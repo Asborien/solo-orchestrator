@@ -878,6 +878,11 @@ run_child_suite "tests/test-bl284-verify-install-context.sh" \
 run_child_suite "tests/test-bl265-jq-reserved-label.sh" \
   "BL-265: the intake appendix's Project Context table renders (no jq reserved word)" \
   "BL-265 jq-reserved-label tests FAILED (run tests/test-bl265-jq-reserved-label.sh for details)"
+# BL-266: typing `pause` filed the unfinished section under
+# completed_sections, so --resume skipped it permanently.
+run_child_suite "tests/test-bl266-paused-section-marked-complete.sh" \
+  "BL-266: a paused intake section is not recorded as complete, and the resume point survives section 115" \
+  "BL-266 paused-section tests FAILED (run tests/test-bl266-paused-section-marked-complete.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS

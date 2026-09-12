@@ -18085,3 +18085,120 @@ produced nothing still reports success" family.
 
 *(BL-266, BL-267 and BL-268 are named without `## …:` citations on purpose: each lands on its own
 branch, so on a branch carrying only this entry those citations would resolve to nothing.)*
+
+---
+
+## BL-266: typing `pause` files the UNFINISHED intake section under `completed_sections`, and `--resume` then skips it permanently — with no message either way
+
+**Status:** Open — fix + suite built on branch `fix/bl266`, uncommitted. Not pushed, no PR.
+
+**Logged:** 2026-09-12, reproduced live while filling in a downstream adoption's intake.
+
+**The defect.** Every one of the 14 section runners in `scripts/intake-wizard.sh` ends in an
+unconditional `save_section N`. The pause path stops everything ELSE and nothing stops that:
+
+- `prompt_input` / `prompt_choice` / `prompt_with_suggestions` each short-circuit at entry while the
+  sentinel exists (`[ -f "${_PAUSE_FILE:-…}" ] && { echo ""; return; }`),
+- `save_answer` returns without writing for the same reason,
+- the collection loops inside a section break on the resulting empty string,
+- and then control reaches `save_section N`, which appends N to `completed_sections` and sets
+  `last_section` to N.
+
+`check_pause_requested` runs after the section returns, removes the sentinel and exits 0, so the
+record is already on disk by the time the wizard says "Pausing intake wizard. Progress saved."
+
+**Reproduced live.** Typing `pause` at "Must-have feature 1" put **section 4** into
+`completed_sections` with none of its `must_have_*` / `should_have_*` / `will_not_*` keys present.
+
+**What it costs the operator.** `is_section_complete` is a membership test against exactly that list:
+
+```
+is_section_complete() {
+  local section_num="$1"
+  [[ " $COMPLETED_SECTIONS " == *" $section_num "* ]]
+}
+```
+
+so on the next `--resume` the runner prints `[OK] Section 4 — already complete` and moves on. Those
+questions are never asked again. Nothing in the file or the transcript says the section is empty, and
+the section is one of the ones that feeds the MVP Cutline — so the cutline is authored against
+questions the operator was never allowed to answer.
+
+**Fix.** `# BL-266-PAUSE-INCOMPLETE`, in `save_section` itself so it covers all 14 call sites at once
+(sections 7 and 8 each carry two): while the sentinel exists, record the resume point, re-render the
+appendix so answers given BEFORE the pause still reach `PROJECT_INTAKE.md`, say plainly that the
+section was paused before it finished, and return 0 WITHOUT touching `completed_sections`.
+
+**The resume point is the subtle half, and the obvious spelling is wrong.** The runner's order is
+`1 2 3 4 5 6 7 8 9 10 11 115 12 13` — `115` encodes "section 11.5" as an integer so it can pass
+through `save_section` and `is_section_complete` — and `run_script_mode` skips with
+`[ "$section" -lt "$start_section" ]`, where `start_section` is `LAST_SECTION + 1`. Writing
+`section - 1` therefore yields **114** for section 115, and every section id 1-13 is less than 114, so
+the entire wizard is skipped on resume and the run reports "Intake Complete!". The guard writes the
+runner-order predecessor instead: `section - 1` for the ordinary ids, and **11** for 115.
+
+Two spellings considered and rejected:
+1. **Leave `last_section` alone.** Correct for every section except 12 — at that point
+   `last_section` is 115 (written by `save_section 115`), giving `start_section` 116, and sections 12
+   and 13 are then skipped by the numeric guard.
+2. **Write `last_section = 0`.** Correct for the runner, because `is_section_complete` re-skips the
+   finished sections. But the interactive menu gates on `[ "$LAST_SECTION" -gt 0 ]`, and with 0 it
+   falls through to `init_progress`, which **overwrites the answers file**. Rejected outright.
+
+**Build note (2026-09-12, branch `fix/bl266`).** Suite
+`tests/test-bl266-paused-section-marked-complete.sh` drives the REAL `save_section`, sourced through
+the wizard's `__SOLO_INTAKE_WIZARD_SOURCED__` main-guard in a subshell, against a hermetic progress
+file recording sections 1-3 done. The sentinel is set by the REAL `prompt_input` reading the literal
+word `pause` from stdin — not by a bare `touch` — and the harness exits 92 if that did not set it, so
+a case cannot pass because the fixture faked the trigger.
+
+RED at `ceb450e`: **2 passed / 7 failed**, the two passes being honest controls — R0 (an UNPAUSED
+`save_section 4` still files section 4, so the fixture works) and R6 (the answer stored before the
+pause is untouched). The discriminators name the damage in the failure text: R1
+`completed_sections is [1, 2, 3, 4], want [1, 2, 3]`; R2 `last_section is [4] … --resume would start
+at 5`; R3 `is_section_complete 4 reports [SKIPPED] — --resume would skip section 4 permanently`; R4
+`last_section is [115], want [11] — --resume would start at 116 and skip every section`.
+
+GREEN **9 / 0** on macOS `/bin/bash` 3.2.57 and on bash 5.2.21 in `ubuntu:24.04` as
+`uid=1000(ubuntu)`. Two mutants, each asserting the mutation landed (`bash -n`, marker gone,
+`save_section() {` still unique, changed-line count) before reading a verdict. **MP1** deletes the
+whole guard, restoring main, and requires R1 to re-open. **MP2** is the PLAUSIBLE WRONG FIX: it drops
+the one line that special-cases 115 so the resume point becomes `section - 1` everywhere. Every other
+case in the suite still passes under MP2 — R4 is the only thing standing between the fix and a wizard
+that silently skips all 14 sections. That is why R4 exists as a case rather than as a comment.
+Registered in `tests/full-project-test-suite.sh` and the `tests.yml` unit lane
+(`scripts/lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
+
+**Residual, open — the same `115` arithmetic bites without any pause.** `save_section 115` writes
+`last_section: 115` and `run_script_mode` compares numerically, so a run interrupted between section
+115 and section 12 by ANYTHING other than `pause` (Ctrl-C, a closed terminal, a crash) resumes at
+`start_section` 116 and skips sections 12 and 13 in silence. This fix does not reach that path — it
+only stops the pause path from creating it. The durable repair is to make the runner skip on POSITION
+in its own ordered list rather than on the integer value, which is a behaviour change to `--resume`
+and wants its own entry.
+
+**Known coupling, accepted deliberately.** The guard computes the resume point, so `save_section` now
+knows something about the runner's section ORDER — that the predecessor of `115` is `11`. The
+authoritative copy of that order lives in `run_script_mode`
+(`scripts/intake-wizard.sh:1846`, `local sections=(1 2 3 4 5 6 7 8 9 10 11 115 12 13)`), so this is a
+second site that knows it.
+
+A runner-owned alternative was drafted and MEASURED rather than argued about: move the write into the
+runner, which owns the order, and leave `save_section` only the refusal to claim completion. It is
+small in code — **+28 / -18 across 5 hunks**, three functions, and it parses. It was rejected on what
+it does to the EVIDENCE. `save_section` would no longer write `last_section`, and this suite drives
+`save_section` directly, so cases R2 and R4 would assert the fixture's own seed back to itself.
+Measured by seeding `last_section` with a deliberately wrong `99` and driving a real pause:
+
+```
+CURRENT FIX:    trigger_rc=0  last_section = 3     (corrected — R2 is a real assertion)
+RUNNER-OWNED:   trigger_rc=0  last_section = 99    (untouched — R2 reads back the seed)
+```
+
+MP2, the mutant that catches a `section - 1` resume point, would also lose its target entirely.
+Restoring real coverage would mean driving `run_script_mode` end to end — stubbing all 14
+`run_section_N` functions and rewriting three cases — a larger change on the test side than on the
+code side, to remove a coupling that is one line and documented. The coupling is recorded here instead.
+
+**Related:** `## BL-265:` and `## BL-267:` (the same wizard, same downstream session),
+`## BL-257:` (state writes that announce a success they did not check for).
