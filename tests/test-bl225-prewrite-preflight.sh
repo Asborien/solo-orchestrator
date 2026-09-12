@@ -127,6 +127,51 @@ P5b="$WORK/t5b"; _adoptee "$P5b" '*.json' '!manifest.json'
 IFS='|' read -r rc5b _ _ _ <<<"$(_run "$P5b" 'manifest.json')"
 chk "T5b: a genuinely re-included path is allowed (negation is honoured)" "${rc5b:-x}" "0"
 
+echo "=== E — the REAL driver, un-stubbed ==="
+
+# T1-T5 stub `_adopt_write_phase`, and that stub is a hole the review found:
+# a rehearsal pointed at "$root" instead of "$copy" — the original defect with a
+# lie on top — passed all 20 cases, because a stub that writes nowhere cannot
+# make a byte-identical assertion fail. So run the REAL driver once. This case
+# is the one that kills:
+#   - pointing the rehearsal at the project instead of the copy
+#   - moving `adopt_test_debt_record` back above the preflight (a file lands,
+#     and the refusal's "nothing was written" becomes false)
+#   - dropping `# BL-225-REHEARSAL-NO-TRACE` (the tree stays clean but the
+#     refusal claims adoption ATTEMPTED writes to the project)
+# It needs a Scout report, so it SKIPS LOUDLY rather than silently if scout
+# cannot produce one — a skipped case that reads as a pass is how the stub hole
+# stayed open.
+E_ROOT="$WORK/e2e"; E_P="$E_ROOT/p"; mkdir -p "$E_ROOT"
+mkdir -p "$E_P/src" && ( cd "$E_P" && git init -q . \
+  && git config user.email e@test.invalid && git config user.name E \
+  && printf '{"name":"acme","scripts":{"test":"npm test"}}\n' > package.json \
+  && printf '# acme\n' > README.md \
+  && printf '.claude/\n' > .gitignore \
+  && git add -A && git commit -q -m 'chore: their history' ) >/dev/null 2>&1
+if ! bash "$REPO_ROOT/scripts/scout.sh" --root "$E_P" --out "$E_ROOT/scan" >/dev/null 2>&1 \
+   || [ ! -s "$E_ROOT/scan/scout-report.json" ]; then
+  bad "E setup — scripts/scout.sh produced no report; the end-to-end case cannot run, and is NOT silently skipped"
+else
+  E_HASH_BEFORE="$(_hash "$E_P")"
+  printf '2\n1\n1\n1\n1\n' > "$E_ROOT/answers"
+  E_ERR="$E_ROOT/err"
+  ( cd "$E_P" && bash "$REPO_ROOT/scripts/adopt-project.sh" \
+      --scan-report "$E_ROOT/scan/scout-report.json" ) < "$E_ROOT/answers" >/dev/null 2>"$E_ERR"
+  E_RC=$?
+  E_DIRTY="$( cd "$E_P" && git status --porcelain --ignored --untracked-files=all 2>/dev/null | grep -c . )"
+  chk "E1 — the real driver REFUSES an adoptee whose rules hide .claude/" \
+    "$([ "$E_RC" -ne 0 ] && echo yes || echo no)" "yes"
+  chk "E2 — and the project is BYTE-IDENTICAL afterwards (real writers, no stub)" \
+    "$(_hash "$E_P")" "$E_HASH_BEFORE"
+  chk "E3 — not one file, tracked, untracked or ignored, was left behind" "$E_DIRTY" "0"
+  # The refusal must be REFUSED (nothing touched), never BLOCKED (something was).
+  chk "E4 — the refusal is labelled REFUSED, so it does not claim writes it did not make" \
+    "$(grep -c '\[REFUSED\]' "$E_ERR")" "1"
+  chk "E5 — and never says adoption ATTEMPTED writes to this project" \
+    "$(grep -ci 'ATTEMPTED writes' "$E_ERR")" "0"
+fi
+
 echo "=== S — the call is before the write, structurally ==="
 
 # T6 — the stub in T1-T5 cannot prove ORDER. This does: in adopt_main the
@@ -159,11 +204,10 @@ MP="$WORK/mp/lib"; mkdir -p "$MP" && cp -p "$LIB"/*.sh "$MP/"
 python3 - "$MP/adopt-state.sh" <<'PYEOF'
 import sys
 p=sys.argv[1]; s=open(p).read()
-old='''    if ( cd "$root" && git check-ignore --no-index -q -- "$rel" ) 2>/dev/null; then
-      ignored="$ignored $rel"
-    fi
+old='''      0) ignored="$ignored
+$rel" ;;
 '''
-new='''    :
+new='''      0) : ;;
 '''
 assert s.count(old)==1, "MP1 anchor not unique: %d" % s.count(old)
 open(p,"w").write(s.replace(old,new))

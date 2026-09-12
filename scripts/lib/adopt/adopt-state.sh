@@ -1177,11 +1177,40 @@ adopt_prewrite_preflight() {
     return 1
   fi
 
+  # THE ORACLE, AND WHY IT IS TWO QUESTIONS AND NOT ONE. `git add` refuses an
+  # ignored path — but for a path already TRACKED it refuses only when an
+  # ANCESTOR DIRECTORY is ignored, not when a file or glob rule covers it.
+  # Measured across four rule shapes on a tracked path (`git add` rc):
+  #     .claude/   -> 1     .claude/*  -> 0     *.json -> 0     exact path -> 0
+  # A first cut asked `check-ignore --no-index` for every path, which says
+  # IGNORED in all four and so REFUSED THREE PROJECTS THAT WORK TODAY — any
+  # adoptee that tracks a file the adoption rewrites and has a non-directory
+  # rule covering it. Two measurements of the same thing had been generalised
+  # from one rule shape each, in opposite directions; twelve shapes settled it.
+  # `--no-index` stays for the untracked half: without it git reports nothing
+  # for a tracked path, the index-aware false-clean that defeated the first fix
+  # of `# BL-225-STAGE-PREFLIGHT`.
+  #
+  # FAIL CLOSED. `check-ignore` exits 128 on a pathspec beyond a symbolic link,
+  # and treating that as "not ignored" would be a fail-OPEN guard — the shape
+  # this entry exists to remove. Anything but 0 or 1 refuses.
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
-    if ( cd "$root" && git check-ignore --no-index -q -- "$rel" ) 2>/dev/null; then
-      ignored="$ignored $rel"
+    local _ci=0 _dir
+    if ( cd "$root" && git ls-files --error-unmatch -- "$rel" ) >/dev/null 2>&1; then
+      _dir="${rel%/*}"
+      [ "$_dir" = "$rel" ] && continue        # top-level tracked file: git add accepts it
+      ( cd "$root" && git check-ignore --no-index -q -- "$_dir" ) 2>/dev/null || _ci=$?
+    else
+      ( cd "$root" && git check-ignore --no-index -q -- "$rel" ) 2>/dev/null || _ci=$?
     fi
+    case "$_ci" in
+      0) ignored="$ignored
+$rel" ;;
+      1) : ;;                                  # not ignored
+      *) adopt_refuse "cannot tell whether '$rel' is covered by your ignore rules (git check-ignore exited $_ci) — refusing rather than guessing"   # BL-225-ORACLE-FAIL-CLOSED
+         return 1 ;;
+    esac
   done <<PLANNED
 $planned
 PLANNED
@@ -1190,7 +1219,8 @@ PLANNED
     # The paths go IN the refusal, not after it in `adopt_note`s: notes print on
     # STDOUT and refusals on STDERR, so a reader piping stderr to a log would
     # get "some of your files are refused" with no list of which.
-    adopt_refuse "your ignore rules refuse $(printf '%s' "$ignored" | wc -w | tr -d ' ') of the files this adoption must write, so it would leave the project half-installed. NOTHING WAS WRITTEN. The refused path(s):$ignored"   # BL-225-PREWRITE-REFUSE
+    # ROWS, not words: `wc -w` counted "my file.txt" as two refused files.
+    adopt_refuse "your ignore rules refuse $(printf '%s' "$ignored" | grep -c .) of the files this adoption must write, so it would leave the project half-installed. NOTHING WAS WRITTEN. The refused path(s):$ignored"   # BL-225-PREWRITE-REFUSE
     adopt_note "These are the files the adoption IS — skipping one produces a broken install,"
     adopt_note "not a disclosed omission. Un-ignore them (or narrow the rule) and run this again."
     adopt_note "Note that git cannot re-include a file under an ignored DIRECTORY, so a"

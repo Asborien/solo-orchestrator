@@ -9549,18 +9549,36 @@ in the real run. Karl chose the copy over a per-writer "don't actually write"
 flag, and the reason held up: a flag is a second thing each writer can forget,
 and a writer that ignored it would write during the rehearsal.
 
-**The oracle is `git check-ignore --no-index`, and it is NOT the staging half's.**
-That half asks `git add --dry-run`, which needs the files to EXIST; here they do
-not yet. Measured against `git add` as ground truth across eight shapes —
-untracked+ignored, tracked+ignored (modified and unmodified), untracked clean,
-tracked clean, and four negation cases including a re-included file inside an
-ignored directory — `check-ignore --no-index` agreed in all eight. `--no-index`
-is required: without it git reports nothing for a TRACKED path, the index-aware
-false-clean that defeated this entry's first fix. Also measured, and recorded
-because it surprised: **`git add` on a tracked-but-now-ignored path exits 1 AND
-STAGES IT ANYWAY**, and git cannot re-include a file under an ignored DIRECTORY,
-so `!.claude/manifest.json` under `.claude/` stays ignored and refusing it is
-correct.
+**The oracle is TWO questions, and a first cut that asked only one over-refused
+three working projects.** The staging half asks `git add --dry-run`, which needs
+the files to EXIST; here they do not yet, so this half asks `check-ignore
+--no-index` instead — but only for paths that are UNTRACKED. For a TRACKED path
+`git add` refuses **only when an ancestor DIRECTORY is ignored**, not when a file
+or glob rule covers it. Measured, `git add` rc on a tracked path, one rule each:
+
+    .claude/  -> 1        .claude/*  -> 0        *.json -> 0        exact path -> 0
+
+`check-ignore --no-index` says IGNORED for all four, so asking it alone refused
+any adoptee that tracks a file the adoption rewrites under a non-directory rule —
+projects that work today. **Two measurements of this had been generalised from
+one rule shape each, in OPPOSITE directions**: the entry claimed `git add` exits
+1 on tracked+ignored (true only of the directory rule), review measured 0 (true
+of the other three), and neither was general. Twelve shapes settled it and the
+oracle now agrees with `git add` on all twelve. `--no-index` stays for the
+untracked half: without it git reports nothing for a tracked path, the
+index-aware false-clean that defeated this entry's first fix.
+
+**It also fails CLOSED** (`# BL-225-ORACLE-FAIL-CLOSED`). `check-ignore` exits
+128 on a pathspec beyond a symbolic link, and the first cut read any non-zero as
+"not ignored" — a fail-open guard inside the entry that exists to remove them.
+Anything but 0 or 1 now refuses and says which path it could not classify.
+
+Two further measurements worth keeping: git cannot re-include a file under an
+ignored DIRECTORY, so `!.claude/manifest.json` under `.claude/` stays ignored and
+refusing it is correct — but the `.claude/*` form DOES re-include, which is why
+the rule shape is load-bearing above. And `git add` given a MIXED pathspec exits
+1 while staging the clean paths, which is the shape `adopt_stage_and_commit`
+produces and what `# BL-225-STAGE-PREFLIGHT` exists for.
 
 **TWO BUGS IN THIS FIX, BOTH FOUND BY MEASUREMENT, BOTH THE CLASS THIS ENTRY IS
 ABOUT.** (1) The preflight first sat BELOW `adopt_test_debt_record`, which writes
@@ -9574,6 +9592,16 @@ interaction was found and fixed the same way: the rehearsal honoured
 `SOIF_ADOPT_HALT_AFTER`, a seam meant for the real run, so the rehearsal
 "failed", the preflight refused and adoption never ran — 12 failures across four
 suites (`# BL-225-REHEARSAL-NO-HALT`).
+
+**THE SUITE'S STUB WAS A HOLE, AND REVIEW FOUND IT.** T1-T5 stub
+`_adopt_write_phase` to test the decision cheaply, and a stub that writes nowhere
+cannot fail a byte-identical assertion — so a rehearsal pointed at `"$root"`
+instead of `"$copy"`, which is the original defect with a false refusal on top,
+passed all 20 cases. Two more survived for the same reason: moving the test-debt
+writer back above the preflight, and dropping the touched-marker restore. Section
+E now runs the REAL `scripts/adopt-project.sh` once, un-stubbed, and all three
+die (23/2, 22/3, 23/2). A stub is a fine way to test a decision and a useless way
+to test that nothing was written.
 
 **FOUR MUTATION PROOFS LOST THEIR END-TO-END OBSERVABLE, AND THAT IS THE REAL
 COST OF THIS CHANGE.** `S5` (wp4-driver), `G4` (wp6-collision-archive), `PM1` and
@@ -9596,7 +9624,14 @@ shape `# BL-225-REFUSE-HONEST` exists to prevent. Finding `S5`'s cause required
 it: the reversed state order fails at `manifest` because that writer hashes the
 KEPT SCAN REPORT, which `adopt_write_intake` writes earlier in the correct order.
 
-**Residuals.** (a) The rehearsal copies the whole tree, `.git` included, because
+**Residuals.** (0) **PRE-EXISTING, found by this review and not fixed here: an
+adoptee whose `.claude` is a symlink to an absolute path OUTSIDE the repository
+has files written there — eight of them — while the refusal correctly reports the
+repository itself untouched.** Measured on base and on this branch alike, so the
+escape predates the preflight; what this branch adds is the refusal that now sits
+in front of it, which is why the guard is fail-closed on `check-ignore`'s rc 128
+rather than reading it as clean. Escaping symlinks want their own entry.
+(a) The rehearsal copies the whole tree, `.git` included, because
 its git behaviour must match the real run's; on a large adoptee that is time and
 disk. Hardlink copies are NOT available — the writers truncate in place, so a
 hardlinked rehearsal would corrupt the operator's originals. (b) PRE-EXISTING and
