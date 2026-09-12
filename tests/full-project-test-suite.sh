@@ -860,6 +860,15 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
   "BL-259: an empty @tsv field must not collapse and shift the resolver row" \
   "BL-259 tsv-field-shift tests FAILED (run tests/test-bl259-tsv-empty-field-shift.sh for details)"
 
+# BL-209: install-filesystem-gates.sh wrote and probed a `.git/hooks` literal.
+# That is false in a linked worktree (`.git` is a FILE), dies when the hooks
+# directory is absent, and is the wrong place entirely when core.hooksPath is
+# configured — in every case leaving the BL-030 gate absent or unreachable while
+# the install reported success.
+run_child_suite "tests/test-bl209-hooksdir-resolution.sh" \
+  "BL-209: the hooks directory is resolved through git, not a .git/hooks literal" \
+  "BL-209 hooksdir-resolution tests FAILED (run tests/test-bl209-hooksdir-resolution.sh for details)"
+
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
 # ----------------------------------------------------------------

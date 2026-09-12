@@ -8367,7 +8367,161 @@ init.sh's arm is the lowest-risk (a fresh scaffold has no worktrees or dotfiles 
 upgrade-project's sync arms are the ones that touch EXISTING projects and deserve the guard
 first — the same argument BL-145's entry made for --auto-fix.
 
-**Status:** Open
+**Status:** Open — and it STAYS open on this branch, which converts **4 of the 36 census lines**:
+`scripts/install-filesystem-gates.sh` only. The other eight files are untouched. Suite
+`tests/test-bl209-hooksdir-resolution.sh` **15 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in
+`ubuntu:24.04` as a non-root user, against RED **2 / 8**; five mutants, each killing a
+different case set. Closing the entry needs the remaining 32 lines.
+
+---
+
+### The install-surface conversion (2026-09-12, branch `fix/bl209-hooksdir`) — 4 of 36 lines
+
+**Why this file first, against the entry's own advice.** The entry above nominates
+`upgrade-project.sh`'s sync arms as deserving the guard first, because they touch EXISTING
+projects. That ordering still holds for the *upgrade* surface. This file is taken first for a
+different reason: it is the only one of the nine whose failure leaves the **BL-030 gate itself**
+absent, and it fails silently by construction — `prepare_initial_state_for_commit()` in `init.sh`
+invokes it with `>/dev/null 2>&1`, so the operator sees "enforcement degraded" and no cause.
+
+**Three shapes broke the `.git/hooks` literal, and all three end the same way.** Measured on
+unmodified `main` at `ceb450e`, each against a hermetic fixture:
+
+```
+A  plain repo, .git/hooks present     -> rc 0, hook written        (the only case that worked)
+B  linked worktree                    -> [FAIL] not a git repo: <wt>   rc 1
+C  .git/hooks absent                  -> the first `cat >` dies        rc 1
+D  core.hooksPath set to myhooks/     -> rc 0, wrote into .git/hooks/, myhooks/ EMPTY
+```
+
+Arm **D** is the one worth reading twice. It is the only one that reports success, and what it
+produces is a gate installed where git will never look for it: `ls myhooks/` is empty after a
+run that exited 0. Arms B and C at least fail loudly — except that the caller discards both
+streams, so in practice all four are silent.
+
+The emitted hook carries the same literal a second time. On `main` it reads:
+
+```
+if [ -f "$(git rev-parse --show-toplevel)/.git/hooks/framework-gate.sh" ]; then
+```
+
+`--show-toplevel` is the WORKTREE root, where `.git` is a FILE, so in exactly the case arm B
+covers this test is false and the block falls through — strict mode, no gate, no output.
+
+**The fix — four marked arms.** `# BL-209-HOOKSDIR` resolves the directory from
+`git rev-parse --git-common-dir`; `# BL-209-FALLBACK-RC` takes that call's exit status explicitly,
+because `set -euo pipefail` is on and a failing rev-parse would otherwise kill the script on the
+assignment before the literal fallback beside it could run; `# BL-209-HOOKSPATH-REFUSE` declines
+to write into a configured hooks path, keyed on git's EXIT STATUS rather than the value;
+`# BL-209-GATE-PATH` applies the same resolution inside the hook that is emitted.
+
+**`--git-common-dir`, NOT `--git-path hooks`, and the difference is the uninstall arm.** The two
+agree in a normal checkout and in a linked worktree — hooks are per-REPOSITORY, so a worktree
+shares the common gitdir's `hooks/`. They diverge the moment a hooks path is configured, because
+`--git-path` HONOURS it. Since `--install` refuses a configured hooks path outright, the only
+directory this script ever writes to is the common one, and `--uninstall` must look THERE.
+Resolved through `--git-path`, uninstall reads a directory install never used, finds no hook, and
+silently removes nothing — leaving the marker block and `framework-gate.sh` behind to revive if
+the hooks path is later unset. A silent no-op in the enforcement lane. This is case R7, and
+mutant MU3 is that exact wrong resolution.
+
+**The suite, and the vacuous red it was rebuilt to remove.** A first cut reported **0 passed / 6
+failed** on `main` and every line of it looked like the defect. Four of the six were the FIXTURE.
+`git init` does not always produce a `.git/hooks` directory — git copies the template dir, and
+`init.templateDir` pointing at a template with no `hooks/` yields a repo with none. That is real
+(it is arm C), it was the state of the machine the suite was written on, and it meant R3..R6 were
+all failing on the missing-directory arm while their diagnostics claimed hooksPath, uninstall
+symmetry and the emitted hook. `setup_repo` now creates the directory explicitly, `G0` asserts
+it, and R2 — the case that is ABOUT the absent directory — removes it deliberately and asserts
+the removal first.
+
+A second vacuity was in the mutants and is worth recording because it is the sharper one: the
+mutant arms re-run cases that have already run once, `setup_repo` is called through command
+substitution and therefore in a SUBSHELL, and the fixture counter it incremented could not reach
+its caller. Every case re-used one path, `git init` silently re-initialised it, `git commit`
+found nothing to commit, and **four mutant kills were all `fixture could not be created`** — four
+vacuous kills on the very mutants whose job is to prove the cases are not vacuous. Fixtures are
+now minted with `mktemp -d` per call.
+
+RED **2 / 6** at `ceb450e`. The two passes are honest-outcome controls, not near-misses: `G0`
+(a stock repo installs cleanly — the floor that stops a dud fixture certifying the rest) and
+`R7` (uninstall reads the directory install wrote — true at base, because with no worktree and
+no configured hooks path the literal and the common dir are the same directory). R1, R2, R3, R4
+and R6 are the discriminators. **R5 is CONSEQUENTIAL, labelled as such in the file**: it cannot
+pass while R1 fails, so its discriminating power comes from MU1 rather than from the base red.
+
+GREEN **13 / 0**, five mutants. The count is five rather than the customary three because the fix
+is four independent arms and a mutant whose kill set overlaps another's proves less than it
+appears to — **a first cut claimed MU1 killed all four worktree-adjacent cases; measured, it kills
+two.** Each mutant asserts the mutation landed (`bash -n`, changed-line count) before the verdict
+is read, and each asserts which cases must SURVIVE it as well as which must die:
+
+| Mutant | What it restores or removes | Dies at | Survives, and must |
+|---|---|---|---|
+| MU1 | the `.git/hooks` literal + the `-d` guard | R1, R5 | R2, R6 — different arms |
+| MU2 | refusal keyed on the hooks-path VALUE, not the exit status | R4 | R3 — a non-empty value is still caught |
+| MU3 | uninstall resolved via `--git-path hooks` | R7 | — |
+| MU4 | the `mkdir -p "$HOOKS_DIR"` deleted | R2 | G0 — a stock repo already has the directory |
+| MU5 | the EMITTED hook back to the `.git/hooks` literal | R6 | R1 — the install path is untouched |
+
+MU2 and MU5 are the two that pay for themselves. MU2 separates a set-but-EMPTY hooks path from a
+set one: `git config <key>` with an empty value exits **0 with no output**, so a check reading the
+value passes it while git still runs no hook from `.git/hooks`. MU5 is the half-fix that looks
+installed on disk — the gate correctly placed in the common gitdir, and a hook that never calls
+it.
+
+**Not covered, deliberately.** The symlinked-hook clobber (BL-145's arm) is the third member of
+this class and is NOT addressed here; `--install` still writes through a symlinked `pre-commit`.
+It needs the refuse-not-write posture BL-145 built on the verify surface, and it is a separate
+change with its own cases.
+
+**Registered** in `tests/full-project-test-suite.sh` and in the canonical `tests=( )` array of
+`.github/workflows/tests.yml` — the canonical array only, never a `pin_*` array, per the BL-190
+note above the pins. `scripts/lint-tests-registered.sh`: `OK: every test file is registered with
+an aggregator (or EXEMPT)`.
+
+**REWORK (2026-09-12, same branch) — three findings, all upheld.** Suite now **15 / 0** on macOS
+`/bin/bash` 3.2.57 and on bash 5.2.21 in `ubuntu:24.04`, against RED **2 / 8** (G0 and R7 are the
+controls that pass at base).
+
+1. **The refusal was a THIRD copy of a predicate this entry's own Related line says to reuse.**
+   It now carries a `SYNC SIBLINGS` marker of the `# BL-084-TIER-KEY` kind, naming
+   `_bl145_hookspath_is_set` (`scripts/verify-install.sh:540`) and `_bl145_configured_hookspath`
+   (`:549`) as the other two. They are NOT shared, and the reason is a signature difference rather
+   than neglect: the `_bl145_*` pair read the CURRENT DIRECTORY's config with a bare `git config`,
+   while this installer is routinely invoked from another cwd and must read
+   `git -C "$PROJECT_ROOT"`. Sharing them means adding a repo parameter and updating six
+   verify-install.sh call sites — a signature change across a governance script, not a move. The
+   durable repair is to hoist them into `scripts/lib/helpers-core.sh` behind a fence exactly as
+   `# BL-095-STATE-READERS-BEGIN` (`:983`-`:1038`) did for the state readers, because
+   verify-install.sh is not sourceable (`guard_not_in_framework` at `:20`). **That hoist is a
+   refactor and is left to the entry that closes the remaining 32 lines.**
+
+2. **The refusal's diagnostic could not reach anyone.** Both callers ran the installer with
+   `>/dev/null 2>&1` — `init.sh:4979` and `scripts/reconfigure-project.sh:194` — so the named cause
+   and repair went to `/dev/null`, and in reconfigure's case a non-zero rolled back the whole
+   enforcement-level transition while telling the operator only "filesystem-gate install failed".
+   That is the same opaque failure this arm exists to end, one layer up.
+   `# BL-209-INSTALLER-STDERR` suppresses stdout only at both sites. Two new cases: **R8**
+   (behavioural — the refusal is on STDERR, not stdout, which is what makes suppressing stdout
+   safe) and **R9** (source-level, and labelled as such — neither caller redirects the installer's
+   stderr). R9 cannot be driven end to end here: `init.sh` is not invocable hermetically in this
+   suite. Its anti-vacuity measure is that each call line must be FOUND first — and that guard
+   earned itself immediately, catching a first pattern that matched init.sh's literal path but not
+   reconfigure's `"$INSTALLER"` variable, reporting the miss instead of passing by absence.
+   Verified non-vacuous by reinstating `2>&1` on a mirror: `R9 — 1 call site(s) still redirect the
+   installer's stderr to /dev/null`.
+
+3. **The refuse block sat at 2-space indent inside a `case` arm that uses 4.** Re-indented — and
+   that alone broke **MU2**, whose `sed` anchored on the old indent and silently stopped applying.
+   `mutate_and_check` caught it at 0 changed lines rather than reporting a pass, which is the
+   behaviour that makes an embedded mutant worth having.
+
+**Also fixed while in there, not in the review.** The inline value read was
+`_hp="$(git … --path …)"` with no `|| _hp=""`. Under this script's `set -euo pipefail` a git build
+that rejects `--path` would abort the installer on that assignment with NO diagnostic — the exact
+silent mode `# BL-209-FALLBACK-RC` was added two arms earlier to end, reintroduced in the arm that
+ends it. `_bl145_configured_hookspath` guards the identical call the same way; this now does too.
 
 **Related:** BL-145 (the verify-surface fix and its `_bl145_*` helpers — reuse them), BL-176
 (the sentinel-surface fix; `# BL-176-GITPATH` is the resolution primitive), BL-088 (managed
