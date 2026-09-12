@@ -3615,6 +3615,8 @@ Verifier-reproduced: with a project-local `lint-backlog-references.sh` and a bac
 
 **Related:** BL-119 (PR #200, the defect class + fix); BL-010 (the commit-msg surface's contract); `scripts/lint-backlog-references.sh` (`--pre-commit-mode`).
 
+---
+
 ## BL-144: self-approval scan is fully silent for malformed-header + past-cap and for past-cap placeholder Approver cells
 
 **Logged:** 2026-07-19 (Dogfood-3 SHOULD-fix wave consolidated verifier, S1+S2)
@@ -3895,6 +3897,9 @@ Scaffolding with `--no-remote-creation` and wiring `origin` by hand (the exact-c
 
 
 **Verifier record (fable, 2026-07-24, SHIP-WITH-FIXES — applied on the branch):** HIGH must-fix caught: the reconciler recorded `pushed_initial` on branch-NAME existence only (`grep refs/heads/<name>`), so a remote carrying a same-named but UNPUSHED `main` (GitHub's 'Initialize with README' default, disjoint history) earned the full BL-123 attestation AND the BL-116 push-gate exemption with zero project code on the host — a regression vs pre-fix, where an actual `git push` had to succeed. Also: the branch name was interpolated unescaped into a grep BRE (a `rel/1.x` local laundered a `rel/1yx` remote). FIX: exact awk field compare (`$2 == "refs/heads/<cand>"`) + require the matched head sha to be a commit the local repo holds (`git cat-file -e <sha>^{commit}`) — a genuine push guarantees the shared commit, an unrelated auto-init does not. Three fixtures added (T-unrelated-history-refused = the HIGH, T-lookalike-branch-refused = metachar/substring, T-dead-origin-not-recorded); the first two are watched-RED against the name-only version (attestation laundered onto an unpushed project) and GREEN with the fix. The existing unconditional mutant was updated to fabricate the real local HEAD sha (isolating the ls-remote-genuineness guard now that cat-file is defense-in-depth). Suite 10/10; attestation blast radius green (bl123 11, check-gate 5, bl130 4, bl032 8); run-lints 11/11. builders-guide 'carries the pushed branch' overstatement corrected.
+
+---
+
 ## BL-158: `check-phase-gate.sh --gate <name>` prints the forced target phase as "Current phase" (cosmetic)
 
 **Logged:** 2026-07-22 (Dogfood-4 S0, finding F-DF4-004)
@@ -13050,6 +13055,8 @@ CI runner). Every suite is one denied syscall away from it.
 **Not claimed:** that any suite other than the one measured has ever fired. The
 scope above is the exposure, not an incident count.
 
+---
+
 ## BL-243: The push-time adversarial review gate — mandatory before push, and three rounds of it being switched off
 
  **Status:** Open
@@ -13379,6 +13386,9 @@ read stdin and does not exit before it.
     derivation recipe beside it held; the ones that shipped as bare prose are
     the ones that failed.** Residual 12 models the fix — it carries its own
     `grep -c`.
+
+---
+
 ## BL-242: Brownfield adoption is HALF BUILT and has never had a backlog entry — seven capabilities unbuilt, and the feature's shape is now decided (D1-D8)
 
 **Status:** Open
@@ -14419,6 +14429,8 @@ written); v1.2 corrected it to WP0–WP3; v1.2.1 corrected it to WP0–WP4 with
 overstated the gap for thirteen days. v1.2.2 restates the not-built set as the
 seven runtime stubs above — a list the code can be asked for rather than one a
 human maintains.
+
+---
 
 ## BL-248: `adopt_evidence_deploy_lane` reads rung 4's evidence without consulting `.satisfied`, so a project with NO deploy lane is told "Points to: built out"
 
@@ -15768,6 +15780,8 @@ the `tests.yml` unit lane (`lint-tests-registered.sh --list`: `registered`).
 `## BL-185:` (the other unrecorded escape), `## BL-070:` (the atomic attestation write this file
 already does for Phase-3 attestations — the shape (b) now follows), `## BL-257:` (the other 23 writes).
 
+---
+
 ## BL-257: `process-checklist.sh` — 23 state writes announce success without checking that the write landed
 
 **Status:** Open
@@ -15796,6 +15810,8 @@ return 0 once the helper is in). Lint or test, not prose — a "use the helper" 
 what the 23 sites already ignored.
 
 **Related:** `## BL-256:`, `## BL-233:` (`# BL-233-ATTEST-REFUSE`), `## BL-182:`.
+
+---
 
 ## BL-258: the adversarial codebase review's ranked findings #5-#10 were never filed — six leads recorded here before they are lost
 
@@ -15916,6 +15932,8 @@ caught by review, not by the lint.
 **Related:** `## BL-253:`, `## BL-254:`, `## BL-255:`, `## BL-256:` (the four that shipped),
 `## BL-257:` (filed out of BL-256's review, same wave), `## BL-231:` (#6's family),
 `## BL-181:` (#10's full-lane blind spot).
+
+---
 
 ## BL-259: `resolve-tools.sh` loses the install instructions for every tool that declares no `version_command` — an empty `@tsv` field collapses and shifts the row
 
@@ -16616,3 +16634,56 @@ A UAT template with no test that survives its own second click is how this got s
 
 **Related:** `## BL-262:` (whose triage this corrects), `## BL-263:` (the escaping
 decision on the sibling site), `## BL-009:` (UAT-template guardrails).
+
+---
+
+## BL-271: `upgrade-project.sh --deployment organizational` never writes `.mode`, so a SCAFFOLDED project upgraded to organizational is verified against the personal branch-protection bar for ever
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** Filed for the maintainer to
+decide, because the write site is not one this batch touches and bundling it into a neighbouring fix
+would be the wrong shape.
+
+**Logged:** 2026-09-12, found while reviewing the mode-vocabulary batch — it is the defect that
+survives BOTH of those fixes.
+
+**The defect.** The manifest carries `mode` (personal|org) and `deployment`
+(personal|organizational) as separate fields. A tier upgrade writes one of them and not the other.
+Every manifest write on the upgrade path, read off `main`:
+
+```
+:571   '. + {deployment: $dep, poc_mode: $pm, enforcement_level: "strict"}'   BL-030 backfill
+:576   '. + {deployment: $dep, poc_mode: null, enforcement_level: "strict"}'  BL-030 backfill
+:2506  '. + {deployment: $dep, poc_mode: $pm}'                               the TIER CHANGE
+```
+
+None of the three touches `.mode`. (`grep -n '\.mode'` over the file returns only `poc_mode` and
+prose.) So a project SCAFFOLDED as personal and later upgraded with
+`scripts/upgrade-project.sh --deployment organizational` ends up carrying `deployment:
+"organizational"` and `mode: "personal"`, permanently, and every reader of `mode` — all of which hand
+it to `host_verify_protection` — measures it against the PERSONAL bar. The required approving review
+and the required status check are never asserted, and the gate returns 0.
+
+**IT IS INVISIBLE TO BOTH MODE FIXES, AND THAT IS THE POINT.** `## BL-268:` makes the drivers refuse a
+mode they do not know; `personal` is a word they know, so nothing refuses. `## BL-270:` repairs a
+`mode` that is present-and-invalid; its guard is `case "$bl270_mode" in ''|personal|org) ;;`, so a
+stale `personal` matches the leave-alone arm by design. A stale-but-valid value is a third state
+neither was built for.
+
+**Same class as `## BL-268:`, different birth path.** BL-268 is the mode/deployment desync on the
+ADOPTED path, where the wrong value is a word no reader knows and therefore eventually loud. Here the
+wrong value is a word every reader accepts, so it is silent for ever — which makes this the quieter
+and arguably worse of the two.
+
+**Not measured beyond the source read.** The write sites and the two guards above were read directly
+on `main` and on `fix/bl270`. No end-to-end upgrade was driven and no test was written, because no fix
+is proposed here; a reproduction belongs with whatever fix the maintainer chooses.
+
+**Why no fix is offered.** The natural home is the tier-change write at `:2506`, which is a different
+write site from BL-270's migration entry, with its own blast radius — it runs on every deployment
+upgrade rather than only on a damaged manifest. Deciding whether the tier change should also write
+`mode`, or whether BL-270's backfill should widen to cover stale-but-valid values, is a call about
+which of two existing mechanisms owns the field. That is the maintainer's, not ours.
+
+**Related:** `## BL-268:` (the same desync on the adopted path, and the refusal that cannot catch
+this), `## BL-270:` (the repair whose leave-alone arm this slips through), `## BL-221:` (the same
+"two birth paths must produce the same manifest shape" argument, one field further on).
