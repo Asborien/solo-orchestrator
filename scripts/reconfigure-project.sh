@@ -190,13 +190,19 @@ if [ -n "$RECONF_LEVEL" ]; then
   else
     INSTALLER="$SCRIPT_DIR/install-filesystem-gates.sh"
   fi
+  # BL-209-INSTALLER-STDERR — stdout suppressed, stderr NOT. A non-zero here
+  # rolls back the whole enforcement-level transition, and with `2>&1` the
+  # operator was told only "filesystem-gate install failed" while the
+  # installer's own account of WHY (a configured core.hooksPath, an uncreatable
+  # hooks dir, a non-repo) went to /dev/null. A rollback whose cause is
+  # unstated is the opaque failure BL-209 exists to end.
   if [ "$RECONF_LEVEL" = "strict" ]; then
-    if ! bash "$INSTALLER" --install "$PROJECT_ROOT" >/dev/null 2>&1; then
-      rollback_reconfigure "filesystem-gate install failed (installer: $INSTALLER)"
+    if ! bash "$INSTALLER" --install "$PROJECT_ROOT" >/dev/null; then
+      rollback_reconfigure "filesystem-gate install failed (installer: $INSTALLER; its reason is above)"
     fi
   else
-    if ! bash "$INSTALLER" --uninstall "$PROJECT_ROOT" >/dev/null 2>&1; then
-      rollback_reconfigure "filesystem-gate uninstall failed (installer: $INSTALLER)"
+    if ! bash "$INSTALLER" --uninstall "$PROJECT_ROOT" >/dev/null; then
+      rollback_reconfigure "filesystem-gate uninstall failed (installer: $INSTALLER; its reason is above)"
     fi
   fi
 

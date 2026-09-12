@@ -910,6 +910,14 @@ run_child_suite "tests/test-bl281-resume-after-115.sh" \
 run_child_suite "tests/test-bl286-integration-branch.sh" \
   "BL-286: the TDD branch axis must resolve the project's own integration branch" \
   "BL-286 integration-branch tests FAILED (run tests/test-bl286-integration-branch.sh for details)"
+# BL-209: install-filesystem-gates.sh wrote and probed a `.git/hooks` literal.
+# That is false in a linked worktree (`.git` is a FILE), dies when the hooks
+# directory is absent, and is the wrong place entirely when core.hooksPath is
+# configured — in every case leaving the BL-030 gate absent or unreachable while
+# the install reported success.
+run_child_suite "tests/test-bl209-hooksdir-resolution.sh" \
+  "BL-209: the hooks directory is resolved through git, not a .git/hooks literal" \
+  "BL-209 hooksdir-resolution tests FAILED (run tests/test-bl209-hooksdir-resolution.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS

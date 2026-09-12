@@ -4976,8 +4976,13 @@ prepare_initial_state_for_commit() {
   # the chore-init commit so the marker block is consistent with the rest of
   # the BL-030 surface).
   if [ "$ENFORCEMENT_LEVEL" = "strict" ]; then
-    bash "$SCRIPT_DIR/scripts/install-filesystem-gates.sh" --install "$PROJECT_DIR" >/dev/null 2>&1 || \
-      print_warn "BL-030: filesystem-gate install failed — strict enforcement degraded."
+    # BL-209-INSTALLER-STDERR — stdout suppressed, stderr NOT. The installer's
+    # refusals name the cause and the repair (a configured core.hooksPath, an
+    # uncreatable hooks dir, a non-repo); `2>&1` threw all of that away and left
+    # the operator with "strict enforcement degraded" and nothing to act on,
+    # which is the same opaque failure BL-209 exists to end.
+    bash "$SCRIPT_DIR/scripts/install-filesystem-gates.sh" --install "$PROJECT_DIR" >/dev/null || \
+      print_warn "BL-030: filesystem-gate install failed — strict enforcement degraded (the installer's reason is above)."
   fi
 }
 
