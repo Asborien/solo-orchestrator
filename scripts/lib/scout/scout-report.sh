@@ -512,7 +512,7 @@ _scout_md_secrets() {
         printf 'Scout scanned %s and found **nothing**. That is a real result, not a blank: the scanner ran and reported no matches.\n\n' \
           'every commit in this project, not just the current files' ;;
       shallow-history)
-        printf 'Scout found **nothing in the commits it could read**, and that is NOT a clean result: this is a shallow clone, so most of the history was never available to the scanner. Unshallow it and scan again.\n\n' ;;
+        printf 'Scout found **nothing in the commits it could read**, and that is NOT a clean result: this is a shallow clone, so most of the history was never available to the scanner. Run `git remote set-branches origin '\''*'\'' && git fetch --unshallow` and scan again — `--unshallow` alone deepens only the branch you cloned, because `--depth` narrowed the refspec too.\n\n' ;;
       *)
         printf 'Scout scanned %s and found **nothing**. That is a real result, not a blank: the scanner ran and reported no matches.\n\n' \
           'the current files (this is not a git repository, so there is no history to read)' ;;
