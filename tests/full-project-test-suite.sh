@@ -860,6 +860,14 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
   "BL-259: an empty @tsv field must not collapse and shift the resolver row" \
   "BL-259 tsv-field-shift tests FAILED (run tests/test-bl259-tsv-empty-field-shift.sh for details)"
 
+# BL-268: adoption wrote the `deployment` vocabulary into the `mode` field, and
+# host_verify_protection — which validated nothing — then skipped its org-tier
+# rules on an adopted organizational project. Covers both manifest write
+# branches and all three host drivers.
+run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
+  "BL-268: adoption writes mode=org and every host driver refuses the deployment vocabulary" \
+  "BL-268 mode-vocabulary tests FAILED (run tests/test-bl268-mode-vocabulary.sh for details)"
+
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
 # ----------------------------------------------------------------

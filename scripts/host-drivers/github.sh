@@ -169,6 +169,18 @@ host_configure_protection() {
 host_verify_protection() {
   local branch="${1:?host_verify_protection: branch required}"
   local mode="${2:?host_verify_protection: mode required}"
+  # BL-268-MODE-VOCABULARY: refuse an unknown mode instead of silently
+  # running the personal-tier subset. The org-only rules below are gated on
+  # the literal string "org", and this function had no validation at all —
+  # unlike its sibling host_configure_protection, which has refused an
+  # unknown mode since it was written. So a caller passing "organizational"
+  # (the `deployment` vocabulary) skipped the required-approving-review and
+  # required-status-check assertions and returned 0, while the failure
+  # banner interpolated $mode and printed "organizational mode".
+  case "$mode" in
+    personal|org) ;;
+    *) echo "host_verify_protection: mode must be 'personal' or 'org', got '$mode'" >&2; return 1 ;;
+  esac
   local owner_repo
   owner_repo=$(_github_parse_origin) || return 1
 

@@ -780,7 +780,16 @@ adopt_write_manifest() {
   local host mode sha
   host="$(adopt_report_read "$report" '.stack.ciHost // ""')"
   case "$host" in ''|null) host="other" ;; esac
+  # BL-268-MODE-VOCABULARY: `mode` and `deployment` are NOT the same field.
+  # `deployment` takes personal|organizational; `mode` takes personal|org, and
+  # every reader of `mode` feeds it to host_verify_protection, whose org-only
+  # rules are gated on the literal string "org". Writing ADOPT_DEPLOYMENT into
+  # both made an adopted organizational project read as personal for branch
+  # protection. init.sh does this same translation at its own write site
+  # (`_RESOLVED_MODE="$DEPLOYMENT"` then `= "organizational" && "org"`); an
+  # adopted project must be born with the same shape as a scaffolded one.
   mode="$ADOPT_DEPLOYMENT"
+  [ "$mode" = "organizational" ] && mode="org"
 
   # BL-221-ADOPT-TIER-KEYS: write the tier keys an init.sh-scaffolded manifest
   # carries. This function wrote only `.host` and `.mode`, so an ADOPTED
@@ -802,10 +811,10 @@ adopt_write_manifest() {
   if [ -f "$root/.claude/manifest.json" ]; then
     adopt_jq_edit "$root" ".claude/manifest.json" \
       '.host = $h | .mode = $m | .deployment = $d | .poc_mode = $p | .enforcement_level = (.enforcement_level // "strict")' \
-      --arg h "$host" --arg m "$mode" --arg d "$mode" --argjson p "$poc_json" || return 1
+      --arg h "$host" --arg m "$mode" --arg d "$ADOPT_DEPLOYMENT" --argjson p "$poc_json" || return 1
   else
-    jq -n --arg h "$host" --arg m "$mode" --argjson p "$poc_json" \
-      '{host: $h, mode: $m, remote_url: "", deployment: $m, poc_mode: $p, enforcement_level: "strict"}' \
+    jq -n --arg h "$host" --arg m "$mode" --arg d "$ADOPT_DEPLOYMENT" --argjson p "$poc_json" \
+      '{host: $h, mode: $m, remote_url: "", deployment: $d, poc_mode: $p, enforcement_level: "strict"}' \
       | adopt_write_file "$root" ".claude/manifest.json" || return 1
   fi
 
