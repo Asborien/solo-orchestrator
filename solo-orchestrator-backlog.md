@@ -18094,6 +18094,12 @@ branch, so on a branch carrying only this entry those citations would resolve to
 
 **Logged:** 2026-09-12, reproduced live while filling in a downstream adoption's intake.
 
+**Counted, because the two numbers differ and an earlier cut used the wrong one.** There are **14
+section runners** and **16 `save_section` call sites**: sections 7 and 8 each carry a skip-path call
+as well as a normal one (`grep -c '^\s*save_section [0-9]'` on `ceb450e` → 16). The runner count is
+what the wizard's structure has; the call-site count is what a fix in `save_section` covers, and this
+entry needs the second.
+
 **The defect.** Every one of the 14 section runners in `scripts/intake-wizard.sh` ends in an
 unconditional `save_section N`. The pause path stops everything ELSE and nothing stops that:
 
@@ -18124,7 +18130,7 @@ questions are never asked again. Nothing in the file or the transcript says the 
 the section is one of the ones that feeds the MVP Cutline — so the cutline is authored against
 questions the operator was never allowed to answer.
 
-**Fix.** `# BL-266-PAUSE-INCOMPLETE`, in `save_section` itself so it covers all 14 call sites at once
+**Fix.** `# BL-266-PAUSE-INCOMPLETE`, in `save_section` itself so it covers all 16 call sites at once
 (sections 7 and 8 each carry two): while the sentinel exists, record the resume point, re-render the
 appendix so answers given BEFORE the pause still reach `PROJECT_INTAKE.md`, say plainly that the
 section was paused before it finished, and return 0 WITHOUT touching `completed_sections`.
@@ -18177,28 +18183,49 @@ only stops the pause path from creating it. The durable repair is to make the ru
 in its own ordered list rather than on the integer value, which is a behaviour change to `--resume`
 and wants its own entry.
 
-**Known coupling, accepted deliberately.** The guard computes the resume point, so `save_section` now
-knows something about the runner's section ORDER — that the predecessor of `115` is `11`. The
-authoritative copy of that order lives in `run_script_mode`
-(`scripts/intake-wizard.sh:1846`, `local sections=(1 2 3 4 5 6 7 8 9 10 11 115 12 13)`), so this is a
-second site that knows it.
+**THE GUARD WRITES NOTHING, AND AN EARLIER CUT OF THIS ENTRY ARGUED THE WRONG WAY.** That cut had the
+guard compute and write a resume point, which forced `save_section` to know the runner's ORDER — that
+the predecessor of `115` is `11`, because `115 - 1` is not a section id. It defended that as an
+accepted coupling. It should not have been accepted, and the review was right on all three counts:
 
-A runner-owned alternative was drafted and MEASURED rather than argued about: move the write into the
-runner, which owns the order, and leave `save_section` only the refusal to claim completion. It is
-small in code — **+28 / -18 across 5 hunks**, three functions, and it parses. It was rejected on what
-it does to the EVIDENCE. `save_section` would no longer write `last_section`, and this suite drives
-`save_section` directly, so cases R2 and R4 would assert the fixture's own seed back to itself.
-Measured by seeding `last_section` with a deliberately wrong `99` and driving a real pause:
+1. **It was a THIRD home for the ordering.** On `ceb450e` the literal `115` appears at exactly two
+   homes, both entitled to it: the `save_section 115` call site with its explanatory comment, and
+   `run_script_mode`'s `local sections=(1 2 3 4 5 6 7 8 9 10 11 115 12 13)` with its dispatch. Nowhere
+   else in `scripts/`, `init.sh` or `templates/`. On `main`, `save_section` knows nothing of section
+   identity beyond `int(sys.argv[1])`. The branch made it a third — so it could not point at where the
+   pattern lives in the original project, because the pattern was not there.
+2. **The write was unnecessary.** `last_section` already holds the previous section's number, set by
+   the last `save_section` to complete. That IS the resume point. There was nothing to record.
+3. **The case it was defended with was unreachable.** The rejection rested on "leave `last_section`
+   alone is correct for every section except 12". Section 12 cannot pause: `run_section_12` is five
+   lines — two `print_info`, `save_section 12`, `echo` — with zero prompts, and section 13 the same.
+   The sentinel is only ever set by `prompt_input`, `prompt_choice` and `prompt_with_suggestions`, so
+   `save_section 12` and `save_section 13` can never run with it live. The exception the design existed
+   to handle does not exist.
 
-```
-CURRENT FIX:    trigger_rc=0  last_section = 3     (corrected — R2 is a real assertion)
-RUNNER-OWNED:   trigger_rc=0  last_section = 99    (untouched — R2 reads back the seed)
-```
+The block is deleted — eighteen lines out, behaviour unchanged, third home gone. Verified for 11.5
+specifically: with it gone, pausing at 115 leaves `last_section` at 11, `--resume` starts at 12, and
+the ordered list still runs 115, 12 and 13 because none of them is `-lt 12`.
 
-MP2, the mutant that catches a `section - 1` resume point, would also lose its target entirely.
-Restoring real coverage would mean driving `run_script_mode` end to end — stubbing all 14
-`run_section_N` functions and rewriting three cases — a larger change on the test side than on the
-code side, to remove a coupling that is one line and documented. The coupling is recorded here instead.
+**AND THE VACUITY FINDING WAS REAL BUT LED TO THE WRONG CONCLUSION.** The earlier cut measured that
+under a write-nothing shape R2 and R4 read back the fixture's own seed, and concluded the shape was
+worse. Weaker assertions are a reason to strengthen the assertions, not to keep a design that needs
+them. Both cases are now LABELLED as corroboration that cannot fail on this branch, and the proof
+moved to where it belongs:
+
+**Case E1 drives the REAL `--resume`, twice.** Resume #1 pauses inside section 4; resume #2 must ASK
+section 4 again rather than print "Section 4 — already complete". That is the outcome the defect
+destroyed, asserted as the operator experiences it rather than as a field in a JSON file. It needs no
+stubs — `--resume` is dispatched at `intake-wizard.sh:2243`, BEFORE the non-TTY refusal at `:2324`, so
+it drives from a pipe. Verified non-vacuous by deleting the guard entirely on a mirror:
+`[FAIL] E1 — after pausing in section 4 completed_sections is [1, 2, 3, 4], want [1, 2, 3]`.
+
+**MP2 was replaced, not repaired.** Its target — the `115` resume-point arithmetic — no longer exists,
+and a mutant whose target is gone fails at setup rather than proving anything. The new MP2 deletes the
+guard's own `return 0`, which is the only thing stopping the fall-through into the normal write.
+
+Suite **10 / 0** on macOS `/bin/bash` 3.2.57, macOS bash 5.3 and bash 5.2.21 in `ubuntu:24.04`,
+against RED **2 / 8** (R0 and R6 are the controls that pass at base).
 
 **SAME SYMPTOM AS `## BUG-010:`, DIFFERENT MECHANISM — AND THIS ENTRY DOES NOT FIX THAT ONE.**
 BUG-010's title is "`intake-wizard.sh --resume` fails SILENTLY on a progress file it does not like — a

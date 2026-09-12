@@ -356,27 +356,19 @@ save_section() {
   # pause sentinel is set the prompt helpers return empty and the collection
   # loops break, so that call still fires and files the section under
   # completed_sections with nothing in it; is_section_complete then makes
-  # --resume skip it for good. Record where to come back to, render what was
-  # answered before the pause, and do NOT claim the section finished.
+  # --resume skip it for good. Render what was answered before the pause, say
+  # the section was not finished, and do NOT claim it was.
+  #
+  # THIS WRITES NOTHING. `last_section` already holds the PREVIOUS section's
+  # number — the last `save_section` to complete set it — which is exactly the
+  # resume point, so there is nothing to record. An earlier cut computed and
+  # wrote one, which forced this function to know the runner's ORDER (that the
+  # predecessor of `115` is `11`, because `115 - 1` is not a section). That made
+  # `save_section` a THIRD home for an ordering that belongs to
+  # `run_script_mode`, which owns the `local sections=(…)` list and the dispatch.
+  # On `ceb450e` the literal `115` appears in exactly two places, both entitled
+  # to it; a third was this branch's own addition and it is gone.
   if [ -f "${_PAUSE_FILE:-/dev/null/sentinel-cannot-exist}" ]; then
-    # The resume point is the runner-order PREDECESSOR, not `section - 1`.
-    # The runner's order is `1 … 11 115 12 13` (115 encodes "11.5" as an
-    # integer), and run_script_mode skips on `section -lt start_section`.
-    # `115 - 1` would hand back 114, and every one of 1-13 is less than
-    # that — the whole wizard would then be skipped on resume.
-    local resume_after="$((section_num - 1))"
-    [ "$section_num" = "115" ] && resume_after=11
-    if command -v python3 &>/dev/null; then
-      python3 -c "
-import json, sys
-last, path = int(sys.argv[1]), sys.argv[2]
-with open(path) as f:
-    data = json.load(f)
-data['last_section'] = max(0, last)
-with open(path, 'w') as f:
-    json.dump(data, f, indent=2)
-" "$resume_after" "$PROGRESS_FILE"
-    fi
     print_info "Section $section_num paused before it was finished — it will be asked again on resume."
     render_intake_file || true
     return 0
