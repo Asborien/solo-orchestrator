@@ -15928,7 +15928,7 @@ absent-vs-unreadable family).
 
 ## BL-266: typing `pause` files the UNFINISHED intake section under `completed_sections`, and `--resume` then skips it permanently — with no message either way
 
-**Status:** Open — fix + suite built on branch `fix/bl266`, uncommitted. Not pushed, no PR.
+**Status:** Open — fix + suite committed on branch `fix/bl266` at `b3b781f`. Not pushed, no PR.
 
 **Logged:** 2026-09-12, reproduced live while filling in a downstream adoption's intake.
 
@@ -16038,5 +16038,27 @@ Restoring real coverage would mean driving `run_script_mode` end to end — stub
 `run_section_N` functions and rewriting three cases — a larger change on the test side than on the
 code side, to remove a coupling that is one line and documented. The coupling is recorded here instead.
 
-**Related:** `## BL-265:` and `## BL-267:` (the same wizard, same downstream session),
-`## BL-257:` (state writes that announce a success they did not check for).
+**SAME SYMPTOM AS `## BUG-010:`, DIFFERENT MECHANISM — AND THIS ENTRY DOES NOT FIX THAT ONE.**
+BUG-010's title is "`intake-wizard.sh --resume` fails SILENTLY on a progress file it does not like — a
+swallowed `KeyError`, then a skipped section, then 'Intake Complete!' at rc 0". That ending is
+verbatim what this defect produces: a section skipped on resume, and the wizard reporting completion.
+The mechanisms are unrelated. BUG-010 defect (1) is `load_progress()` subscripting seven keys with no
+`.get` and no default, so a progress file missing one raises a `KeyError` whose traceback goes to
+stderr and whose exit status nobody checks. This entry is `save_section` firing under the pause
+sentinel and writing the section into `completed_sections` with no answers. A progress file that
+BUG-010 defect (1) chokes on is a DIFFERENT input from one this defect corrupts, and fixing either
+leaves the other reachable.
+
+**Residual, open — BUG-010 defect (1) is untouched here.** `load_progress()` still subscripts, and
+still carries on with the variables unset when it raises. The maintainer's prescribed fix is
+`.get(k, '')` (or validating the key set and refusing by name) plus checking the exit status instead of
+reading stdout over a traceback. Nothing in this branch goes near it, and it produces this entry's
+symptom by its own route, so a reader who sees "skipped section, Intake Complete" after this fix lands
+should look there next.
+
+**Related:** `## BUG-010:` (same observable ending, different mechanism; its defect (1) still open),
+`## BL-257:` (state writes that announce a success they did not check for). BL-265 and BL-267, filed
+separately in this batch, are the same wizard on the same downstream session.
+
+*(BL-265 and BL-267 are named without `## …:` citations on purpose: each lands on its own branch, so
+on a branch carrying only this entry those citations would resolve to nothing.)*
