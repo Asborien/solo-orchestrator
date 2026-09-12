@@ -133,7 +133,7 @@ adopt_stub_secrets_disposition() {
   if [ "$status" = "scanned-partial" ]; then
     adopt_stub_notice "the secrets disposition" "unassigned — §10 gives §6.3 to no work package" \
       "The scan ran but could only read part of this project's history (a shallow clone), so its"
-    adopt_note "result is not a statement about your history. Run 'git fetch --unshallow' and re-scan"
+    adopt_note "result is not a statement about your history. Run 'git remote set-branches origin '*' && git fetch --unshallow' and re-scan"
     adopt_note "before you treat this repository as free of committed credentials."
     return 0
   fi

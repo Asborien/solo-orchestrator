@@ -377,7 +377,7 @@ scout_secrets_scan() {
   # emitted; what the word withdraws is the claim that zero means zero.
   if [ "$_scope" = "shallow-history" ]; then
     printf 'scanned-partial\n' > "$work/secstatus"
-    printf '%s\n' "This is a SHALLOW clone. Git has only ${_commits:-an unknown number of} commit(s) of this project here, so the scanner read those and NOTHING ELSE — and a credential that was committed and later removed lives precisely in the part it could not read. A count of zero means zero in the commits present; it is not a statement about this project's history. Run 'git fetch --unshallow' and scan again before treating this project as free of committed credentials." \
+    printf '%s\n' "This is a SHALLOW clone. Git has only ${_commits:-an unknown number of} commit(s) of this project here, so the scanner read those and NOTHING ELSE — and a credential that was committed and later removed lives precisely in the part it could not read. A count of zero means zero in the commits present; it is not a statement about this project's history. Run 'git remote set-branches origin '*' && git fetch --unshallow' and scan again before treating this project as free of committed credentials. (--depth narrows the REFSPEC as well as the history, so --unshallow ALONE re-reads only the branch you cloned.)" \
       > "$work/secnote"
     return 0
   fi

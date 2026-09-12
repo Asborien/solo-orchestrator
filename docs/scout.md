@@ -262,7 +262,7 @@ when the checkout is shallow, `scope` is `shallow-history`, `status` is
 `scanned-partial`, and `commitsScanned` carries the number the scan could
 actually reach. Findings from the commits it *did* read are real and are still
 listed; what the status withdraws is the claim that a count of zero says
-anything about this project's history. Run `git fetch --unshallow` and scan
+anything about this project's history. Run `git remote set-branches origin '*' && git fetch --unshallow` and scan
 again. Measured on one three-commit fixture whose key is removed in a later
 commit: a full clone reports `findingCount` 1, a `--depth 1` clone of the same
 repository reports 0.

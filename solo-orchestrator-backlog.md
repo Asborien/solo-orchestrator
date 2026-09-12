@@ -16106,6 +16106,62 @@ the fix.
 **33 / 2**, on the same two cases (V2 `pre_commit_hooks_installed`, V6 `initialization_verified`),
 from a tree built by `git archive main`. Pre-existing on main and unrelated to this entry.
 
+**OPEN, AND IT IS AGAINST THIS ENTRY'S OWN ADVICE: THE REMEDY WE PRESCRIBE DOES NOT REMEDIATE.**
+This fix tells the operator to run `git fetch --unshallow` in five places — `scout-secrets.sh`'s
+secnote, `scout-report.sh`'s markdown arm, `adopt-stubs.sh`, `adopt-tools.sh` and `docs/scout.md`.
+Following that advice exactly leaves the defect intact, because `--depth` narrows the REFSPEC as well
+as the history and `--unshallow` only deepens what the refspec already covers. Both halves are in
+git's own manual (git 2.54.0, `git clone --help`):
+
+```
+:251  --depth=<depth>   Create a shallow clone with a history truncated to the specified
+                        number of commits. Implies --single-branch unless
+                        --no-single-branch is given …
+
+:267  --single-branch   … Further fetches into the resulting repository will only update
+                        the remote-tracking branch for the branch this option was used
+                        for the initial cloning.
+```
+
+Line 251 is why a `--depth 1` clone is single-branch; **line 267 is the half that matters here** — it
+is what makes `--unshallow` insufficient rather than merely incomplete, because the narrowed refspec
+persists into every later fetch. So a credential on a side branch is still never fetched, and Scout
+then reports `status: scanned`, `scope: full-history`, `findingCount: 0` over it — this entry's own
+headline sentence, reached by doing what this entry says.
+
+**FIXED.** The remedy is now `git remote set-branches origin '*' && git fetch --unshallow` at all five
+sites — `scout-secrets.sh`'s secnote, `scout-report.sh`'s markdown arm, `adopt-stubs.sh`,
+`adopt-tools.sh` (the `scanned-partial` arm and the guard comment) and `docs/scout.md`. Measured to
+take findingCount 0 → 1.
+
+**A SIXTH SITE WAS DELIBERATELY LEFT ALONE.** `scripts/lib/plan-staging.sh:94`'s
+`SOIF_PLAN_SHALLOW_FALLBACK` also says `git fetch --unshallow`, and it is CORRECT as it stands: the
+currency system's need is `git cat-file -e "${pin}^{commit}"` — depth on the framework's own history,
+which `--unshallow` alone does supply. It is a different remedy for a different problem, and the line
+is byte-pinned by a test. A blanket find-and-replace across "unshallow" would have broken it.
+
+**AND THE FIRST CUT OF THIS FIX SHIPPED ADVICE THAT WAS NOT RUNNABLE AS PRINTED.** The glob has to
+reach the operator QUOTED, and the five sites sit in three different quoting contexts — a
+single-quoted `printf` in `scout-report.sh`, double-quoted arguments in the other three. The spelling
+that is safe in one is broken in the others, and both mistakes were made here in turn: `"*"` inside a
+double-quoted string terminates it, `'*'` inside a single-quoted string terminates that, and in BOTH
+cases the quotes are STRIPPED from the rendered text. What the operator was told to run was
+`git remote set-branches origin *` — a bare glob that expands against whatever is in their working
+directory. **`bash -n` passes on every one of those variants**; only rendering the line catches it.
+The shipped form uses a literal `'*'` in the double-quoted sites and the `'\''` idiom in the
+single-quoted one, so all five render identically. **Case S9** pins that by RENDERING each site rather
+than grepping the source, and fails if any site prints an unquoted glob or if the site count is not 5
+— verified non-vacuous by unquoting one site on a mirror
+(`[FAIL] S9 … adopt-stubs.sh(unquoted)`).
+
+That mistake is worth recording rather than quietly correcting, because it is this entry's own subject
+one layer further out: a remedy that is native, invents nothing, and does not work when followed.
+
+**Residual, open — a plain `--single-branch` clone is not detected at all.** The detection added by
+this entry keys on shallowness. A full-depth `--single-branch` clone is not shallow, so it reports
+`full-history` while carrying exactly the same blind spot. Same defect class, genuinely wider, and
+deliberately not bundled into this change.
+
 **Related:** `## BL-147:` (a check that cannot run must not pass — the same principle, in CI),
 `## BL-256:` (gates handing out receipts they did not earn), `## BL-231:` (the absent-vs-unreadable
 family), `## BL-242:` (`# BL-242-RESCAN-HONEST`, the enumeration this widens).

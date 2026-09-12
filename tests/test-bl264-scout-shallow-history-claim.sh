@@ -376,14 +376,22 @@ drive_rescan() {
   d="$(newtmp)"
   mkdir -p "$d/proj" "$d/emptyfw"
   printf '{"secrets":{"status":"%s"}}\n' "$status" > "$d/report.json"
+  # THE REDIRECTION IS ON THE COMMAND, AND THAT IS LOAD-BEARING. A first cut
+  # wrote `2>&1` on its own line before the closing paren, where it is a NULL
+  # COMMAND rather than a redirection — and being last, its status is what `$?`
+  # captures, so RESCAN_RC was ALWAYS 0. S7's "no re-scan, rc=0" was then
+  # stating a measurement it had not taken: changing the guard to `return 7`
+  # left the suite GREEN while the pass line still claimed rc=0. Measured:
+  # `f7() { return 7; }` in that shape yields 0; on the command, 7. This is the
+  # `## BL-256:` unearned-receipt class, in a test rather than in a gate.
   RESCAN_OUT="$(
     # shellcheck source=/dev/null
     . "$ADOPT_CORE"  >/dev/null 2>&1 || exit 91
     # shellcheck source=/dev/null
     . "$ADOPT_TOOLS" >/dev/null 2>&1 || exit 92
     ADOPT_FRAMEWORK_ROOT="$d/emptyfw"
-    _adopt_rescan_secrets "$d/proj" "$d/report.json"
-  2>&1 )"
+    _adopt_rescan_secrets "$d/proj" "$d/report.json" 2>&1
+  )"
   RESCAN_RC=$?
   return 0
 }
@@ -427,6 +435,62 @@ else
   else
     pass "S8 (source-level: the re-scan enumeration has a 'scanned-partial' arm that names the remedy)"
   fi
+fi
+
+# ── S9: the REMEDY WE PRINT MUST BE RUNNABLE AS PRINTED ─────────────────────
+# The remedy is `git remote set-branches origin '*' && git fetch --unshallow`,
+# and the glob MUST reach the operator quoted. It is emitted from five sites in
+# three different quoting contexts — a single-quoted `printf` in
+# scout-report.sh, and double-quoted arguments in scout-secrets.sh,
+# adopt-stubs.sh and adopt-tools.sh — so the spelling that is safe in one is
+# broken in the others. Both mistakes were made here in turn: `"*"` inside a
+# double-quoted string terminates it, and `'*'` inside a single-quoted string
+# terminates that, and in BOTH cases the quotes are stripped from the rendered
+# text and the operator is told to run a bare `origin *`, which globs against
+# whatever is in their working directory.
+#
+# `bash -n` passes on every one of those variants. Only rendering catches it,
+# which is why this case renders rather than greps the source.
+echo ""
+echo "S9: every printed remedy is runnable as printed"
+
+_s9_render() {  # <file> <lineno>
+  local line d out
+  line="$(sed -n "${2}p" "$1")"
+  d="$(newtmp)"
+  out="$( cd "$d" && touch alpha.txt beta.txt && \
+          adopt_note() { printf '%s\n' "$*"; } && _commits=7 && \
+          eval "${line%;;}" 2>&1 | head -1 )"
+  printf '%s' "$out"
+}
+
+s9_bad=""; s9_seen=0
+for _s9 in "scripts/lib/adopt/adopt-stubs.sh:136" \
+           "scripts/lib/adopt/adopt-tools.sh:508" \
+           "scripts/lib/scout/scout-secrets.sh:380" \
+           "scripts/lib/scout/scout-report.sh:515"; do
+  _s9f="${_s9%%:*}"; _s9l="${_s9##*:}"
+  [ -f "$REPO_ROOT/$_s9f" ] || { s9_bad="$s9_bad $_s9f(missing)"; continue; }
+  _s9out="$(cd "$REPO_ROOT" && _s9_render "$_s9f" "$_s9l")"
+  case "$_s9out" in
+    *"set-branches origin '*'"*) s9_seen=$((s9_seen + 1)) ;;
+    *"set-branches origin"*)     s9_bad="$s9_bad $_s9f(unquoted)" ;;
+    *)                           s9_bad="$s9_bad $_s9f(no-remedy)" ;;
+  esac
+done
+# docs/scout.md is prose, not shell — grep it directly.
+if grep -q "set-branches origin '\*'" "$REPO_ROOT/docs/scout.md" 2>/dev/null; then
+  s9_seen=$((s9_seen + 1))
+else
+  s9_bad="$s9_bad docs/scout.md"
+fi
+
+if [ -n "$s9_bad" ]; then
+  fail_ "S9" "the printed remedy is not runnable as printed at:$s9_bad — a bare \`origin *\` globs in the operator's shell"
+elif [ "$s9_seen" -ne 5 ]; then
+  fail_ "S9" "expected 5 remedy sites, rendered $s9_seen — a site was moved or removed and this case would pass by absence"
+else
+  pass "S9 — all 5 printed remedies render the glob QUOTED (\`origin '*'\`), across three different quoting contexts"
 fi
 
 echo ""

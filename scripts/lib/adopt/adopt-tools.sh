@@ -380,7 +380,7 @@ _adopt_rescan_secrets() {
   # about to name — and buys nothing: the re-scan happens moments after the
   # survey, in the SAME clone, at the same depth, so it would return
   # `scanned-partial` again. The documented remedy for a shallow clone is the
-  # operator's `git fetch --unshallow` and a deliberate re-scan, which is what
+  # operator's `git remote set-branches origin '*' && git fetch --unshallow` and a deliberate re-scan, which is what
   # the disposition stub now tells them to do; it is not an automatic re-walk
   # inside the adoption run.
   case "$status" in scanned|scanned-partial) return 0 ;; esac   # BL-242-SECRETS-RESCAN
@@ -505,7 +505,7 @@ _adopt_rescan_secrets() {
         # read all of it" must not be heard as "we found nothing".
         adopt_note "The scan was re-run and the scanner worked, but it could only read PART of this"
         adopt_note "project's history (a shallow clone). What it found is real; what it did not"
-        adopt_note "reach is unknown. Run 'git fetch --unshallow' and re-scan before treating this"
+        adopt_note "reach is unknown. Run 'git remote set-branches origin '*' && git fetch --unshallow' and re-scan before treating this"
         adopt_note "repository as free of committed credentials." ;;
       *)
         adopt_note "The scan was re-run; its status is '${fresh_status:-unknown}'." ;;
