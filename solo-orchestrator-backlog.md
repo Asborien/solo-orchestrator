@@ -17918,9 +17918,24 @@ one entry by a shared defect class — the precedent for this entry's shape), `#
 
 ## BL-265: `intake-wizard.sh` names a jq KEYWORD as a function parameter, so the intake appendix's Project Context table renders with zero rows on every jq since 1.5
 
-**Status:** Open — fix + suite built on branch `fix/bl265`, uncommitted. Not pushed, no PR.
+**Status:** Open — fix + suite committed on branch `fix/bl265` at `8f2eecb`. Not pushed, no PR.
 
-**Logged:** 2026-09-12, from a downstream adoption (`si-6425-harness-baseline`) whose
+**THIS IS THE FIX FOR `## BUG-010:` DEFECT (3), WHICH THE MAINTAINER FILED ON 2026-09-01.** He
+diagnosed it, named `label` as the reserved keyword, and prescribed the same one-word rename — down to
+the replacement token. This entry was written before that was noticed and is not a first discovery.
+The independent reproduction is still worth recording, because it arrived by a different route
+(a downstream adoption rather than an adversarial review) and carries the blast-radius measurement and
+the regression suite that entry does not.
+
+**One half of his prescribed fix is NOT done here.** BUG-010 says: "rename the parameter (`lbl`,
+`field`) — a one-word change — **and check jq's exit status rather than reading its stdout**." Only
+the rename is in this branch. The exit-status check is the call-site hardening recorded as the
+residual below; it is what would have made the ORIGINAL failure loud instead of leaving it to be
+found twice. Worth doing, and deliberately not bundled.
+
+**Logged:** 2026-09-12 — independently hit during a downstream adoption
+(`si-6425-harness-baseline`); ALREADY FILED UPSTREAM as `## BUG-010:` defect (3) on 2026-09-01. The
+downstream project's
 `PROJECT_INTAKE.md` came back without a single context field.
 
 **The defect.** `render_intake_file()` in `scripts/intake-wizard.sh` opened its Project Context table
@@ -18059,9 +18074,14 @@ the call site; hardening the call site is a separate change and is not made here
 
 **The pattern this belongs to.** The harness reasons about a project as if it were born under the
 harness — this entry assumes `PROJECT_INTAKE.md` is the harness's to render, and it is one of three
-faces of the same assumption. `## BL-268:` carries the full statement of it; read that paragraph
-alongside this entry.
+faces of the same assumption. The full statement of it is in the BL-268 entry, filed separately in
+this batch; read it alongside this one if both have landed.
 
-**Related:** `## BL-266:` and `## BL-267:` (found in the same wizard on the same downstream adoption),
-`## BL-268:` (the same born-under-the-harness assumption, in the manifest), `## BL-256:` (the same
-"a step that produced nothing still reports success" family).
+**Related:** `## BUG-010:` **defect (3) — this entry is its fix**, and its defects (1) and (2) remain
+open (a swallowed `KeyError` in `load_progress`, and a choice prompt with no EOF guard). BL-266 and
+BL-267, filed separately in this batch, are the same wizard on the same downstream adoption; BL-268
+is the same born-under-the-harness assumption in the manifest. `## BL-256:` is the same "a step that
+produced nothing still reports success" family.
+
+*(BL-266, BL-267 and BL-268 are named without `## …:` citations on purpose: each lands on its own
+branch, so on a branch carrying only this entry those citations would resolve to nothing.)*
