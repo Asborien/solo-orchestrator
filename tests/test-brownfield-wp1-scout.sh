@@ -293,7 +293,7 @@ ver=$(jqv "$out" '.scannerVersion')
 rr=$(jqv "$out" '.repoRoot')
 hc=$(jqv "$out" '.headCommit')
 ok=1
-[ "$sv" = "1" ] || ok=0
+[ "$sv" = "2" ] || ok=0   # BL-264 widened secrets.status and secrets.scope
 printf '%s' "$at" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' || ok=0
 [ -n "$ver" ] && [ "$ver" != "null" ] || ok=0
 [ "$rr" = "$(cd "$NODE" && pwd)" ] || ok=0

@@ -51,7 +51,11 @@ scout_emit_json() {
   TAB=$(printf '\t')
 
   printf '{\n'
-  printf '  "schemaVersion": 1,\n'
+  # 2 since BL-264. The bump is not cosmetic: a reader written against 1 is
+  # entitled to an exhaustive `secrets.status` of three words and a
+  # `secrets.scope` of two, and both enumerations widened. `commitsScanned` is
+  # additive and would not have justified a bump on its own.
+  printf '  "schemaVersion": 2,\n'
   printf '  "scannedAt": %s,\n'      "$(scout_json_str "$(_scout_meta "$work" scannedAt)")"
   printf '  "scannerVersion": %s,\n' "$(scout_json_str "$(scout_module_version)")"
   printf '  "repoRoot": %s,\n'       "$(scout_json_str "$(_scout_meta "$work" repoRoot)")"
@@ -149,16 +153,27 @@ scout_emit_json() {
 
 # _scout_emit_secrets WORK — the `secrets` object, trailing comma included.
 _scout_emit_secrets() {
-  local work="$1" status cfg count first line
+  local work="$1" status cfg count first line commits produced
   status=$(_scout_meta "$work" secstatus)
   cfg=$(_scout_meta "$work" secconfig)
   count=$(_scout_meta "$work" seccount)
+  commits=$(_scout_meta "$work" seccommits)
+  # BL-264: the two statuses under which gitleaks actually produced findings.
+  # `scanned-partial` findings are REAL — narrowing the scope does not make
+  # what was found inside it untrue — so they are emitted rather than nulled,
+  # and the status word is what carries the caveat.
+  produced=0
+  case "$status" in scanned|scanned-partial) produced=1 ;; esac
 
   printf '  "secrets": {\n'
   printf '    "tool": %s,\n'        "$(scout_json_str "$(_scout_meta "$work" sectool)")"
   printf '    "toolVersion": %s,\n' "$(scout_json_str_or_null "$(_scout_meta "$work" secversion)")"
   printf '    "status": %s,\n'      "$(scout_json_str "$status")"
   printf '    "scope": %s,\n'       "$(scout_json_str_or_null "$(_scout_meta "$work" secscope)")"
+  # The honest value a consumer can act on without parsing prose: how many
+  # commits this checkout actually had. `null` off a repository, where the
+  # question does not apply.
+  printf '    "commitsScanned": %s,\n' "$( [ -n "$commits" ] && printf '%s' "$commits" || printf 'null' )"
   printf '    "configFile": %s,\n'  "$(scout_json_str_or_null "$cfg")"
   if [ -n "$cfg" ]; then
     printf '    "configNote": %s,\n' \
@@ -178,13 +193,13 @@ _scout_emit_secrets() {
   # §6.4: the instructions are PRINTED, never executed. Scout runs no rewrite,
   # and the sentence that matters most is that a rewrite does not un-leak
   # anything already fetched — so rotation comes first, always.
-  if [ "$status" = "scanned" ] && [ -n "$count" ] && [ "$count" != "0" ]; then
+  if [ "$produced" -eq 1 ] && [ -n "$count" ] && [ "$count" != "0" ]; then
     printf '    "historyRewrite": %s,\n' \
       "$(scout_json_str "ROTATE FIRST. A history rewrite (git filter-repo, or BFG) followed by a force-push and a re-clone by every collaborator removes the value from the repository, but it does NOT un-leak anything already cloned or fetched by anyone. Rotation at the source of truth is the fix; the rewrite is housekeeping afterwards. Scout prints this and runs none of it.")"
   else
     printf '    "historyRewrite": null,\n'
   fi
-  if [ "$status" = "scanned" ]; then
+  if [ "$produced" -eq 1 ]; then
     printf '    "findingCount": %s,\n' "${count:-0}"
     printf '    "findings": ['
     first=1
@@ -476,6 +491,12 @@ _scout_md_secrets() {
       printf '**The scan did not finish.** %s\n\n' "$(_scout_meta "$work" secnote)"
       return 0
       ;;
+    scanned-partial)
+      # BL-264: printed BEFORE the findings, not after, because the reader's
+      # conclusion is formed by the count and the count is the part that is
+      # not trustworthy here.
+      printf '**Only part of this history was read.** %s\n\n' "$(_scout_meta "$work" secnote)"
+      ;;
   esac
 
   if [ -n "$cfg" ]; then
@@ -483,8 +504,19 @@ _scout_md_secrets() {
   fi
 
   if [ -z "$count" ] || [ "$count" = "0" ]; then
-    printf 'Scout scanned %s and found **nothing**. That is a real result, not a blank: the scanner ran and reported no matches.\n\n' \
-      "$( [ "$(_scout_meta "$work" secscope)" = "full-history" ] && printf 'every commit in this project, not just the current files' || printf 'the current files (this is not a git repository, so there is no history to read)' )"
+    # BL-264 added the third arm. The two-arm ternary this replaces printed
+    # "every commit in this project" for a `--depth 1` clone, which is the
+    # human-facing half of the same false claim the JSON's scope field made.
+    case "$(_scout_meta "$work" secscope)" in
+      full-history)
+        printf 'Scout scanned %s and found **nothing**. That is a real result, not a blank: the scanner ran and reported no matches.\n\n' \
+          'every commit in this project, not just the current files' ;;
+      shallow-history)
+        printf 'Scout found **nothing in the commits it could read**, and that is NOT a clean result: this is a shallow clone, so most of the history was never available to the scanner. Unshallow it and scan again.\n\n' ;;
+      *)
+        printf 'Scout scanned %s and found **nothing**. That is a real result, not a blank: the scanner ran and reported no matches.\n\n' \
+          'the current files (this is not a git repository, so there is no history to read)' ;;
+    esac
     return 0
   fi
 

@@ -370,7 +370,20 @@ _adopt_rescan_secrets() {
   local status work sec
 
   status="$(adopt_report_read "$report" '.secrets.status // ""')"
-  [ "$status" != "scanned" ] || return 0   # BL-242-SECRETS-RESCAN
+  # BL-264-RESCAN-PARTIAL — `scanned-partial` belongs on the `scanned` side of
+  # this guard, and the rule is this function's own: "Only a report that says
+  # nobody looked is worth asking again." A partial scan is a scan that LOOKED;
+  # a tool ran and produced real findings over the history it could reach.
+  #
+  # Re-running it costs exactly what the comment above says it costs — a full
+  # history walk, and a different measurement from the one the evidence hash is
+  # about to name — and buys nothing: the re-scan happens moments after the
+  # survey, in the SAME clone, at the same depth, so it would return
+  # `scanned-partial` again. The documented remedy for a shallow clone is the
+  # operator's `git fetch --unshallow` and a deliberate re-scan, which is what
+  # the disposition stub now tells them to do; it is not an automatic re-walk
+  # inside the adoption run.
+  case "$status" in scanned|scanned-partial) return 0 ;; esac   # BL-242-SECRETS-RESCAN
 
   # THREE LIBRARIES, NOT TWO, and the third is the one a first cut missed.
   # `_scout_emit_secrets` renders through `scout_json_str`,
@@ -482,6 +495,18 @@ _adopt_rescan_secrets() {
       scan-failed)
         adopt_note "The scan was re-run and it FAILED. Nothing is known about credentials in this"
         adopt_note "project's history — a scan that broke is not a scan that found nothing." ;;
+      scanned-partial)
+        # BL-264-RESCAN-PARTIAL — REACHABLE even though the guard above now
+        # declines to re-scan a report that ALREADY says `scanned-partial`: a
+        # re-scan triggered by `tool-unavailable` installs the scanner and then
+        # meets the shallow clone, and comes back partial. Without this arm that
+        # lands in the `*)` fallthrough, which states the status and says
+        # nothing about what it means — on the one surface where "we could not
+        # read all of it" must not be heard as "we found nothing".
+        adopt_note "The scan was re-run and the scanner worked, but it could only read PART of this"
+        adopt_note "project's history (a shallow clone). What it found is real; what it did not"
+        adopt_note "reach is unknown. Run 'git fetch --unshallow' and re-scan before treating this"
+        adopt_note "repository as free of committed credentials." ;;
       *)
         adopt_note "The scan was re-run; its status is '${fresh_status:-unknown}'." ;;
     esac

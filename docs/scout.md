@@ -254,6 +254,19 @@ in as many words: *"Scout scanned every commit in this project, not just the
 current files and found nothing. That is a real result, not a blank: the scanner
 ran and reported no matches."*
 
+**A shallow clone is reported as a shallow clone, never as a full history.**
+`gitleaks git` walks the commits git *has*. On a `--depth 1` checkout that is
+one, and nothing fails — there is no error for the commits the scanner was never
+given. So the scope is not claimed on the strength of "this is a repository":
+when the checkout is shallow, `scope` is `shallow-history`, `status` is
+`scanned-partial`, and `commitsScanned` carries the number the scan could
+actually reach. Findings from the commits it *did* read are real and are still
+listed; what the status withdraws is the claim that a count of zero says
+anything about this project's history. Run `git fetch --unshallow` and scan
+again. Measured on one three-commit fixture whose key is removed in a later
+commit: a full clone reports `findingCount` 1, a `--depth 1` clone of the same
+repository reports 0.
+
 ### `collisions` — what the framework would otherwise trample
 
 An inventory of every file the framework has an opinion about, and what would
