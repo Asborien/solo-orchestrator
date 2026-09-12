@@ -253,7 +253,20 @@ case_R9() {
       continue
     fi
     n_found=$((n_found + 1))
-    if printf '%s' "$lines" | grep -q '2>&1'; then
+    # ANY stderr redirection, not the single spelling `2>&1`. An earlier cut
+    # matched only that one, and the reviewer defeated it by reinstating the
+    # swallow as `>/dev/null 2>/dev/null` — R9 still PASSED while the installer's
+    # diagnostic was thrown away exactly as before. `2>` followed by anything is
+    # the property; the spelling is not.
+    #
+    # Read the WHOLE statement, not the matched line: the call is a single
+    # logical line today, but a redirect moved onto a `\`-continuation would sit
+    # on the next physical line and slip past a line-scoped grep. `paste` joins
+    # continued lines before the test.
+    local joined
+    joined="$(sed -e ':a' -e '/\\$/{N;s/\\\n//;ta' -e '}' "$f" 2>/dev/null \
+              | grep -E 'bash "[^"]*" *--(un)?install ')"
+    if printf '%s' "$joined" | grep -qE '2>'; then
       n_swallow=$((n_swallow + 1))
     fi
   done
@@ -265,6 +278,42 @@ case_R9() {
     fail_ R9 "$n_swallow call site(s) still redirect the installer's stderr to /dev/null — its refusal cannot reach the operator"
   else
     pass "R9 (source-level: neither init.sh nor reconfigure-project.sh swallows the installer's stderr)"
+  fi
+}
+
+# R10 — THE REFUSAL ARM, WHICH HAD NO COVERAGE AT ALL. G0 through R9 never
+# exercise a non-repo, so the guard that decides "is PROJECT_ROOT a repo root"
+# was entirely untested while an earlier cut of it was silently WIDENED from
+# main's `[ -d "$PROJECT_ROOT/.git" ]` to `rev-parse --is-inside-work-tree`.
+#
+# The dangerous input is a plain directory NESTED in a repo: `--is-inside-work-tree`
+# answers yes for it, and `--git-common-dir` then resolves to the ENCLOSING
+# repo, so the installer writes the BL-030 gate into a repository the caller
+# never named. This asserts both halves — refused, AND the parent untouched,
+# because a refusal that still wrote would pass a rc-only check.
+case_R10() {
+  local parent sub out rc before after
+  parent=$(setup_repo r10) || { fail_ R10 "fixture could not be created"; return; }
+  sub="$parent/nested/plain"
+  mkdir -p "$sub" || { fail_ R10 "could not create the nested directory"; return; }
+  # precondition: the nested dir really is inside the repo and is NOT a repo
+  if [ -e "$sub/.git" ]; then
+    fail_ R10 "fixture invalid — the nested directory is itself a repo"; return
+  fi
+  if ! git -C "$sub" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    fail_ R10 "fixture invalid — the nested directory is not inside the parent repo, so this case would prove nothing"; return
+  fi
+  before=$(ls -1 "$parent/.git/hooks" 2>/dev/null | wc -l | tr -d ' ')
+  out=$(bash "$INST" --install "$sub" 2>&1); rc=$?
+  after=$(ls -1 "$parent/.git/hooks" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$rc" -eq 0 ]; then
+    fail_ R10 "accepted a non-repo nested inside a repo at rc=0 — the gate was installed into a repository the caller did not name"
+  elif [ "$before" != "$after" ]; then
+    fail_ R10 "refused at rc=$rc but still wrote into the PARENT repo's hooks dir ($before -> $after entries)"
+  elif ! printf '%s' "$out" | grep -q 'not a git repo'; then
+    fail_ R10 "refused at rc=$rc but the message does not name the problem: $out"
+  else
+    pass "R10 (a non-repo nested in a repo is REFUSED, and the enclosing repo's hooks dir is untouched)"
   fi
 }
 
@@ -344,7 +393,7 @@ case_R7() {
 
 run_all_cases() {
   case_G0; case_R1; case_R2; case_R3; case_R4; case_R5; case_R6; case_R7
-  case_R8; case_R9
+  case_R8; case_R9; case_R10
 }
 
 echo "== BL-209: hooks-directory resolution in install-filesystem-gates.sh =="
