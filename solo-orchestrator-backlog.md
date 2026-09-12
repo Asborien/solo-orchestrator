@@ -15925,3 +15925,245 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+## BL-262: `reconfigure-project.sh` regenerates the CI pipeline from a path that cannot exist on any host, warns, and reports success anyway
+
+**Status:** Open — reproduction + fix BUILT on branch `fix/reconfigure-ci-host`, NOT yet submitted.
+`# BL-262-RECONFIG-CI-HOST`: the `language` arm resolves the recorded host from the project manifest,
+reads the template from `templates/pipelines/ci/<host>/<lang>.yml`, and takes the destination from the
+shared resolver (`# BL-229-HOST-PIPELINE-PATHS`) rather than minting a fourth copy of the mapping. An
+unrecognised host is REFUSED rather than normalised (`# BL-262-RECONFIG-CI-FAIL-CLOSED`; the reasoning
+is below, and it reverses this branch's first cut). Suite `tests/test-bl262-reconfigure-ci-host.sh`
+**12 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in `ubuntu:24.04` as a non-root user, against RED
+**1 / 11**; three mutants, EMBEDDED in the suite, each killing a different case set. shellcheck 0.11.0
+clean.
+
+**Numbering.** Filed as BL-262, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
+the next free number here, and two carried fixes in a DOWNSTREAM project already hold BL-260 and
+BL-261 in committed code and in a committed audit trail — three marker tokens across
+`scripts/verify-install.sh` and `scripts/pre-commit-gate.sh` in that project, none of them filed in
+this backlog yet. <!-- lint-bl-markers: allow the three tokens are deliberately written bare; they are markers in a downstream project, not in this code surface, and backticking them would assert they resolve here -->
+So **BL-260 and BL-261 are reserved, not free.** See `## BL-263:` and `## BL-264:` for the other two
+of the three, and read all three numbers as provisional until those downstream carries are filed:
+nothing in this repository holds a number until an entry header claims it.
+
+**Logged:** 2026-09-12.
+
+**The defect.** The CI-regeneration block of `scripts/reconfigure-project.sh` built its template path as
+`"$ORCHESTRATOR_SOURCE/templates/pipelines/ci/$ci_template"` — **omitting the per-host directory the
+templates actually live in**. `init.sh`'s `generate_ci` builds the same path WITH it. The templates are
+laid out per host, so the reconfigure spelling names a file that exists for no host and no language:
+the `[ -f "$template_path" ]` guard is false on every run, control falls to
+`print_warn "CI template not found"`, and the function continues to the script's
+`[OK] Reconfiguration complete.` banner at **rc 0**.
+
+The second half is the destination. The same block hardcoded `cp "$template_path" .github/workflows/ci.yml`
+while `init.sh` switches by host — `.github/workflows/ci.yml`, `.gitlab-ci.yml`,
+`bitbucket-pipelines.yml`, and an explicit early `return 0` for `other`. So even with the source path
+corrected, a GitLab project would have had a GitHub-shaped file written to a path GitLab never reads.
+**The block had no host awareness at all**, which is why the two halves failed together.
+
+**Measured, both directions:**
+```
+$ git show main:scripts/reconfigure-project.sh | grep -c host
+0
+
+$ git show main:scripts/reconfigure-project.sh | grep -n 'pipelines/ci'
+361:      local template_path="$ORCHESTRATOR_SOURCE/templates/pipelines/ci/$ci_template"
+$ grep -n 'pipelines/ci/\$host' init.sh
+3215:  local template_path="$SCRIPT_DIR/templates/pipelines/ci/$host/$ci_template"
+
+$ ls templates/pipelines/ci/
+bitbucket
+github
+gitlab
+```
+Driving the REAL script against a fixture project whose recorded host is `gitlab`
+(`--field language --old python --new typescript`), at `ceb450e`:
+```
+[STEP] Reconfiguring project: language (python → typescript)
+  [OK] Updated language in tool-preferences.json
+[WARN] CI template not found: <src>/templates/pipelines/ci/typescript.yml
+[WARN] Review .gitignore and settings permissions for typescript-specific entries
+
+  [OK] Reconfiguration complete.
+[INFO] Review the changed files and commit when ready.
+RC=0
+```
+and on disk: **no `.gitlab-ci.yml`, no `.github/workflows/ci.yml`, no `bitbucket-pipelines.yml`.**
+After the fix, the same fixture writes `BL262-CI-TEMPLATE-GITLAB` to `.gitlab-ci.yml` and nothing under
+`.github/`.
+
+**What the operator sees, and why nothing complains.** They ask to change the project's language, and
+the script tells them it worked. The warning that carries the real news sits between two successes — an
+`[OK]` above it and an `[OK] Reconfiguration complete.` below — and is worded as an absence
+(`CI template not found`) rather than a failure, so it reads like an optional artefact that was not
+applicable. It is also the SECOND `[WARN]` in the run; the other is the routine `.gitignore` advisory
+that fires on every language change, so the pair reads as normal noise. Nothing raises the exit status:
+the `else` arm neither returns non-zero nor sets a flag, and the script ends at rc 0, so no caller and
+no gate can tell this run apart from a clean one. The intake wizard, which is what invokes this script
+on a field change, surfaces nothing further.
+
+What they are left with is a project whose recorded language says `typescript` and whose CI still runs
+the old language's jobs — a divergence with no artefact recording it. The failure is invisible until CI
+runs, and when it does the symptom (wrong toolchain) points at CI, not at a reconfiguration that
+reported success days earlier. A `grep` for the missing path would have found it instantly, which is
+the shape of `## BL-229:`: not a wrong answer, a MISSING one that reads exactly like a clean one.
+
+**This is BL-229's defect class, in a file BL-229 named and did not convert.** `scripts/lib/host.sh`'s
+own sync-sibling note lists the live `HOST_CI_PATH` copies and names this file among them:
+```
+$ grep -n 'reconfigure-project' scripts/lib/host.sh
+74:# writer), `scripts/reconfigure-project.sh`, `scripts/validate.sh`'s
+```
+That note was accurate and the entry was closed anyway, so the record is that this was known, written
+down, and left standing. The fix asks the resolver rather than re-deriving the mapping, which is what
+that note asks of the next editor.
+
+**RESIDUAL, OPEN — the release arm has the identical omission and this branch does NOT fix it.**
+Two more sites in the same file build `templates/pipelines/release/<platform>.yml` where `init.sh`
+builds `release/<host>/<platform>.yml`, and the release templates are laid out per host exactly as the
+CI ones are:
+```
+$ git show main:scripts/reconfigure-project.sh | grep -n 'pipelines/release'
+375:          local release_src="$ORCHESTRATOR_SOURCE/templates/pipelines/release/${current_platform}.yml"
+418:      local release_src="$ORCHESTRATOR_SOURCE/templates/pipelines/release/${NEW_VALUE}.yml"
+$ grep -n 'pipelines/release/\$host' init.sh
+3251:  local release_template="$SCRIPT_DIR/templates/pipelines/release/$host/$PLATFORM.yml"
+$ ls templates/pipelines/release/
+bitbucket
+github
+gitlab
+```
+Line 375 is the `language` arm's release re-template and line 418 is the `platform` arm's. Both are
+guarded by `[ -f "$release_src" ]` with **no else arm at all**, so they are quieter than the CI one:
+they emit nothing whatever and the operator is told only `[OK] Reconfiguration complete.` Scoped out
+deliberately rather than folded in — the CI fix is testable on its own and the release arm needs its
+own cases (it also re-templates through `sed`, and line 375's destination is hardcoded to
+`.github/workflows/release.yml`, which `host_pipeline_resolve` already owns as `HOST_RELEASE_PATH`).
+**Not measured end to end**, unlike the CI half: the grep and the directory listing above are the whole
+evidence, and the `platform` arm was never driven against a fixture.
+
+**The suite.** `tests/test-bl262-reconfigure-ci-host.sh` drives the REAL script against a hermetic
+fixture project — a SYNTHETIC orchestrator source carrying only the three per-host CI template dirs, so
+it does not depend on the shipped `templates/` tree, and a project dir with `scripts/` mirrored in the
+way a generated project carries them, deliberately lacking `init.sh` and `templates/generated` so the
+`_soif_dir_is_framework` self-contamination guard does not fire. No network, no `init.sh` invocation.
+Nine cases: the three hosts, `other`, an unknown host, a missing `host.sh`, an absent template, and
+the TWO absent-host shapes (no manifest; a manifest with no `.host`). **Cases pin template CONTENT per host, not existence** — a fix that resolves the source
+directory but keeps the hardcoded destination still writes a real file, and an existence check calls
+that green; mutant M2 is exactly that fix and dies at T2/T3 on content plus a stray-GitHub-file
+assertion.
+
+Two cases were written to avoid passing for the wrong reason. **T4 (`other`)** cannot assert only
+"wrote nothing", because the defect writes nothing on every host — so it also asserts the operator is
+told WHY, and that the script does **not** claim a template is missing. Pre-fix, an `other` project is
+warned its CI template is absent when none is wanted. **T6 (absent template)** cannot assert only "it
+warned", because the pre-fix code always warns — so it asserts the warning names the HOST-QUALIFIED
+path. `ci/typescript.yml` and `ci/github/typescript.yml` are indistinguishable to an operator skimming
+a warning, and only the second is a real answer.
+
+**RED 1 / 11 at `ceb450e`, and the single pass is the point.** A first cut of this suite was
+**0 / 7** — a red with no passing control, which cannot distinguish "the defect is real" from "the
+harness never drove the script": every case would read identically if `run_reconf` silently did
+nothing. **T0** is the floor. It asserts only what the language arm already did correctly before this
+entry — the recorded language changes and the script says so — so it passes on unmodified `main` and
+must keep passing after the fix. It is a control, never a discriminator. The other ten are the seven
+host cases plus T5b and the three mutant setups, which fail at base because the arms they revert are
+not there yet; that failure now READS as a setup failure rather than as a case failure (see below).
+
+**Mutants — EMBEDDED, not run by hand.** The first cut ran three mutants manually and recorded the
+tallies in this entry. A mutant recorded in prose is re-run by nobody; a mutant in the suite is re-run
+by CI on every push, which is the only version that still works after the branch that wrote it is
+merged. Each builds a mirror of `scripts/`, asserts the mutation LANDED (`bash -n` plus a changed-line
+count), and names what must SURVIVE it as well as what must die:
+
+| Mutant | What it restores | Must die | Must survive, and does |
+|---|---|---|---|
+| M1 | the `$host` segment dropped from the template path | all three host cases go dark | `other` — it returns before the path is built |
+| M2 | the hardcoded `.github/workflows/ci.yml` destination | gitlab + bitbucket, on the STRAY-FILE assertion | github — for GitHub the hardcode is the right answer |
+| M3 | the warned GitHub fallback for an unknown host | T5 | — |
+
+M2 is the one that pays for itself: with the source path corrected but the destination hardcoded, a
+REAL file is written on every host, and an existence check calls that green. Only the per-host content
+pin and the stray-file assertion separate it from a correct run — which is why the cases pin CONTENT.
+
+**Two bugs were found IN THIS SUITE while embedding the mutants, and both were silent.** The first:
+the perl expressions that build each mirror had unescaped `$template_path` / `$ci_template` on the
+REPLACEMENT side, so perl interpolated its own unset variables and substituted the empty string — M2's
+mutation produced a broken script rather than the intended one, and M1's passed for a partially wrong
+reason. The second is sharper. `mk_mirror` was called as `MM1="$(mk_mirror ...)"`, and `fail_` writes to
+stdout: on the setup-failure path its diagnostic was CAPTURED INTO `MM1` instead of printed, so the
+caller read a non-empty string as success and ran the mutant against an unmutated mirror, while the
+`FAILED` increment was lost in the substitution's subshell. Measured at base, every mutant reported a
+CASE failure and not one reported a SETUP failure — precisely backwards. `mk_mirror` now reports
+through a global.
+
+**The unrecognised-host decision — FAIL CLOSED, and this reverses the branch's first cut.**
+`host_pipeline_resolve` fails closed on an unrecognised host (rc 4, no paths), and its comment says why:
+defaulting an unknown host to the GitHub paths "is how a mis-recorded host silently produced a
+GitHub-shaped answer everywhere". `init.sh`'s `generate_ci` does the opposite — it warns and falls back.
+This branch first followed init.sh, on the argument that a visible, warned-about GitHub file is more
+correctable than a silent no-op. **That argument does not survive being written out**, and it is
+recorded here rather than quietly replaced:
+
+1. **It is not more correctable; it is less visible.** A stray `.github/workflows/ci.yml` in a GitLab
+   project looks exactly like an ordinary framework artefact. The only thing distinguishing it from a
+   correct run is a `[WARN]` sitting between an `[OK]` above and `[OK] Reconfiguration complete.`
+   below — which is verbatim the reading this entry argues, at length, that the operator does not do.
+   It trades this entry's silent no-op for a silent WRONG WRITE.
+2. **The two callers are not alike.** `init.sh` runs at CREATION, where the host arrives in the same
+   run from `--git-host` or the wizard and there is no recorded value that can be wrong. This script
+   runs against an EXISTING project and reads the host the manifest already records, so an
+   unrecognised value means the manifest is wrong — the precise case `host_pipeline_resolve`'s comment
+   names.
+3. **init.sh's fallback is a remnant, not a counter-policy.** `generate_release`, forty lines below it
+   in the same file, WAS converted to ask the resolver (`# BL-229-INIT-RELEASE-PATH`); `generate_ci`
+   was not, and still carries its own `case "$host"`. Following it would re-mint the mapping BL-229
+   exists to collapse — and `host.sh`'s sync-sibling note names THIS file as one of the copies to
+   convert, not as a second opinion to adopt.
+4. **Nothing legitimate is refused.** `other` is handled and returns before the resolver is reached, so
+   the only values that can reach the refusal are ones no host recognises.
+
+The refusal names the offending value, prints the resolver's own diagnostic, names the valid set, and
+**states that the language field HAS already been written while the pipeline has not** — a half-applied
+change reported as half-applied. It is `exit 1`, which is this script's established idiom (eleven other
+`print_fail` + `exit 1` sites) and which reaches the intake wizard that invokes it. T5 is the case; M3
+is the mutant that restores the fallback, so the decision is enforced rather than merely written down.
+
+**A MISSING `scripts/lib/host.sh` refuses with a DIFFERENT message, and T5b pins that.** The library
+being absent is not the host being wrong, and `## BL-231:` is the family that exists because those two
+get collapsed — the operator's repair differs in each case.
+
+**AN ABSENT `host` IS REFUSED TOO, AND A FIRST CUT OF THIS FIX GOT THAT WRONG.** That cut wrote
+`local ci_host="github"`, then `jq -r '.host // "github"'`, then a third `|| echo "github"` — and it
+contradicted the refusal directly above it. The refusal's own stated ground is that guessing GitHub is
+how a mis-recorded host silently produces a GitHub-shaped answer; the absent case then guessed exactly
+that. T7 pinned the wrong behaviour, so the test agreed with the bug.
+
+**Nothing in the framework defaults a missing host to github.** There are two established behaviours,
+and the arm now adopts the first rather than minting a third:
+- `host.sh`'s `host_read_from_manifest` — refuse at rc 2 naming the remedy
+  (`scripts/check-gate.sh --backfill-host`). This is the reader `host_pipeline_resolve` uses when
+  called with no argument, which is how the three existing consumers call it
+  (`scripts/validate.sh:111`, `scripts/check-phase-gate.sh:2794`, `scripts/cut-release.sh:1231`).
+- `scripts/verify-install.sh`'s `_detect_pipeline_host` — infer from the git remote, yield `other`
+  when it cannot tell. Never a bare "github".
+
+`# BL-262-RECONFIG-CI-HOST-READ` drops the local jq and both cuts of the default. The two absent
+shapes are now separate cases because `host.sh` distinguishes them and the operator's next move
+differs: **T7** (no manifest at all, rc 1) and **T7b** (a manifest with no `.host`, rc 2, asserting
+host.sh's `--backfill-host` remedy reaches the operator rather than being swallowed). **M4** is T7's
+mutant — it reinstates the GitHub default and requires T7 to catch it, the companion to M3 on the
+unrecognised path. Both halves of the contradiction now have a mutant, so neither can quietly return.
+
+**OPEN QUESTION FOR THE MAINTAINER, not settled here.** Refusing is consistent with the resolver this
+arm delegates to, but `init.sh`'s `generate_ci` warns and falls back on the same input. Whether
+reconfigure should refuse or follow `_detect_pipeline_host` and infer from the remote is a policy call
+about whether every pre-host-field project must run the backfill before it can change language. This
+entry adopts the existing `host.sh` behaviour rather than inventing one, and raises the choice in the
+PR description.
+
+**Related:** `## BL-229:` (the same defect class, the resolver this fix asks, and the note that named
+this file), `## BL-084:` (`# BL-084-TIER-KEY`, the sync-sibling trap this avoids re-creating),
+`## BL-231:` (the absent-vs-unreadable family — here, absent-and-unreported).

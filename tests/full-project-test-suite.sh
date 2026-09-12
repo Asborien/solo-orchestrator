@@ -860,6 +860,14 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
   "BL-259: an empty @tsv field must not collapse and shift the resolver row" \
   "BL-259 tsv-field-shift tests FAILED (run tests/test-bl259-tsv-empty-field-shift.sh for details)"
 
+# BL-262: reconfigure-project.sh's CI regeneration had no host awareness — a
+# template path missing the per-host directory (so it never resolved, and the
+# warn arm ran under an [OK] banner at rc 0) and a hardcoded GitHub
+# destination. Cases pin template CONTENT per host, not existence.
+run_child_suite "tests/test-bl262-reconfigure-ci-host.sh" \
+  "BL-262: reconfigure regenerates CI from the per-host template to the per-host destination" \
+  "BL-262 reconfigure-ci-host tests FAILED (run tests/test-bl262-reconfigure-ci-host.sh for details)"
+
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
 # ----------------------------------------------------------------
