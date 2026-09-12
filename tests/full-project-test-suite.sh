@@ -883,6 +883,11 @@ run_child_suite "tests/test-bl265-jq-reserved-label.sh" \
 run_child_suite "tests/test-bl266-paused-section-marked-complete.sh" \
   "BL-266: a paused intake section is not recorded as complete, and the resume point survives section 115" \
   "BL-266 paused-section tests FAILED (run tests/test-bl266-paused-section-marked-complete.sh for details)"
+# BL-267: prompt_input had no handling for the wizard's own `?` help key, so
+# a bare question mark was returned and saved as the answer.
+run_child_suite "tests/test-bl267-bare-question-mark.sh" \
+  "BL-267: a bare \`?\` re-asks instead of being saved as the answer, and the notice stays off stdout" \
+  "BL-267 bare-question-mark tests FAILED (run tests/test-bl267-bare-question-mark.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS

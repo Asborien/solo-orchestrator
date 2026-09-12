@@ -111,18 +111,34 @@ prompt_input() {
   local prompt="$1"
   local default="${2:-}"
   local result
-  if [ -n "$default" ]; then
-    read -rp "$(echo -e "  ${BOLD}$prompt${NC} [$default]: ")" result # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's centralized prompt helper
-    result="${result:-$default}"
-  else
-    read -rp "$(echo -e "  ${BOLD}$prompt${NC}: ")" result # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's centralized prompt helper
-  fi
-  if [ "$result" = "pause" ] || [ "$result" = "PAUSE" ] || [ "$result" = "Pause" ]; then
-    _request_pause
-    echo ""
+  # BL-267-BARE-QUESTION-MARK — the `while true` is the point of the loop, not
+  # decoration. `?` is the wizard's own help key: the banner says "Type '?' at
+  # prompts marked with [? for suggestions]", and the sibling
+  # prompt_with_suggestions honours it with exactly this shape — read, test,
+  # `continue`. This helper, behind 81 of the wizard's prompts, had no handling
+  # at all, so a `?` fell through to `echo "$result"` and the `save_answer` on
+  # the caller's next line RECORDED IT AS THE ANSWER. Observed on
+  # one_time_budget and users_12mo, both stored as the literal string "?" and
+  # carried into PROJECT_INTAKE.md.
+  while true; do
+    if [ -n "$default" ]; then
+      read -rp "$(echo -e "  ${BOLD}$prompt${NC} [$default]: ")" result # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's centralized prompt helper
+      result="${result:-$default}"
+    else
+      read -rp "$(echo -e "  ${BOLD}$prompt${NC}: ")" result # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's centralized prompt helper
+    fi
+    if [ "$result" = "pause" ] || [ "$result" = "PAUSE" ] || [ "$result" = "Pause" ]; then
+      _request_pause
+      echo ""
+      return
+    fi
+    if [ "$result" = "?" ]; then
+      echo "  No suggestions available for this field — answer it directly, or type N/A." >&2
+      continue
+    fi
+    echo "$result"
     return
-  fi
-  echo "$result"
+  done
 }
 
 # ================================================================
