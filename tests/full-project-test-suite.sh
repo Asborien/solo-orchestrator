@@ -860,6 +860,12 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
   "BL-259: an empty @tsv field must not collapse and shift the resolver row" \
   "BL-259 tsv-field-shift tests FAILED (run tests/test-bl259-tsv-empty-field-shift.sh for details)"
 
+# BL-265: `label` is a jq keyword, so `def row(label; val)` refused to compile
+# and render_intake_file() wrote a Project Context table with no rows.
+run_child_suite "tests/test-bl265-jq-reserved-label.sh" \
+  "BL-265: the intake appendix's Project Context table renders (no jq reserved word)" \
+  "BL-265 jq-reserved-label tests FAILED (run tests/test-bl265-jq-reserved-label.sh for details)"
+
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
 # ----------------------------------------------------------------
