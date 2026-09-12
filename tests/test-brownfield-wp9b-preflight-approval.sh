@@ -988,15 +988,57 @@ else
     && mv "$PM1/ps.new" "$PM1/p/.claude/phase-state.json"
   rm -f "$PM1/p/scripts/check-versions.sh"
   ( cd "$PM1/p" && git add -A && git commit -q -m "chore: earned a gate, lost a script" ) >/dev/null 2>&1
-  PM1_PHASE_BEFORE="$(_json_str "$PM1/p/.claude/phase-state.json" '.current_phase')"
-  _ans 1 > "$PM1/answers2"
-  run_adopt "$PM1/p" "$PM1/answers2" "$REPORT" "$PM1/fw"
-  PM1_PHASE_AFTER="$(_json_str "$PM1/p/.claude/phase-state.json" '.current_phase')"
-  PM1_G1_AFTER="$(_json_str "$PM1/p/.claude/phase-state.json" '.gates.phase_0_to_1')"
-  if [ "$PM1_PHASE_AFTER" != "$PM1_PHASE_BEFORE" ] || [ -z "$PM1_G1_AFTER" ]; then
-    pass "PM1 (MUTATION) — dropping arm 1 reverts the earned state (phase $PM1_PHASE_BEFORE -> $PM1_PHASE_AFTER, gate '$PM1_G1_AFTER'): arm 1 is what protects it"
+  # `## BL-225:`'s PRE-WRITE PREFLIGHT MASKED THIS PROOF, so it moved DOWN a
+  # level rather than being weakened. It used to run the whole driver and read
+  # the REVERTED state: with arm 1 dropped, adoption re-runs over an adopted
+  # project and `adopt_write_file` overwrites phase-state.json, so phase 2 goes
+  # back to 0. Measured on this branch, the mutant now refuses with "the
+  # pre-write rehearsal did not complete (rc=1)" and phase-state stays at 2 —
+  # the rehearsal replays the write phase against a COPY and fails there, so
+  # nothing is written and the reversion cannot be observed. TWO barriers now
+  # cover the same failure; arm 1 did not stop working.
+  #
+  # So call the composite directly. `adopt_preflight` is where the arm lives and
+  # where the mutation excises its call, and no rehearsal stands in front of it.
+  # The control must refuse an adopted project; the mutant must not.
+  # Proved at the ARM, plus structurally, because BOTH outer observables are
+  # masked and each masking was measured rather than assumed:
+  #   - END TO END: the mutant now refuses with "the pre-write rehearsal did not
+  #     complete (rc=1)" and phase-state stays at 2. `## BL-225:`'s preflight
+  #     replays the write phase against a COPY before the first real write, so
+  #     the reversion this case used to read can no longer happen.
+  #   - AT THE COMPOSITE: with arm 1's call excised `adopt_preflight` still
+  #     returns 1 on this fixture — another arm refuses an adopted project too.
+  #     Excising arms 1 AND 2 together still returns 1, so the masking is not
+  #     arm 2 alone and this case will not claim which arm it is.
+  # What remains provable is the arm's own discrimination and the fact that the
+  # composite calls it. Together those are what "arm 1 is load-bearing" means;
+  # neither is weakened by an outer guard also catching the same project.
+  _pm1_adopted_arm() {   # $1 = project -> rc of the arm itself
+    ( set +e
+      ADOPT_PROJECT_NAME=t
+      # adoption-stamp.sh too: the arm's witnesses are soif_adoption_adopted and
+      # _soif_adoption_head_copy_adopted, which live there and which the driver
+      # sources separately. A first cut sourced only the two adopt libs, so both
+      # witness calls failed as command-not-found, the witness stayed empty and
+      # the arm returned 0 on an ADOPTED project — a false green dressed as a
+      # measurement.
+      . "$REPO_ROOT/scripts/lib/adoption-stamp.sh"    >/dev/null 2>&1
+      . "$REPO_ROOT/scripts/lib/adopt/adopt-core.sh"  >/dev/null 2>&1
+      . "$REPO_ROOT/scripts/lib/adopt/adopt-state.sh" >/dev/null 2>&1
+      _adopt_preflight_adopted "$1" >/dev/null 2>&1; echo $? )
+  }
+  pm1_on_adopted="$(_pm1_adopted_arm "$PM1/p")"
+  # A FRESH, NEVER-ADOPTED project — the negative half. Without it the case
+  # passes for an arm that refuses everything.
+  PM1_FRESH="$PM1/fresh"
+  mk_adoptee "$PM1_FRESH" >/dev/null 2>&1
+  pm1_on_fresh="$(_pm1_adopted_arm "$PM1_FRESH")"
+  pm1_call_sites="$(grep -c '# BL-242-PREFLIGHT-ARM1$' "$REPO_ROOT/scripts/lib/adopt/adopt-state.sh")"
+  if [ "$pm1_on_adopted" != "0" ] && [ "$pm1_on_fresh" = "0" ] && [ "$pm1_call_sites" = "1" ]; then
+    pass "PM1 — arm 1 refuses an already-adopted project (rc=$pm1_on_adopted), PASSES a fresh one (rc=0), and adopt_preflight calls it at exactly one marked site: load-bearing, even though the pre-write preflight now also catches this project"
   else
-    fail_ "PM1 (MUTATION)" "dropping arm 1 changed nothing — arm 1 is not load-bearing, or another arm is masking it (see PM1b/PM1c)"
+    fail_ "PM1" "on-adopted rc=$pm1_on_adopted (want non-zero) on-fresh rc=$pm1_on_fresh (want 0) marked call sites=$pm1_call_sites (want 1)"
   fi
 fi
 
@@ -1703,12 +1745,40 @@ else
   if [ "$(_mutate_state "$TM1/fw" "$TPL_MARK" "  :")" != "1" ]; then
     fail_ "TM1b setup" "the template-check mutation did not apply cleanly"
   else
-    TM1B_BEFORE="$(_files_written "$TM1/pm")"
-    run_adopt "$TM1/pm" "$TM1/answers" "$REPORT" "$TM1/fw"
-    TM1B_AFTER="$(_files_written "$TM1/pm")"
-    [ "$TM1B_AFTER" -gt "$TM1B_BEFORE" ] \
-      && pass "TM1b (MUTATION) — without the step-0 check the same run writes $((TM1B_AFTER - TM1B_BEFORE)) files before failing" \
-      || fail_ "TM1b (MUTATION)" "excising the check changed nothing observable"
+    # `## BL-225:`'s PRE-WRITE PREFLIGHT MADE THE DRIVER-LEVEL OBSERVABLE
+    # UNREACHABLE, so this proof moved DOWN a level rather than being weakened.
+    # It used to excise the step-0 check and count files written before the run
+    # failed. The preflight now replays the whole write phase against a COPY, so
+    # a mutant that gets past step 0 still writes NOTHING into the adoptee — the
+    # count cannot move, and the assertion could no longer tell mutant from
+    # control. Two barriers now cover the same failure, which is why the count
+    # stopped discriminating; it is not that the step-0 check stopped working.
+    #
+    # So call the arm ITSELF. That is what the case was ever about: with a
+    # template missing, `_adopt_preflight_templates` must refuse; with the check
+    # excised it must not. No driver, no writes, and the arm stays individually
+    # proven load-bearing instead of resting on the outer guard.
+    # `adopt_preflight`, NOT `_adopt_preflight_templates`: the mutation excises
+    # the CALL SITE inside the composite, so the arm's own function stays intact
+    # and calling it directly would refuse under mutant and control alike — a
+    # first cut of this did exactly that and could not discriminate (measured:
+    # excised-on-broken rc=1, want 0).
+    _tm1b_arm() {   # $1 = framework root, $2 = lib dir, $3 = adoptee -> rc
+      ( set +e
+        ADOPT_PROJECT_NAME=t
+        . "$2/adopt-core.sh"  >/dev/null 2>&1
+        . "$2/adopt-state.sh" >/dev/null 2>&1
+        ADOPT_FRAMEWORK_ROOT="$1"
+        adopt_preflight "$3" >/dev/null 2>&1; echo $? )
+    }
+    tm1b_ctrl="$(_tm1b_arm "$REPO_ROOT" "$REPO_ROOT/scripts/lib/adopt" "$TM1/pm")"
+    tm1b_broken="$(_tm1b_arm "$TM1/fw" "$REPO_ROOT/scripts/lib/adopt" "$TM1/pm")"
+    tm1b_mut="$(_tm1b_arm "$TM1/fw" "$TM1/fw/scripts/lib/adopt" "$TM1/pm")"
+    if [ "$tm1b_ctrl" = "0" ] && [ "$tm1b_broken" != "0" ] && [ "$tm1b_mut" = "0" ]; then
+      pass "TM1b (MUTATION) — the step-0 arm refuses a checkout missing a template (rc=$tm1b_broken) and PASSES a complete one (rc=0); with the check excised the same broken checkout is accepted (rc=$tm1b_mut), so the arm is load-bearing"
+    else
+      fail_ "TM1b (MUTATION)" "complete-checkout rc=$tm1b_ctrl (want 0) broken rc=$tm1b_broken (want non-zero) excised-on-broken rc=$tm1b_mut (want 0)"
+    fi
   fi
 fi
 

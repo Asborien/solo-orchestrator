@@ -9535,8 +9535,77 @@ git names the culprit) but the adoptee is left half-written with no way back
 except by hand.
 **Status:** Open
 
-**PARTIALLY CLOSED 2026-08-31 — the STAGING half. The BEFORE-ANY-WRITE half is
-still open, and this entry stays Open for it.** What shipped: a preflight in
+**BOTH HALVES NOW BUILT (2026-09-12, branch `fix/bl225-prewrite-preflight`) — the
+before-any-write half is below, after the staging half it completes.**
+
+**THE BEFORE-ANY-WRITE HALF.** `_adopt_write_phase` is extracted as the ONLY
+writer of the adoptee's files and is called TWICE: once by
+`adopt_prewrite_preflight` against a full COPY of the tree, once for real
+(`# BL-225-PREWRITE-CALL`, `# BL-225-WRITE-PHASE-REAL`, and the refusal itself at
+`# BL-225-PREWRITE-REFUSE`). The planned path set is therefore not a
+maintained list that can drift behind the writers — **it is what the writers
+produced on a rehearsal**, so a new writer is in the preflight the moment it is
+in the real run. Karl chose the copy over a per-writer "don't actually write"
+flag, and the reason held up: a flag is a second thing each writer can forget,
+and a writer that ignored it would write during the rehearsal.
+
+**The oracle is `git check-ignore --no-index`, and it is NOT the staging half's.**
+That half asks `git add --dry-run`, which needs the files to EXIST; here they do
+not yet. Measured against `git add` as ground truth across eight shapes —
+untracked+ignored, tracked+ignored (modified and unmodified), untracked clean,
+tracked clean, and four negation cases including a re-included file inside an
+ignored directory — `check-ignore --no-index` agreed in all eight. `--no-index`
+is required: without it git reports nothing for a TRACKED path, the index-aware
+false-clean that defeated this entry's first fix. Also measured, and recorded
+because it surprised: **`git add` on a tracked-but-now-ignored path exits 1 AND
+STAGES IT ANYWAY**, and git cannot re-include a file under an ignored DIRECTORY,
+so `!.claude/manifest.json` under `.claude/` stays ignored and refusing it is
+correct.
+
+**TWO BUGS IN THIS FIX, BOTH FOUND BY MEASUREMENT, BOTH THE CLASS THIS ENTRY IS
+ABOUT.** (1) The preflight first sat BELOW `adopt_test_debt_record`, which writes
+`.claude/test-debt.json` — so it printed "nothing was written to your project"
+while its own derived count said one file had been, in the same message block.
+That writer is now inside the rehearsed phase. (2) The rehearsal raised the
+GLOBAL touched-disk marker, so a refusal told the operator adoption "had already
+ATTEMPTED writes to this project" when it had only touched the copy; the marker
+is now restored exactly as found (`# BL-225-REHEARSAL-NO-TRACE`). A third
+interaction was found and fixed the same way: the rehearsal honoured
+`SOIF_ADOPT_HALT_AFTER`, a seam meant for the real run, so the rehearsal
+"failed", the preflight refused and adoption never ran — 12 failures across four
+suites (`# BL-225-REHEARSAL-NO-HALT`).
+
+**FOUR MUTATION PROOFS LOST THEIR END-TO-END OBSERVABLE, AND THAT IS THE REAL
+COST OF THIS CHANGE.** `S5` (wp4-driver), `G4` (wp6-collision-archive), `PM1` and
+`TM1b` (wp9b-preflight-approval) each proved their guard by showing files were
+written on a failure path. Nothing is now written on any failure path, so the
+guards are unprovable END TO END — not broken, **masked by a second barrier**.
+Each was re-proved at the level where it is still observable, and each masking
+was measured rather than assumed: `S5` asserts the adoptee keeps neither file;
+`G4` needed its FIXTURE changed (it ignored a directory the framework install
+writes into, so the preflight refused it mutated or not, and it paired with `G5`
+to discriminate); `TM1b` moved to the composite because the mutation excises the
+CALL SITE, not the function; `PM1` moved to the arm plus a structural check,
+because excising arms 1 AND 2 together still refuses, so no composite-level
+claim about which arm masks it would be honest.
+
+**`SOIF_REHEARSAL_ERR`** names a file to keep the rehearsal's own stderr in. It
+is discarded by default so the operator sees one adoption and not two, but then a
+refusal can only say "the rehearsal did not complete (rc=N)" — the unhelpful
+shape `# BL-225-REFUSE-HONEST` exists to prevent. Finding `S5`'s cause required
+it: the reversed state order fails at `manifest` because that writer hashes the
+KEPT SCAN REPORT, which `adopt_write_intake` writes earlier in the correct order.
+
+**Residuals.** (a) The rehearsal copies the whole tree, `.git` included, because
+its git behaviour must match the real run's; on a large adoptee that is time and
+disk. Hardlink copies are NOT available — the writers truncate in place, so a
+hardlinked rehearsal would corrupt the operator's originals. (b) PRE-EXISTING and
+deliberately not fixed here: `adopt_write_manifest` refuses with "neither shasum
+nor sha256sum is available" when the real cause is a MISSING INPUT (the kept scan
+report). Both tools exist; the message misattributes itself, and it is the
+message a rehearsal failure surfaces first.
+
+**The staging half, shipped 2026-08-31:** What shipped: a preflight in
 `adopt_stage_and_commit` (`# BL-225-STAGE-PREFLIGHT`) that asks
 `git add --dry-run` before it stages and stops WHOLE, so the index is never
 half-written; an honest refusal (`# BL-225-REFUSE-HONEST`) that derives the

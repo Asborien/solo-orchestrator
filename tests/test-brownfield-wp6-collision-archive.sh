@@ -1350,7 +1350,15 @@ G4="$(newtmp)"
 if ! mk_adoptee "$G4/p" || ! _add_surfaces "$G4/p" || ! mk_mirror "$G4/fw"; then
   fail_ "G4 (MUTATION)" "fixture setup failed"
 else
-  printf 'git-hooks/\n' > "$G4/p/.gitignore"
+  # FIXTURE CHANGED WITH `## BL-225:`'s PRE-WRITE PREFLIGHT, and it had to be.
+  # This was `git-hooks/` — a directory the FRAMEWORK INSTALL writes into — so
+  # the preflight now refuses that project up front whether or not this mutation
+  # is applied, and the case could no longer tell mutant from control. The rule
+  # is now the one G5 uses, `.claude/adoption-archive/`, which reaches ONLY
+  # paths the archive records. G5 proves the unmutated driver ADOPTS that
+  # project successfully (the entries are withheld); this proves the mutant does
+  # not. The pair is the discrimination.
+  printf '.claude/adoption-archive/\n' > "$G4/p/.gitignore"
   ( cd "$G4/p" && git add .gitignore && git commit -q -m "chore: their ignore rules" ) >/dev/null 2>&1
   MUTG4="$G4/fw/scripts/lib/adopt/adopt-archive.sh"
   g4_sites=$(_sites "$L_ARCHIVE" 'BF-ADOPT-IGNORE-ARCHIVE')
@@ -1364,11 +1372,17 @@ else
   g4_landed=$(_adoption_commit_landed "$G4/p")
   g4_arch="$(arch_dir_of "$G4/p")"
   g4_ondisk=0; [ -n "$g4_arch" ] && [ -f "$G4/p/$g4_arch/MANIFEST.json" ] && g4_ondisk=1
+  # THE OBSERVABLE MOVED, and the new one is stronger. It used to be "the
+  # archive is on disk, proving the run got that far before git add refused".
+  # The preflight now catches the mutation BEFORE the first write, so nothing
+  # reaches the adoptee at all — assert that instead. `g4_ondisk` must be 0 for
+  # the same reason the whole entry exists: a refusal that leaves files behind
+  # is the defect.
   if [ "$g4_sites" -eq 1 ] && [ "$g4_chg" -eq 2 ] && [ "$g4_parses" -eq 1 ] \
-     && [ "$g4_rc" -ne 0 ] && [ "$g4_landed" -eq 0 ] && [ "$g4_ondisk" -eq 1 ]; then
-    pass "G4 (MUTATION): with the archive-path check neutered (1 site, 2 lines, mutant parses) git add refuses the ignored path and the WHOLE adoption fails (rc $g4_rc, no adoption commit) — the archive is on disk, so the run reached staging — RED"
+     && [ "$g4_rc" -ne 0 ] && [ "$g4_landed" -eq 0 ] && [ "$g4_ondisk" -eq 0 ]; then
+    pass "G4 (MUTATION): with the archive-path check neutered (1 site, 2 lines, mutant parses) the ignored archive entries enter the planned set, the pre-write preflight refuses, and the adoptee keeps NOTHING — while G5 shows the same project adopts cleanly unmutated"
   else
-    fail_ "G4" "sites=$g4_sites (want 1) changed_lines=$g4_chg (want 2) parses=$g4_parses (want 1) run rc=$g4_rc (want non-zero) adoption commit landed=$g4_landed (want 0) archive on disk=$g4_ondisk (want 1)"
+    fail_ "G4" "sites=$g4_sites (want 1) changed_lines=$g4_chg (want 2) parses=$g4_parses (want 1) run rc=$g4_rc (want non-zero) adoption commit landed=$g4_landed (want 0) archive on disk=$g4_ondisk (want 0)"
   fi
 fi
 
