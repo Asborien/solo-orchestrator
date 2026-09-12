@@ -17913,3 +17913,155 @@ recorded as a lead rather than a defect.
 different key), `## BL-231:` (absent-vs-unreadable), `## BL-256:` (two unrelated surfaces bound into
 one entry by a shared defect class — the precedent for this entry's shape), `## BL-242:`
 (`# BL-242-PHASE0-LANDING`, the phase-state write this arm reads).
+
+---
+
+## BL-265: `intake-wizard.sh` names a jq KEYWORD as a function parameter, so the intake appendix's Project Context table renders with zero rows on every jq since 1.5
+
+**Status:** Open — fix + suite built on branch `fix/bl265`, uncommitted. Not pushed, no PR.
+
+**Logged:** 2026-09-12, from a downstream adoption (`si-6425-harness-baseline`) whose
+`PROJECT_INTAKE.md` came back without a single context field.
+
+**The defect.** `render_intake_file()` in `scripts/intake-wizard.sh` opened its Project Context table
+with
+
+```
+def row(label; val): "| " + label + " | " + ((val // "") | tostring) + " |";
+```
+
+`label` is a jq **keyword** — it is the head of `label $out | … | break $out` — so it cannot name a
+function parameter. jq does not reject the one definition; it refuses to compile the **whole program**
+and emits nothing:
+
+```
+$ echo '{}' | jq -r 'def row(label; val): "x"; row("a";"b")'
+jq: error: syntax error, unexpected label, expecting IDENT or BINDING at <top-level>, line 1, column 9:
+    def row(label; val): "x"; row("a";"b")
+            ^^^^^
+jq: 1 compile error
+```
+
+**Which jq versions — measured, not assumed.** `label`/`break` arrived in jq 1.5, and the reservation
+arrived with it. Every version from 1.5 on refuses the program; only 1.4, which has no `label` at all,
+accepts it:
+
+```
+for img in ubuntu:16.04 ubuntu:18.04 ubuntu:20.04 ubuntu:22.04 ubuntu:24.04; do
+  docker run --rm "$img" bash -c 'apt-get update -qq >/dev/null 2>&1;
+    apt-get install -y -qq jq >/dev/null 2>&1; jq --version;
+    echo "{}" | jq -r "def row(label; val): \"x\"; row(\"a\";\"b\")" 2>&1 | head -1'; done
+
+jq-1.5-1-a5b5cbe   jq: error: syntax error, unexpected label, expecting IDENT or '$' …
+jq-1.5-1-a5b5cbe   jq: error: syntax error, unexpected label, expecting IDENT or '$' …
+jq-1.6             jq: error: syntax error, unexpected label, expecting IDENT or '$' …
+jq-1.6             jq: error: syntax error, unexpected label, expecting IDENT or '$' …
+jq-1.7             jq: error: syntax error, unexpected label, expecting IDENT or BINDING …
+
+docker run -i --rm --platform linux/amd64 ubuntu:20.04 \
+  bash -c 'cat > /jq14; chmod +x /jq14; /jq14 --version;
+           echo "{}" | /jq14 -r "def row(label; val): \"x\"; row(\"a\";\"b\")"' < jq-1.4-linux-x86_64
+jq-1.4
+x
+```
+plus jq 1.8.2 on this Mac, which fails identically. **So this line has never worked on any jq a
+project could realistically have installed** — it is not a regression introduced by a new jq. The
+framework's own catalogue entry for jq (`templates/tool-matrix/common.json`) declares no minimum
+version, so there is no supported configuration in which it renders.
+
+**What the operator actually gets — and the brief on this was wrong in one direction, so read the
+measurement.** `PROJECT_INTAKE.md` **is** written; it is the Project Context table inside it that is
+empty. Both call sites are `render_intake_file || true`, and the `||` also suppresses the script's
+top-level `set -e` inside the function, so the failing `jq` does not abort the render — the remaining
+`printf`s and the SECOND jq program (the Answers table) run normally. Measured against a fixture
+progress file at `ceb450e`:
+
+```
+### Project Context
+
+| Field | Value |
+|---|---|
+
+### Answers
+
+| Key | Value |
+|---|---|
+| `problem_statement` | BL265-ANSWER-VALUE |
+```
+
+Nine rows are gone — project name, description, platform, track, deployment, language, POC mode, last
+section saved, completed sections — while `save_section` prints `[OK] Section N saved.` and the wizard
+continues. The jq compile error does reach the terminal on a real run (stderr is not redirected), so
+the failure is **noisy but non-blocking**, not silent; the `|| true` is what makes it survivable.
+
+**Measured on a full-size answer set**, rendering the same progress file through both versions of the
+wizard (each sourced from a complete `scripts/` tree — a lone copy in a bare tmpdir dies at
+`source "$SCRIPT_DIR/lib/helpers.sh"` under `set -e`, in BOTH arms, which reads as the defect and is
+not):
+
+```
+--- AT MAIN ceb450e (defect present)
+    PROJECT_INTAKE.md: written, 72 lines
+    Project Context table:  1 '| '-led line(s)      # the header, and nothing under it
+    Answers table:         51 '| '-led line(s)      # header + all 50 answers
+    stderr: jq: error: syntax error, unexpected label, expecting IDENT or BINDING …
+--- WITH THE FIX
+    PROJECT_INTAKE.md: written, 81 lines
+    Project Context table: 10 '| '-led line(s)      # header + nine rows
+    Answers table:         51 '| '-led line(s)
+    stderr:
+```
+
+**This is the more dangerous of the two failure shapes, and worth saying plainly.** A document that
+renders empty gets noticed on sight; a 72-line document whose Answers table is complete and correct,
+missing one metadata table among otherwise-finished content, reads as done. The one signal that
+something went wrong is a jq compile error on stderr that scrolls past mid-run, thirteen sections
+before the operator sees the finished file.
+
+**Blast radius.** `render_intake_file` is called from `save_section` — i.e. after EVERY one of the 13
+sections — and again from the upgrade path. Every project scaffolded by this framework that runs the
+wizard has an intake file missing its entire context block.
+
+**Fix.** `# BL-265-JQ-RESERVED`: rename the parameter to `lbl`. One line, no behaviour change beyond
+the program now compiling, and a three-line comment above it carrying the trap so the next reader does
+not reinstate a keyword. Not chosen: making `render_intake_file` fail loudly instead of `|| true` —
+that is a separate call-site decision with its own blast radius, recorded as the residual below.
+
+**Build note (2026-09-12, branch `fix/bl265`).** Suite `tests/test-bl265-jq-reserved-label.sh` drives
+the REAL `render_intake_file` — sourced through the wizard's own
+`__SOLO_INTAKE_WIZARD_SOURCED__` main-guard, in a subshell so the wizard's `set -euo pipefail` does
+not leak into the harness — against a hermetic progress file. It calls it as `render_intake_file ||
+exit $?`, reproducing production's `|| true` errexit suppression exactly: under a **bare** call the
+failing jq aborts the subshell and no appendix is appended at all, which is not what an operator sees,
+and a suite that got that wrong would be asserting the wrong artifact.
+
+RED at `ceb450e`: **2 passed / 7 failed**. The two passes are honest controls, not accidents — R0 (the
+render produced a file) and R1 (the Answers table, produced by a SEPARATE jq program that names no
+keyword, is intact). R2/R3 are the discriminators (`Project name row is [], want
+[BL265-PROJECT-NAME]`), R4 counts the table at 1 `| `-led line instead of 10, and R5 catches the
+stderr verbatim: `jq: error: syntax error, unexpected label, expecting IDENT or BINDING`. M0 and the
+MP1 setup fail because the marker does not exist yet.
+
+GREEN **9 / 0** on macOS `/bin/bash` 3.2.57 and on bash 5.2.21 / jq 1.7 in `ubuntu:24.04` as
+`uid=1000(ubuntu)`. Two mutants, each asserting the mutation landed (`bash -n`, the mutated spelling
+present exactly once, the original gone, and a changed-line count) before reading any verdict. **MP1**
+restores `label` on a mirror and requires the Project Context table to go empty **while the Answers
+table still renders** — the second half is what proves R2 discriminates the defect rather than a
+broken fixture. **MP2** repoints the project-name row at `.description`: the table still renders all
+10 lines, so only a by-value assertion sees it. Without MP2 the suite would pass with R2 written as a
+row-count check. Registered in `tests/full-project-test-suite.sh` and in the `tests.yml` unit lane
+(`scripts/lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
+
+**Residual, open.** `render_intake_file || true` swallows every failure of the render, not just this
+one — a missing template, an unwritable `PROJECT_INTAKE.md`, or the next jq mistake all land the same
+way. The suite pins the rendered OUTPUT, so a future breakage is caught by this test rather than by
+the call site; hardening the call site is a separate change and is not made here.
+
+**The pattern this belongs to.** The harness reasons about a project as if it were born under the
+harness — this entry assumes `PROJECT_INTAKE.md` is the harness's to render, and it is one of three
+faces of the same assumption. `## BL-268:` carries the full statement of it; read that paragraph
+alongside this entry.
+
+**Related:** `## BL-266:` and `## BL-267:` (found in the same wizard on the same downstream adoption),
+`## BL-268:` (the same born-under-the-harness assumption, in the manifest), `## BL-256:` (the same
+"a step that produced nothing still reports success" family).

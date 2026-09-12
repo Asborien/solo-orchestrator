@@ -410,7 +410,10 @@ render_intake_file() {
     printf '### Project Context\n\n'
     printf '| Field | Value |\n|---|---|\n'
     jq -r '
-      def row(label; val): "| " + label + " | " + ((val // "") | tostring) + " |";
+      # `label` is a jq KEYWORD (`label $out | break $out`), so it cannot name a
+      # function parameter. Every jq that has label/break — 1.5 (2015) onward —
+      # refuses to compile the whole program, so this table rendered EMPTY.
+      def row(lbl; val): "| " + lbl + " | " + ((val // "") | tostring) + " |";  # BL-265-JQ-RESERVED
       row("Project name"; .project_name),
       row("Description"; .description),
       row("Platform"; .platform),

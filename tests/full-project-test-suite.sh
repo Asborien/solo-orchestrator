@@ -873,6 +873,11 @@ run_child_suite "tests/test-bl263-bl264-uat-template-dom.sh" \
 run_child_suite "tests/test-bl284-verify-install-context.sh" \
   "BL-284: an adopted project's recorded context reaches has_context(); fix_superpowers uses a real CLI verb" \
   "BL-284 verify-install context/plugin-verb tests FAILED (run tests/test-bl284-verify-install-context.sh for details)"
+# BL-265: `label` is a jq keyword, so `def row(label; val)` refused to compile
+# and render_intake_file() wrote a Project Context table with no rows.
+run_child_suite "tests/test-bl265-jq-reserved-label.sh" \
+  "BL-265: the intake appendix's Project Context table renders (no jq reserved word)" \
+  "BL-265 jq-reserved-label tests FAILED (run tests/test-bl265-jq-reserved-label.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
