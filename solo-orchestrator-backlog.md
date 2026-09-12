@@ -15928,7 +15928,7 @@ absent-vs-unreadable family).
 
 ## BL-270: a project adopted before the mode-vocabulary fix carries a `mode` no reader understands, and nothing shipped could repair it
 
-**Status:** Open — fix + suite built on branch `fix/bl270`, uncommitted. Not pushed, no PR.
+**Status:** Open — fix + suite committed on branch `fix/bl270` at `836312e`. Not pushed, no PR.
 
 **Logged:** 2026-09-12. Depends on `## BL-268:`, which fixes the birth path and the readers; this is
 the migration for projects already on disk.
