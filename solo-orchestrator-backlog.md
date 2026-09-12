@@ -15925,3 +15925,38 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+## BL-272: a plain `--single-branch` clone is not shallow, so Scout's shallow detection never fires — and the blind spot is identical
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** Filed separately at both
+reviewers' recommendation rather than bundled into `## BL-264:`.
+
+**Logged:** 2026-09-13, while fixing BL-264's remediation advice. It is the same blind spot reached by
+a different clone flag.
+
+**The defect.** `## BL-264:` makes Scout stop calling a shallow clone `full-history`. Its detection
+keys on SHALLOWNESS — `git rev-parse --is-shallow-repository`. A clone made with `--single-branch`
+and no `--depth` is **not shallow**: full history, every commit of the cloned branch present,
+`--is-shallow-repository` returns `false`. So the new detection does not fire, the report says
+`scope: full-history`, `status: scanned`, and a credential committed on any OTHER branch is as
+invisible as it was before BL-264.
+
+**Why the two are the same defect.** `--depth` implies `--single-branch` (git 2.54.0,
+`git clone --help`:251), and the narrowed refspec is what persists — ":267: Further fetches into the
+resulting repository will only update the remote-tracking branch for the branch this option was used
+for the initial cloning." BL-264's case is the narrowed refspec arriving as a SIDE EFFECT of depth.
+This entry is the narrowed refspec arriving on its own, without depth, where nothing in the report
+records it. The unread region is the same region; only the flag that created it differs.
+
+**Why it is not bundled.** BL-264 detects shallowness, which git exposes as a single boolean. Refspec
+narrowness has no equivalent one-shot predicate — it is a property of `remote.origin.fetch` and of
+which remote-tracking refs exist, and deciding what Scout should say about it (a fifth status word? a
+scope value? a separate field?) is a schema question on a `schemaVersion` that BL-264 has just moved
+from 1 to 2. Both reviewers said file it rather than widen that change, and this entry agrees.
+
+**Not measured beyond the reasoning above.** No fixture was built and no detection was prototyped,
+because no fix is proposed; a reproduction belongs with whatever shape the maintainer chooses.
+
+**Related:** `## BL-264:` (the shallow half, fixed; this is the same blind spot by another route),
+`## BL-147:` (a check that cannot run must not pass), `## BL-256:` (gates handing out receipts they
+did not earn).
