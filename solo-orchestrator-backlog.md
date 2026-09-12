@@ -18386,3 +18386,118 @@ filed separately in this batch, are the same wizard on the same downstream sessi
 
 *(BL-265 and BL-266 are named without `## …:` citations on purpose: each lands on its own branch, so
 on a branch carrying only this entry those citations would resolve to nothing.)*
+
+---
+
+## BL-270: a project adopted before the mode-vocabulary fix carries a `mode` no reader understands, and nothing shipped could repair it
+
+**Status:** Open — fix + suite built on branch `fix/bl270`, uncommitted. Not pushed, no PR.
+
+**Logged:** 2026-09-12. Depends on `## BL-268:`, which fixes the birth path and the readers; this is
+the migration for projects already on disk.
+
+**The gap.** BL-268 has two arms: adoption now writes `org` instead of `organizational`, and all
+three host drivers refuse a mode they do not know. Neither touches an existing project, and together
+they make an existing organizational adoptee STRICTLY WORSE:
+
+```
+before BL-268   host_verify_protection main organizational  -> rc 0, silent   (false pass)
+arms 1+2 only   host_verify_protection main organizational  -> rc 1, refused  (permanent)
+```
+
+**And there was no supported way out, measured rather than assumed.** Adoption cannot be re-run:
+`_adopt_preflight_adopted` (`scripts/lib/adopt/adopt-state.sh:231`, `# BL-242-PREFLIGHT-ARM1`)
+refuses on two witnesses — "this project has already been adopted — the manifest records it". And
+re-running the writer would falsify the record even if it were reachable: the same pass moves
+`adoptedAtCommit` to the current tip, which `scripts/lib/adoption-stamp.sh:218` documents as a known
+hazard in its own words. `upgrade-project.sh` handles `deployment`, which was already correct;
+`reconfigure-project.sh` says in its own `--help` that the deployment axis is not its to touch; and
+the manifest is config-guard protected, so hand-editing is refused by design.
+
+**Fix — one migration entry in `_run_idempotent_backfill`** (`scripts/upgrade-project.sh`),
+`# BL-270-MODE-VOCABULARY-BACKFILL`, beside the host backfill and the BL-030 fields backfill. No new
+flag: `--backfill-only` is already the operator entry point. No new helper, and no second
+derivation — it applies the same `organizational -> org` translation adoption now uses.
+
+**Why HERE and not on `reconfigure-project.sh`.** An earlier attempt put this on
+`reconfigure-project.sh --field mode` and it was wrong: every field that script supports is an
+OPERATOR CHOICE, and it states in its own `--help` that the deployment axis belongs to
+`upgrade-project.sh`. `_run_idempotent_backfill`'s own header is this case word for word — entries
+that "migrate pre-existing projects to the current schema without requiring the operator to also pick
+a track / deployment / POC transition" — and it already derives `.deployment` and `.poc_mode` from
+`phase-state.json`, which is the same derive-from-another-record shape a `mode` repair needs.
+
+**THE PREDICATE DIFFERS FROM THE TWO MANIFEST-FIELD SIBLINGS, AND IT IS SAID OUT LOUD.** The host
+block and the BL-030 block guard on the field being ABSENT; this one guards on it being PRESENT AND
+INVALID, because the defect WROTE a value rather than omitting one. **That is not a departure from
+the function's contract, and the first draft of this paragraph overstated it.** Counted: of the five
+blocks in `_run_idempotent_backfill`, only those two key on absence — the BL-174 gitignore block
+appends to an existing file, the vendored-skills sync overwrites existing `SKILL.md` files, and the
+BL-088 block `cp`s over existing scripts. The shared contract is the migration, not the predicate.
+
+**The contradiction refusal.** When `manifest.json` and `phase-state.json` disagree about
+`deployment` there is no correct mode to derive, and guessing writes a value that matches one record
+while contradicting the other — the shape of the defect being repaired. The block warns naming both
+and leaves `mode` alone. It does not abort: a backfill never fails the upgrade, which is the posture
+of every block in that function.
+
+**No audit row, deliberately.** The BL-030 sibling writes one because it also installs the filesystem
+gate and changes enforcement posture. The closer sibling — the host backfill — writes none, and this
+changes one derived field. `soif_append_approval_row` stays dead.
+
+**Dependencies:** `jq` only, as its neighbours. `python3` is already a hard dependency of
+`upgrade-project.sh` and is recorded as followup **F-012**; this block adds nothing to it.
+
+**Build note (2026-09-12, branch `fix/bl270`).** Suite
+`tests/test-bl270-mode-vocabulary-backfill.sh` extracts the REAL `_run_idempotent_backfill` from the
+shipped file and drives it against hermetic fixture projects — nothing re-implemented — then feeds the
+repaired value to the REAL `host_verify_protection` behind a stub `gh`. The extraction is ASSERTED
+(found, non-empty, parses) before any case runs, because every case below would otherwise pass against
+an empty shell. Declared tool dependencies: `jq` and `git`, both hard failures at startup.
+
+RED at `ceb450e`: **6 passed / 8 failed**, identical on both platforms. The six passes are controls —
+B0 (reachability: the function runs to completion on a project needing no repair, so a red below is
+not a broken fixture), B2, B3, B4, V0 and V2. GREEN **14 / 0** on macOS `/bin/bash` 3.2.57 and on
+bash 5.2.21 / jq 1.7 in `ubuntu:24.04` with `--network none`.
+
+Three mutants, each asserting the mutation landed (the mutated text absent, an exact changed-line
+count, and the extracted function still parsing) before any verdict: **MP1** drops the empty-string
+arm so the block claims an ABSENT `mode` — input that belongs to the sibling backfills — and B4 is
+what stops it; **MP2** removes the contradiction refusal; **MP3** is the plausible wrong fix, letting
+the derivation reach `deployment` too, where B1 still passes and only B2 sees it.
+
+**Two honesty notes on the cases.** **V2 passes at base as well**, for a different reason (the
+unvalidated driver accepts anything and the shared rules pass); its value is inside the GREEN run,
+where it shows V1 is the org rules firing rather than a blanket failure. And there is **no case for
+the drivers refusing the stranded value** — that is BL-268's second arm on a different branch, and
+asserting it here would make this suite fail on its own branch and pass only once the other landed.
+
+**Verified against this project's real manifest**, not only fixtures — a copy of a 21-key adopted
+manifest carrying `mode: "organizational"`:
+
+```
+BEFORE: {"mode":"organizational","deployment":"organizational"}   top-level keys: 21
+  [OK] mode repaired: organizational -> org (derived from deployment=organizational)
+AFTER:  {"mode":"org","deployment":"organizational"}              top-level keys: 21
+adoption.adoptedAtCommit unchanged: 72ecc8e2…   valid JSON: yes   re-run diff: 0 lines
+```
+
+The unchanged `adoptedAtCommit` is the point: this repairs the field WITHOUT touching the adoption
+provenance, which is exactly what re-running the writer could not do.
+
+**The command a stranded project runs**, from its root:
+
+```
+bash scripts/upgrade-project.sh --backfill-only
+```
+
+**Numbering.** BL-260 and BL-261 are reserved, not free, and this was checked rather than assumed:
+BL-260-CONTEXT-STATE and BL-260-PLUGIN-VERB in `scripts/verify-install.sh`, and
+BL-261-INTEGRATION-BRANCH in `scripts/pre-commit-gate.sh`, all three in committed code in a DOWNSTREAM
+project, plus two committed audit rows naming BL-261. <!-- lint-bl-markers: allow the three tokens are deliberately written bare; they are markers in a downstream project, not in this code surface, and backticking them would assert they resolve here --> 262-268 are taken by this batch and 269
+is held for the `scripts/validate.sh` phase-inference defect, so this is 270.
+
+**Related:** `## BL-268:` (the defect this migrates; read its observation section first),
+`## BL-242:` (`# BL-242-PREFLIGHT-ARM1`, the refusal that closes the re-adoption route),
+`## BL-030:` (the sibling manifest backfill this sits beside), `## BL-221:` (the same "the two birth
+paths must produce the same manifest shape" argument).

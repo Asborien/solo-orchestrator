@@ -561,6 +561,7 @@ jobs:
             tests/test-bl265-jq-reserved-label.sh
             tests/test-bl266-paused-section-marked-complete.sh
             tests/test-bl267-bare-question-mark.sh
+            tests/test-bl270-mode-vocabulary-backfill.sh
             tests/test-bl239-contributor-hooks.sh
             tests/test-bl230-workflow-html-lint-surface.sh
             tests/host-drivers/error-translate.test.sh

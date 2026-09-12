@@ -888,6 +888,12 @@ run_child_suite "tests/test-bl266-paused-section-marked-complete.sh" \
 run_child_suite "tests/test-bl267-bare-question-mark.sh" \
   "BL-267: a bare \`?\` re-asks instead of being saved as the answer, and the notice stays off stdout" \
   "BL-267 bare-question-mark tests FAILED (run tests/test-bl267-bare-question-mark.sh for details)"
+# BL-270: a project adopted before BL-268 carries a `mode` outside the mode
+# vocabulary, and nothing repaired it. The migration entry lives in
+# _run_idempotent_backfill, reached by upgrade-project.sh --backfill-only.
+run_child_suite "tests/test-bl270-mode-vocabulary-backfill.sh" \
+  "BL-270: the backfill repairs a present-and-invalid manifest mode, and the org rules then run" \
+  "BL-270 mode-vocabulary-backfill tests FAILED (run tests/test-bl270-mode-vocabulary-backfill.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
