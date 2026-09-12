@@ -16695,8 +16695,10 @@ this), `## BL-270:` (the repair whose leave-alone arm this slips through), `## B
 **Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** The repair is a hoist, which
 is a refactor; this entry reports the hazard and its evidence and stops there.
 
-**Logged:** 2026-09-13, after three separate fixes were each instructed to "reuse the framework's own
-helper" and each found the helper unreachable for a different local reason.
+**Logged:** 2026-09-13, after FOUR separate instructions to "reuse the framework's own helper" were each
+measured and each found the helper unreachable. Extended 2026-09-13 with the fourth, which is the
+sharpest: `## BL-263:`'s release half, where the helper IS reachable and the question still cannot be
+answered.
 
 **The defect.** The remote-URL-to-host inference — the four-arm `case` that maps an `origin` URL to
 `github` / `gitlab` / `bitbucket` / `other` — exists at FOUR sites, all of which ship into every
@@ -16721,9 +16723,9 @@ git show main:scripts/lib/host.sh | grep -c 'github\.com\*)'   ->  0
 Four copies, kept in sync by nobody, with an empty owner sitting beside them.
 
 **WHY THIS IS MORE THAN A DRY COMPLAINT: THE HELPERS ARE UNREACHABLE, AND THAT IS WHY THE COPIES KEEP
-BEING MADE.** Three fixes in one batch were each told to reuse an existing helper rather than
-duplicate. All three found the helper unreachable, and — importantly — for **two different
-mechanisms**, not one:
+BEING MADE.** **FOUR** instructions in one batch told a fix to reuse an existing helper rather than
+duplicate it. **All four were measured, and all four found the helper unreachable** — across **three
+distinct mechanisms**, the third of which is not a reachability problem at all:
 
 1. **Not sourceable.** `scripts/verify-install.sh` carries `set -euo pipefail` at `:2` and
    `guard_not_in_framework || exit 1` at `:20`, both at TOP LEVEL with no sourced-detection guard.
@@ -16731,10 +16733,50 @@ mechanisms**, not one:
    repo it exits the caller. This blocks `_detect_pipeline_host` (`:1319`) and the `_bl145_*` hook
    helpers (`:522`-`:644`) equally. Any caller that wants one of them can only copy it.
 2. **Sourceable but not shipped.** `scripts/lib/scout/scout-stack.sh` has no top-level guards at all
-   and would source cleanly — but Scout is absent from generated projects. Measured on a real adopted
-   project: `scripts/lib/` holds 41-odd shipped libraries and **no `scout/` directory**, and
-   `scout` appears nowhere in `scripts/lib/scaffold-shipped-set.sh`. So `_scout_pkg_managers` is
-   reachable only from `init.sh`, which is the one consumer that does not ship.
+   and would source cleanly — but Scout is absent from generated projects. Measured mechanically, not
+   observed: `scripts/lib/scaffold-shipped-set.sh` derives the copy list from init.sh's own `cp` lines,
+   and `soif_parse_shipped_scripts init.sh scripts` on `ceb450e` returns **70 paths, of which 24 are
+   `scripts/lib/` — exactly the 24 top-level ones**. `scripts/lib` holds 41 `.sh` files recursively;
+   the 9 under `scout/` and the 8 under `adopt/` ship in NONE of them. So `_scout_pkg_managers` is
+   reachable only from `init.sh`, which is itself not in the shipped set.
+3. **Reachable, shipped, sourceable — and nothing to detect at the moment it runs.** `## BL-263:`'s
+   RELEASE half asks the same detector the same question from `init.sh`, the ONE consumer where Scout
+   is reachable. It still cannot be answered. `generate_release` calls `get_release_vars` at
+   `init.sh:3284`, and `grep -n "package\.json\|package-lock\|pnpm-lock\|yarn\.lock" init.sh` exits 1
+   — init.sh never writes a manifest or a lockfile, for any language, at any point. **The information
+   does not exist yet.** No placement of the helper could fix this; only moving WHEN the pipeline is
+   rendered could.
+
+**THE ROLL-CALL, BECAUSE FOUR FOR FOUR IS THE ARGUMENT.** Each row is an instruction to reuse
+something, and the measurement that followed it. Not one of the four was a case of the fix author
+preferring to duplicate.
+
+| instructed to reuse | from | outcome | mechanism |
+|---|---|---|---|
+| `_bl145_*` hook helpers | `scripts/verify-install.sh:522`-`:644` | unreachable | 1 — not sourceable |
+| `_detect_pipeline_host` | `scripts/verify-install.sh:1319` | unreachable | 1 — not sourceable |
+| `_scout_pkg_managers` (CI half) | `scripts/lib/scout/scout-stack.sh:168` | unreachable | 2 — not shipped |
+| `_scout_pkg_managers` (release half) | same, called from `init.sh` | unanswerable | 3 — nothing to detect yet |
+
+**A NOTE ON THE COUNT, because the batch lead put it as "four different local reasons" and that is one
+more than the measurement supports.** Rows 1 and 2 share a mechanism exactly — same file, same two
+top-level lines, different helper about 1,080 lines apart. Four INSTANCES, three MECHANISMS. The
+weaker claim is the one that holds, and it is still the point: **this is not one broken helper.** Four
+independent attempts to do the right thing, against three different helpers in two different files,
+each blocked for a reason local to that helper. The codebase's actual working pattern for shared logic
+is duplication with a sync comment, and `# BL-084-TIER-KEY` exists because someone already knew that.
+
+**THE TWO COUNTEREXAMPLES, and they are the whole case for the repair.** Neither reviewer on this
+batch has found a third.
+- **`scripts/lib/host.sh` itself.** It ships (it is in the 24), it carries no top-level guards so it
+  sources cleanly, and **six shipped scripts do source it** — `validate.sh`, `check-gate.sh`,
+  `verify-install.sh`, `cut-release.sh`, `check-phase-gate.sh`, `process-checklist.sh`. The shared-
+  library pattern is not aspirational here; it is load-bearing and working in this exact file. The
+  host inference simply never moved into it.
+- **The `# BL-095-STATE-READERS` fence** in `helpers-core.sh:983`-`:1038`, which is the same move
+  already executed once, with its deliberately-unmigrated siblings named and reasoned in place.
+The repair is therefore not a new idea that needs designing. It is the file's own pattern, applied to
+the one thing that was left out of it.
 
 **A claim worth narrowing, because a first draft of this entry overstated it.** It is NOT true that
 this codebase has no shared-library surface: `scripts/lib/` carries 41 `.sh` files, and
@@ -16760,5 +16802,7 @@ recorded rather than attempted.
 **Related:** `## BL-095:` (`# BL-095-STATE-READERS`, the fence that is the model for the repair, and
 whose own header already names deliberately-unmigrated siblings), `## BL-209:` (the `_bl145_*`
 instance of the unsourceable half), `## BL-262:` (the `_detect_pipeline_host` instance, and the fix
-this hazard currently blocks), `## BL-084:` (`# BL-084-TIER-KEY`, the repo's own sync-siblings marker
-convention for the cases where a hoist is not taken).
+this hazard currently blocks), `## BL-263:` (BOTH remaining instances — the not-shipped half and the
+nothing-to-detect half — and, like `## BL-262:`, a fix withdrawn because of this hazard),
+`## BL-084:` (`# BL-084-TIER-KEY`, the repo's own sync-siblings marker convention for the cases where
+a hoist is not taken).
