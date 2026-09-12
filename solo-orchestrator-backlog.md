@@ -15964,6 +15964,25 @@ that "migrate pre-existing projects to the current schema without requiring the 
 a track / deployment / POC transition" — and it already derives `.deployment` and `.poc_mode` from
 `phase-state.json`, which is the same derive-from-another-record shape a `mode` repair needs.
 
+**THE NATIVENESS CITATIONS, ON `main`, WHICH AN EARLIER CUT DID NOT MAKE.** That cut argued
+nativeness from adoption's writer — unverifiable on this branch, and the weaker argument anyway. Two
+lines on `main` settle it:
+
+- **`init.sh:4733-4735`** is the identical translation, in the file that births every project:
+  ```
+  # Map DEPLOYMENT "organizational" → "org" for consistency with spec
+  _RESOLVED_MODE="$DEPLOYMENT"
+  [ "$_RESOLVED_MODE" = "organizational" ] && _RESOLVED_MODE="org"
+  ```
+  Same field, same shape, same direction. This block applies the mapping the scaffolding path has
+  always applied; it invents nothing.
+- **`upgrade-project.sh:494`**, inside this very function (`_run_idempotent_backfill` opens at
+  `:488`), is a PRESENT-AND-WRONG-SHAPE predicate:
+  `if [ -d templates/pipelines/ci ] && [ ! -d templates/pipelines/ci/github ] && ls templates/pipelines/ci/*.yml …`
+  The directory EXISTS; the migration fires because its LAYOUT is wrong. That is structurally the same
+  guard as this block's "present, but outside the vocabulary", and it is the precedent that settles
+  the predicate question outright rather than arguing it.
+
 **THE PREDICATE DIFFERS FROM THE TWO MANIFEST-FIELD SIBLINGS, AND IT IS SAID OUT LOUD.** The host
 block and the BL-030 block guard on the field being ABSENT; this one guards on it being PRESENT AND
 INVALID, because the defect WROTE a value rather than omitting one. **That is not a departure from
@@ -16033,6 +16052,30 @@ BL-260-CONTEXT-STATE and BL-260-PLUGIN-VERB in `scripts/verify-install.sh`, and
 BL-261-INTEGRATION-BRANCH in `scripts/pre-commit-gate.sh`, all three in committed code in a DOWNSTREAM
 project, plus two committed audit rows naming BL-261. <!-- lint-bl-markers: allow the three tokens are deliberately written bare; they are markers in a downstream project, not in this code surface, and backticking them would assert they resolve here --> 262-268 are taken by this batch and 269
 is held for the `scripts/validate.sh` phase-inference defect, so this is 270.
+
+**TWO CORRECTIONS TO THIS ENTRY AND THE CODE COMMENT, BOTH AGAINST US.**
+
+**The stated placement dependency does not exist.** The block sits after the BL-030 backfill, and both
+this entry and the in-code comment justify that by saying it "derives from `deployment`, and that
+block is what guarantees `deployment` is present". Neither half holds. The block reads
+`phase-state.json` itself and falls back to it, so moving it ABOVE BL-030 produces identical results —
+measured by the reviewer. And BL-030 only runs when `enforcement_level` is absent-or-empty, so it
+guarantees nothing in the general case. The ordering is harmless but the REASON given for it is wrong,
+and a reader who relies on that sentence will draw a false conclusion about the block's dependencies.
+**FIXED in the code comment too**, which now states the ordering is conventional rather than
+dependent, and names the hazard the order actually creates.
+
+**Where the order DOES matter, the block consumes a neighbour's guess under an `[OK]`.** On a
+`phase-state.json` with no `.deployment`, BL-030 prints `assuming 'personal' for backfill` and writes
+it — a warned GUESS. This block then reads that value back as fact and reports
+`[OK] mode repaired: organizational -> personal`. An organizational adoptee is silently converted to
+personal, which is the same class of outcome this entry exists to prevent. The block refuses to derive
+from a manifest/phase-state DISAGREEMENT but happily derives from an invented value, and it announces
+the result as a repair. **FIXED.** `phase-state.json` is now treated as the authority for
+`deployment`: when it records none, the block REFUSES rather than deriving, and carries BL-030's own
+`--deployment organizational` remedy into its warning. It refuses a DISAGREEMENT, so it must refuse an
+INVENTION too. **Case B7** pins it, verified non-vacuous by removing the guard on a mirror — without
+it the block prints `[OK] mode repaired: organizational -> org` off a guessed value.
 
 **Related:** `## BL-268:` (the defect this migrates; read its observation section first),
 `## BL-242:` (`# BL-242-PREFLIGHT-ARM1`, the refusal that closes the re-adoption route),
