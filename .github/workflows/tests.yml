@@ -578,6 +578,7 @@ jobs:
             tests/test-bl286-integration-branch.sh
             tests/test-bl209-hooksdir-resolution.sh
             tests/test-bl275-selfapproval-remedy.sh
+            tests/test-bl262-reconfigure-ci-host.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────

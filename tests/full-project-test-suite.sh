@@ -921,6 +921,13 @@ run_child_suite "tests/test-bl209-hooksdir-resolution.sh" \
 run_child_suite "tests/test-bl275-selfapproval-remedy.sh" \
   "BL-275: the self-approval remedy names no non-existent flag and does not advise the failing action" \
   "BL-275 self-approval remedy tests FAILED (run tests/test-bl275-selfapproval-remedy.sh for details)"
+# BL-262: reconfigure-project.sh's CI regeneration had no host awareness — a
+# template path missing the per-host directory (so it never resolved, and the
+# warn arm ran under an [OK] banner at rc 0) and a hardcoded GitHub
+# destination. Cases pin template CONTENT per host, not existence.
+run_child_suite "tests/test-bl262-reconfigure-ci-host.sh" \
+  "BL-262: reconfigure regenerates CI from the per-host template to the per-host destination" \
+  "BL-262 reconfigure-ci-host tests FAILED (run tests/test-bl262-reconfigure-ci-host.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
