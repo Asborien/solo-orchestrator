@@ -15928,7 +15928,7 @@ absent-vs-unreadable family).
 
 ## BL-268: adoption writes the `deployment` vocabulary into the `mode` field, and `host_verify_protection` — the one function that reads it — validates nothing, so an adopted ORGANIZATIONAL project is measured against the personal branch-protection bar and told it passed
 
-**Status:** Open — fix + suite built on branch `fix/bl268`, uncommitted. Not pushed, no PR.
+**Status:** Open — fix + suite committed on branch `fix/bl268` at `4ae2d3a`. Not pushed, no PR.
 
 **Logged:** 2026-09-12, found by reading the two birth paths against each other.
 
