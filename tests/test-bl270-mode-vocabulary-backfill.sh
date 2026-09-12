@@ -94,7 +94,21 @@ JSON
 # run_backfill <dir> [extracted-fn-file] → BF_OUT, BF_RC
 run_backfill() {
   local d="$1" fn="${2:-$BACKFILL_FN}"
+  # THE REDIRECTION IS ON THE COMMAND, AND THAT IS LOAD-BEARING. A first cut
+  # wrote `2>&1` on its own line before the closing paren, where it is a NULL
+  # COMMAND rather than a redirection — and being last, its status is what `$?`
+  # captures. `BF_RC` was therefore ALWAYS 0, so every `[ "$BF_RC" -eq 0 ]`
+  # below could not fail for any reason inside the function, including B0,
+  # which is LABELLED a reachability control and claims to observe rc=0.
+  # Measured: `f7() { return 7; }` in that shape yields 0; on the command, 7.
+  # A check that cannot run must not pass.
+  #
+  # `set -e` matches production. `_run_idempotent_backfill` runs under
+  # upgrade-project.sh's `set -euo pipefail`, and this harness ran it under
+  # `-uo` only — so an early errexit abort inside the block would have been
+  # invisible here while being fatal in the real script.
   BF_OUT="$(
+    set -euo pipefail
     cd "$d" || exit 90
     PROJECT_ROOT="$d"
     SCRIPT_DIR="$REPO_ROOT/scripts"
@@ -103,8 +117,8 @@ run_backfill() {
     . "$REPO_ROOT/scripts/lib/helpers.sh" >/dev/null 2>&1 || exit 91
     # shellcheck source=/dev/null
     . "$fn" || exit 92
-    _run_idempotent_backfill
-  2>&1 )"
+    _run_idempotent_backfill 2>&1
+  )"
   BF_RC=$?
   return 0
 }
@@ -205,6 +219,25 @@ else
     pass "B6 — an unknown deployment is refused by name; mode left alone"
   else
     fail_ "B6" "mode=[$(mval "$P6" mode)] out=[$(printf '%s' "$BF_OUT" | grep -i derive | head -1)]"
+  fi
+fi
+
+# B7 — THE GUESS-REFUSAL. When phase-state carries no `.deployment`, the BL-030
+# block above writes a WARNED GUESS of "personal" into the manifest. Deriving
+# from that and announcing `[OK] mode repaired: organizational -> personal`
+# would silently demote an organizational project — the same class of outcome
+# this block exists to prevent. It refuses a DISAGREEMENT, so it must refuse an
+# INVENTION too.
+P7="$(newtmp)/p"
+if ! mk_proj "$P7" organizational organizational --no-phase-state; then
+  fail_ "B7 setup" "could not build the no-phase-state fixture"
+else
+  run_backfill "$P7"
+  if [ "$(mval "$P7" mode)" = "organizational" ] \
+     && printf '%s' "$BF_OUT" | grep -q "records no 'deployment'"; then
+    pass "B7 — with no phase-state deployment the block REFUSES rather than deriving from BL-030's assumed default"
+  else
+    fail_ "B7" "mode=[$(mval "$P7" mode)] out=[$(printf '%s' "$BF_OUT" | grep -i deploy | head -1)]"
   fi
 fi
 
@@ -329,7 +362,8 @@ fi
 
 # MP2 — remove the contradiction refusal. The block then derives from one
 # record while contradicting the other. B5 is what stops it.
-mutate 's|^        if \[ -n "\$bl270_ps" \] && \[ -n "\$bl270_dep" \] && \[ "\$bl270_ps" != "\$bl270_dep" \]; then$|        if false; then|' \
+# The arm is an `elif` since the guess-refusal was added above it.
+mutate 's|^        elif \[ -n "\$bl270_ps" \] && \[ -n "\$bl270_dep" \] && \[ "\$bl270_ps" != "\$bl270_dep" \]; then$|        elif false; then|' \
        '"\$bl270_ps" != "\$bl270_dep"' 2
 if [ -z "$MUT" ]; then
   fail_ "MP2 setup" "the contradiction-refusal mutation did not apply cleanly — $MUT_WHY"

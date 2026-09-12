@@ -624,8 +624,22 @@ _run_idempotent_backfill() {
   #
   # Idempotent by the same standard as its neighbours: an absent or
   # already-valid `mode` is left untouched, so a second run is a no-op.
-  # Placed AFTER the BL-030 block because it derives from `deployment`, and
-  # that block is what guarantees `deployment` is present.
+  #
+  # ORDERING. It sits after the BL-030 block, but NOT because of a dependency —
+  # an earlier cut of this comment claimed BL-030 "guarantees `deployment` is
+  # present" and that was wrong twice over. This block reads `phase-state.json`
+  # itself and falls back to it, so moving it above BL-030 produces identical
+  # results; and BL-030 only runs when `enforcement_level` is absent-or-empty,
+  # so it guarantees nothing in the general case. The order is conventional,
+  # matching the manifest-field blocks above, and nothing here depends on it.
+  #
+  # What the order DOES create is the hazard the guard below closes: when
+  # `phase-state.json` carries no `.deployment`, BL-030 prints "assuming
+  # 'personal' for backfill" and WRITES that guess into the manifest. Reading it
+  # back as fact would let this block print `[OK] mode repaired: organizational
+  # -> personal` and silently demote an organizational project — the same class
+  # of outcome this block exists to prevent. It refuses to derive from a
+  # DISAGREEMENT, so it must not derive from an INVENTION either.
   #
   # Dependencies: `jq` only, as its neighbours. python3 is already a hard
   # dependency of this script and is recorded as followup F-012; this block
@@ -644,7 +658,16 @@ _run_idempotent_backfill() {
           [ "$bl270_ps" = "null" ] && bl270_ps=""
         fi
         [ -z "$bl270_dep" ] && bl270_dep="$bl270_ps"
-        if [ -n "$bl270_ps" ] && [ -n "$bl270_dep" ] && [ "$bl270_ps" != "$bl270_dep" ]; then
+        if [ -z "$bl270_ps" ]; then
+          # PHASE-STATE IS THE AUTHORITY, and without it the manifest's
+          # `deployment` cannot be trusted: on exactly this input the BL-030
+          # block above writes a WARNED GUESS of "personal". Deriving `mode`
+          # from a guess and announcing it as a repair is the failure this
+          # block exists to prevent, so refuse and carry BL-030's own remedy.
+          print_warn "phase-state.json records no 'deployment' — mode left as '$bl270_mode'."
+          print_warn "  The manifest's deployment may be the BL-030 backfill's assumed default."
+          print_warn "  Set it for real, then re-run:  scripts/upgrade-project.sh --deployment organizational"
+        elif [ -n "$bl270_ps" ] && [ -n "$bl270_dep" ] && [ "$bl270_ps" != "$bl270_dep" ]; then
           # REFUSE on a disagreement. With the two records in conflict there is
           # no correct mode to derive, and guessing writes a value that matches
           # one record while contradicting the other — which is the shape of the
