@@ -238,8 +238,9 @@ _scout_secrets_render() {
 # scout_secrets_scan ROOT WORK — fills WORK with the secrets section's data.
 #
 # Writes (all inside WORK, which the entry script owns and removes):
-#   secstatus   scanned | tool-unavailable | scan-failed
-#   secscope    full-history | working-tree-only | (empty when not scanned)
+#   secstatus   scanned | scanned-partial | tool-unavailable | scan-failed
+#   secscope    full-history | shallow-history | working-tree-only | (empty when not scanned)
+#   seccommits  commits reachable from HEAD, or empty off a repository
 #   secversion  the tool's own version string
 #   seccount    the finding count, or empty when nothing was scanned
 #   secconfig   a repo-local gitleaks config path, or empty
@@ -247,20 +248,22 @@ _scout_secrets_render() {
 #   secjson     one JSON finding object per line (the projection)
 #   secmissing  allowlisted fields the report did not carry
 #
-# THE STATUS VOCABULARY IS THREE WORDS BECAUSE THE CLAIMS ARE DIFFERENT.
+# THE STATUS VOCABULARY IS FOUR WORDS BECAUSE THE CLAIMS ARE DIFFERENT.
 # `scanned` with zero findings is a positive result. `tool-unavailable` is
 # "nobody looked". `scan-failed` is "we looked and something went wrong".
-# Collapsing any two of these into an empty findings array is the
-# silent-success defect class, aimed at the one section of this report where a
-# false clean bill of health has a credential behind it.
+# `scanned-partial` is "we looked at part of it and cannot speak for the rest"
+# (BL-264 — a shallow clone). Collapsing any two of these into an empty
+# findings array is the silent-success defect class, aimed at the one section
+# of this report where a false clean bill of health has a credential behind it.
 scout_secrets_scan() {
   local root="$1" work="$2"
-  local _bin _mode _scope _flags _rc _version _count _cfg f
+  local _bin _mode _scope _flags _rc _version _count _cfg _commits _gitdir f
 
   printf 'gitleaks\n' > "$work/sectool"
   : > "$work/secjson"
   : > "$work/secmissing"
   : > "$work/secscope"
+  : > "$work/seccommits"
   : > "$work/seccount"
   : > "$work/secconfig"
   : > "$work/secversion"
@@ -285,12 +288,37 @@ scout_secrets_scan() {
   # precisely what the emitted GitLab/Bitbucket templates never do. Off a
   # repository there is no history to walk, and the scope field says so rather
   # than letting a working-tree scan be read as a history scan.
-  _mode="dir"; _scope="working-tree-only"
+  #
+  # A SHALLOW CLONE IS THE SAME LIE WITH A REPOSITORY UNDERNEATH IT.  # BL-264-SHALLOW-SCOPE
+  # `gitleaks git` walks what git HAS, and a `--depth 1` checkout has one
+  # commit. It reads it, finds nothing, and exits 0 — there is no error for the
+  # 3,652 commits it was never given. The scan is not what is wrong here; the
+  # CLAIM is. Measured before this arm existed: a three-commit fixture whose
+  # first commit adds an AKIA key and whose second removes it reports
+  # findingCount 1 from a full clone and `scanned / full-history / 0` from a
+  # `--depth 1` clone of the same repository — a clean bill of health over a
+  # live credential, issued under the word "full". `# BL-147` states the
+  # framework's own rule for this shape: a check that cannot run must not pass.
+  _mode="dir"; _scope="working-tree-only"; _commits=""
   if command -v git >/dev/null 2>&1 \
      && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     _mode="git"; _scope="full-history"
+    # `--is-shallow-repository` is the reading that also holds inside a linked
+    # worktree, where the `shallow` marker lives in the MAIN git directory and
+    # `--absolute-git-dir` points at `.git/worktrees/NAME` instead. The file
+    # test is the fallback for a git too old to answer, and it is absolute
+    # because a relative `.git/shallow` would be resolved against Scout's cwd
+    # rather than against the project it was pointed at.
+    _gitdir=$(git -C "$root" rev-parse --absolute-git-dir 2>/dev/null)
+    if [ "$(git -C "$root" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ] \
+       || { [ -n "$_gitdir" ] && [ -f "$_gitdir/shallow" ]; }; then
+      _scope="shallow-history"
+    fi
+    _commits=$(git -C "$root" rev-list --count HEAD 2>/dev/null)
+    case "$_commits" in ''|*[!0-9]*) _commits="" ;; esac
   fi
   printf '%s\n' "$_scope" > "$work/secscope"
+  printf '%s\n' "$_commits" > "$work/seccommits"
 
   # A project's OWN gitleaks config can suppress findings entirely — measured:
   # a `.gitleaks.toml` allowlisting `AKIA[A-Z2-7]{16}` takes a two-plant
@@ -341,6 +369,18 @@ scout_secrets_scan() {
   _count=$(grep -c '' "$work/secjson" 2>/dev/null)
   case "$_count" in ''|*[!0-9]*) _count=0 ;; esac
   printf '%s\n' "$_count" > "$work/seccount"
+  # BL-264: `scanned-partial` is a FOURTH status word, not a flag beside the
+  # third, because the three-word vocabulary above is what consumers switch on
+  # and both of adoption's readers spell that switch `[ "$status" != "scanned" ]`.
+  # A boolean sibling would have left every one of them reading a shallow scan
+  # as a completed one. The findings it did produce are real and are still
+  # emitted; what the word withdraws is the claim that zero means zero.
+  if [ "$_scope" = "shallow-history" ]; then
+    printf 'scanned-partial\n' > "$work/secstatus"
+    printf '%s\n' "This is a SHALLOW clone. Git has only ${_commits:-an unknown number of} commit(s) of this project here, so the scanner read those and NOTHING ELSE — and a credential that was committed and later removed lives precisely in the part it could not read. A count of zero means zero in the commits present; it is not a statement about this project's history. Run 'git fetch --unshallow' and scan again before treating this project as free of committed credentials." \
+      > "$work/secnote"
+    return 0
+  fi
   printf 'scanned\n' > "$work/secstatus"
   printf '%s\n' "Every finding below is built from a fixed list of seven fields. The secret VALUE is never one of them, and neither is the commit message — which the scanner does not redact and which has been demonstrated to carry one." \
     > "$work/secnote"

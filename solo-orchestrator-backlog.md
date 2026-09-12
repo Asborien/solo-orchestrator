@@ -19692,3 +19692,187 @@ PR description.
 **Related:** `## BL-229:` (the same defect class, the resolver this fix asks, and the note that named
 this file), `## BL-084:` (`# BL-084-TIER-KEY`, the sync-sibling trap this avoids re-creating),
 `## BL-231:` (the absent-vs-unreadable family — here, absent-and-unreported).
+
+---
+
+## BL-264: Scout reports a shallow clone as a completed `full-history` secrets scan — a `--depth 1` checkout is issued a clean bill of health over a credential the scanner was never given
+
+**Status:** Open — fix prepared on `fix/scout-shallow-history-claim`, not yet raised as a PR. Suite
+`tests/test-bl264-scout-shallow-history-claim.sh` **10 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in
+`ubuntu:24.04` as a non-root user, against RED **2 / 8** on unmodified `main` (`ceb450e`); three
+mutants, all killed. Registered in the aggregator and in the `tests.yml` unit lane
+(`lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
+
+**The Linux run needed gitleaks installed, and the suite is right to insist.** A first container run
+reported `0 passed, 0 failed, 1 skipped` at exit 0 — the whole suite skipped, because the image had no
+gitleaks. That is the suite behaving correctly: it skips LOCALLY and **fails when `CI` is set**, which
+is the posture the tests.yml gitleaks step was added for (`the twelve gitleaks-gated cases were
+skipping here too`). Re-run with gitleaks 8.30.1 present and `CI=1`: **10 / 0, 0 skipped.** Recorded
+because a green container run that ran nothing is exactly the unearned receipt this entry is about.
+
+**Numbering.** Filed as BL-264, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
+the next free number here, and two carried fixes in a DOWNSTREAM project already hold BL-260 and
+BL-261 in committed code and in a committed audit trail, unfiled in this backlog. <!-- lint-bl-markers: allow the downstream marker tokens are deliberately not backticked; they are markers in another project, not in this code surface -->
+So **BL-260 and BL-261 are reserved, not free.** The other two of the three are `## BL-262:` and
+`## BL-263:`; read all three numbers as provisional until those downstream carries are filed, since
+nothing here holds a number until an entry header claims it.
+
+
+**Logged:** 2026-09-12, from a live report that claimed `full-history` having reached **1 of 3,653
+commits**.
+
+**The defect.** `scripts/lib/scout/scout-secrets.sh` decides the secrets scope by asking exactly one
+question — is this inside a work tree? — and answers `full-history` whenever it is:
+
+```
+  _mode="dir"; _scope="working-tree-only"
+  if command -v git >/dev/null 2>&1 \
+     && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    _mode="git"; _scope="full-history"
+  fi
+```
+
+A shallow clone is inside a work tree. `gitleaks git` then walks the commits git *has*, which on a
+`--depth 1` checkout is one, finds nothing in it, and exits 0. **Nothing fails.** There is no error
+for the 3,652 commits the scanner was never handed, so the report takes the clean path and records
+`status: "scanned"`, `scope: "full-history"`, `findingCount: 0`. The scan is not what is wrong here;
+the **claim** is. `grep -rn shallow scripts/lib/scout/` returns **zero** — the case was never
+enumerated.
+
+**Measured, both directions, on the same repository.** A three-commit fixture whose first commit adds a
+BASE32-valid `AKIA` key, whose second removes it and whose third is noise — so the key is absent from
+the working tree and only a history walk can find it — cloned twice from the same origin:
+
+```
+=== full ===
+commits reachable : 3
+is-shallow        : false
+plant in worktree : 0 file(s)
+{"schemaVersion":1,"secrets":{"status":"scanned","scope":"full-history","findingCount":1}}
+=== shallow ===
+commits reachable : 1
+is-shallow        : true
+plant in worktree : 0 file(s)
+{"schemaVersion":1,"secrets":{"status":"scanned","scope":"full-history","findingCount":0}}
+```
+
+The two reports differ only in the number that matters, and neither says so. The second is a clean bill
+of health issued under the word "full" over a live credential.
+
+**Why this section and not another.** `docs/adoption.md` § "What every adoption gets" promises the
+secrets scan unconditionally — *"The full secrets scan. History does not care what phase you land
+at."* — and that page's own honesty table already marks the adjacent capability as absent (*"Adoption
+that can fail on a serious finding — the secrets stop, not built (WP10)"*). A scan that silently
+narrows to one commit is worse than the one that is documented as missing, because it is documented as
+present. `scout-secrets.sh`'s header states the governing rule in its own words: collapsing two
+different claims into an empty findings array "is the silent-success defect class, aimed at the one
+section of this report where a false clean bill of health has a credential behind it". The framework
+legislates the same shape for CI in `# BL-147` (`templates/pipelines/ci/github/typescript.yml`): *"a
+check that cannot run must not pass."*
+
+**Who consumes it.** Not a person — `scripts/lib/adopt/`. Both readers spell their switch on the
+status word alone: `adopt-tools.sh` `_adopt_rescan_secrets` (`[ "$status" != "scanned" ] || return 0`)
+and `adopt-stubs.sh` `adopt_stub_secrets_disposition` (`if [ "$status" != "scanned" ]`). That is what
+decides the fix's shape below, and it is what `MP2` exists to prove.
+
+**The fix — `# BL-264-SHALLOW-SCOPE`.** Degrade the recorded scope and the status; do not refuse, and do
+not warn-and-keep-the-claim.
+
+- **Not refuse.** Scout is a read-only pre-adoption survey pointed at somebody else's checkout, and
+  `--depth 1` is what CI hands you. Refusing would discard six perfectly valid sections to punish one,
+  and the operator's response to a tool that refuses to run is to stop running it.
+- **Not warn-and-continue.** The consumer is a shell script reading JSON. A sentence in `note` reaches
+  nobody who acts on it.
+- **Degrade, and say so in a value.** `scope` becomes `shallow-history`, beside the existing
+  `working-tree-only` degradation for a non-repository — the same arm for the same reason, a case §6.1
+  did not enumerate. `status` becomes a **fourth word**, `scanned-partial`, because a boolean sibling
+  would have left both adoption readers above reading a shallow scan as a completed one. A new
+  `commitsScanned` integer records what the checkout actually had. Findings that *were* produced are
+  still emitted — narrowing the scope does not make what was found inside it untrue — and the status
+  word is what withdraws the zero.
+
+**`schemaVersion` goes 1 → 2.** A reader written against 1 is entitled to an exhaustive
+`secrets.status` of three words and a `secrets.scope` of two, and both enumerations widened.
+`commitsScanned` is additive and would not have justified a bump on its own. The precedent is
+`scripts/lib/adoption-stamp.sh`, whose own comment records that its 1 → 2 "is not cosmetic".
+
+**The suite.** `tests/test-bl264-scout-shallow-history-claim.sh`, unit lane, ~5s. `S0` asserts the
+fixture is sound **before** anything else — 3 commits against 1, the plant absent from the working
+tree, the full scan finding it — so a dud fixture fails loudly rather than certifying nothing (the WP2
+suite's G0 doctrine; BASE32-validity is load-bearing and a plant containing a character outside
+`[A-Z2-7]` yields zero findings and a vacuous green). `S1` holds the full clone unchanged, which is the
+guard against a fix that calls every repository partial. `S2` is the bug, stated as the weakest
+assertion that excludes it. `S3` is the design: the value must be machine-readable — a scope enum, a
+status word distinct from `scanned`, and the depth as a JSON **number**. `S5` holds §6.1's existing
+non-repository arm. Three mutants on mirrors: `MP1` re-points the detection at the old value and the
+false claim returns; `MP2` keeps the honest scope but restores `status: "scanned"` — the half-fix a
+reviewer would most plausibly accept, and the one that keeps the false clean bill for every consumer
+that matters; `MP3` deletes `commitsScanned` while leaving the warning prose intact, which only `S3`'s
+machine-readable demand notices.
+
+**`file://` in the fixture is load-bearing.** `git clone --depth 1 /local/path` silently ignores the
+depth and hardlinks the whole object store, which would make the shallow arm a second full clone and
+the entire suite vacuously green.
+
+**Regressions measured, not assumed.** `test-brownfield-wp1-scout.sh` 33/2 and
+`test-brownfield-wp2-scout-sections.sh` 51/2 — **byte-identical failure sets before and after** on this
+host (`V2`/`V6` reality probes; `C1`/`C3` hook descriptions), confirmed by stashing the change and
+re-running. `wp2`'s `G3`, which is §6.1's full-history claim under test, stays green. One existing pin
+moved with the schema: `test-brownfield-wp1-scout.sh` `A2` asserted `schemaVersion == 1`.
+
+**Not covered, and deliberately.** A **partial** clone (`--filter=blob:none`) is not shallow: git has
+every commit and fetches blobs on demand, so `gitleaks git` still walks the whole history. It reports
+`full-history` and that is correct. A shallow clone whose depth exceeds the real history is likewise
+not shallow — git writes no marker — and reports `full-history` correctly.
+
+**EXTENSION (2026-09-12, same branch) — the SECOND reader.** This entry's own note says
+`scanned-partial` is a fourth status word and that "both of adoption's readers spell that switch
+`[ "$status" != "scanned" ]`". A first cut updated one of them — `adopt_stub_secrets_disposition`.
+The other is `_adopt_rescan_secrets` (`scripts/lib/adopt/adopt-tools.sh`), and the same spelling put
+`scanned-partial` on the WRONG side of its guard.
+
+**The guard.** `[ "$status" != "scanned" ] || return 0` treats a partial scan as "nobody looked", so a
+shallow adoption re-walked the whole history. That is exactly the cost the function's own doc-comment
+says the guard exists to avoid — "re-running the scanner over it would cost a full history walk and
+replace the measurement the stamp names with a different one" — and its stated rule decides the case:
+**"Only a report that says nobody looked is worth asking again."** A partial scan LOOKED; a tool ran
+and produced real findings over the history it could reach. `# BL-264-RESCAN-PARTIAL` moves it to the
+`scanned` side. The re-scan happens moments after the survey in the SAME clone at the same depth, so
+it would return `scanned-partial` again; the remedy for a shallow clone is the operator's deliberate
+`git fetch --unshallow` and re-scan, which the disposition stub now tells them to do, not an automatic
+re-walk inside the adoption run.
+
+**The enumeration.** The `# BL-242-RESCAN-HONEST` case had no `scanned-partial` arm, so a re-scan that
+came back partial fell through to `"The scan was re-run; its status is 'scanned-partial'."` — a status
+string and nothing about what it means, on the one surface where "we could not read all of it" must
+not be heard as "we found nothing". **That arm is still reachable after the guard change**, and the
+path is worth stating because it is not obvious: a re-scan triggered by `tool-unavailable` installs
+the scanner and then meets the shallow clone. The arm now says which part was read and names the
+remedy.
+
+**Two cases, and the control is the point.** **S7** drives the REAL `_adopt_rescan_secrets` with
+`ADOPT_FRAMEWORK_ROOT` pointed at an empty directory: past the guard the function hits its
+missing-Scout arm and says so, so "did the guard return early" is observable with no scanner ever
+running. Its control runs FIRST — `tool-unavailable` must still get PAST the guard — because an early
+return for every input would satisfy S7 otherwise. **S8** is source-level and labelled so: the arm is
+reachable only through a real scanner meeting a real shallow clone inside an adoption run, so the
+assertion is scoped to the `# BL-242-RESCAN-HONEST` block and fails if that block cannot be found
+rather than passing by absence.
+
+Suite **13 / 0** on macOS `/bin/bash` 3.2.57 and on bash 5.2.21 / gitleaks 8.28.0 in `ubuntu:24.04`.
+Scoped RED with ONLY `adopt-tools.sh` reverted: **11 / 2**, both new cases failing and the control
+passing. Full RED with all four fix files reverted: **3 / 10**.
+
+**One unexplained flake, recorded rather than smoothed over.** The first Linux run of this suite
+reported **12 / 1**; three consecutive re-runs on the identical stage reported 13 / 0. The failing
+case was not captured and the cause is unidentified. Four runs to one is not a clean bill of health
+for the suite's determinism, and the next person to see a red here should suspect the suite before
+the fix.
+
+**Regression note.** `test-brownfield-wp1-scout.sh` reports **33 / 2** on this branch — and the same
+**33 / 2**, on the same two cases (V2 `pre_commit_hooks_installed`, V6 `initialization_verified`),
+from a tree built by `git archive main`. Pre-existing on main and unrelated to this entry.
+
+**Related:** `## BL-147:` (a check that cannot run must not pass — the same principle, in CI),
+`## BL-256:` (gates handing out receipts they did not earn), `## BL-231:` (the absent-vs-unreadable
+family), `## BL-242:` (`# BL-242-RESCAN-HONEST`, the enumeration this widens).
