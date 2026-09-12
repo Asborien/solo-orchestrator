@@ -15925,3 +15925,85 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+## BL-267: the wizard's own `?` help key is recorded as the answer at 81 of its prompts, because only one of the two prompt helpers handles it
+
+**Status:** Open — fix + suite built on branch `fix/bl267`, uncommitted. Not pushed, no PR.
+
+**Logged:** 2026-09-12, observed on `one_time_budget` and `users_12mo` in a downstream adoption's
+`.claude/intake-progress.json`, both stored as the literal string `?`.
+
+**The defect.** `scripts/intake-wizard.sh` has two prompt helpers and they disagree about `?`.
+`prompt_with_suggestions` treats it as the help key, exactly as the wizard's own banner promises:
+
+```
+    if [ "$result" = "?" ]; then
+      show_suggestions "$suggestion_key"
+      continue
+    fi
+```
+
+`prompt_input` has no such arm. A `?` falls straight through to `echo "$result"`, and the caller's
+very next line is a `save_answer`:
+
+```
+  users_12mo=$(prompt_input "Expected users at 12 months" "")
+  save_answer "users_12mo" "$users_12mo"
+```
+
+**Blast radius, counted.** `grep -c '=$(prompt_input "'` → **81** call sites, against **18** for
+`prompt_with_suggestions`. The banner the operator reads three lines before the first prompt says
+"Type '?' at prompts marked with [? for suggestions] to see options" — and `prompt_input` never
+prints that marker, so the operator who tries `?` anywhere else is not misreading the instructions so
+much as discovering that four-fifths of the wizard does not implement them. The junk value is then
+carried into `PROJECT_INTAKE.md`'s Answers table by `render_intake_file`.
+
+**Fix.** `# BL-267-BARE-QUESTION-MARK`: in `prompt_input`, after the pause arm, treat a bare `?` as a
+request for help, say there is none for this field, and ask again.
+
+**The fix's own hazard, and it is not hypothetical.** `prompt_input` returns its value **on stdout** —
+every one of the 81 call sites is `x=$(prompt_input …)` — and this repo's `print_info`
+(`scripts/lib/helpers-core.sh:50`) writes to **stdout** as well. A notice printed without `>&2` is
+therefore captured as part of the answer. Measured, on the first cut of this fix:
+
+```
+v=$(printf "?\n42\n" | prompt_input "Expected users at 12 months" "" 2>/dev/null); echo "[$v]"
+[[INFO] No suggestions for this field — answer it directly, or type N/A.
+42]
+```
+
+That is a strictly worse value than the `?` it replaced. The shipped arm redirects with `>&2`, which
+is what the sibling `prompt_with_suggestions` already does for its own retry line
+(`echo "  Please enter a value or type ? for suggestions." >&2`). Verified after the redirect:
+`CAPTURED=[42]`.
+
+**Build note (2026-09-12, branch `fix/bl267`).** Suite `tests/test-bl267-bare-question-mark.sh` drives
+the REAL `prompt_input` from stdin through command substitution — the same shape as a call site, not a
+re-implementation — and case S1 walks the whole path an operator walks, `prompt_input` into the real
+`save_answer`, then reads the value back off the progress file.
+
+RED at `ceb450e`: **3 passed / 6 failed**. The three passes are honest controls — C0 (an ordinary
+answer round-trips), C4 (an answer that merely CONTAINS a `?`, `why? about 42`, is untouched, which
+pins that the arm tests the bare token and not the character), and C2, which passes **vacuously** at
+base because there is no notice to leak yet. C2 is a control at base and a discriminator under MP2;
+that is stated here rather than claimed as a RED signal it is not. The discriminators are C1
+(`prompt_input returned [?], want [42]`), C3 (the `one_time_budget` shape: `?` then Enter must yield
+the default `N/A`, and on main returns `?`), and S1 (`users_12mo was saved as [?], want [42]`).
+
+GREEN **9 / 0** on macOS `/bin/bash` 3.2.57 and on bash 5.2.21 in `ubuntu:24.04` as
+`uid=1000(ubuntu)`. Two mutants, each asserting the mutation landed (`bash -n`, the mutated spelling
+absent, `prompt_input() {` still unique, changed-line count) before reading a verdict. **MP1** deletes
+the `?` arm, restoring main: the bare `?` comes back as the return value AND lands on disk, while an
+ordinary answer still works — the second half is what shows C1/S1 discriminate the defect rather than
+the fixture. **MP2** drops the `>&2` from the notice and nothing else: the `?` is still swallowed, C1
+and S1 and C3 all still pass, and the value saved to disk is `[INFO] No suggestions for this field —
+answer it directly, or type N/A.\n42`. C2 is the only case that sees it. Registered in
+`tests/full-project-test-suite.sh` and the `tests.yml` unit lane
+(`scripts/lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
+
+**Residual, open.** `prompt_choice` has the same gap in a milder form: a `?` there is not accepted as
+an answer (it fails the numeric range test and the loop re-asks), but the operator is told
+"Invalid choice. Enter a number between 1 and N" rather than that there are no suggestions. No data is
+corrupted, so it is not fixed here.
+
+**Related:** `## BL-265:` and `## BL-266:` (the same wizard, same downstream session).

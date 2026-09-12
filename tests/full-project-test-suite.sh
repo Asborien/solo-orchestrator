@@ -860,6 +860,12 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
   "BL-259: an empty @tsv field must not collapse and shift the resolver row" \
   "BL-259 tsv-field-shift tests FAILED (run tests/test-bl259-tsv-empty-field-shift.sh for details)"
 
+# BL-267: prompt_input had no handling for the wizard's own `?` help key, so
+# a bare question mark was returned and saved as the answer.
+run_child_suite "tests/test-bl267-bare-question-mark.sh" \
+  "BL-267: a bare \`?\` re-asks instead of being saved as the answer, and the notice stays off stdout" \
+  "BL-267 bare-question-mark tests FAILED (run tests/test-bl267-bare-question-mark.sh for details)"
+
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
 # ----------------------------------------------------------------
