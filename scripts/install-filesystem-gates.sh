@@ -50,8 +50,33 @@ PROJECT_ROOT="$2"
 # leaving the marker block and framework-gate.sh behind to revive if hooksPath
 # was later unset. A silent no-op in the enforcement lane. `--git-common-dir`
 # cannot be redirected by hooksPath, so the two arms agree by construction.
-git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-  || { echo "[FAIL] not a git repo: $PROJECT_ROOT" >&2; exit 1; }
+# THE GUARD ASKS WHETHER PROJECT_ROOT *IS* A REPO ROOT, not whether it sits
+# somewhere inside one. An earlier cut of this arm used
+# `rev-parse --is-inside-work-tree`, which answers the second question and so
+# WIDENED the guard main had:
+#   * a plain directory NESTED in a repo returns rc 0, and `--git-common-dir`
+#     resolves relative to the REPO rather than to PROJECT_ROOT — so the
+#     installer would have written the BL-030 gate into an enclosing repository
+#     the caller never named. Reachable through reconfigure-project.sh: a
+#     project whose `.git` was removed, sitting inside a monorepo or a tracked
+#     ~/code.
+#   * a bare repo and a `.git` directory both give rc 0 while PRINTING "false" —
+#     the same read-the-status-not-the-value trap `# BL-209-HOOKSPATH-REFUSE`
+#     below lectures about, inverted. There the exit status is the answer; here
+#     the VALUE is.
+# `--show-toplevel` compared by PHYSICAL path is the right question, and it
+# keeps every BL-209 win: in a linked worktree `--show-toplevel` IS the worktree
+# root, which is exactly what the caller passed.
+_soif_top="$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null)" || _soif_top=""
+_soif_top_phys=""
+[ -n "$_soif_top" ] && _soif_top_phys="$(cd "$_soif_top" 2>/dev/null && pwd -P)"
+_soif_want_phys="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)"
+if [ -z "$_soif_top_phys" ] || [ "$_soif_top_phys" != "$_soif_want_phys" ]; then
+  echo "[FAIL] not a git repo: $PROJECT_ROOT" >&2
+  [ -n "$_soif_top_phys" ] && \
+    echo "       It sits inside the repository at $_soif_top_phys — refusing to install a gate into a repository you did not name." >&2
+  exit 1
+fi
 
 # BL-209-FALLBACK-RC — `set -euo pipefail` is on at the top of this script, so a FAILING
 # rev-parse would kill the script on the assignment and the literal fallback
@@ -61,9 +86,12 @@ git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
 HOOKS_DIR="$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null)" || HOOKS_DIR=""
 [ -n "$HOOKS_DIR" ] && HOOKS_DIR="$HOOKS_DIR/hooks"
 [ -n "$HOOKS_DIR" ] || HOOKS_DIR=".git/hooks"
-# --git-path returns a path relative to the repo it was asked about (absolute in
-# a linked worktree, where it names the common gitdir), so anchor a relative
-# answer to PROJECT_ROOT — this script is routinely called from another cwd.
+# `--git-common-dir` returns a path relative to the repo it was asked about
+# (absolute in a linked worktree, where it names the common gitdir), so anchor a
+# relative answer to PROJECT_ROOT — this script is routinely called from another
+# cwd. (An earlier cut of this comment said `--git-path`, which is the option the
+# twenty lines above argue is WRONG here and which mutant MU3 exists to reject.
+# A reader following the comment reached the opposite conclusion from the code.)
 case "$HOOKS_DIR" in
   /*) : ;;
   *)  HOOKS_DIR="$PROJECT_ROOT/$HOOKS_DIR" ;;

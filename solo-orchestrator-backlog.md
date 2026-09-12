@@ -8374,8 +8374,8 @@ first — the same argument BL-145's entry made for --auto-fix.
 
 **Status:** Open — and it STAYS open on this branch, which converts **4 of the 36 census lines**:
 `scripts/install-filesystem-gates.sh` only. The other eight files are untouched. Suite
-`tests/test-bl209-hooksdir-resolution.sh` **15 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in
-`ubuntu:24.04` as a non-root user, against RED **2 / 8**; five mutants, each killing a
+`tests/test-bl209-hooksdir-resolution.sh` **16 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in
+`ubuntu:24.04` as a non-root user, against RED **3 / 8**; five mutants, each killing a
 different case set. Closing the entry needs the remaining 32 lines.
 
 ---
@@ -8521,6 +8521,55 @@ controls that pass at base).
    that alone broke **MU2**, whose `sed` anchored on the old indent and silently stopped applying.
    `mutate_and_check` caught it at 0 changed lines rather than reporting a pass, which is the
    behaviour that makes an embedded mutant worth having.
+
+**SECOND REWORK (2026-09-13) — a blocking regression THIS BRANCH introduced, plus two test
+weaknesses.** Suite now **16 / 0** on macOS `/bin/bash` 3.2.57, macOS bash 5.3 and bash 5.2.21 in
+`ubuntu:24.04`, against RED **3 / 8**.
+
+1. **THE BRANCH BROKE `tests/test-bl112-commit-enforcement.sh`, 13/0 → 11/2, AND NO PR CHECK COULD
+   SEE IT.** That suite is registered in the aggregator only (`grep -c 'test-bl112'`: tests.yml **0**,
+   full-project-test-suite.sh **1**), so it runs in the manual three-hour lane while every
+   PR-blocking check stayed green. `install-filesystem-gates.sh:13` names that suite as its pin, and
+   the suite pinned the emitted hook with a `grep -qF` on the literal
+   `bash "$(git rev-parse --show-toplevel)/.git/hooks/framework-gate.sh"`. `# BL-209-GATE-PATH`
+   changed that emission, so the literal stopped matching — and the SAME literal is re-used at :707
+   as a PRE-MUTANT GUARD, so BL-112's strict-gate mutation proof stopped executing: the guard that
+   exists to reject a mis-targeted mutant was firing on a correct one, leaving the RED/GREEN pair
+   behind `# BL-112-STRICT-GATE` unproven on this branch. Fixed by pinning the BEHAVIOUR rather than
+   the bytes — `_bl112_gate_invoked` asserts the hook RESOLVES a gate path and INVOKES it, is
+   indifferent to the expression between, and is used at both sites with a `# BL-209-GATE-PATH`
+   reference so the coupling is greppable from both ends. Back to **13 / 0**.
+
+2. **THE REPO GUARD HAD BEEN WIDENED, AND THE WIDER CASE WRITES INTO THE WRONG REPOSITORY.** `main`
+   refused with `[ -d "$PROJECT_ROOT/.git" ]`; this branch asked
+   `rev-parse --is-inside-work-tree`, which answers "is it somewhere INSIDE a repo" and returns rc 0
+   for a plain directory NESTED in one. `--git-common-dir` then resolves to the ENCLOSING repo, so the
+   BL-030 gate would be installed into a repository the caller never named — reachable through
+   reconfigure-project.sh on a project whose `.git` was removed inside a monorepo or a tracked
+   `~/code`. It also admits a bare repo and a `.git` directory, both rc 0 while PRINTING "false" — the
+   same read-the-status-not-the-value trap `# BL-209-HOOKSPATH-REFUSE` lectures about, inverted.
+   Now resolves `--show-toplevel` and refuses unless its PHYSICAL path equals PROJECT_ROOT's, which
+   preserves every worktree win because a linked worktree's toplevel IS the worktree root.
+   **Case R10** covers the refusal arm, which had NO coverage at all — G0 through R9 never exercised a
+   non-repo. It asserts both halves: refused, AND the parent's hooks directory untouched, because a
+   refusal that still wrote would pass an rc-only check. **R10 PASSES AT BASE** — `main`'s `-d` guard
+   refuses that input correctly — so it is a control there and a discriminator against the widened
+   guard, proven by restoring `--is-inside-work-tree` on a mirror:
+   `[FAIL] R10 — accepted a non-repo nested inside a repo at rc=0`, with G0 surviving.
+
+3. **R9 did not test the property it names.** Titled "neither caller swallows the installer's stderr",
+   its predicate matched the single spelling `2>&1`; the reviewer reinstated the swallow as
+   `>/dev/null 2>/dev/null` and R9 still PASSED. It now joins `\`-continuations before matching and
+   tests for ANY `2>` redirection. Verified against that exact spelling —
+   `[FAIL] R9 — 1 call site(s) still redirect the installer's stderr to /dev/null`. A first attempt to
+   prove this was itself inconclusive: the `perl` anchored on `>/dev/null$` while the real line ends
+   `>/dev/null || \`, so the mutation never landed and the PASS meant nothing. Re-run with a
+   landing assertion on the target line.
+
+4. **A comment contradicted its own code.** The note above the anchoring case explained `--git-path`
+   while the code uses `--git-common-dir` — the option the twenty lines above it argue is wrong and
+   which mutant MU3 exists to reject. A reader following the comment reached the opposite conclusion
+   from the code. Corrected, and the correction says what it was.
 
 **Also fixed while in there, not in the review.** The inline value read was
 `_hp="$(git … --path …)"` with no `|| _hp=""`. Under this script's `set -euo pipefail` a git build
