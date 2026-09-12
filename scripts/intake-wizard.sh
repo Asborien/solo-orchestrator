@@ -351,6 +351,36 @@ with open(sys.argv[8], 'w') as f:
 # ================================================================
 save_section() {
   local section_num="$1"
+  # BL-266-PAUSE-INCOMPLETE — a PAUSED section is not a COMPLETED section.
+  # Every run_section_N ends in an unconditional `save_section N`. Once the
+  # pause sentinel is set the prompt helpers return empty and the collection
+  # loops break, so that call still fires and files the section under
+  # completed_sections with nothing in it; is_section_complete then makes
+  # --resume skip it for good. Record where to come back to, render what was
+  # answered before the pause, and do NOT claim the section finished.
+  if [ -f "${_PAUSE_FILE:-/dev/null/sentinel-cannot-exist}" ]; then
+    # The resume point is the runner-order PREDECESSOR, not `section - 1`.
+    # The runner's order is `1 … 11 115 12 13` (115 encodes "11.5" as an
+    # integer), and run_script_mode skips on `section -lt start_section`.
+    # `115 - 1` would hand back 114, and every one of 1-13 is less than
+    # that — the whole wizard would then be skipped on resume.
+    local resume_after="$((section_num - 1))"
+    [ "$section_num" = "115" ] && resume_after=11
+    if command -v python3 &>/dev/null; then
+      python3 -c "
+import json, sys
+last, path = int(sys.argv[1]), sys.argv[2]
+with open(path) as f:
+    data = json.load(f)
+data['last_section'] = max(0, last)
+with open(path, 'w') as f:
+    json.dump(data, f, indent=2)
+" "$resume_after" "$PROGRESS_FILE"
+    fi
+    print_info "Section $section_num paused before it was finished — it will be asked again on resume."
+    render_intake_file || true
+    return 0
+  fi
   if command -v python3 &>/dev/null; then
     python3 -c "
 import json, sys

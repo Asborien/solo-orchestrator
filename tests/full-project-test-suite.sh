@@ -860,6 +860,12 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
   "BL-259: an empty @tsv field must not collapse and shift the resolver row" \
   "BL-259 tsv-field-shift tests FAILED (run tests/test-bl259-tsv-empty-field-shift.sh for details)"
 
+# BL-266: typing `pause` filed the unfinished section under
+# completed_sections, so --resume skipped it permanently.
+run_child_suite "tests/test-bl266-paused-section-marked-complete.sh" \
+  "BL-266: a paused intake section is not recorded as complete, and the resume point survives section 115" \
+  "BL-266 paused-section tests FAILED (run tests/test-bl266-paused-section-marked-complete.sh for details)"
+
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
 # ----------------------------------------------------------------
