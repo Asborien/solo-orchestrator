@@ -894,6 +894,13 @@ run_child_suite "tests/test-bl267-bare-question-mark.sh" \
 run_child_suite "tests/test-bl270-mode-vocabulary-backfill.sh" \
   "BL-270: the backfill repairs a present-and-invalid manifest mode, and the org rules then run" \
   "BL-270 mode-vocabulary-backfill tests FAILED (run tests/test-bl270-mode-vocabulary-backfill.sh for details)"
+# BL-268: adoption wrote the `deployment` vocabulary into the `mode` field, and
+# host_verify_protection — which validated nothing — then skipped its org-tier
+# rules on an adopted organizational project. Covers both manifest write
+# branches and all three host drivers.
+run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
+  "BL-268: adoption writes mode=org and every host driver refuses the deployment vocabulary" \
+  "BL-268 mode-vocabulary tests FAILED (run tests/test-bl268-mode-vocabulary.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS

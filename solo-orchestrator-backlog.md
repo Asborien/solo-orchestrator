@@ -18544,3 +18544,216 @@ it the block prints `[OK] mode repaired: organizational -> org` off a guessed va
 `## BL-242:` (`# BL-242-PREFLIGHT-ARM1`, the refusal that closes the re-adoption route),
 `## BL-030:` (the sibling manifest backfill this sits beside), `## BL-221:` (the same "the two birth
 paths must produce the same manifest shape" argument).
+
+---
+
+## BL-268: adoption writes the `deployment` vocabulary into the `mode` field, and `host_verify_protection` — the one function that reads it — validates nothing, so an adopted ORGANIZATIONAL project is measured against the personal branch-protection bar and told it passed
+
+**Status:** Open — fix + suite built on branch `fix/bl268`, uncommitted. Not pushed, no PR.
+
+**Logged:** 2026-09-12, found by reading the two birth paths against each other.
+
+**The defect is a join of two halves, and either alone is survivable.**
+
+**Half one — the write.** The framework manifest carries two tier fields with DIFFERENT vocabularies:
+`deployment` is `personal|organizational`, `mode` is `personal|org`. `init.sh` keeps them apart at its
+own write site:
+
+```
+  # Map DEPLOYMENT "organizational" → "org" for consistency with spec
+  _RESOLVED_MODE="$DEPLOYMENT"
+  [ "$_RESOLVED_MODE" = "organizational" ] && _RESOLVED_MODE="org"
+  …
+  '. + {host:$h, mode:$m, remote_url:"", deployment:$dep, …}'      # $m=_RESOLVED_MODE, $dep=DEPLOYMENT
+```
+
+`adopt_write_manifest` in `scripts/lib/adopt/adopt-state.sh` did `mode="$ADOPT_DEPLOYMENT"` and then
+fed that ONE value to BOTH fields (`--arg m "$mode" --arg d "$mode"`). `ADOPT_DEPLOYMENT` is set from
+the audience question and is `organizational` or `personal`, so every organizational adoptee was born
+carrying `mode: "organizational"` — a word no reader of `mode` knows. A SCAFFOLDED project has never
+carried it.
+
+**Half two — the read.** All four readers of `.mode` do the same thing with it:
+
+```
+scripts/check-gate.sh:141        mode=$(jq -r '.mode // "personal"' … ) ; host_verify_protection "main" "$mode"
+scripts/check-gate.sh:418        (same)
+scripts/check-phase-gate.sh:1968 (same)
+scripts/process-checklist.sh:1619 (same)
+```
+
+`host_verify_protection` gates its org-only assertions on the literal string `"org"`:
+
+```
+  if [ "$mode" = "org" ]; then
+    val=$(echo "$resp" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0')
+    …
+    val=$(echo "$resp" | jq -r '.required_status_checks // empty')
+```
+
+and it had **no validation of `mode` at all** — unlike its sibling `host_configure_protection`, which
+has refused an unknown mode since it was written (`host_configure_protection: mode must be 'personal'
+or 'org', got '$mode'`). So `"organizational"` fell through every org-only rule and the function
+**returned 0** having run only the two shared checks.
+
+**The join, measured.** Against a protection response that satisfies the personal tier and fails the
+org tier (force-push off, admins enforced, `required_approving_review_count: 0`, no status checks):
+
+```
+mode=org             → rc 1, "required_approving_review_count is 0 (org mode requires at least 1)"
+mode=personal        → rc 0
+mode=organizational  → rc 0, nothing on stderr          # what an adopted org project carried
+```
+
+An adopted organizational project asks to be held to the org bar, is measured against the personal
+bar, and is told it passed. On GitHub that silently skips the required approving review and the
+required status check. The same gate exists in the GitLab driver (push-access-level, approvals,
+pipeline success) and the Bitbucket driver (push restriction, approvals, passing builds), and neither
+validated either.
+
+**And the banner would have lied about which tier it ran.** The failure text interpolates `$mode`:
+`printf "github driver: protection verification failed for %s#%s (%s mode):"`. Any unknown mode that
+DID produce a failure would print "(organizational mode)" over personal-tier results. **That path IS
+reachable at base and was measured** — the unknown mode returns 0 only when the SHARED rules also
+pass. Leave force-push enabled on the same fixture and base prints, verbatim:
+
+```
+github driver: protection verification failed for acme/api#main (organizational mode):
+  - main branch allows force-push (should be disabled)
+```
+
+A banner naming a tier it never verified, over a list containing only personal-tier findings. Case H6
+pins it; H5 is its control.
+
+**Fix — `# BL-268-MODE-VOCABULARY`, both halves, four files.**
+1. `adopt-state.sh` mirrors init.sh's translation for `mode`, and `deployment` is sourced from
+   `ADOPT_DEPLOYMENT` directly so it keeps its own vocabulary. Fixing the write alone was not enough:
+   it leaves the reader still willing to accept any word.
+2. `host_verify_protection` in all three drivers refuses an unknown mode by name, **before** the
+   origin parse and the API call, matching `host_configure_protection`'s existing contract. Fixing the
+   read alone was not enough either: it would turn the adopted project's gate from a silent pass into
+   a hard failure with no way to fix the manifest.
+
+**The trap in the obvious fix.** The two manifest fields share ONE local in that function. Translating
+`$mode` without re-sourcing `deployment` corrupts `deployment` instead — `"org"` where every reader
+expects `"organizational"`, including `assert_choosable`'s tier ladder. Case A2 is the case for that;
+mutant MP3 is the proof it is load-bearing.
+
+**Build note (2026-09-12, branch `fix/bl268`).** Suite `tests/test-bl268-mode-vocabulary.sh` drives
+the REAL `adopt_write_manifest` — sourced out of the framework's own lib set exactly as
+`scripts/adopt-project.sh` sources it, in a subshell so the driver's write ledger and the stamp's
+refuse-a-second-stamp guard cannot leak between cases — against hermetic tmpdir projects. It drives
+the REAL `host_verify_protection` out of all three driver files against hermetic git repos with stub
+`gh` / `glab` / `curl` on PATH: no network, no live host, no reimplementation of anything under test.
+Case E1 chains the two halves — the `mode` value adoption actually wrote is handed to the verifier
+that consumes it, which is the join the defect lives in.
+
+What the suite covers:
+- **Both manifest write branches.** `adopt_write_manifest` has two: `adopt_jq_edit` when
+  `.claude/manifest.json` already exists, and `jq -n` when it does not. Cases A3/A4/A5 drive the edit
+  branch from a pre-existing manifest, and
+  A6 is the control that proves it WAS the edit branch — the adoptee's own key and `remote_url`
+  survive the write. MP2 and MP3 mutate the two `--arg d` sites SEPARATELY, so each branch is shown to
+  be independently covered; a single mutant over both would not distinguish them.
+- **All three drivers, hermetically, with per-driver controls.** Stub `gh`, `glab` and `curl` on PATH
+  and a git repo with a host-appropriate origin, tuned so `personal` PASSES and `org` FAILS naming an
+  org-only rule. That pair (H1/H2) is what makes H3 mean anything: it proves the fixture reaches the
+  org-only block, so `organizational` returning 0 is the personal subset being run rather than a
+  fixture that never got that far. Nothing here shells out to a real host CLI, so the suite cannot
+  red on a missing `glab` or reach the network.
+- **Six mutants**, including one per driver: MP4/MP5/MP6 excise each driver's gate
+  and require `organizational` to come back rc 0 AND SILENT — indistinguishable from `personal` —
+  while `org` still fails, which is the defect stated exactly rather than approximately.
+
+RED at `ceb450e` (fix stashed): **13 passed / 20 failed**. The thirteen passes are controls and they
+are the reason the red is trustworthy: A0/A3 (personal round-trips through both write branches), A2/A5
+(the `deployment` half, which base gets right), A6 (the edit branch really ran), A7 (init.sh still
+carries `_RESOLVED_MODE="org"`), H1/H2 on all three drivers, and H5. The discriminators all red for
+the right reason and the failure text says so — `mode=organizational returned 0 — the org-only
+assertions were skipped and the project was told it passed` on each driver, `.mode is
+[organizational], want [org]` on both write branches, and E1 `an adopted ORGANIZATIONAL project's mode
+[organizational] verified CLEAN against the github driver`. No case reds for a reason other than the
+defect.
+
+GREEN **33 / 0** on macOS `/bin/bash` 3.2.57, verified three ways — stdin a terminal, stdin
+`/dev/null`, and stdin an OPEN PIPE. The third is not ceremony. A first cut of the `curl` stub copied
+`tests/host-drivers/mock-cli.sh`'s stdin drain (`[ -t 0 ] || cat >/dev/null`), which that harness needs
+because its stubs also serve call sites that pipe a body. The only path this suite reaches,
+`_bb_curl_no_body`, pipes nothing — so the drain read the HARNESS's stdin and, under a runner whose
+stdin is an open pipe rather than a terminal, **blocked for ever**. Measured: three stuck processes on
+a backgrounded run, and it would have HUNG a CI lane rather than failed it. The stub no longer reads
+stdin at all and both subshells take `< /dev/null`. Every mutant asserts it landed (`bash -n`, an
+exact occurrence count for the mutated and original spellings, and a changed-line floor) before any
+verdict is read, and a mutation that cannot be applied fails loudly as a `setup` case.
+
+**No regression from the fix, measured rather than assumed.** `tests/host-drivers/run-all.sh` exits 1
+on this host — the three `e2e-init*.test.sh` suites report 2 passed / 3 failed each. That is
+PRE-EXISTING and not this fix: the whole log contains the string `mode must be` **zero** times, the
+failing cases carry `mode=personal` and `mode=org` (both accepted by the new gate), and
+`e2e-init.test.sh` run against a copy of this tree with the four fixed files reverted to `HEAD`
+produces the identical 2/3 with identical failure text on T1, T2 and T5. `dispatcher`, `github`,
+`gitlab`, `bitbucket`, `regressions`, `error-translate` and the mock-cli self-test all pass on both.
+
+**AN OBSERVATION ABOUT PROJECTS ALREADY ADOPTED, AND DELIBERATELY NO TOOLING FOR IT.**
+This fix is the birth path. A project adopted BEFORE it carries `mode: "organizational"` on disk, and
+after the driver half lands its gate stops returning a false pass and starts refusing by name — the
+safe direction, but a change those projects will notice. Two measurements bound the situation:
+
+- **Re-running the writer would repair the field.** `adopt_write_manifest`'s `adopt_jq_edit` branch
+  assigns `.mode` unconditionally, so a second pass rewrites `organizational` to `org` (measured on a
+  fixture in exactly that shape). It also rewrites the `.adoption` block — `adoptedAtCommit` moves to
+  the current tip and `adoptedAt` to now, which is the hazard `scripts/lib/adoption-stamp.sh:218`
+  documents in its own words.
+- **Adoption cannot be re-run anyway, by design.** `_adopt_preflight_adopted`
+  (`scripts/lib/adopt/adopt-state.sh:231`, `# BL-242-PREFLIGHT-ARM1`) refuses on two witnesses:
+  "this project has already been adopted — the manifest records it … Adoption is a one-time act."
+
+**Where such a thing would belong, if it is ever built.** Not on
+`scripts/reconfigure-project.sh`: every field that script supports is an OPERATOR CHOICE, and it says
+in its own `--help` that the deployment axis is not its to touch. The harness's existing mechanism for
+correcting a manifest field on an EXISTING project without a tier change is
+`scripts/upgrade-project.sh --backfill-only`, whose `_run_idempotent_backfill` already repairs
+`.host`, `.enforcement_level`, `.deployment` and `.poc_mode` — the last three DERIVED from
+`phase-state.json`, which is the same shape a `mode` repair would need. Recorded as a fact about the
+harness's own layout, not as a proposal.
+
+**No tooling is proposed, and that is the decision rather than an omission.** Almost everyone who
+adopts will adopt a repo that already carries this fix, so the birth path IS the product. "The fix
+landed halfway through my adoption" describes only the projects adopted in the window before it
+shipped. For those few the answer is a deliberate, one-off data correction of the recorded value,
+taken with the knowledge of what it is for — not a new route through the tooling for a population that
+stops growing the moment this lands.
+
+
+**Residuals, open.**
+1. **OPEN — a project adopted before this fix has no supported route back.** Re-running adoption is
+   refused at the only entrypoint: `_adopt_preflight_adopted`
+   (`scripts/lib/adopt/adopt-state.sh:231`, `# BL-242-PREFLIGHT-ARM1`) rejects on two witnesses —
+   "this project has already been adopted — the manifest records it". And re-running the writer
+   would falsify the record even if it were reachable: the same pass moves `adoptedAtCommit` to the
+   current tip, which `scripts/lib/adoption-stamp.sh:218` documents as a known hazard in its own
+   words. Both measured. No tooling is proposed here, per the observation above — the birth path is
+   the fix, and this shape describes only projects adopted before it landed.
+2. **Bitbucket's `host_configure_protection` still has no mode validation.** This fix does not create
+   that asymmetry — bitbucket was ALREADY the outlier on main, the only driver with no `case "$mode"`
+   anywhere in it. Counted on `main`: `grep -c 'mode must be'` gives github 1, gitlab 1, bitbucket 0,
+   so four mode entry points accepted an unvalidated value (three `verify`s plus bitbucket's
+   `configure`). This fix takes that from **four to one**. The survivor is on a path adoption never
+   calls, and closing it would be scope creep on a pre-existing upstream inconsistency.
+3. **The `other` host's fallback `host_verify_protection` in `scripts/lib/host.sh` ignores `mode`
+   entirely** — it is attestation-based and has no tier distinction, so an org project on an unmanaged
+   host gets the personal bar by design. That is a design question, not a vocabulary bug.
+
+**THE PATTERN THIS BELONGS TO, AND IT IS BIGGER THAN THIS ENTRY.** The harness reasons about a project
+as if it were born under the harness. `## BL-265:` assumes the intake file is the harness's to render;
+this entry assumes the manifest was written by `init.sh`; and the phase-inference warning in
+`scripts/validate.sh` — filed separately — assumes the Phase 2 and Phase 4 artifacts appear only as
+those phases complete, which is true of a scaffolded project and false of an adopted one that has
+carried a CHANGELOG and release notes for months. Adoption breaks that assumption in three places, and
+in each one the failure is silent or actively misleading rather than loud. The repair question is the
+same in all three: what does this look like for a project the harness did not create?
+
+**Related:** `## BL-221:` (the same function, the same "the two birth paths must produce the same
+manifest shape" argument — this is one more field it did not cover), `## BL-253:` (adoption stamping a
+value no reader understands, `poc_mode: "production"`), `## BL-002:` (the free-tier attestation escape
+that makes a verification result load-bearing).
