@@ -15925,3 +15925,76 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+## BL-273: `scripts/lib/host.sh` is the shared host library and carries no host inference, while four shipped scripts each carry their own copy of the same four-arm case
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** The repair is a hoist, which
+is a refactor; this entry reports the hazard and its evidence and stops there.
+
+**Logged:** 2026-09-13, after three separate fixes were each instructed to "reuse the framework's own
+helper" and each found the helper unreachable for a different local reason.
+
+**The defect.** The remote-URL-to-host inference — the four-arm `case` that maps an `origin` URL to
+`github` / `gitlab` / `bitbucket` / `other` — exists at FOUR sites, all of which ship into every
+generated project:
+
+```
+git grep -n 'github\.com\*)' main -- 'scripts/*.sh'
+  scripts/check-gate.sh:159        cmd_backfill_host
+  scripts/upgrade-project.sh:511   the host backfill in _run_idempotent_backfill
+  scripts/verify-install.sh:242    an inline manifest-then-remote fallback
+  scripts/verify-install.sh:1328   _detect_pipeline_host
+```
+
+`scripts/verify-install.sh` carries it TWICE, ~1,080 lines apart. And `scripts/lib/host.sh` — the
+shared host library, the file that owns `host_read_from_manifest`, `host_pipeline_resolve` and the
+driver dispatch, the obvious and only sensible home — carries **zero**:
+
+```
+git show main:scripts/lib/host.sh | grep -c 'github\.com\*)'   ->  0
+```
+
+Four copies, kept in sync by nobody, with an empty owner sitting beside them.
+
+**WHY THIS IS MORE THAN A DRY COMPLAINT: THE HELPERS ARE UNREACHABLE, AND THAT IS WHY THE COPIES KEEP
+BEING MADE.** Three fixes in one batch were each told to reuse an existing helper rather than
+duplicate. All three found the helper unreachable, and — importantly — for **two different
+mechanisms**, not one:
+
+1. **Not sourceable.** `scripts/verify-install.sh` carries `set -euo pipefail` at `:2` and
+   `guard_not_in_framework || exit 1` at `:20`, both at TOP LEVEL with no sourced-detection guard.
+   Sourcing it does not import a function; it runs the verification script, and inside the framework
+   repo it exits the caller. This blocks `_detect_pipeline_host` (`:1319`) and the `_bl145_*` hook
+   helpers (`:522`-`:644`) equally. Any caller that wants one of them can only copy it.
+2. **Sourceable but not shipped.** `scripts/lib/scout/scout-stack.sh` has no top-level guards at all
+   and would source cleanly — but Scout is absent from generated projects. Measured on a real adopted
+   project: `scripts/lib/` holds 41-odd shipped libraries and **no `scout/` directory**, and
+   `scout` appears nowhere in `scripts/lib/scaffold-shipped-set.sh`. So `_scout_pkg_managers` is
+   reachable only from `init.sh`, which is the one consumer that does not ship.
+
+**A claim worth narrowing, because a first draft of this entry overstated it.** It is NOT true that
+this codebase has no shared-library surface: `scripts/lib/` carries 41 `.sh` files, and
+`# BL-095-STATE-READERS` in `helpers-core.sh` is a worked example of doing exactly the right thing —
+a fenced set of readers, with three deliberately-unmigrated siblings named and reasoned at
+`:996`-`:1009`. The accurate statement is narrower and worse: **the surface exists, and these
+particular helpers are outside it**, living in executable scripts that either cannot be sourced or do
+not ship. The pattern that results is duplication with a sync comment, and four sites is where the
+host inference has landed.
+
+**Blast radius.** Every one of the four copies runs in a generated project, and they do not agree
+about their own contract: two are inline fallbacks that silently yield `other`, one prompts the
+operator to confirm before writing, and one is a pure function. A spelling added to one — a new
+forge, a self-hosted GitLab domain — reaches the other three only if someone remembers. There is no
+test asserting the four agree, and no marker linking them.
+
+**Not measured beyond the above.** No hoist was prototyped and no consumer was converted. The obvious
+repair is to move the inference into `scripts/lib/host.sh` behind a fence, exactly as
+`# BL-095-STATE-READERS` did for the state readers, and convert the four call sites — but that is a
+refactor across four shipped scripts, and the standing instruction on this batch is fixes only. It is
+recorded rather than attempted.
+
+**Related:** `## BL-095:` (`# BL-095-STATE-READERS`, the fence that is the model for the repair, and
+whose own header already names deliberately-unmigrated siblings), `## BL-209:` (the `_bl145_*`
+instance of the unsourceable half), `## BL-262:` (the `_detect_pipeline_host` instance, and the fix
+this hazard currently blocks), `## BL-084:` (`# BL-084-TIER-KEY`, the repo's own sync-siblings marker
+convention for the cases where a hoist is not taken).
