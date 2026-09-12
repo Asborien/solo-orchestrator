@@ -18258,7 +18258,7 @@ on a branch carrying only this entry those citations would resolve to nothing.)*
 
 ## BL-267: the wizard's own `?` help key is recorded as the answer at 81 of its prompts, because only one of the two prompt helpers handles it
 
-**Status:** Open — fix + suite built on branch `fix/bl267`, uncommitted. Not pushed, no PR.
+**Status:** Open — fix + suite committed on branch `fix/bl267` at `1989933`. Not pushed, no PR.
 
 **Logged:** 2026-09-12, observed on `one_time_budget` and `users_12mo` in a downstream adoption's
 `.claude/intake-progress.json`, both stored as the literal string `?`.
@@ -18331,9 +18331,23 @@ answer it directly, or type N/A.\n42`. C2 is the only case that sees it. Registe
 `tests/full-project-test-suite.sh` and the `tests.yml` unit lane
 (`scripts/lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
 
-**Residual, open.** `prompt_choice` has the same gap in a milder form: a `?` there is not accepted as
-an answer (it fails the numeric range test and the loop re-asks), but the operator is told
-"Invalid choice. Enter a number between 1 and N" rather than that there are no suggestions. No data is
-corrupted, so it is not fixed here.
+**Residual, open — and it is WORSE than this entry first recorded.** `prompt_choice` has the same `?`
+gap in a milder form: a `?` there is not accepted as an answer (it fails the numeric range test and the
+loop re-asks), but the operator is told "Invalid choice. Enter a number between 1 and N" rather than
+that there are no suggestions. No data is corrupted, so it is not fixed here.
 
-**Related:** `## BL-265:` and `## BL-266:` (the same wizard, same downstream session).
+That same loop carries `## BUG-010:` **defect (2)**, which this entry did not know about when it was
+written: the prompt has **no EOF guard**, so `read` returning non-zero is treated as a wrong answer
+rather than the end of input and the loop never terminates. The maintainer measured **19,819,553 bytes
+of "Invalid choice. Enter a number between 1 and 2." in under two minutes, still running when killed.**
+So the sibling helper this entry holds up as the correct idiom is correct about `?` and unbounded on
+EOF. Both live in `prompt_choice` and neither is fixed here. His prescribed shape is
+`scripts/lib/adopt/adopt-core.sh`'s `adopt_read_optional` / `ADOPT_MANDATORY_REFUSAL` path, which
+treats EOF as an unanswered mandatory question and stops.
+
+**Related:** `## BUG-010:` (its defect (2) is the EOF hang in the same `prompt_choice` loop this
+residual names; its defect (3) is the jq reserved word fixed on the BL-265 branch). BL-265 and BL-266,
+filed separately in this batch, are the same wizard on the same downstream session.
+
+*(BL-265 and BL-266 are named without `## …:` citations on purpose: each lands on its own branch, so
+on a branch carrying only this entry those citations would resolve to nothing.)*
