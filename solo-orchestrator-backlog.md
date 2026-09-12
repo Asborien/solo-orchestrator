@@ -15935,6 +15935,171 @@ caught by review, not by the lint.
 
 ---
 
+## BL-263: every CI template hardcodes `npm`, so each pnpm and yarn project is scaffolded with a pipeline that cannot run
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** A fix WAS built on branch
+`fix/ci-template-package-manager` and is **withdrawn**; the reasoning that withdrew it is the substance
+of this entry and is recorded below. The branch now carries this entry and nothing else.
+
+**Numbering.** Filed as BL-263, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
+the next free number here, and two carried fixes in a DOWNSTREAM project already hold BL-260 and
+BL-261 in committed code and in a committed audit trail, unfiled in this backlog. <!-- lint-bl-markers: allow the downstream marker tokens are deliberately not backticked; they are markers in another project, not in this code surface -->
+So **BL-260 and BL-261 are reserved, not free.** The other two of the three are `## BL-262:` and
+`## BL-264:`; read all three numbers as provisional until those downstream carries are filed, since
+nothing here holds a number until an entry header claims it.
+
+**Logged:** 2026-09-12, from a read of `templates/pipelines/ci/github/typescript.yml` against the release
+writer sitting forty lines below it in the same file. **The lead reproduces.**
+
+**The defect.** All three TypeScript CI templates —
+`templates/pipelines/ci/{github,gitlab,bitbucket}/typescript.yml` — spell the package manager `npm` in
+every step. `init.sh::generate_ci` installs the chosen one with a BARE `cp "$template_path"
+"$target_path"`, and `scripts/reconfigure-project.sh` does the same. No substitution. Forty lines further
+down the SAME function's sibling, `generate_release`, renders `__INSTALL_COMMAND__` and
+`__BUILD_COMMAND__` out of a language table through `sed` — the pattern existed, beside the defect, and
+was not applied to it.
+
+**The framework already knows the answer and throws it away.** `_scout_pkg_managers` in
+`scripts/lib/scout/scout-stack.sh` is the detector of record: a 31-row table mapping `pnpm-lock.yaml` ->
+pnpm, `yarn.lock` -> yarn, `package-lock.json` -> npm. `scripts/lib/scout/scout-prefill.sh` reads it at
+section 12 and records it into the intake as `stack.packageManagers`. Nothing carries it to the
+generator. **The count matters:** the lead that opened this named seven modules as detectors. Measured,
+only ONE detects. `grep -rln pnpm scripts/` returns seven files, but `scripts/lib/accumulation.sh`
+(exempt-path regex), `scripts/process-checklist.sh` (a lockfile-presence list), `scout-reality.sh`,
+`scout-collisions.sh`, `scout-testsbaseline.sh` and `adopt-archive.sh` merely enumerate lockfile
+spellings for unrelated purposes. A grep for a string is not a census of behaviour.
+
+**Two failures, and the first one is not the one you would predict.** `npm ci` on a project with no
+`package-lock.json` is the obvious break. It is not the FIRST break: on GitHub, `cache: 'npm'` in
+`actions/setup-node` hashes the npm lockfile to build its cache key, and a missing one is a hard error
+from the action — "Some specified paths were not resolved" — which fires in the setup step, BEFORE any
+script runs. Confirmed against setup-node's own `docs/advanced-usage.md`, which documents
+`package-manager-cache: false` as the escape hatch for exactly this. So the operator's first red is in a
+step they did not write, naming a file they deliberately do not have.
+
+**Blast radius — measured, not estimated.**
+```
+grep -rn "npm\|pnpm\|yarn" templates/pipelines/ci/    ->  22 hits, all npm, across 3 files
+grep -rn "pnpm\|yarn" templates/pipelines/            ->  exit 1 (no match)
+find templates/pipelines -name "*pnpm*" -o -name "*yarn*"  ->  nothing
+```
+There is no pnpm or yarn variant anywhere under `templates/pipelines/`, so there was no path by which a
+non-npm project could ever have received a working pipeline. Every TypeScript or JavaScript project on
+pnpm or yarn, on all three hosts, at every track — the CI template is language-keyed, not track-keyed.
+
+**A second surface, and it is not the same code.** The RELEASE writer hardcodes the manager too:
+`init.sh::get_release_vars` sets `RELEASE_INSTALL_COMMAND="npm ci"` at `init.sh:3120` for the
+`typescript|javascript` arm. That is the same product defect one file over, and it has its own blocker,
+which is the sharper of the two. Both halves are covered here; neither is fixed.
+
+---
+
+### WHY NO FIX IS PROPOSED
+
+A fix was built, tested RED/GREEN with mutants, and then measured against the criterion that the
+detector it depends on must be REACHABLE from the places that need it. It is not. The measurement is
+below and it is the reason this entry ships alone.
+
+**Scout does not ship into a scaffolded project — mechanically derived, not asserted.** The framework
+holds its own answer to "what does `init.sh` copy into a project": `scripts/lib/scaffold-shipped-set.sh`,
+which parses init.sh's `cp` lines so the list "can never drift from the real copy list". Run against
+pristine `ceb450e`:
+```
+. scripts/lib/scaffold-shipped-set.sh
+soif_parse_shipped_scripts init.sh scripts   ->  70 paths
+grep -c scout    <that list>                 ->  0
+grep lib/host.sh <that list>                 ->  scripts/lib/host.sh
+```
+**Zero of the 70 shipped scripts is a Scout file.** The only detector of record is framework-side only.
+
+**CI half — four consumers of the CI template in shipped code, three of them project-side.**
+| | site on `ceb450e` | side | what it does |
+|---|---|---|---|
+| 1 | `init.sh:3215` (`generate_ci`) | framework | bare `cp` of the template |
+| 2 | `scripts/reconfigure-project.sh:361` | **project** | bare `cp` on a language change |
+| 3 | `scripts/verify-install.sh:1348` (`fix_ci_pipeline`) | **project** | bare `cp`, three host arms |
+| 4 | `scripts/check-updates.sh:172` | **project** | `diff -q` of the project's `ci.yml` against the raw template |
+All three project-side consumers ARE in the shipped set. `init.sh` is not, and the grep that would
+"show" that is vacuous — the parser only ever emits `scripts/` paths, so `init.sh` could not appear in
+its output whatever the truth was. The real argument is structural: `init.sh` is the framework entry
+point, run from the clone, and it is what DOES the copying. So a fix that resolves the
+manager through Scout works in exactly one of the four and is unreachable in the other three, and
+consumer 4 additionally breaks by construction: a RENDERED pipeline can never `diff -q` clean against an
+unrendered template, so every upgraded project would start reading "differs from upstream template".
+`scripts/upgrade-project.sh:494` also names the path but is excluded from the four deliberately — it
+migrates the pre-BL-008 flat layout and never reads the template's content.
+
+**Release half — two consumers, one project-side, and a blocker that is not about reachability at all.**
+`get_release_vars` is defined at `init.sh:3114` and **duplicated verbatim** at
+`scripts/reconfigure-project.sh:249`, under a comment that says so: *"Mirrors the logic in init.sh
+get_release_vars()"*, carrying its own `RELEASE_INSTALL_COMMAND="npm ci"` at `:256`. The reconfigure copy
+ships; the init.sh copy does not. That is the same reachability problem as the CI half. **The sharper
+blocker is the other one:** at the only moment the framework-side consumer runs, there is nothing to
+detect.
+```
+grep -n "package\.json\|package-lock\|pnpm-lock\|yarn\.lock" init.sh   ->  no match, exit 1
+grep -n "npm install\|npm ci\|pnpm install\|yarn install\|corepack" init.sh
+    1724:      "Bash(npm install *)",        <- a permissions allowlist entry
+    1725:      "Bash(npm ci)",               <- a permissions allowlist entry
+    3120:      RELEASE_INSTALL_COMMAND="npm ci"   <- the defect itself
+```
+`init.sh` never writes a `package.json` and never writes a lockfile, at any point, for any language.
+`generate_release` calls `get_release_vars` at `init.sh:3284`. At that instant the scaffolded project
+has no package manifest of any kind. **This is not a resolution problem — the information does not
+exist at that point in time.** No detector placed anywhere could answer the question, because the
+question has no answer yet.
+
+**So the defect is real and the fix is above a fix.** Every route out requires either a NEW CLI input,
+a NEW shipped-library surface, or MOVING when the pipeline is rendered. The Orchestrator's standing rule
+on this work is fixes only, and all three clear that bar.
+
+**Three routes, with their costs. No recommendation is offered; this is the maintainer's call.**
+1. **Make it an input.** A new `init.sh` flag (`--package-manager`), threaded through the
+   non-interactive schema, the interactive prompt, `PROJECT_INTAKE.md`, and `phase-state.json` so the
+   three project-side consumers can read it back without Scout. *Cost:* a public CLI and on-disk schema
+   change, therefore a compatibility surface for every existing project that has no such field; the
+   operator now answers a question the framework could have observed; and `reconfigure-project.sh`,
+   `verify-install.sh` and `check-updates.sh` each need the read added.
+2. **Render later.** Move release-pipeline rendering (and CI rendering with it) out of `init.sh`'s
+   scaffold pass to a point after the project has dependencies installed — a Phase 2 initialization
+   step, or a `verify-install.sh --fix` arm that regenerates once a lockfile exists. *Cost:* changes
+   WHEN a governed artefact is produced, which moves a phase-gate boundary; a project is then scaffolded
+   without a working pipeline and acquires one later, so anything that checks for the pipeline at
+   scaffold time has to learn the new timing.
+3. **Default honestly, and fix only the later path.** Leave `init.sh` on npm — defensible, since it
+   genuinely cannot know — but make it SAY so in the generated pipeline and in its own output, and fix
+   the three project-side consumers to re-resolve once a lockfile exists. *Cost:* needs a detector those
+   three can reach, which is a new shipped-library surface (route 1's problem in a different place); and
+   it accepts that a fresh pnpm project's first CI run is red by design until the later path runs.
+
+**`SOIF_CI_PACKAGE_MANAGER` IS NOT AN EXISTING MECHANISM.** It was the withdrawn implementation's own
+invention and nothing else in the framework has ever used it. Measured: **2 occurrences on the branch
+before withdrawal** (`init.sh:3249` in a `print_info`, and `scripts/lib/pkgmgr.sh:161` where it was set),
+and `git grep -c SOIF_CI_PACKAGE_MANAGER ceb450e` exits 1 — **0 on main**. Anyone reading a later
+proposal that names it should treat it as a proposal, not as a variable that exists.
+
+**What was withdrawn.** `scripts/lib/pkgmgr.sh` (new lib, `soif_pkgmgr_detect` / `soif_pkgmgr_vars` /
+`soif_render_ci_template` / `soif_pkgmgr_is_yarn_berry`); the `generate_ci` rewrite in `init.sh`; 13
+distinct `__PM_*__` placeholders plus the `__PM_ONLY_PNPM__` block marker across the three TypeScript
+templates; `tests/test-bl263-ci-template-package-manager.sh`; and its registrations in
+`tests/full-project-test-suite.sh` and `.github/workflows/tests.yml`. The suite ran 12/0 GREEN against
+3/9 RED with three mutants — it worked. It is withdrawn because working in the one consumer that cannot
+reach the operator is not the same as fixing the defect.
+
+**The reconfigure host-path arm is `## BL-262:`'s, not this entry's.** This build independently found
+the same `scripts/reconfigure-project.sh` host-path defect that `## BL-262:` was opened for: the missing
+`$host/` segment, the hardcoded GitHub destination, the `other` arm. **Read `## BL-262:` for that
+defect; it is not restated here.** Two independent reproductions of one defect is one defect.
+
+**Related:** `## BL-262:` (the same file, the host-path defect, and itself held on the same class of
+blocker), `## BL-273:` (the systemic finding this is the fourth instance of — reusable logic that is not
+reachable from the places that need it), `## BL-229:` (the `_extract_fn` idiom the withdrawn suite used),
+`## BL-113:` (the `__SOLO_TEMPLATE_ONLY__` marker idiom the withdrawn block marker was modelled on),
+`## BL-256:` (a green step the operator reads as a check that never ran), `## BL-147:` (a check that
+cannot run must not pass).
+
+---
+
 ## BL-259: `resolve-tools.sh` loses the install instructions for every tool that declares no `version_command` — an empty `@tsv` field collapses and shifts the row
 
 **Status:** Closed — shipped + merged 2026-09-10 (PR #383, merge `ed3aab4`). `# BL-259-TSV-SPLIT`: the
