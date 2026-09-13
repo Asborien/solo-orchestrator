@@ -199,11 +199,47 @@ _tdd_triggers() {
       return 1
     fi
   fi
+  # BL-261-INTEGRATION-BRANCH — the branch axis asks "did a test ride EARLIER
+  # on this branch", which needs the branch's OWN base. That base was the
+  # literal `main`. On a project whose integration branch is not `main`, the
+  # range stops being "this branch" and becomes the whole divergence between
+  # `main` and the real trunk, so `b_test` is almost always > 0 and the
+  # classifier returns 1 (EXEMPT) on every commit. The gate is installed,
+  # reports healthy, and never fires.
+  #
+  # This FAILS OPEN, which is why it matters more than a wrong number: an
+  # UNRESOLVABLE base already skips the axis and falls through to fire
+  # (fail-closed, correct, unchanged below). A resolvable-but-WRONG base is
+  # the dangerous case, and it is the common one, because `main` usually
+  # exists even where it is not the trunk.
+  #
+  # Read an explicit key and nothing else. `origin/HEAD` was considered and
+  # rejected: it is local config, so a governance gate keyed on it is
+  # configurable by the thing it governs, and inferring a trunk is the class
+  # of guess `adopt-intake.sh` refuses ("a fact nobody gave"). An ABSENT key
+  # therefore resolves to today's behaviour EXACTLY, byte-identical for every
+  # existing project, rather than to something cleverer that could be wrong.
+  #
+  # Stated precisely, because it is tempting to overclaim here: this does NOT
+  # satisfy BL-221 in the direction that matters. On a wrong-trunk project with
+  # no key — which is EVERY project today, since nothing writes it yet — the
+  # absent key still resolves to `main` and the gate stays inert, which is the
+  # permissive answer. Always-firing on an absent key is not available either:
+  # it would false-block every keyless main-trunk project. What this guarantees
+  # is byte-identity and no NEW permissive resolution; closing the keyless case
+  # needs a writer, and this ships the reader without picking one.
+  local _ib=""
+  if [ -f .claude/manifest.json ] && command -v jq >/dev/null 2>&1; then
+    _ib=$(jq -r '.integration_branch // ""' .claude/manifest.json 2>/dev/null || echo "")
+    [ "$_ib" = "null" ] && _ib=""
+  fi
+  [ -n "$_ib" ] || _ib="main"
+
   local base=""
-  if git rev-parse --verify --quiet main >/dev/null 2>&1; then
-    base="main"
-  elif git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
-    base="origin/main"
+  if git rev-parse --verify --quiet "$_ib" >/dev/null 2>&1; then
+    base="$_ib"
+  elif git rev-parse --verify --quiet "origin/$_ib" >/dev/null 2>&1; then
+    base="origin/$_ib"
   fi
   if [ -n "$base" ]; then
     local branch_status bcounts b_test
