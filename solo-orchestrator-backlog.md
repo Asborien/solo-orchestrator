@@ -15925,3 +15925,88 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+## BL-274: an organizational deployment REQUIRES a second technologist, so a company with one technical director cannot satisfy the tier — is that intended?
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** An attestation was designed
+in full and deliberately NOT built; the reasoning is the contribution and is recorded below.
+
+**Logged:** 2026-09-13, from an adopter with a real instance of the shape: a limited company with a
+liability entity, insurance, ITSM and an audit trail, and exactly ONE technical authority — the same
+individual is both Senior Technical Authority and Orchestrator.
+
+**The symptom that started it.** `scripts/check-phase-gate.sh` fails the organizational self-approval
+control when the Approver cell matches the blame author of that row (`:1719`). For a single-authority
+company the two are the same person at every gate, so the gate is permanently red and no sequence of
+correct actions turns it green.
+
+**The finding is that this is NOT a gate problem.** `docs/governance-framework.md` does not lack a way
+for such a company to express itself. **It requires a second technologist in order to be organizational
+at all.** §XIV, the six blocking pre-conditions, item 5:
+
+> **Backup maintainer designated:** Second technologist with repository and hosting access per Section X.
+
+Listed as blocking, required before Phase 0. §X repeats it as a per-project mandate — *"Every project
+must have a designated backup maintainer — a second technologist who has full repository and hosting
+access"* — and §X's Insider Threat section names what the gate implements as one of three structural
+guarantees: *"role-based approval gate separation through **independent phase gate approvers**,
+append-only audit evidence, and **anti-self-approval controls**."*
+
+So a single-authority organizational project does not have an unmet gate. **It has an unmet blocking
+pre-condition, and the red gate is the symptom.** §V also makes the approver role wider than the
+Orchestrator: the Phase 1→2 approver is the *"Senior Technical Authority (architect, engineering lead,
+**or IT security**)"*.
+
+**THE QUESTION FOR THE MAINTAINER.** The taxonomy offers `personal` (self-review permitted, known risk
+stated) and `organizational` (independent authority assumed and, per §XIV.5, required). A company that
+is a real liability entity with real governance obligations but ONE technical director is neither. Its
+two options today are to misrepresent itself as `personal` or to sit permanently red. Is that
+intended? The framework may well mean it — §X's Insider Threat section is explicit that concentrating
+all technical access in one individual is a risk requiring compensating controls, and a second
+technologist is the first of them. If it IS intended, the gap is in the messaging rather than the
+taxonomy: nothing tells such an operator that the red gate is pre-condition 5 surfacing, so they read
+it as a tooling fault and look for a flag.
+
+**WE DESIGNED AN ATTESTATION AND DID NOT BUILD IT.** The mechanism was worked out completely and is
+native — `SOLO_SINGLE_AUTHORITY_ATTESTED` + a mandatory `_REASON`, checked inside the `organizational`
+block ahead of the FAIL arm, recorded to `.claude/process-state.json` per gate and pinned to
+`git rev-parse HEAD`, refusing if the reason is blank or the record cannot be written, printing a
+yellow `[ATTESTED]` naming the reason and never the word verified. Every property has a precedent:
+
+| property | precedent |
+|---|---|
+| gate-keyed, HEAD-pinned, HEAD-sensitive idempotence | `_cpg_record_accum_attestation`, `check-phase-gate.sh:959` |
+| mandatory reason, refused when blank | `check-pr-review.sh:174-183` — *"An attestation without a justification is the gate switched off with extra steps."* |
+| refuse if it cannot be recorded | `check-pr-review.sh:200-204`, `check-phase-gate.sh:1251-1253` |
+| `printf %s`, never `echo -e`, for an operator reason | `check-phase-gate.sh:1245` — an `echo -e` reason can forge `[OK]` lines into the gate transcript |
+| a solo operator with no second person | `SOLO_UAT_SOLO_ATTESTED`, `process-checklist.sh:1201` |
+| a governance control met by written exception | `zdr_attestation_reason`, invariant #16 |
+
+**It was not built because it would attest past the wrong thing.** The attestation would record "this
+organisation has one technical authority" against the self-approval control, while the pre-condition
+that statement actually contradicts — §XIV.5 — stayed unmet and unmentioned. That turns a blocking
+pre-condition into a green gate line, which is the `## BL-256:` failure mode (a receipt for a check
+that did not happen) applied to governance rather than to tooling. **A thirteenth attestation is cheap
+to build and it was the wrong instrument.**
+
+**If an instrument is wanted, one already exists and is closer.** §X.1 requires the Application Owner
+and IT Security to acknowledge the concentrated-access risk in `APPROVAL_LOG.md` at the Phase 0→1
+gate. That is the framework's own home for "this organisation accepts the single-point-of-failure
+trade-off", it is already append-only and auditable, and it does not touch an independence control.
+
+**Not measured beyond the reading above.** No fixture was built and no mechanism was prototyped,
+because no fix is proposed. The `docs/governance-framework.md` citations were read end to end (1,039
+lines), not grepped.
+
+**Counts corrected while writing this.** The attestation family is **nine** `SOLO_*_ATTESTED`
+environment variables in shipped code — `APPROVALS`, `TDD`, `REVIEWERS`, `UAT_SOLO`, `MCP`,
+`MCP_ACCUM`, `LICENSE`, `PR_REVIEW`, `BP` — plus the `zdr_attested` phase-state field. Ten named
+mechanisms, not twelve. `SOLO_APPROVALS_ATTESTED` is NOT related to this control; it covers GitLab's
+Premium-only required-approvals API (`host-drivers/gitlab.sh:220`).
+
+**Related:** `## BL-275:` (the same control, and the reason its remedy line cannot be made both true
+and consistent — read it before acting on this one), `## BL-212:` (the same walker, its coverage
+stopping at Phase 1→2, and the CI backstop shipped warn-only while §V Control 4 claims continuous
+verification), `## BL-256:` (a green line the operator reads as a check that was performed),
+`## BL-149:` (a gate people cannot satisfy honestly is a gate they delete — the outcome this entry
+exists to avoid).
