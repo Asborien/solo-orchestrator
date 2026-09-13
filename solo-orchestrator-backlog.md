@@ -20136,3 +20136,260 @@ yet merged**, `fix/bl277`, so that citation resolves only once it lands), `## BL
 reader this arm extends), `## BL-176:` (`# BL-176-GITPATH-EDITMSG`, the sibling case where a linked
 worktree's `.git` POINTER FILE silently disabled two gates — the same class of path assumption in the
 same file).
+
+---
+
+## BL-280: the Phase 2→3 bug gate treats an unmeasured GitHub as zero bugs — an absent SEV label, and a repo `gh` cannot even resolve, both read as "no bugs" and clear the gate
+
+**Status:** Open — reproduction + fix BUILT on branch `fix/bl280`, NOT yet submitted.
+`# BL-280-SEV-LABEL-PROBE` distinguishes "this label does not exist" from "zero open issues"
+with one bounded `gh api repos/{owner}/{repo}/labels/<name>` per label; `# BL-280-NO-SEV-VOCAB`
+stops `gh auth status` alone from establishing a bug-tracking SOURCE; `# BL-280-PARTIAL-VOCAB`
+reports an arm whose labels are absent as NOT MEASURED instead of `[OK]`; `# BL-280-QUERY-LIMIT`
+passes `--limit 1000`; `# BL-280-QUERY-STATUS` captures each query's exit status so a failed query
+is NOT MEASURED rather than 0; `# BL-280-REPO-PREFLIGHT` asks `gh repo view` once so a repository
+`gh` cannot resolve is reported as that, not as "no SEV label". Suite
+`tests/test-bl280-bug-gate-unmeasured-source.sh` **19 / 0** against RED **3 / 16**; seven mutants,
+each with a named killer; shellcheck 0.11.0 clean on the suite and no new finding on
+`scripts/test-gate.sh` (same SC1091/SC2001/SC2155 set as main). An earlier cut of this entry said
+13 / 0 against 3 / 10 with four mutants and four markers; adversarial review of that cut found two
+holes in it, recorded under **"Second cut"** below.
+
+**Numbering.** Filed as BL-280. Swept before claiming it: the token `BL-280` appears on **no ref**
+of this repository — 0 hits across all `refs/heads` and `refs/remotes` — against a positive control
+of `BL-279`, which the identical sweep finds on exactly the two refs that carry it
+(`fix/bl279`, `fork/fix/bl279`). The first cut of that sweep piped `git grep` into `head -1` inside
+an `if`, so the pipeline's exit status was `head`'s and **every ref reported a hit**; the number was
+only established once the predicate was fixed and controlled. `## BL-262:` records that BL-260 and
+BL-261 are reserved by downstream carries.
+
+**Duplicate sweep — by file touched, not by keyword.** `scripts/test-gate.sh` is modified by **no**
+open branch: for every ref, `git diff --name-only $(git merge-base main $ref) $ref -- scripts/test-gate.sh`
+is empty. That predicate is live rather than vacuous — the same loop over the same refs lists real
+files for fourteen of them (`fix/bl268` → five paths, `fix/scout-shallow-history-claim` → nine, and
+so on). Merged history on `main` carries seventeen commits touching this file, none on
+`check_phase_gate`'s GitHub arm. The four `gh issue list` calls named below are the **only** four in
+`scripts/`, `scripts/lib/` and `scripts/host-drivers/` combined, so the blast radius is one function.
+
+**Logged:** 2026-09-13, found while adopting the framework into a downstream project.
+
+**ONE entry, two arms, and the reason they are not two entries.** They share four lines in one
+function and one diff repairs both; splitting would mean two branches editing the same four lines
+and a conflict between them for no analytic gain. The information a split would have carried — that
+the arms differ sharply in consequence — is recorded per arm below, and the arms differ more than
+the finding as reported to me suggested. The shape is `## BL-275:`'s ("half one" / "half two" inside
+one entry), not two numbers.
+
+**ARM 1 — an absent label is indistinguishable from zero bugs, and the gate clears on it.**
+`gh issue list --label SEV-1 --state open --json number` against a repository that has no `SEV-1`
+label returns an **empty list at rc 0**. Not an error, not a diagnostic — a successful query with no
+results, which is the same thing a genuinely clean repository returns.
+
+**Measured, with the positive control first** (110-label repository, no `SEV-*` label among them):
+```
+gh label list  --limit 200 --json name | jq length                  -> 110
+gh label list  --limit 200 --json name | jq -r '.[].name' | grep ^SEV  -> (nothing)
+
+gh issue list --label "SEV-1" --state open --json number            -> [] , rc 0
+gh issue list --label "SEV-1" --state open --json number | jq length -> 0
+
+gh issue list --label "bug"   --state open --json number | jq length -> 30    # control: the pipeline works
+```
+
+The old code then did two things with that 0. It **added** it to the severity tally, and — the part
+that actually clears the gate — it set `has_bugs=true`, unconditionally, on the strength of
+`gh auth status`. `gh auth status` says the OPERATOR is logged in. It says nothing about whether
+this repository tracks bugs in GitHub Issues, and nothing about whether the SEV vocabulary exists
+here. With no `BUGS.md` present, the function printed `[OK] No open SEV-1 bugs` and its three
+siblings and reported the Phase 2→3 bug gate clear having measured nothing at all. This is
+`CLAUDE.md`'s own prohibition — *"a check that cannot run must not pass"* — and the failure class
+`# BL-112-SAST-NOTRUN` exists to name.
+
+**Three routes into it, not one.** The missing-label case above is the narrowest. Wider:
+
+- **No GitHub remote at all.** Measured in a fresh `git init` directory with no remote:
+  `gh issue list --label "SEV-1" --state open --json number` exits **1** with empty stdout; `jq length`
+  on empty input prints nothing and exits 0 (the `## BL-256:` residual-4 shape); `tr -d` yields the
+  empty string; and the existing sanitizer `case "$gh_sev1" in ''|*[!0-9]*) gh_sev1=0 ;; esac`
+  converts that to **0**. A GitLab or Bitbucket project with `gh` installed and logged in therefore
+  received four fabricated all-clears. The sanitizer is not at fault — it is doing its job — but it
+  is the last place a failed query becomes a number.
+- **Partial vocabulary, and this is the dangerous one.** The two SEV-2 arms query
+  `--label "SEV-2" --label "fix-now"` and `--label "SEV-2" --label "deferred"`. Two `--label` flags
+  **intersect**, measured: `bug` -> 257, `enhancement` -> 228, both together -> **1**. So a project
+  that created `SEV-1`/`SEV-2`/`SEV-3` but not the framework's `fix-now` / `deferred` jargon gets 0
+  from both queries — and **both of those arms BLOCK**. Open SEV-2 bugs, gate clear.
+
+**ARM 2 — the counts saturate at 30. This one does NOT let a gate pass; correct the framing.**
+No `--limit`, so every query stops at `gh issue list`'s default of 30.
+
+**Measured, same repository, same pipeline:**
+```
+gh issue list --label "bug" --state open --json number | jq length               -> 30
+gh issue list --label "bug" --state open --limit 1000 --json number | jq length  -> 257
+```
+
+Under-counted 8.5×. **It was reported to me as failing permissively in the same direction as arm 1,
+and it does not.** Every threshold in `check_phase_gate` is `-gt 0` — verified by reading all four
+consumers, `sev1_count`, `sev2_open`, `sev2_deferred` and `sev3_open` are used in a `-gt 0` test and
+in the message string, nowhere else — and saturation at 30 never yields 0 from a non-zero truth. A
+verdict cannot flip. What arm 2 corrupts is the **number the operator triages against**: "SEV-1 bugs
+open: 30" when the true figure is 257 is the difference between an afternoon's work and a
+re-planning conversation. It is a reporting defect of real cost, filed as one, and the entry should
+not borrow arm 1's severity for it.
+
+**Fix — BUILT on this branch.** Four markers, and one of them is a trap avoided rather than a
+mechanism:
+
+1. `# BL-280-SEV-LABEL-PROBE` — the missing distinction. `gh api repos/{owner}/{repo}/labels/<name>`
+   is rc 0 when the label exists and rc 1 + 404 when it does not (measured both ways), one request,
+   no pagination, and it fails rc 1 in a repository `gh` cannot resolve — which is the correct answer
+   there too. **NOT `gh label list`:** its own default limit is **30**, measured
+   (`gh label list --json name` -> 30, `--limit 200` -> 110), so probing with it would have rebuilt
+   arm 2 inside the fix for arm 1. Case R6 in the suite is the standing guard on that.
+2. `# BL-280-NO-SEV-VOCAB` — with none of `SEV-1`/`SEV-2`/`SEV-3` present, GitHub is no longer
+   counted as a bug-tracking SOURCE. `has_bugs` is left alone, so the function falls through to **its
+   own existing honest arm** — `[WARN] No bug tracking source found (BUGS.md or GitHub Issues)`,
+   `Cannot verify bug status`, exit 2. No new policy is minted: that arm and that exit code were
+   already the answer for a project with no tracker, and this makes the GitHub case consistent with
+   it instead of inventing a verdict.
+3. `# BL-280-PARTIAL-VOCAB` — vocabulary adopted but incomplete, and GitHub the only source: the
+   affected arm prints `NOT MEASURED … This is NOT a clean result` and sets `warnings=true` rather
+   than `[OK]`. Gated on `[ ! -f "BUGS.md" ]`, because a BUGS.md project counted every severity from
+   the file and GitHub contributing 0 is then **correct**, not a silence.
+4. `# BL-280-QUERY-LIMIT` — `--limit 1000` on all four queries. Ten pages at the REST `per_page` cap
+   of 100. **Residual, stated rather than hidden:** above 1000 open issues of a single severity the
+   figure is still understated; the verdict is not, because it is already a block.
+5. `# BL-280-QUERY-STATUS` (second cut) — each `gh issue list` is run into a variable with
+   `|| rc=$?`, and jq only sees the body of a query that exited 0. A query that failed marks its
+   arm NOT MEASURED — `the 'SEV-1' query failed (gh exit 1), so GitHub's count is unknown` — and
+   sets `warnings=true`, whether or not `BUGS.md` exists: the label is there, so GitHub may hold
+   issues under it that nobody counted. The `|| rc=$?` shape is what survives the script's `set -e`;
+   a bare `x=$(cmd); rc=$?` exits on the very failure it is trying to record.
+6. `# BL-280-REPO-PREFLIGHT` (second cut) — one `gh repo view --json name` before the label probes.
+   On failure the probes are skipped and the scope note reads `could not resolve a GitHub
+   repository, so its issues were NOT counted`; the earlier note, `no SEV-1/SEV-2/SEV-3 label
+   exists in this repository`, is reserved for a repository that resolved and has no such label.
+   The note is now printed on the no-source arm too, so a project with no `BUGS.md` sees the
+   reason before `No bug tracking source found`.
+
+**Blast radius of the fix, measured on the shipped script.** A project tracking bugs in `BUGS.md`
+— the common case — keeps all four `[OK]` lines and gains one `[INFO]` naming what GitHub
+contributed. A project with no `gh`, or `gh` not authenticated, is byte-identical: the whole block
+is already behind `command -v gh && gh auth status`. The outcomes that change from clear to
+not-clear are the ones that were never measured — including, since the second cut, a `BUGS.md`
+project whose SEV labels exist on GitHub but whose queries failed: it now reads NOT MEASURED on
+those arms (exit 2) where it read `[OK]` before, because BUGS.md's count says nothing about what
+GitHub holds.
+
+**What this entry does NOT decide, and why the maintainer should.** Two judgements were deliberately
+left open rather than taken here:
+
+- **Should an unmeasurable bug source BLOCK rather than warn?** This fix routes it to `exit 2`
+  (attestation required), matching the function's existing no-source arm. Failing closed would block
+  every project that has not adopted the SEV vocabulary on GitHub, which on the evidence is most of
+  them, and `# BL-112-SAST-NOTRUN` argues at length that a gate you cannot pass is a gate people
+  work around. That reasoning is persuasive but it is a security posture, not an implementation
+  detail, and it is yours.
+- **The gate has no record of which tracker the project actually uses, and could have one.**
+  `.claude/build-progress.json` carries a `bug_tracker` field — written in exactly two places,
+  `init.sh` and `scripts/test-gate.sh`'s `ensure_progress_file` heredoc, **both hardcoded to the
+  literal `"github_issues"`**, and **read by no code anywhere in the repository**. The intake wizard
+  does ask ("Bug tracking tool", default `GitHub Issues`) and saves the answer as
+  `bug_tracking_tool` in the intake record, where nothing consults it either. That is
+  `# BL-203-INTERVAL-PLUMB`'s defect one field over: an operator answer that never reaches the
+  enforced field. Plumbing it through would give this gate a real discriminator and make arms 2 and 3
+  of the fix unnecessary — but it mints a third writer and a new contract, so it is proposed here,
+  not built. **It is not filed as its own entry; it needs a number if you want it chased.**
+
+**Build note (2026-09-13, branch `fix/bl280`).** Suite
+`tests/test-bl280-bug-gate-unmeasured-source.sh` drives the REAL `scripts/test-gate.sh
+--check-phase-gate` against a PATH-shimmed `gh` in a `mktemp` project. No network, no real `gh`.
+The shim models the four behaviours that matter and nothing else: `auth` always rc 0 (that is all
+the old code checked), `repo view` rc 0 unless the fixture is `norepo`, `api` answering by a
+per-fixture label list, and `issue list` honouring `--limit` exactly as gh does — default 30,
+capped at the given value — or exiting 1 with nothing on stdout when the fixture is `queryfail`.
+
+RED against `main`'s file: **3 passed / 16 failed**. GREEN: **19 / 0**. (The first cut measured
+3 / 10 and 13 / 0 with the cases it had; the second cut's six additions are all RED on main.)
+
+**The three passes at RED are the honest-outcome controls, and they are load-bearing.** P0 asserts
+the shim is the `gh` the gate calls — without it R1/R2/R3 would pass whenever `gh` is merely absent
+from PATH, because no `gh` skips the GitHub block entirely and produces the honest warning for
+entirely the wrong reason. That is this entry's own defect reproduced inside its test, and P0 exists
+so it cannot be. R0 asserts a genuinely clean project still reads clear. R7 asserts a partly-adopted
+vocabulary **with** BUGS.md still reads `[OK]` — true on main by construction, and the bound on the
+fix's blast radius.
+
+Discriminators R1-R6 and R8 all go red on main: R1 the missing-label clear, R2 the no-remote clear,
+R3 the two blocking SEV-2 arms, R3b/R3c the SEV-1 and SEV-3 arms alone, R4 `257` reported as `30`,
+R5 the unstated scope, R6 four unlimited queries, R8 four failed queries read as four all-clears.
+
+**Seven mutants, each with a named killer, and each proving it changed the file before it concludes
+anything.** MT1 strips `--limit` → R4. MT2 reinstates `has_bugs=true` on the no-vocabulary branch →
+R1. MT3 drops the `[ ! -f "BUGS.md" ]` guard → R7, which is what makes that guard load-bearing
+rather than decoration. MT4 drives R6's own predicate against a stripped file and requires it to
+report 4 of 4 while still reporting 0 on the real one. MT5 and MT6 delete the SEV-1 and SEV-3
+PARTIAL-VOCAB lines respectively → R3b, R3c; each proves the edit landed by a line count that
+dropped by exactly one and the target line absent. MT7 rewrites all four `|| gh_<arm>_rc=$?` to
+`|| gh_<arm>_rc=0` — the first cut's sanitise-to-zero, reinstated in one substitution — → R8.
+
+**Second cut (2026-09-13): two holes in the first cut, found by adversarial review, not by me.**
+Both were reproduced before anything was changed. First, the two single-severity lines of
+`# BL-280-PARTIAL-VOCAB` — `sev1_measurable=false` and `sev3_measurable=false` — were **untested**:
+R3's fixture carried SEV-1 and SEV-3, so neither line ever fired, and deleting either one left the
+suite at **13 / 0**. Measured on the tip: line count 672 → 671, target text absent, `Passed: 13
+Failed: 0`, both lines. R3b and R3c now isolate each line (SEV-1 absent with everything else
+present, and the SEV-3 mirror), MT5 and MT6 are the reviewer's deletions made permanent, and the
+same two deletions against the fixed file now read **17 / 2** each — R3b + MT5, and R3c + MT6.
+Second, and worse because it is main's defect one step later: with all five labels present and
+every `gh issue list` exiting 1 with empty stdout, the first cut still **sanitised the empty body
+to 0 and printed four `[OK]` all-clears**, `has_bugs=true`, exit 2 only because FEATURES.md was
+missing. The label probe had succeeded, so the code trusted the query that followed it — the
+`case ''|*[!0-9]*) → 0` sanitizer this entry's ARM 1 describes as "the last place a failed query
+becomes a number" was still doing exactly that. `# BL-280-QUERY-STATUS` is the fix; R8 the case;
+MT7 the mutant. Two smaller review findings landed with them: the scope note now distinguishes an
+unresolvable repository from a repository with no SEV labels (`# BL-280-REPO-PREFLIGHT`, asserted
+in R2 both ways, and R2's pass string no longer claims "a failed query is not a zero count" — it
+claims what R2 measures, a repository `gh` cannot resolve), and MT4's RED path no longer calls the
+counting predicate with an empty mutant directory (it emitted `grep: /scripts/test-gate.sh: No
+such file` against main). The shim gained a `repo` verb and a `queryfail` mode, and P0 now also
+proves the shim answers `gh repo view` — without that, every case would take the unresolvable-repo
+arm and R1–R4 would pass having never reached the code they test.
+
+**Two defects in the suite itself, both caught by running it and both this repo's documented
+traps.** First, R6's predicate was **comment-blind** and reported three violations that were all
+prose inside the fix's own comments — `## BL-258:` #7 verbatim ("one script accused on the strength
+of the words `exit 1` inside a COMMENT"), and `code_lines()` now drops whole-line comments before
+matching. Second, and worse: **MT1 and MT2 originally PASSED against main while mutating nothing.**
+Their `perl` substitutions target text that only exists once the fix is applied, so against main the
+file came back byte-identical and every assertion below measured the unmutated script. Both "landed"
+checks were written as *"is the target text absent afterwards"*, which is trivially true when it was
+never present. They now compare a `cksum` taken before the edit and refuse to conclude anything if
+the file did not change — which is why the RED tally moved from 5/8 to 3/10. A mutant that mutates
+nothing is an assertion that cannot fail.
+
+**Fails CLOSED on a missing prerequisite, and the control for that is real.** Absent `jq`, the suite
+prints `[FAIL] PREREQ` and exits 1 at **0 / 1** — it does not SKIP, because a suite that skips
+reports green having run nothing, which is the class this entry is about. The **first** attempt to
+prove this used `PATH=/usr/bin:/bin` and the suite ran 13/0 — `jq` is at `/usr/bin/jq` on this host
+as well as `/opt/homebrew/bin/jq`, so the control was fake and would have certified a check that
+never ran. Re-measured against a `PATH` containing one symlink (`dirname`) and nothing else, with
+`command -v jq` confirmed to find nothing first.
+
+Registered in `tests/full-project-test-suite.sh` and in the `tests.yml` unit lane
+(`lint-tests-registered.sh --list`: `registered`), and the lint's **negative control** was run: with
+the aggregator entry removed it names this file — *"test file is not invoked by any aggregator"*,
+1 violation — and is clean with it restored. The five other unit suites that drive
+`scripts/test-gate.sh` re-run green (`test-bl073-review-manifest-gate` 29/0,
+`test-bl121-cutline-bsd-sed` 2/0, `test-test-gate-counter-sanitizer` 5/0,
+`test-test-gate-null-handling` and `test-unrecord-feature` rc 0).
+
+**Related:** `## BL-112:` (`# BL-112-SAST-NOTRUN` — the shipped doctrine that a check which did not
+run must never read as a check that found nothing; this is that class in a gate rather than a hook),
+`## BL-231:` (the absent-vs-unreadable family), `## BL-256:` (residual 4, `jq` on empty input as a
+silent success — the mechanism by which a failed query becomes 0 here), `## BL-203:`
+(`# BL-203-INTERVAL-PLUMB`, the intake answer that never reaches the enforced field — the same shape
+as the unread `bug_tracker` above), `## BL-258:` #7 (the comment-blind predicate this suite walked
+into), `## BL-275:` (the one-entry-two-halves shape, and the precedent for leaving a maintainer
+judgement explicitly undecided).
