@@ -154,12 +154,24 @@ if ! bash "$REPO_ROOT/scripts/scout.sh" --root "$E_P" --out "$E_ROOT/scan" >/dev
   bad "E setup — scripts/scout.sh produced no report; the end-to-end case cannot run, and is NOT silently skipped"
 else
   E_HASH_BEFORE="$(_hash "$E_P")"
-  printf '2\n1\n1\n1\n1\n' > "$E_ROOT/answers"
+  # ENOUGH ANSWERS TO REACH THE PREFLIGHT, AND A LOUD FAILURE IF WE DO NOT.
+  # A fixed 5-line stream underran the intake on a host without node/npm: the
+  # driver stopped at "Tooling Configuration ... no answer was given" BEFORE the
+  # preflight, so E1-E3 passed VACUOUSLY (nothing ran, so nothing was written)
+  # and E4/E5 read the intake abort's message instead of the preflight's.
+  # Measured in `ubuntu:24.04`: 23/2 there against 25/0 on this Mac, for a
+  # fixture difference and not a product difference. E0 below is the guard: if
+  # the run did not reach the preflight, say so instead of asserting anything.
+  { printf '2\n'; i=0; while [ "$i" -lt 40 ]; do printf '1\n'; i=$((i + 1)); done; } > "$E_ROOT/answers"
   E_ERR="$E_ROOT/err"
   ( cd "$E_P" && bash "$REPO_ROOT/scripts/adopt-project.sh" \
       --scan-report "$E_ROOT/scan/scout-report.json" ) < "$E_ROOT/answers" >/dev/null 2>"$E_ERR"
   E_RC=$?
   E_DIRTY="$( cd "$E_P" && git status --porcelain --ignored --untracked-files=all 2>/dev/null | grep -c . )"
+  # E0 — the run must have reached the PREFLIGHT. Without this every assertion
+  # below is satisfied by a driver that stopped earlier for an unrelated reason.
+  chk "E0 — the run reached the pre-write preflight (not an earlier abort)" \
+    "$(grep -c 'your ignore rules refuse' "$E_ERR")" "1"
   chk "E1 — the real driver REFUSES an adoptee whose rules hide .claude/" \
     "$([ "$E_RC" -ne 0 ] && echo yes || echo no)" "yes"
   chk "E2 — and the project is BYTE-IDENTICAL afterwards (real writers, no stub)" \
@@ -200,21 +212,25 @@ done
 # MP1 — delete the check-ignore arm on a mirror: T1 must stop refusing. Without
 # this, T1 passes for any reason at all, including a preflight that refuses
 # every project.
+#
+# The mutation is awk, not python3: the runner has python3 and a bare
+# `ubuntu:24.04` does not, and this suite must give the same verdict on both.
+# It rewrites a TWO-LINE anchor, so the edit cannot be a one-line sed; and it
+# asserts the anchor was unique AND that the replacement LANDED, because "the
+# mutator ran" is not "the mutant mutates".
 MP="$WORK/mp/lib"; mkdir -p "$MP" && cp -p "$LIB"/*.sh "$MP/"
-python3 - "$MP/adopt-state.sh" <<'PYEOF'
-import sys
-p=sys.argv[1]; s=open(p).read()
-old='''      0) ignored="$ignored
-$rel" ;;
-'''
-new='''      0) : ;;
-'''
-assert s.count(old)==1, "MP1 anchor not unique: %d" % s.count(old)
-open(p,"w").write(s.replace(old,new))
-PYEOF
-mp_applied=$?
-if [ "$mp_applied" -ne 0 ] || ! bash -n "$MP/adopt-state.sh" 2>/dev/null; then
-  bad "MP1 setup: the mutation did not apply cleanly"
+mp_anchor='      0) ignored="$ignored'
+mp_n="$(grep -cF "$mp_anchor" "$MP/adopt-state.sh")"; case "$mp_n" in ''|*[!0-9]*) mp_n=0 ;; esac
+awk -v anchor="$mp_anchor" '
+  $0 == anchor { print "      0) : ;;"; skip = 1; next }
+  skip == 1    { skip = 0; next }
+  { print }
+' "$MP/adopt-state.sh" > "$MP/adopt-state.sh.mut" && mv "$MP/adopt-state.sh.mut" "$MP/adopt-state.sh"
+mp_left="$(grep -cF "$mp_anchor" "$MP/adopt-state.sh")"; case "$mp_left" in ''|*[!0-9]*) mp_left=0 ;; esac
+mp_new="$(grep -c '^      0) : ;;$' "$MP/adopt-state.sh")"; case "$mp_new" in ''|*[!0-9]*) mp_new=0 ;; esac
+if [ "$mp_n" -ne 1 ] || [ "$mp_left" -ne 0 ] || [ "$mp_new" -ne 1 ] \
+   || ! bash -n "$MP/adopt-state.sh" 2>/dev/null; then
+  bad "MP1 setup: the mutation did not apply cleanly (anchors=$mp_n left=$mp_left new=$mp_new)"
 else
   P9="$WORK/t9"; _adoptee "$P9" '.claude/'
   mp_rc=$( set +e

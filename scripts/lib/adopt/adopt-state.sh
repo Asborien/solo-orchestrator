@@ -1114,15 +1114,13 @@ STATE_ORDER
 # source would rehearse nothing. The whole tree is copied, `.git` included,
 # because the rehearsal's git behaviour must match the real one's.
 #
-# THE ORACLE IS `git check-ignore --no-index`, and it is NOT the staging half's
-# oracle. That half asks `git add --dry-run`, which needs the files to EXIST;
-# here they do not yet. Measured against `git add` as ground truth across eight
-# shapes — untracked+ignored, tracked+ignored (modified and not), untracked
-# clean, tracked clean, and four negation-pattern cases including a re-included
-# file inside an ignored directory — `check-ignore --no-index` agreed in all
-# eight. `--no-index` is required: without it git reports nothing for a TRACKED
-# path, which is the index-aware false-clean that defeated this entry's first
-# fix.
+# THE ORACLE IS NOT THE STAGING HALF'S. That half asks `git add --dry-run`,
+# which needs the files to EXIST; here they do not yet. What replaces it is TWO
+# questions, not one — see the block at the loop below, which carries the
+# measurement. An earlier version of this header claimed a single
+# `check-ignore --no-index` agreed with `git add` "in all eight" shapes; it does
+# not, and asking it alone over-refused working projects. The header is kept
+# short deliberately: one description of this oracle, in one place.
 adopt_prewrite_preflight() {
   local root="$1" report="$2" copy work saved rc=0 planned ignored=""
   copy="$ADOPT_WORK/rehearsal/tree"
@@ -1216,6 +1214,38 @@ $planned
 PLANNED
 
   if [ -n "$ignored" ]; then
+    # DERIVE THE BLAST RADIUS FROM THE TREE, NOT FROM THE MARKER. The
+    # touched-disk marker records an ATTEMPT and is raised BEFORE each write, so
+    # an arm that attempted one and left nothing still raises it — the tool
+    # resolver does exactly that on a host missing node/npm. The refusal then
+    # told the operator adoption "had already ATTEMPTED writes to this project"
+    # over a provably clean tree: measured in `ubuntu:24.04`, 0 files under
+    # `.claude/`, 0 rows from `git status --porcelain --ignored -uall`, and the
+    # message still claiming otherwise. That is the false-claim class
+    # `# BL-225-REFUSE-HONEST` exists to remove, and it was invisible on macOS
+    # because the resolver's arm is not taken when the tools are present.
+    #
+    # This arm runs BEFORE the write phase, so if the tree is clean here then
+    # nothing was written, full stop. Ask the tree and clear the proxy when it
+    # disagrees with the facts.
+    # Ask about the PLANNED PATHS, not `git status`. A first cut asked git, and
+    # git reports an empty IGNORED DIRECTORY as a row (`!! .claude/`), so a
+    # `mkdir -p` that created nothing read as "the tree is dirty" and the proxy
+    # was never cleared — the Linux failure this was written to fix, unfixed.
+    # The planned set is exactly what the adoption would have written, so if not
+    # one of those paths exists, nothing was written. A planned path the
+    # OPERATOR already had counts as existing, which only makes this arm more
+    # conservative: it keeps the marker and says less.
+    _bl225_landed=0
+    while IFS= read -r _p; do
+      [ -n "$_p" ] || continue
+      [ -e "$root/$_p" ] && { _bl225_landed=1; break; }
+    done <<LANDED
+$planned
+LANDED
+    if [ "$_bl225_landed" -eq 0 ] && [ -n "${ADOPT_WORK:-}" ]; then
+      rm -f "$ADOPT_WORK/touched" 2>/dev/null || true   # BL-225-REFUSE-DERIVED
+    fi
     # The paths go IN the refusal, not after it in `adopt_note`s: notes print on
     # STDOUT and refusals on STDERR, so a reader piping stderr to a log would
     # get "some of your files are refused" with no list of which.

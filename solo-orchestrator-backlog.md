@@ -9626,8 +9626,8 @@ KEPT SCAN REPORT, which `adopt_write_intake` writes earlier in the correct order
 
 **Residuals.** (0) **PRE-EXISTING, found by this review and not fixed here: an
 adoptee whose `.claude` is a symlink to an absolute path OUTSIDE the repository
-has files written there — eight of them — while the refusal correctly reports the
-repository itself untouched.** Measured on base and on this branch alike, so the
+has files written there — SEVEN of them, measured twice, on base and on this
+branch — while the refusal correctly reports the repository itself untouched.** Measured on base and on this branch alike, so the
 escape predates the preflight; what this branch adds is the refusal that now sits
 in front of it, which is why the guard is fail-closed on `check-ignore`'s rc 128
 rather than reading it as clean. Escaping symlinks want their own entry.
