@@ -17539,3 +17539,187 @@ answer is itself wrong), `## BL-256:` (a gate clearing on a receipt it did not e
 exception is that receipt), `## BL-266:` (SIBLING BRANCH, PR #390 — the same wizard's other
 non-interactive-adjacent path; the citation resolves once `fix/bl266` lands). BL-281 and BL-282,
 filed in this batch, are named without `## …:` citations because each lands on its own branch.
+
+---
+
+## BL-276: four test suites ran in ~1 second against `/dev/null` and blocked FOREVER when the caller left stdin open — `full-project-test-suite.sh` is what CONTRIBUTING.md tells every contributor to run
+
+**Logged:** 2026-09-13, found by running `tests/test-intake-wizard-fixes.sh` from a harness that leaves
+stdin connected rather than closed. **Status:** Open — fix built on `fix/bl276`; see the Fix section
+and the three residuals.
+**Category:** Environment-dependent hang — a check that cannot report, and reports nothing about why.
+**Severity:** **Real.** The failure mode is an unbounded stall with no diagnostic, no timeout and no
+partial verdict, landing on the one command `CONTRIBUTING.md` § "Local development setup" names as the
+way to validate a checkout. It presumably passes in GitHub Actions only because that runner hands the
+step `/dev/null`; a contributor running the same line from a tool, agent harness, CI shim or editor
+that leaves stdin open gets a suite that simply stops.
+
+### Measured, both stdin shapes, on `main` @ `ceb450e1`
+
+```
+$ time bash tests/test-intake-wizard-fixes.sh < /dev/null
+Passed: 26   Failed: 0                                  rc=0, 1 second
+
+$ timeout 60 bash tests/test-intake-wizard-fixes.sh < <(sleep 300)
+T-bl203-session-check-null-safe: missing keys must not error or fail open
+                                                        rc=124 — still hung at 60s
+                                                        15 of 26 cases emitted
+```
+
+Same file, same tree, same commit. The only variable is what the CALLER left on file descriptor 0.
+
+### The mechanism
+
+`tests/test-intake-wizard-fixes.sh:618` was
+
+```
+OUT=$( cd "$D" && bash "$SESSCHECK" 2>&1 ); RC=$?
+```
+
+with no stdin redirect, so the child inherits the caller's. `$SESSCHECK` is
+`scripts/session-test-gate-check.sh` (assigned at `:509`), a **SessionStart hook**, and its line 27 is
+
+```
+if [ ! -t 0 ]; then
+  ENVELOPE=$(cat 2>/dev/null || echo "")
+```
+
+`[ ! -t 0 ]` separates a terminal from everything else, and everything else is assumed to be a pipe
+that will close. A bare `cat` returns instantly on `/dev/null` and **never sees EOF while any writer
+holds the pipe open**. A process sample during the stall gives the stack
+`command_substitute -> read_comsub -> zread -> read()`.
+
+### It was not one suite — a tree-wide sweep found four
+
+All 227 files under `tests/` were run twice, once with `/dev/null` and once with a writer holding a
+pipe open, each under a bound. Four suites change behaviour with the stdin shape, against **three
+different unbounded readers**, and **all four are children of `tests/full-project-test-suite.sh`**:
+
+| suite | `/dev/null` | held-open pipe | the reader it reaches |
+|---|---|---|---|
+| `test-intake-wizard-fixes.sh` | **1s**, 26/26 | hung, 15 verdicts | `session-test-gate-check.sh:27` — `[ ! -t 0 ]` then bare `cat` |
+| `test-bl032-gitlab-free-approvals-attestation.sh` | **1s**, 8/8 | hung, 0 verdicts | its own fake `glab` stub `:62` — `[ ! -t 0 ]` then bare `cat` |
+| `test-gitlab-ci-status-stderr-approvals.sh` | **3s**, 11/11 | hung, 0 verdicts | its own fake `glab` stub `:63` — same shape |
+| `test-pr-review-gate.sh` | **15s**, 51/18 | hung, 10 verdicts | `scripts/check-pr-review.sh:113` — `[ ! -t 0 ]` then `while read` |
+
+`test-pr-review-gate.sh`'s 18 failures are **pre-existing on `main`** — reproduced at `ceb450e1` with
+`/dev/null`, before any change here — and are not this entry's business. What BL-276 owns is that the
+stdin shape changed its behaviour at all.
+
+**One false positive, recorded because the bound produced it.** The first sweep pass used a 45s bound
+and flagged `tests/test-brownfield-wp4-driver.sh`. It is fine: 42s on `/dev/null`, 52s on a pipe, 24/24
+both ways. The bound was the confounder, not the suite. Re-measure before believing a bound.
+
+**`check-pr-review.sh` is the one with teeth.** Its comment already names half the problem — *"`[ -t 0 ]`
+separates the hook (stdin is a pipe) from a human running this by hand (stdin is a tty), where a read
+would block forever"* — and then blocks forever on the third case, a pipe nobody closes.
+
+### The fix, and why it is at the CALL SITES
+
+**Twelve invocations** across the four suites now redirect stdin, each marked `# BL-276-STDIN-REDIRECT`
+on the invocation line: intake-wizard 1, bl032 2, ci-status 5, pr-review-gate 4. **No reader was
+changed.**
+
+Hardening the readers was considered first and rejected on both of them:
+
+1. **The BL-202 remedy does not apply.** `## BL-202:` fixed this same class in the sibling hook
+   `session-intake-check.sh` by moving the stdin read to be **lazy** — inside `emit_state()`, reachable
+   only from a speaking path (`# BL-202-LAZY-STDIN`). That works there because that hook has five silent
+   states and needs the envelope only when it speaks. `session-test-gate-check.sh` has no such shape:
+   it needs `.source` on **every** invocation to choose between a destructive re-init of
+   `.claude/tool-usage.json` and a merge. There is no silent path to hide the read behind.
+2. **A bounded read trades a loud bug for a silent one.** The only remaining way to harden either
+   reader is a timeout. Under the real SessionStart envelope a slow write would then fall through to
+   the default `SESSION_SOURCE="startup"` and take the **destructive** branch — zeroing the `calls`
+   array and `commits_since_last_context7` mid-Build-Loop, which is the exact regression the envelope
+   parse was added to prevent (the hook's own header; `## BL-233:`, `## BL-236:`). For
+   `check-pr-review.sh` the same bound is worse: git hands a pre-push hook its ref list on a pipe, and
+   a short read means the gate passes commits it never checked. That is a deterministic test hang
+   traded for a nondeterministic production failure, in the wrong direction on both counts.
+3. **Nothing distinguishes the two pipes.** "A pipe that will carry an envelope" and "a pipe nobody
+   closes" are the same `[ ! -t 0 ]`. The reader cannot tell them apart without a bound, which is (2).
+
+The call site is also where the tree already stands. Both other suites that drive this hook —
+`test-session-test-gate-check-merge.sh:53` and `test-validate-counter-sanitizer.sh:73` — already pass
+`</dev/null`, as do most of `test-pr-review-gate.sh`'s own `$CHECK` invocations. The twelve fixed sites
+were the outliers that forgot it; this is the existing idiom applied consistently, not a new one.
+
+### Suite
+
+`tests/test-bl276-stdin-hang.sh`, registered in `tests/full-project-test-suite.sh` and in the
+`tests.yml` unit lane. **GREEN 10 / 0** in 73s; **RED 3 / 7** against `main` @ `ceb450e1` in 504s (the
+RED cost is four 120s bounds being paid in full, which only a broken tree does).
+
+The four defect cases assert **parity, not green** — the `/dev/null` run is the reference and the
+held-open run must match its exit status AND its verdict count. A case demanding rc=0 would be
+asserting `test-pr-review-gate.sh`'s 18 unrelated failures.
+
+| case | RED @ `ceb450e1` | GREEN |
+|---|---|---|
+| `A1-probe-flags-a-real-block` | pass (detector control) | pass |
+| `A1b-probe-clears-a-non-blocker` | pass (detector control) | pass |
+| `A2-intake-wizard-stdin-parity` | **FAIL** — hung, 15 of 26 | pass — rc=0, 26 = 26 |
+| `A3-bl032-gitlab-stdin-parity` | **FAIL** — hung, 0 of 8 | pass — rc=0, 8 = 8 |
+| `A8-ci-status-stdin-parity` | **FAIL** — hung, 0 of 11 | pass — rc=0, 11 = 11 |
+| `A9-pr-review-gate-stdin-parity` | **FAIL** — hung, 10 of 69 | pass — rc=1, 69 = 69 |
+| `A4-call-sites-carry-the-redirect` | **FAIL** — no marker anywhere | pass — 12 marked, all redirecting |
+| `A5-mutation-intake` | **FAIL** — A2 already red, proof undefined | pass — mutant stalls at 15 of 26 |
+| `A6-mutation-gitlab` | **FAIL** — A3 already red, proof undefined | pass — mutant stalls at 0 of 8 |
+| `A7-hook-still-honours-a-piped-envelope` | pass (unchanged contract) | pass |
+
+**Two mutants.** A5 and A6 strip `</dev/null` back off the marked lines and require the probe to flag
+the result as hung AND to have stalled **strictly earlier** than the fixed run — without that second
+half a slow host would satisfy the mutation proof. **A2 is the case that kills A5's mutant; A3 kills
+A6's.**
+
+**Every case was shown to be able to fail.** A2/A3/A4/A8/A9 and the mutation cases fail on `main`. The
+three that pass on `main` do not test the fix, so they were falsified by mutation instead: forcing
+`PR_HUNG=0` reds A1 (`DETECTOR CONTROL FAILED — a plain blocking cat ... was NOT flagged`), forcing
+`PR_HUNG=1` reds A1b (`a probe that flags everything proves nothing`), and rewriting the hook's source
+`case` arm to `SESSION_SOURCE="startup"` reds A7 (`calls=0 counter=0, expected 2 and 4`). **A7 is the
+guard on the decision above**: if someone later "fixes" BL-276 inside the hook with a timed read, A7 is
+what goes red under load.
+
+**The bound is two-mechanism and never absent.** `timeout`/`gtimeout` when either is on `PATH`,
+otherwise a poll loop over a done-file, which needs no external tool — macOS ships neither `timeout`
+nor `gtimeout` without coreutils. Both paths were exercised: 10/0 with `timeout`, and 10/0 again with
+the discovery loop neutered so the poll loop runs. Where a bound genuinely cannot be built (`mkfifo`
+unavailable) the affected case **FAILS**; nothing here passes by absence.
+
+**A defect in the first cut of the suite, found by its own leftovers.** `mutate()` was called inside
+`$( )` and appended the mutant's path to the cleanup list *from that subshell*, so the `trap` never saw
+it and two stray `.sh` files were left in `tests/` after every run. The path is now registered before
+anything writes to it, and `mutate` is called as a plain command.
+
+### Residuals — what this entry does NOT close
+
+1. **Six suites remain unmeasured.** `tests/test-bl099-guard-coverage.sh`, `tests/edge-cases-scripts.sh`,
+   `tests/test-delta-wp5-hotfix-retro.sh`, `tests/test-enforcement-level-reconfigure.sh`,
+   `tests/test-verify-install-fix-functions.sh` and `tests/upgrade-path-tests.sh` exceed 300s on
+   **both** stdin shapes, so the sweep cannot tell whether their runtime is hiding a hang. They are
+   recorded as unresolved rather than clear — a slow suite is not a clear one. Forty-two other slow
+   suites were resolved CLEAR at the 300s bound, and no suite outside the four above changed behaviour
+   with the stdin shape at any bound tried.
+2. **Nothing stops the next one.** There is no lint for "a command substitution invoking a stdin-reading
+   script without a redirect", and the three readers still block unboundedly by design. The new suite
+   pins the twelve sites that are fixed; a thirteenth call site added tomorrow is caught by nothing.
+   The honest detector is the one used to find these: run the suite with a writer holding stdin open,
+   under a bound. Not built as a lint.
+3. **`lint-tests-registered.sh` cannot prove this suite's registration**, and says so itself. Its
+   `_build_unit_list_set` scopes the unit list with `awk '/tests=\(/{f=1;next}'`, and
+   `.github/workflows/tests.yml:324` mentions the array-opening token **in prose**, so the scope opens
+   25 lines above the real array and folds intervening comments into the membership set. Demonstrated:
+   planting `# tests/test-bl276-stdin-hang.sh` above the array and deleting the real entry leaves the
+   lint **green**. This is the already-recorded `## BL-181:` residual, not a new defect. Membership was
+   therefore proven by **executing** the array as bash does — it evaluates to 191 members with
+   `test-bl276-stdin-hang.sh` among them, and commenting that one line out drops it to 0 — and by the
+   negative control of deleting it, which does red the lint (`fast unit test is not listed in the
+   tests.yml unit lane`).
+
+**Related:** `## BL-202:` (the same hang class in the sibling SessionStart hook, fixed by a lazy read —
+the precedent this entry examined and could not reuse), `## BL-239:` (**sibling, not duplicate**: same
+hook family, same `stdin`, opposite failure — there a PreToolUse gate copied to `.git/hooks/pre-commit`
+got NO stdin JSON and silently took the ALLOW path; here a reader gets stdin that never ends and takes
+no path at all. Absent input reading as success versus endless input reading as nothing),
+`## BL-181:` (residual 3 above — the lint-scope widening), `## BL-197:` (the diagnostic-destruction
+class: an instrument that yields no evidence about the failure it is reporting).
