@@ -82,6 +82,41 @@ _run() {
       "$([ -e "$ADOPT_WORK/rehearsal" ] && echo residue || echo clean)" )
 }
 
+# _run_marked DIR MARKS PLANNED... -> "rc|err" — same as _run, but raises the
+# touched-disk markers BEFORE the preflight, exactly as the arms that raise
+# them do.
+#
+# THIS CASE EXISTS BECAUSE E4/E5 CANNOT CARRY IT. E4/E5 reach the derived arm
+# only when the tool resolver raises the marker, and the resolver returns
+# early — before `adopt_touched_disk` — when gitleaks is already installed.
+# The PR-blocking `unit-shard` job installs gitleaks unconditionally and this
+# Mac has it on PATH, so on every host that actually gates a merge E4/E5 pass
+# whether or not the derived arm exists at all: measured, deleting the whole
+# arm left the suite at 26/0 on macOS and 26/0 on a container WITH gitleaks,
+# and went red only on a bare container without it. A guard that the gating
+# hosts cannot fail is not a guard. These cases raise the markers themselves,
+# so they discriminate on any host and with any tool inventory.
+# MARKS is a comma list: `touched`, `unbounded`, or both.
+_run_marked() {
+  local d="$1" marks="$2"; shift 2
+  ( set +e
+    ADOPT_PROJECT_NAME=t
+    . "$LIB/adopt-core.sh"  >/dev/null 2>&1
+    . "$STATE"              >/dev/null 2>&1
+    ADOPT_WORK="$WORK/wm.$$.$RANDOM"; mkdir -p "$ADOPT_WORK"
+    adopt_ledger_init "$ADOPT_WORK/written" >/dev/null 2>&1
+    case ",$marks," in *,touched,*)   adopt_touched_disk ;; esac
+    case ",$marks," in *,unbounded,*) adopt_touched_disk_unbounded ;; esac
+    _planned="$*"
+    _adopt_write_phase() {
+      local p
+      for p in $_planned; do adopt_record_write "$p"; done
+      return 0
+    }
+    err=$(adopt_prewrite_preflight "$d" "" 2>&1 >/dev/null); rc=$?
+    printf '%s|%s\n' "$rc" "$(printf '%s' "$err" | tr '\n' ' ')" )
+}
+
 echo "=== T — the refusal arrives before the first write ==="
 
 # T1 — THE DISCRIMINATOR. Their .gitignore hides .claude/, which is where the
@@ -126,6 +161,70 @@ chk "T5a: '!' under an ignored DIRECTORY does not re-include — still refused" 
 P5b="$WORK/t5b"; _adoptee "$P5b" '*.json' '!manifest.json'
 IFS='|' read -r rc5b _ _ _ <<<"$(_run "$P5b" 'manifest.json')"
 chk "T5b: a genuinely re-included path is allowed (negation is honoured)" "${rc5b:-x}" "0"
+
+# T8 — THE DERIVED CLEAR, ON ANY HOST. Three states of the two markers.
+#
+# T8a: the coarse marker is raised, no planned path landed, the unbounded
+# writer never ran -> the marker was pessimistic and the refusal must say so.
+P8a="$WORK/t8a"; _adoptee "$P8a" '.claude/'
+IFS='|' read -r rc8a err8a <<<"$(_run_marked "$P8a" 'touched' '.claude/manifest.json' 'PROJECT_INTAKE.md')"
+chk "T8a: still refuses"                            "$([ "${rc8a:-0}" -ne 0 ] && echo yes || echo no)" "yes"
+chk "T8a: labelled REFUSED, not BLOCKED"            "$(printf '%s' "$err8a" | grep -c 'REFUSED')" "1"
+chk "T8a: and does NOT claim it ATTEMPTED writes"   "$(printf '%s' "$err8a" | grep -ci 'ATTEMPTED writes')" "0"
+
+# T8b: the UNBOUNDED writer ran. The planned set does not bound what an eval'd
+# install recipe writes, so the marker must survive the derivation. This is the
+# case that goes red if the clear is a replacement instead of an intersection.
+P8b="$WORK/t8b"; _adoptee "$P8b" '.claude/'
+IFS='|' read -r rc8b err8b <<<"$(_run_marked "$P8b" 'touched,unbounded' '.claude/manifest.json' 'PROJECT_INTAKE.md')"
+chk "T8b: refuses"                                  "$([ "${rc8b:-0}" -ne 0 ] && echo yes || echo no)" "yes"
+chk "T8b: an unbounded writer keeps the pessimistic message" \
+  "$(printf '%s' "$err8b" | grep -ci 'ATTEMPTED writes')" "1"
+
+# T8c: a planned path EXISTS in the tree. Whether this adoption put it there or
+# the operator already had it, the derivation cannot tell — so it keeps the
+# marker. Conservative by design.
+P8c="$WORK/t8c"; _adoptee "$P8c" '.claude/'
+printf 'theirs\n' > "$P8c/PROJECT_INTAKE.md"
+IFS='|' read -r rc8c err8c <<<"$(_run_marked "$P8c" 'touched' '.claude/manifest.json' 'PROJECT_INTAKE.md')"
+chk "T8c: a landed planned path keeps the pessimistic message" \
+  "$(printf '%s' "$err8c" | grep -ci 'ATTEMPTED writes')" "1"
+
+# T9 — THE UNBOUNDED FLAG IS EVIDENCE, NOT AN ATTEMPT. The resolver cannot know
+# what an eval'd recipe writes, so it fingerprints the adoptee's path list
+# either side of the eval. The distinction is load-bearing in both directions:
+# an attempt-based flag re-opens the over-claim on a host whose recipe ran and
+# changed nothing (the bare-container case that failed E4/E5), and no flag at
+# all lets the refusal say "nothing was written" over a leftover file.
+T9D="$WORK/t9fp"; _adoptee "$T9D"
+(
+  . "$LIB/adopt-core.sh" >/dev/null 2>&1
+  fp0="$(adopt_tree_fingerprint "$T9D")";           printf 'fp0=%s\n' "$fp0"
+  fp1="$(adopt_tree_fingerprint "$T9D")";           printf 'fp1=%s\n' "$fp1"
+  printf 'leftover\n' > "$T9D/installer-left-this.txt"
+  fp2="$(adopt_tree_fingerprint "$T9D")";           printf 'fp2=%s\n' "$fp2"
+  adopt_tree_fingerprint "$WORK/no-such-dir" >/dev/null 2>&1; printf 'rc_missing=%s\n' "$?"
+) > "$WORK/t9.out" 2>&1
+_t9() { grep "^$1=" "$WORK/t9.out" | head -1 | cut -d= -f2-; }
+chk "T9a: the fingerprint is stable across two reads of an unchanged tree" \
+  "$([ -n "$(_t9 fp0)" ] && [ "$(_t9 fp0)" = "$(_t9 fp1)" ] && echo yes || echo no)" "yes"
+chk "T9b: and CHANGES when a recipe leaves a file behind" \
+  "$([ "$(_t9 fp0)" != "$(_t9 fp2)" ] && echo yes || echo no)" "yes"
+chk "T9c: an unreadable tree returns non-zero — callers must read that as 'assume it changed'" \
+  "$([ "$(_t9 rc_missing)" != "0" ] && echo yes || echo no)" "yes"
+
+# T9d — the resolver's gate, structurally: the fingerprint is taken BEFORE the
+# eval and compared AFTER it, and the flag is raised from the comparison rather
+# than unconditionally. A one-line drift back to an unconditional raise is the
+# regression this pins.
+TOOLS="$LIB/adopt-tools.sh"
+chk "T9d: the resolver raises the unbounded flag exactly once" \
+  "$(grep -c 'adopt_touched_disk_unbounded   # BL-225-TOUCHED-UNBOUNDED' "$TOOLS")" "1"
+chk "T9d: and it is guarded by a fingerprint comparison, not unconditional" \
+  "$(grep -c '_bl225_fp_before" != "\$_bl225_fp_after' "$TOOLS")" "1"
+chk "T9d: the BEFORE fingerprint precedes the eval" \
+  "$([ "$(grep -n '_bl225_fp_before=' "$TOOLS" | head -1 | cut -d: -f1)" \
+     -lt "$(grep -n 'BL-242-RESOLVER-INSTALL' "$TOOLS" | head -1 | cut -d: -f1)" ] && echo yes || echo no)" "yes"
 
 echo "=== E — the REAL driver, un-stubbed ==="
 
@@ -220,7 +319,9 @@ done
 # mutator ran" is not "the mutant mutates".
 MP="$WORK/mp/lib"; mkdir -p "$MP" && cp -p "$LIB"/*.sh "$MP/"
 mp_anchor='      0) ignored="$ignored'
+mp_tail='$rel" ;;'
 mp_n="$(grep -cF "$mp_anchor" "$MP/adopt-state.sh")"; case "$mp_n" in ''|*[!0-9]*) mp_n=0 ;; esac
+mp_t0="$(grep -cFx "$mp_tail" "$MP/adopt-state.sh")"; case "$mp_t0" in ''|*[!0-9]*) mp_t0=0 ;; esac
 awk -v anchor="$mp_anchor" '
   $0 == anchor { print "      0) : ;;"; skip = 1; next }
   skip == 1    { skip = 0; next }
@@ -228,9 +329,15 @@ awk -v anchor="$mp_anchor" '
 ' "$MP/adopt-state.sh" > "$MP/adopt-state.sh.mut" && mv "$MP/adopt-state.sh.mut" "$MP/adopt-state.sh"
 mp_left="$(grep -cF "$mp_anchor" "$MP/adopt-state.sh")"; case "$mp_left" in ''|*[!0-9]*) mp_left=0 ;; esac
 mp_new="$(grep -c '^      0) : ;;$' "$MP/adopt-state.sh")"; case "$mp_new" in ''|*[!0-9]*) mp_new=0 ;; esac
+# The awk deletes the line AFTER the anchor unconditionally. Assert that line
+# was the one intended: if the source ever changes so anchor+1 is something
+# else, this mutator would silently delete an arbitrary line and could still
+# satisfy the other three postconditions and `bash -n`.
+mp_t1="$(grep -cFx "$mp_tail" "$MP/adopt-state.sh")"; case "$mp_t1" in ''|*[!0-9]*) mp_t1=0 ;; esac
 if [ "$mp_n" -ne 1 ] || [ "$mp_left" -ne 0 ] || [ "$mp_new" -ne 1 ] \
+   || [ "$mp_t0" -ne 1 ] || [ "$mp_t1" -ne 0 ] \
    || ! bash -n "$MP/adopt-state.sh" 2>/dev/null; then
-  bad "MP1 setup: the mutation did not apply cleanly (anchors=$mp_n left=$mp_left new=$mp_new)"
+  bad "MP1 setup: the mutation did not apply cleanly (anchors=$mp_n left=$mp_left new=$mp_new tail=$mp_t0->$mp_t1)"
 else
   P9="$WORK/t9"; _adoptee "$P9" '.claude/'
   mp_rc=$( set +e

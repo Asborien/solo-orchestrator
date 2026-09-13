@@ -1123,6 +1123,7 @@ STATE_ORDER
 # short deliberately: one description of this oracle, in one place.
 adopt_prewrite_preflight() {
   local root="$1" report="$2" copy work saved rc=0 planned ignored=""
+  local _bl225_landed=0 _bl225_p=""
   copy="$ADOPT_WORK/rehearsal/tree"
   work="$ADOPT_WORK/rehearsal/work"
   mkdir -p "$ADOPT_WORK/rehearsal" "$work" 2>/dev/null || {
@@ -1214,36 +1215,55 @@ $planned
 PLANNED
 
   if [ -n "$ignored" ]; then
-    # DERIVE THE BLAST RADIUS FROM THE TREE, NOT FROM THE MARKER. The
-    # touched-disk marker records an ATTEMPT and is raised BEFORE each write, so
-    # an arm that attempted one and left nothing still raises it — the tool
-    # resolver does exactly that on a host missing node/npm. The refusal then
-    # told the operator adoption "had already ATTEMPTED writes to this project"
-    # over a provably clean tree: measured in `ubuntu:24.04`, 0 files under
-    # `.claude/`, 0 rows from `git status --porcelain --ignored -uall`, and the
-    # message still claiming otherwise. That is the false-claim class
-    # `# BL-225-REFUSE-HONEST` exists to remove, and it was invisible on macOS
-    # because the resolver's arm is not taken when the tools are present.
+    # DERIVE THE BLAST RADIUS FROM THE TREE, NOT FROM THE MARKER — BUT ONLY
+    # WHERE THE TREE CAN ANSWER. The touched-disk marker records an ATTEMPT and
+    # is raised BEFORE each write, so an arm that attempted one and left nothing
+    # still raises it — the tool resolver does exactly that on a host missing
+    # node/npm. The refusal then told the operator adoption "had already
+    # ATTEMPTED writes to this project" over a provably clean tree: measured in
+    # `ubuntu:24.04`, 0 files under `.claude/`, and the message still claiming
+    # otherwise. That is the false-claim class `# BL-225-REFUSE-HONEST` exists
+    # to remove, and it was invisible on macOS because the resolver's arm is not
+    # taken when the tools are present.
     #
-    # This arm runs BEFORE the write phase, so if the tree is clean here then
-    # nothing was written, full stop. Ask the tree and clear the proxy when it
-    # disagrees with the facts.
-    # Ask about the PLANNED PATHS, not `git status`. A first cut asked git, and
-    # git reports an empty IGNORED DIRECTORY as a row (`!! .claude/`), so a
-    # `mkdir -p` that created nothing read as "the tree is dirty" and the proxy
-    # was never cleared — the Linux failure this was written to fix, unfixed.
-    # The planned set is exactly what the adoption would have written, so if not
-    # one of those paths exists, nothing was written. A planned path the
-    # OPERATOR already had counts as existing, which only makes this arm more
-    # conservative: it keeps the marker and says less.
+    # WHY THE PLANNED SET AND NOT `git status --porcelain --ignored`. Not
+    # because git mis-reports an empty directory — it does not; measured on
+    # macOS git 2.50.1 and ubuntu git 2.43.0, an empty ignored `.claude/`
+    # yields ZERO rows under the default `--ignored=traditional` (only
+    # `--ignored=matching` prints `!! .claude/`, and that is the directory
+    # matching the pattern, not a file). An earlier draft of this comment
+    # claimed the opposite and was refuted on both hosts; do not reinstate it.
+    # The real reason is that a working project's OWN ignored content answers
+    # the question wrongly: on a fixture ignoring `node_modules/ .env dist/`,
+    # `git status --porcelain --ignored` returns 3 rows on both hosts before
+    # adoption touches anything at all. git answers "is this tree dirty",
+    # which is not the question. The planned set is exactly what THIS adoption
+    # would have written, so if not one of those paths exists, this adoption
+    # wrote none of them. A planned path the OPERATOR already had counts as
+    # existing, which only makes this arm more conservative: it keeps the
+    # marker and says less.
+    #
+    # AND IT IS AN INTERSECTION, NOT A REPLACEMENT. The planned set bounds the
+    # driver's own writers; it does not bound the tool resolver's `eval`, whose
+    # recipe may write anything anywhere. Clearing on the planned set alone
+    # would let the refusal say "nothing was written" over an installer's
+    # leftover file — the exact sentence adopt-tools.sh records as measured
+    # history. So the clear requires BOTH: no planned path landed AND
+    # `# BL-225-TOUCHED-UNBOUNDED` unraised. That flag is evidence-based, not
+    # attempt-based — the resolver fingerprints the adoptee's path list either
+    # side of the eval and raises it only on a real difference, or when it
+    # could not read the tree at all. So a recipe that ran and changed nothing
+    # does not cost the operator an honest message, and one that changed
+    # something cannot be argued away by a derivation that never saw it.
     _bl225_landed=0
-    while IFS= read -r _p; do
-      [ -n "$_p" ] || continue
-      [ -e "$root/$_p" ] && { _bl225_landed=1; break; }
+    while IFS= read -r _bl225_p; do
+      [ -n "$_bl225_p" ] || continue
+      [ -e "$root/$_bl225_p" ] && { _bl225_landed=1; break; }
     done <<LANDED
 $planned
 LANDED
-    if [ "$_bl225_landed" -eq 0 ] && [ -n "${ADOPT_WORK:-}" ]; then
+    if [ "$_bl225_landed" -eq 0 ] && ! adopt_has_unbounded_write \
+       && [ -n "${ADOPT_WORK:-}" ]; then
       rm -f "$ADOPT_WORK/touched" 2>/dev/null || true   # BL-225-REFUSE-DERIVED
     fi
     # The paths go IN the refusal, not after it in `adopt_note`s: notes print on

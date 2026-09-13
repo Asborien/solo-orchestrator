@@ -9624,11 +9624,45 @@ shape `# BL-225-REFUSE-HONEST` exists to prevent. Finding `S5`'s cause required
 it: the reversed state order fails at `manifest` because that writer hashes the
 KEPT SCAN REPORT, which `adopt_write_intake` writes earlier in the correct order.
 
+**THE MARKER IS TWO MARKERS, and the third review cycle is why.** A refusal that
+arrives before the first write still has to say whether anything was written,
+and `# BL-225-TOUCHED-DISK` cannot answer it: it records an ATTEMPT, is raised
+before each write, and an arm that attempted one and left nothing still raises
+it. Clearing it from the PLANNED SET fixes the over-claim for the driver's own
+writers and breaks it for the one writer the planned set does not bound — the
+tool resolver's `eval` of a matrix install recipe. So the clear is an
+intersection: no planned path landed AND `# BL-225-TOUCHED-UNBOUNDED` unraised.
+That second flag is EVIDENCE-BASED, and the distinction is load-bearing in both
+directions, measured: raised on the attempt, a bare `ubuntu:24.04` (no node, no
+npm, no gitleaks) runs a recipe that leaves the adoptee byte-identical and the
+refusal still claims adoption "ATTEMPTED writes to this project" — measured by
+mutating the flag back to attempt-based and re-running in that container:
+`Results: 35 passed, 3 failed`, failing `E4`, `E5` and `T9d`. That is the
+over-claim this entry exists to remove. Not raised at all, an installer's
+leftover file sits in the tree under "nothing was written". So the resolver fingerprints the adoptee's PATH LIST either side of
+the eval (`adopt_tree_fingerprint`) and raises the flag on a difference, or when
+it could not read the tree — an unreadable answer is not a clean one.
+
+**Three sentences in the first draft of `# BL-225-REFUSE-DERIVED` were false and
+are recorded here so the next editor does not reinstate them.** They claimed git
+reports an empty IGNORED DIRECTORY as a row, that a `mkdir -p` therefore read as
+a dirty tree, and that this was the Linux failure unfixed. Refuted on both
+hosts: under the default `--ignored=traditional`, an empty ignored `.claude/`
+yields ZERO rows on macOS git 2.50.1 and ubuntu git 2.43.0 — only
+`--ignored=matching` prints `!! .claude/`, and that is the directory matching the
+pattern, not a file. The real reason to prefer the planned set is that a working
+project's OWN ignored content answers the wrong question: a fixture ignoring
+`node_modules/ .env dist/` returns 3 rows on both hosts before adoption touches
+anything. Same class as `## BL-258:` — added prose is a failure surface, and in
+an entry about refusals that assert what they never derived, a comment stating a
+measured-but-nonexistent mechanism is that defect one level up.
+
 **Residuals.** (0) **PRE-EXISTING, found by this review and not fixed here: an
 adoptee whose `.claude` is a symlink to an absolute path OUTSIDE the repository
 has files written there — SEVEN of them, measured twice, on base and on this
-branch — while the refusal correctly reports the repository itself untouched.** Measured on base and on this branch alike, so the
-escape predates the preflight; what this branch adds is the refusal that now sits
+branch — while the refusal correctly reports the repository itself untouched.**
+Measuring it on base as well as on the tip is what shows the escape predates the
+preflight; what this branch adds is the refusal that now sits
 in front of it, which is why the guard is fail-closed on `check-ignore`'s rc 128
 rather than reading it as clean. Escaping symlinks want their own entry.
 (a) The rehearsal copies the whole tree, `.git` included, because
