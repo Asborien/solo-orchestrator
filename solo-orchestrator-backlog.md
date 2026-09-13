@@ -18634,6 +18634,18 @@ pins it; H5 is its control.
    read alone was not enough either: it would turn the adopted project's gate from a silent pass into
    a hard failure with no way to fix the manifest.
 
+**THE FIX ENFORCES A CONTRACT THE FILE ALREADY STATED, AND CANNOT BLOCK A SCAFFOLDED PROJECT.** Two
+facts from `main`, neither claimed by an earlier cut of this entry and both stronger than the
+argument it did make:
+- `scripts/host-drivers/github.sh` documents the vocabulary in its own function headers — `# mode:
+  "personal" | "org"` at **`:112`** above `host_configure_protection` and again at **`:166`** above
+  `host_verify_protection`. The contract was written down twice and enforced once; this fix enforces
+  what the file already said rather than introducing a new rule.
+- `init.sh:2489` is `local mode="$_RESOLVED_MODE"`, and `_RESOLVED_MODE` is the translated value. So
+  `init.sh` has NEVER written `organizational` into `.mode`, and the new refusal therefore cannot
+  newly block any SCAFFOLDED project — only an adopted one, which is the population this entry is
+  about.
+
 **The trap in the obvious fix.** The two manifest fields share ONE local in that function. Translating
 `$mode` without re-sourcing `deployment` corrupts `deployment` instead — `"org"` where every reader
 expects `"organizational"`, including `assert_choosable`'s tier ladder. Case A2 is the case for that;
@@ -18665,7 +18677,11 @@ What the suite covers:
   and require `organizational` to come back rc 0 AND SILENT — indistinguishable from `personal` —
   while `org` still fails, which is the defect stated exactly rather than approximately.
 
-RED at `ceb450e` (fix stashed): **13 passed / 20 failed**. The thirteen passes are controls and they
+RED at `ceb450e` (fix stashed): **13 passed / 20 failed** — and HALF THAT RED IS STRUCTURAL, which a
+later reader should not over-count as discrimination. Ten of the twenty are SETUP reds that say only
+that the fix is absent: four `M0` marker cases, and `MP1`-`MP6` failing at setup because the lines
+they mutate do not exist at base. The ten that actually OBSERVE the defect are A1, A4, H3+H4 on each
+of the three drivers, H6 and E1. The thirteen passes are controls and they
 are the reason the red is trustworthy: A0/A3 (personal round-trips through both write branches), A2/A5
 (the `deployment` half, which base gets right), A6 (the edit branch really ran), A7 (init.sh still
 carries `_RESOLVED_MODE="org"`), H1/H2 on all three drivers, and H5. The discriminators all red for
@@ -18687,7 +18703,8 @@ exact occurrence count for the mutated and original spellings, and a changed-lin
 verdict is read, and a mutation that cannot be applied fails loudly as a `setup` case.
 
 **No regression from the fix, measured rather than assumed.** `tests/host-drivers/run-all.sh` exits 1
-on this host — the three `e2e-init*.test.sh` suites report 2 passed / 3 failed each. That is
+on this host — `e2e-init` 2/3, `e2e-init-bitbucket` 2/3 and `e2e-init-gitlab` **2/5**, each measured
+individually rather than assumed uniform (an earlier cut of this line said "3 failed each"). That is
 PRE-EXISTING and not this fix: the whole log contains the string `mode must be` **zero** times, the
 failing cases carry `mode=personal` and `mode=org` (both accepted by the new gate), and
 `e2e-init.test.sh` run against a copy of this tree with the four fixed files reverted to `HEAD`
@@ -18738,8 +18755,28 @@ stops growing the moment this lands.
    that asymmetry — bitbucket was ALREADY the outlier on main, the only driver with no `case "$mode"`
    anywhere in it. Counted on `main`: `grep -c 'mode must be'` gives github 1, gitlab 1, bitbucket 0,
    so four mode entry points accepted an unvalidated value (three `verify`s plus bitbucket's
-   `configure`). This fix takes that from **four to one**. The survivor is on a path adoption never
-   calls, and closing it would be scope creep on a pre-existing upstream inconsistency.
+   `configure`). This fix takes that from **four to one**.
+
+   **An earlier cut of this residual said the survivor "is on a path adoption never calls". That is
+   false.** `scripts/check-gate.sh`'s `cmd_repair()` (`:192`) reads the exact field adoption corrupts
+   — `:418` is `jq -r '.mode // "personal"'` over the manifest — and hands it to
+   `host_configure_protection` at `:466`. Adoption does not call it; the OPERATOR does, one command
+   later.
+
+   **The ruling stands anyway, on a better argument: this fix strictly IMPROVES that path.** Before
+   it, on a corrupted project, `--repair` wrote the weak personal-tier restrictions, returned 0,
+   recorded the step, and `verify` then silently certified the result. After it the write is
+   byte-identical and `verify` REFUSES. Same weak write, false certificate removed — so closing
+   `configure` as well would be scope creep on a path this change already makes safer.
+
+   **The LATCH is the strongest argument for eventually closing it, and it is recorded here rather
+   than left to be discovered.** Because bitbucket's `configure` returns 0,
+   `_record_phase2_step "branch_protection_configured"` fires at `:359`; the `_step_done` guard at
+   `:462` then makes every later `--repair` print "Skipping configure — already recorded" and never
+   re-configure. The project is left with personal-tier restrictions, a RECORDED CLAIM that protection
+   was configured, and a verify failure whose remedy text points at the host UI — the wrong place. On
+   github and gitlab this is unreachable: `configure` refuses, and `cmd_repair` dies before any write
+   or any recording.
 3. **The `other` host's fallback `host_verify_protection` in `scripts/lib/host.sh` ignores `mode`
    entirely** — it is attestation-based and has no tier distinction, so an org project on an unmanaged
    host gets the personal bar by design. That is a design question, not a vocabulary bug.
