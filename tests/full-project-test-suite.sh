@@ -860,6 +860,12 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
   "BL-259: an empty @tsv field must not collapse and shift the resolver row" \
   "BL-259 tsv-field-shift tests FAILED (run tests/test-bl259-tsv-empty-field-shift.sh for details)"
 
+# BL-278: the pending-approval sentinel is read from the repo the commit
+# targets, not only from the session's project directory.
+run_child_suite "tests/test-bl278-sentinel-root.sh" \
+  "BL-278: a repo's own pending-approval sentinel gates its own commits" \
+  "BL-278 sentinel-root tests FAILED (run tests/test-bl278-sentinel-root.sh for details)"
+
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
 # ----------------------------------------------------------------

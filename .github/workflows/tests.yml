@@ -537,6 +537,7 @@ jobs:
             tests/test-bl255-sed-replacement-escape.sh
             tests/test-bl256-unearned-receipts.sh
             tests/test-bl259-tsv-empty-field-shift.sh
+            tests/test-bl278-sentinel-root.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────
