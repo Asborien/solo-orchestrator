@@ -17723,3 +17723,192 @@ got NO stdin JSON and silently took the ALLOW path; here a reader gets stdin tha
 no path at all. Absent input reading as success versus endless input reading as nothing),
 `## BL-181:` (residual 3 above — the lint-scope widening), `## BL-197:` (the diagnostic-destruction
 class: an instrument that yields no evidence about the failure it is reporting).
+
+---
+
+## BL-260: two `verify-install.sh` auto-fixers that could never run — `has_context()` is unsatisfiable on an adopted project, and `fix_superpowers` calls a CLI verb that does not exist
+
+**Status:** Open
+
+**Logged:** 2026-09-13, out of a brownfield adoption. Both arms were found and fixed in the ADOPTED
+project's installed copy of `scripts/verify-install.sh` before either was submitted here, so until this
+lands the two trees diverge in exactly these two places. Both are the same defect class — a row
+registered with `register_fixable`, offered to the operator as auto-fixable, and dispatched by
+`run_remediation` to a function that CANNOT succeed — which is why they are one entry; the blast
+radius differs per arm and is stated per arm below.
+
+**Arm 1 — `# BL-260-CONTEXT-STATE`. The fixer's precondition is the file the fixer creates.**
+`has_context()` is `[ -n "$PLATFORM" ] && [ -n "$LANGUAGE" ] && [ -n "$TRACK" ]`, and `load_context()`
+had exactly two sources for those three:
+
+- `.claude/tool-preferences.json` (`.context.platform` / `.language` / `.track`) — and the only two
+  things in the tree that CREATE that file are `init.sh` (writes at `:1245` and `:1279`) and
+  `fix_tool_prefs` itself. `adopt-project.sh` does not write it, `intake-wizard.sh` does not write it,
+  and `reconfigure-project.sh` only edits it behind an `[ -f ]` guard. So on an adopted project the
+  file is absent, and the only thing that would create it is the fixer that refuses unless
+  `has_context()`. It is its own precondition.
+- `grep -m1 'Platform:' CLAUDE.md` and its two siblings — anchors emitted by the SCAFFOLDED
+  `CLAUDE.md`. An adopted project keeps its own `CLAUDE.md`; that is the point of adoption.
+
+So every one of PLATFORM/LANGUAGE/TRACK stayed empty for ever on the adoption path, and the row was
+listed as auto-fixable while `--auto-fix` declined it on every pass.
+
+**What the adoption path actually records, and why the fix reads it rather than adding a source.**
+`adopt_render_intake_progress` (`scripts/lib/adopt/adopt-intake.sh`) writes seven subscribed top-level
+keys into `.claude/intake-progress.json`, three of them `platform`, `language` and `track`;
+`adopt_write_phase_state` (`scripts/lib/adopt/adopt-state.sh`, `# BL-242-PHASE0-LANDING`) writes
+`track: "full"` into `.claude/phase-state.json`. `intake-wizard.sh`'s `init_progress` writes the same
+three top-level keys, populated, once the operator answers Section 1. **`load_context()` already opens
+both files** — `.claude/intake-progress.json` for `.deployment`, `.claude/phase-state.json` for
+`.project` and `.deployment` — so this reads fields that are already there, in files already open.
+
+**There is precedent for the exact chain in the tree.** `_soif_plan_recover_and_render`
+(`scripts/lib/plan-staging.sh`) documents and implements `TRACK  phase-state.track →
+tool-preferences.context.track → manifest → "standard"` and `LANGUAGE
+tool-preferences.context.language → intake-progress.language → CLAUDE.md → ""`. The fix brings
+`load_context()` into line with a resolution order the framework already had.
+
+**An EMPTY recorded value must not win, and that is a measured requirement, not caution.** Adoption
+writes `platform: ""` and `language: ""` deliberately — "not known and therefore written EMPTY rather
+than guessed" is the comment on `adopt_render_intake_progress`. `jq -r '.platform // empty'` on `""`
+yields `""`, because `""` is TRUTHY in jq and `//` only fires on `null`/`false`. So the `-z` guards are
+what stop a pre-intake adoptee from being handed a fabricated context.
+
+**Arm 2 — `# BL-260-PLUGIN-VERB`. `add` is not a subcommand, on any host.** `fix_superpowers` ran
+`claude plugins add superpowers`. Measured on Claude Code `2.1.269` (macOS 26.4.1):
+
+```
+$ claude plugin add superpowers ; echo rc=$?
+error: unknown command 'add'
+rc=1
+
+$ claude plugin --help | grep -E '^  install\|i'
+  install|i [options] <plugin>         Install a plugin from available
+```
+
+The group accepts both spellings (`Usage: claude plugin|plugins …`), so `plugins` was never the
+problem; the VERB was. This fixer has therefore never worked for anyone, on a scaffolded project or an
+adopted one, and because `run_remediation` reports per-row it announced `Could not fix: Superpowers
+plugin not installed` rather than anything that named the cause.
+
+**And the marketplace qualification is load-bearing, not tidiness.** The detector six lines above the
+registration reads `jq -r '.enabledPlugins["superpowers@claude-plugins-official"] // false'
+"$HOME/.claude/settings.json"`. A bare `superpowers` resolves through whichever marketplace the host
+has configured, and an install recorded under any other key satisfies the CLI and NOT the detector —
+a fixer that reports `Fixed` and leaves the row red on the next run. **That is not hypothetical: the
+repo's own `docs/cli-setup-addendum.md` documents a SECOND marketplace for this plugin** — it gives
+`/plugin install superpowers@claude-plugins-official` at `:52`, `:123` and `:595`, and at `:128`-`:129`
+the alternative `/plugin marketplace add obra/superpowers-marketplace` followed by
+`/plugin install superpowers@superpowers-marketplace`. An operator who followed the second recipe and
+then ran a bare-name fixer would get an install recorded under a key the detector does not read.
+`--scope user` is the CLI's own default and is stated because it is what writes
+`~/.claude/settings.json`, the file the detector reads. `--yes` is deliberately NOT passed: it
+auto-accepts running a marketplace-declared command, and a fixer must not execute code on the
+operator's behalf without a prompt — `claude plugin install --help` documents `-y` as required when
+stdin or stdout is not a TTY for exactly those plugins, so one that needs confirmation fails loudly
+under `--auto-fix` instead of running silently.
+
+**Measured, both directions.** Fixture: an adopted project — its own `CLAUDE.md` with no identity
+block, `.claude/intake-progress.json` carrying `platform: "web"`, `language: "typescript"`,
+`track: "full"`, `.claude/phase-state.json` carrying `track` and no platform or language, and no
+`tool-preferences.json`. At `ceb450e1`, three consecutive `--auto-fix` runs against the same fixture:
+
+```
+pass 1 rc=1 tool-prefs=ABSENT :: [FAIL] Could not fix: tool-preferences.json missing
+pass 2 rc=1 tool-prefs=ABSENT :: [FAIL] Could not fix: tool-preferences.json missing
+pass 3 rc=1 tool-prefs=ABSENT :: [FAIL] Could not fix: tool-preferences.json missing
+```
+
+With the fix, one run:
+
+```
+[INFO] Fixing: tool-preferences.json missing
+  [OK] Fixed: tool-preferences.json missing
+$ cat .claude/tool-preferences.json | jq -c .context
+{"dev_os":"darwin","platform":"web","language":"typescript","track":"full"}
+```
+
+and the tool row flips from `Tool check skipped — no project context` to `Tool check skipped —
+resolver or matrix missing`, which is `check_tools` reaching its SECOND guard for the first time.
+
+**Blast radius — measured, not estimated, and different per arm.**
+
+*Arm 1 — adopted projects only, five call sites.* `has_context()` has five callers in
+`verify-install.sh` and all five took the wrong branch for the whole life of an adoption:
+`check_tools` skipped the entire tool check; `fix_tool_prefs` refused; `fix_claude_md` refused;
+`fix_ci_pipeline` refused; and the CI-pipeline row's routing (`elif has_source && has_context`)
+downgraded a missing pipeline from auto-fixable to a MANUAL instruction. A scaffolded project is
+unaffected — `init.sh` writes `tool-preferences.json` at birth, so its first source is populated.
+
+*Arm 2 — every project, every host, both birth paths.* The registration is in `check_plugins_mcp`,
+which is reached whenever `jq` is present and `$HOME/.claude/settings.json` exists, and it is gated on
+nothing else. There is no host on which `claude plugins add` was a command.
+
+**Fix — BUILT, and it is the code already running in the adopting project, ported unchanged.** Arm 1
+is a `for` loop over `.claude/intake-progress.json` then `.claude/phase-state.json` behind
+`command -v jq`, each field assigned only when still empty, load order and `-z` guards mirroring the
+`DEPLOYMENT` block in the same function. Arm 1 adds no new source and no new file open. Arm 2 is a
+one-line command change plus the comment block that records why `install`, why the qualified id, and
+why not `--yes`.
+
+**Options considered, and why these.**
+1. **Read the state files** (chosen). No new source, no new file, and the resolution order already
+   exists elsewhere in the tree (`_soif_plan_recover_and_render`).
+2. **Have `adopt-project.sh` write `tool-preferences.json` at adoption.** Rejected: adoption does not
+   know the platform or the language — it writes them EMPTY on purpose — so this would either write a
+   context-free file that still fails `has_context()`, or guess. It also puts a second writer on a file
+   `init.sh` owns.
+3. **Relax `has_context()`** to require fewer than three fields. Rejected: `fix_ci_pipeline` and
+   `fix_claude_md` consume `$LANGUAGE` and `$PLATFORM` directly, so a laxer predicate would let them
+   render with blanks — trading a refusal for a corrupt artifact.
+4. **Arm 2: `claude plugin install superpowers` (bare).** Rejected, and it is the mutation the suite
+   keeps dead: it succeeds at the CLI and does not satisfy the detector.
+
+**Build note (2026-09-13, branch `fix/bl260`).** Suite
+`tests/test-bl260-verify-install-context.sh` drives the REAL `verify-install.sh` end to end from inside
+a fixture project, with a fixture `HOME` and a `claude` shim on `PATH` that mirrors the real CLI's
+dispatch (`plugin`/`plugins` are one group; the group validates its VERB first) and records its argv.
+It is hermetic: the fixture `HOME` carries a `~/.claude-dev-framework/.git` directory so
+`fix_framework_clone` is never REGISTERED — without it `--auto-fix` reaches a real `git clone` of the
+CDF — and the fixture `settings.json` declares `mcpServers.context7`, so `fix_context7` is never
+registered and no `npx` is reached. The dispatched fixer set is seven, all local, verified by reading
+the remediation block.
+
+GREEN **16 / 0 / 0** on bash 5.3.15 and on bash 3.2.57 (macOS 26.4.1), **15 / 0 / 1** in
+`ubuntu:24.04` on bash 5.2.21 as a non-root user, where `L1` correctly SKIPS. RED against
+`ceb450e1`'s `verify-install.sh` in the same tree: **3 / 13 / 0** on macOS, **2 / 13 / 1** on Linux.
+The three that pass RED are honest-outcome controls, true on main by construction: `A0` (the script
+runs at all), `A4` (an adoption whose recorded platform/language are EMPTY is still declined — the
+no-fabrication control) and `L1` (the live CLI rejects `add`, which is the DEFECT, so it is true before
+and after).
+
+Six mutants, and which case kills each is recorded in the suite:
+- **MA1** excises the state-file read (restores `ceb450e1`'s `load_context`) → **A1**.
+- **MA2** keeps the read and drops the three `-z` guards, so `phase-state.json`'s absent `platform`
+  blanks the value `intake-progress.json` supplied → **A1**. This is what makes "an empty value must
+  not win" load-bearing rather than decorative.
+- **MA3** reads `LANGUAGE` from `.platform` — a copy-paste slip that leaves `has_context()` true and
+  the file written, so `A0`/`A1`/`A2` all stay green → **A3** only, which pins the three values.
+- **MP1** restores `claude plugins add superpowers` → **P1**.
+- **MP2** de-qualifies the id to a bare `superpowers`. The install SUCCEEDS and the row still reports
+  `Fixed`, so `P1` stays green → **P2** only, which pins the argv by value.
+- **MP3** adds `--yes` — same shape, same killer: **P2**.
+
+`L1` is the anchor: everything in the `P` family trusts a shim, and `L1` checks the shim's one
+load-bearing claim against the REAL CLI when one is on `PATH` (`--help`, plus a verb the CLI rejects at
+dispatch before it resolves anything — no install, no network, no state). Where no `claude` exists it
+reports SKIP and is counted separately, so an absent CLI can never read as a pass. Registered in
+`tests/full-project-test-suite.sh` and in the `tests.yml` unit-lane array
+(`lint-tests-registered.sh --list`: `registered`; membership confirmed by NEGATIVE control — removing
+the `tests.yml` line flips the same lint to `FAIL  not-in-unit-lane`).
+
+**Residual — `_soif_plan_recover_and_render` has the same hole for PLATFORM.** Its documented chain is
+`PLATFORM  tool-preferences.context.platform → CLAUDE.md → ""`, with no `intake-progress.platform`
+rung, while its LANGUAGE chain has exactly that rung. On an adopted project the platform therefore
+recovers as `""` there for the same reason it did here. Not touched by this fix, not reproduced, and
+recorded as a lead rather than a defect.
+
+**Related:** `## BL-253:` (the adoption-vs-scaffold state-parity family — same birth-path divergence,
+different key), `## BL-231:` (absent-vs-unreadable), `## BL-256:` (two unrelated surfaces bound into
+one entry by a shared defect class — the precedent for this entry's shape), `## BL-242:`
+(`# BL-242-PHASE0-LANDING`, the phase-state write this arm reads).
