@@ -904,6 +904,12 @@ run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
 run_child_suite "tests/test-bl281-resume-after-115.sh" \
   "BL-281: --resume after a clean Section 11.5 must run Sections 12 and 13" \
   "BL-281 resume-after-115 tests FAILED (run tests/test-bl281-resume-after-115.sh for details)"
+# BL-261: the TDD gate's branch axis resolves its base from the project's
+# recorded integration branch, so it stops exempting every commit on a
+# non-`main` trunk — and an absent key still behaves byte-identically.
+run_child_suite "tests/test-bl261-integration-branch.sh" \
+  "BL-261: the TDD branch axis must resolve the project's own integration branch" \
+  "BL-261 integration-branch tests FAILED (run tests/test-bl261-integration-branch.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
