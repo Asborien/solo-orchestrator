@@ -15931,10 +15931,19 @@ absent-vs-unreadable family).
 **Status:** Open — **the QUESTION is open; a MECHANISM is built and in use.** `# BL-274-SINGLE-AUTHORITY`:
 `SOLO_SINGLE_AUTHORITY_ATTESTED` + a mandatory `_REASON`, consulted inside the organizational
 self-approval arm of `check-phase-gate.sh`, recorded per gate and pinned to `HEAD`. Suite
-`tests/test-bl274-single-authority-attestation.sh` **14 / 0** on bash 3.2.57 (macOS) and 5.2.21 in
-`ubuntu:24.04` as a non-root user, against RED **4 / 17** at `ceb450e`; three mutants, embedded, each
+`tests/test-bl274-single-authority-attestation.sh` **17 / 0** on bash 3.2.57 (macOS) and 5.2.21 in
+`ubuntu:24.04` as a non-root user, against RED **6 / 19** at `ceb450e`; three mutants, embedded, each
 asserting the target existed BEFORE it was mutated. Five sibling suites on the same function
 unchanged (31 / 0).
+
+**THE GATE PASSES — exit 0, not a red gate with an annotation.** `issues` is not incremented on the
+attested path. That is asserted rather than asserted-about: **A13** builds a project the Phase 0→1
+gate otherwise clears CLEANLY, so the self-approval control is the only thing between it and exit 0,
+and requires `bash scripts/check-phase-gate.sh` to exit **0** with the attestation set. **A14** takes
+the same project and requires it to exit **non-zero** without it. The pair makes the exit code
+attributable to this change and to nothing else, and A13 fails on unmodified `main` — the requirement
+is proven in both directions. A13 also guards its own premise: it first runs the fixture with an
+INDEPENDENT approver and refuses to report anything if that does not already exit 0.
 
 **This entry proposes an answer; it does not assert it is the right one.** The adopter cannot wait for
 a maintainer ruling, so the mechanism is built and used rather than merely suggested. If the
@@ -16004,9 +16013,9 @@ tooling into governance. The objection was right, and it is answered in the OUTP
 away. Every time the escape fires it prints, in this order:
 
 ```
-[ATTESTED] Phase 0→1: self-approval NOT verified — the independence control cannot apply
-           where one person holds the only technical authority. Reason: <the operator's words>
-        This RECORDS an accepted exception. Nothing was checked, and no independence was established.
+[ATTESTED] Phase 0→1: single-authority attestation ACCEPTED — the independence control was NOT
+           applied, because one person holds the only technical authority here. Reason: <operator's words>
+        This RECORDS an accepted exception. No check was performed and no independent approval exists.
         docs/governance-framework.md §XIV item 5 — a second technologist with repository and hosting
         access — is a BLOCKING pre-condition and REMAINS UNMET. This attestation does not clear it.
         Recorded to .claude/process-state.json::attestations.single_authority, pinned to this commit,
@@ -16015,9 +16024,15 @@ away. Every time the escape fires it prints, in this order:
 
 The claim being made is "a named human accepted a named, still-unmet condition", not "the control
 passed". **A3 and A4 in the suite exist only to hold that line**: A3 fails if the output stops naming
-§XIV item 5, the words "second technologist", or this entry; A4 fails if the line omits "not verified"
-or ever claims the control was verified or satisfied. MT2 proves A3 can actually kill — it strips the
-citation from a mirror of the script and A3 flips red.
+§XIV item 5, the words "second technologist", or this entry; A4 fails if the line omits its explicit
+NOT, or if it uses the vocabulary of a completed check at all. MT2 proves A3 can actually kill — it
+strips the citation from a mirror of the script and A3 flips red.
+
+**The word "verified" is barred outright rather than negated**, and A4 enforces that with a match on
+`verif|satisf|passed|complete`. An earlier cut of this line read *"self-approval NOT verified"*, which
+is accurate and still wrong for the job: a reader skimming a long gate transcript registers the shape
+of a line before they read it, and "NOT verified" and "verified" share that shape. An accepted
+attestation must not be mistakable at a glance for a completed check.
 
 **The distinction is load-bearing, and if it ever stops holding the mechanism should go.** An
 attestation that reads like a passed check is worse than a red gate, because a red gate is honest.
@@ -16028,14 +16043,30 @@ requires the Application Owner and IT Security to acknowledge the concentrated-a
 control. An adopter using this attestation should record the §X.1 acknowledgement as well; the
 attestation unblocks the gate, it does not discharge the governance obligation.
 
-**What is measured.** RED **4 / 17** at `ceb450e` and GREEN **14 / 0** after, on both shells; the four
-that pass RED are the two controls (A1, A11) and two negative assertions that are true by absence
-before the change (A10, A12) and become load-bearing after it. An earlier cut of the suite scored 8
-RED passes, and four of those were VACUOUS — A5 and A9 were satisfied by the ordinary self-approval
-FAIL rather than by the refusal they name, and MT2/MT3 reported kills because their landing assertions
-("the string is gone") were true of a script that never had the string. All four were tightened before
-a line of implementation was written. The `docs/governance-framework.md` citations were read end to
-end (1,039 lines), not grepped.
+**A LIMIT ON THE CLAIM, because the requirement was stated for two gates.** `validate_approval_fields`
+— the function carrying this control — is invoked at exactly TWO call sites, Phase 0→1 (`:2038`) and
+Phase 1→2 (`:2417`). **The Phase 2→3 gate never calls it**, and is checked only by
+`validate_approval_section_dated`, which verifies a dated row and never who committed it. So this
+attestation unblocks Phase 0→1 and Phase 1→2, and Phase 2→3 is not unblocked by it because Phase 2→3
+was never blocked by self-approval in the first place. That is `## BL-212:`'s open finding, not this
+one's, and it means an organizational project's go-live signatures are unchecked for authorship
+whether or not this attestation exists.
+
+**What is measured.** RED **6 / 19** at `ceb450e` and GREEN **17 / 0** after, on both shells. The six
+that pass RED are the controls (A1, A11, A14) and three negative assertions true by absence before the
+change (A10, A12, A15) that become load-bearing after it. **A13 is the one that matters and it fails
+RED**: the gate does not exit 0 on unmodified main.
+
+An earlier cut of this suite scored 8 RED passes and four were VACUOUS — A5 and A9 were satisfied by
+the ordinary self-approval FAIL rather than by the refusal they name, and MT2/MT3 reported kills
+because their landing assertions ("the string is gone") were true of a script that never had the
+string. All four were tightened before a line of implementation was written. A15 was wrong in the
+other direction and its first form FAILED against correct code: it counted every `[OK]` substring in
+the transcript, which conflates a forged verdict line with the operator's own characters appearing
+inside the Reason field — the payload `\n[OK] fake` survives as the literal text `n[OK] fake` on the
+attestation's own line, which is the sanitiser working. It now counts OK-LED LINES, which is the
+property that matters. The `docs/governance-framework.md` citations were read end to end (1,039
+lines), not grepped.
 
 **A defect this suite caught in its own implementation.** The first cut called the handler bare. This
 script carries `set -euo pipefail` at line 2, so the handler's ordinary "no attestation offered"

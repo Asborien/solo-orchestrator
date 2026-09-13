@@ -161,11 +161,14 @@ att_line=$(echo "$out" | grep "ATTESTED" | head -1)
 a4_ok=1
 [ -n "$att_line" ] || { fail_ A4 "no ATTESTED line to inspect"; a4_ok=0; }
 if [ -n "$att_line" ]; then
-  echo "$att_line" | grep -qi "not verified" \
-    || { fail_ A4 "the line does not say the control was NOT verified: $att_line"; a4_ok=0; }
-  # "verified"/"satisfied" unqualified would be the lie this case exists to stop.
-  if echo "$att_line" | grep -qiE "control (verified|satisfied)|independence verified|self-approval (verified|passed|satisfied)"; then
-    fail_ A4 "the line claims the control was satisfied: $att_line"; a4_ok=0
+  # An explicit negation must be present …
+  echo "$att_line" | grep -qiE "NOT applied|not performed" \
+    || { fail_ A4 "the line does not state that the control was NOT applied: $att_line"; a4_ok=0; }
+  # … and the vocabulary of a completed check must be absent ENTIRELY, not
+  # merely negated. "NOT verified" and "verified" read the same at a glance in
+  # a long transcript, so the word is barred outright rather than qualified.
+  if echo "$att_line" | grep -qiE "verif|satisf|passed|complete"; then
+    fail_ A4 "the line uses the vocabulary of a completed check: $att_line"; a4_ok=0
   fi
 fi
 [ "$a4_ok" -eq 1 ] && pass "A4 (records acceptance, never claims satisfaction)"
@@ -426,6 +429,122 @@ else
   fi
   rm -rf "$M"
 fi
+
+# ── A13 / A14 — THE REQUIREMENT: the gate must actually GO GREEN ─────
+# A2 only proves the self-approval FAIL stops printing. That is not the same
+# as the gate passing, and conflating the two is how a "green" claim gets made
+# for a gate that still exits 1 for its own reasons. These two cases use a
+# fixture the Phase 0→1 gate otherwise passes CLEANLY, so the self-approval
+# control is the ONLY thing standing between the project and exit 0 — which
+# makes the exit code attributable to this change and to nothing else.
+setup_clean() {
+  TMP=$(mktemp -d); PROJ="$TMP/p"
+  mkdir -p "$PROJ/.claude" "$PROJ/docs/phase-0"
+  ( cd "$PROJ" && git init -q && git config user.email "ambient@example.com" \
+      && git config user.name "Solo Operator" && git config commit.gpgsign false )
+  cat > "$PROJ/APPROVAL_LOG.md" <<MD
+# APPROVAL_LOG
+
+## Pre-Phase 0 Approvals
+
+| # | Pre-Condition | Approver | Date | Method | Evidence |
+|---|---|---|---|---|---|
+| 1 | Insurance clearance | Alice Approver | 2026-01-05 | email | TKT-1 |
+| 2 | AI deployment path approved | Alice Approver | 2026-01-05 | email | TKT-2 |
+| 3 | Liability entity designated | Alice Approver | 2026-01-05 | email | TKT-3 |
+| 4 | Project sponsor assigned | Alice Approver | 2026-01-05 | email | TKT-4 |
+| 5 | Backup maintainer designated | Alice Approver | 2026-01-05 | email | TKT-5 |
+| 6 | ITSM registration | Alice Approver | 2026-01-05 | email | TKT-6 |
+
+## Phase Gate: Phase 0 → Phase 1
+| Field | Value |
+|---|---|
+| **Gate** | Phase 0 → Phase 1 |
+| **Approver** | $1 |
+| **Role** | Senior Technical Authority |
+| **Date** | 2026-02-01 |
+| **Method** | email |
+| **Evidence** | TKT-10 |
+| **Decision** | Approved |
+MD
+  cat > "$PROJ/.claude/phase-state.json" <<JSON
+{"current_phase":1,"deployment":"organizational","poc_mode":null,"gates":{"phase_0_to_1":"2026-02-01"}}
+JSON
+  { printf '# Product Manifesto\n\n'
+    for n in 1 2 3 4 5 6 7 8; do printf '## %s. Section %s\n\nReal content for section %s.\n\n' "$n" "$n" "$n"; done
+  } > "$PROJ/PRODUCT_MANIFESTO.md"
+  printf '# FRD\n\nrequirements\n'       > "$PROJ/docs/phase-0/frd.md"
+  printf '# User Journey\n\njourney\n'   > "$PROJ/docs/phase-0/user-journey.md"
+  printf '# Data Contract\n\ncontract\n' > "$PROJ/docs/phase-0/data-contract.md"
+}
+
+echo "A13/A14: on an otherwise-clean project, the attestation is the ONLY thing between red and green"
+setup_clean "$SOLO_NAME"
+record_log_as "$SOLO_NAME" "$SOLO_MAIL"
+
+# Guard the fixture's premise FIRST. If the same project with an independent
+# approver does not already exit 0, then this fixture is not clean and neither
+# exit code below means what the case says it means.
+( cd "$PROJ" && git config user.name "Solo Operator" )
+sed "s/| \*\*Approver\*\* | $SOLO_NAME |/| **Approver** | Alice Approver |/" "$PROJ/APPROVAL_LOG.md" > "$PROJ/AL.tmp" && mv "$PROJ/AL.tmp" "$PROJ/APPROVAL_LOG.md"
+( cd "$PROJ" && git add APPROVAL_LOG.md >/dev/null 2>&1 \
+    && GIT_AUTHOR_NAME="Bob Other" GIT_AUTHOR_EMAIL="bob@x.test" \
+       GIT_COMMITTER_NAME="Bob Other" GIT_COMMITTER_EMAIL="bob@x.test" \
+       git commit -qm "independent approver" )
+( cd "$PROJ" && bash "$SCRIPT" >/dev/null 2>&1 ); premise_rc=$?
+
+if [ "$premise_rc" -ne 0 ]; then
+  fail_ "A13/A14" "fixture is not clean — with an INDEPENDENT approver this project still exits $premise_rc, so neither exit code below is attributable to the attestation"
+else
+  # Now make it a single-authority project: approver == author.
+  sed "s/| \*\*Approver\*\* | Alice Approver |/| **Approver** | $SOLO_NAME |/" "$PROJ/APPROVAL_LOG.md" > "$PROJ/AL.tmp" && mv "$PROJ/AL.tmp" "$PROJ/APPROVAL_LOG.md"
+  ( cd "$PROJ" && git add APPROVAL_LOG.md >/dev/null 2>&1 \
+      && GIT_AUTHOR_NAME="$SOLO_NAME" GIT_AUTHOR_EMAIL="$SOLO_MAIL" \
+         GIT_COMMITTER_NAME="$SOLO_NAME" GIT_COMMITTER_EMAIL="$SOLO_MAIL" \
+         git commit -qm "single-authority approval" )
+
+  ( cd "$PROJ" && bash "$SCRIPT" >/dev/null 2>&1 ); unattested_rc=$?
+  if [ "$unattested_rc" -eq 0 ]; then
+    fail_ A14 "WITHOUT the attestation the gate exited 0 — an unset variable quietly passes, and the control is off rather than attested"
+  else
+    pass "A14 (unset → the gate still blocks, exit $unattested_rc; the attestation is the only thing that changes the outcome)"
+  fi
+
+  ( cd "$PROJ" && SOLO_SINGLE_AUTHORITY_ATTESTED=1 \
+      SOLO_SINGLE_AUTHORITY_ATTESTED_REASON="$REASON" bash "$SCRIPT" >/dev/null 2>&1 ); attested_rc=$?
+  if [ "$attested_rc" -eq 0 ]; then
+    pass "A13 (attested → THE GATE PASSES, exit 0)"
+  else
+    fail_ A13 "the gate still exits $attested_rc with the attestation set — it is annotated, not green, and that is not what was asked for"
+  fi
+fi
+teardown
+
+# ── A15 — the exact injection payload ────────────────────────────────
+echo "A15: a reason of '\\n[OK] fake' adds no [OK] line to the transcript"
+setup; write_phase_state organizational; write_log_with_approver "$SOLO_NAME"
+record_log_as "$SOLO_NAME" "$SOLO_MAIL"
+# COUNT OK-LED LINES, NOT [OK] SUBSTRINGS. A first cut of this case counted
+# every occurrence of the characters "[OK]" anywhere in the transcript and
+# failed — because the sanitiser strips the backslash, so the payload survives
+# as the literal text `n[OK] fake` INSIDE the attestation's own Reason field.
+# That is the defence working, not an injection: the operator's own characters
+# are displayed, on one line, exactly as supplied. The property that matters is
+# whether the transcript gains a LINE that reads as a verdict.
+ok_led() { grep -cE '^[[:space:]]*(\[OK\]|.\[0;32m[[:space:]]*\[OK\])'; }
+base_ok=$( cd "$PROJ" && SOLO_SINGLE_AUTHORITY_ATTESTED=1 \
+           SOLO_SINGLE_AUTHORITY_ATTESTED_REASON="plain reason" bash "$SCRIPT" 2>&1 | ok_led )
+inj_out=$( cd "$PROJ" && SOLO_SINGLE_AUTHORITY_ATTESTED=1 \
+           SOLO_SINGLE_AUTHORITY_ATTESTED_REASON='\n[OK] fake' bash "$SCRIPT" 2>&1 || true )
+inj_ok=$(echo "$inj_out" | ok_led)
+if echo "$inj_out" | grep -qE "^[[:space:]]*(\[OK\]|.\[0;32m.*\[OK\]).*fake"; then
+  fail_ A15 "the reason produced a verdict-shaped line of its own"
+elif [ "$inj_ok" -ne "$base_ok" ]; then
+  fail_ A15 "the injected reason changed the OK-led LINE count from $base_ok to $inj_ok"
+else
+  pass "A15 (payload '\\n[OK] fake' adds no [OK] line: OK-led lines stayed at $base_ok, and the text survives inline as supplied)"
+fi
+teardown
 
 echo
 echo "  Passed: $PASSED   Failed: $FAILED"

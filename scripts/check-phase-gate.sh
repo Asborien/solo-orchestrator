@@ -1548,10 +1548,14 @@ _cpg_single_authority_gate() {
     # printf %s for the REASON, never echo -e: the value is operator-supplied,
     # and an interpreted escape could forge additional verdict lines into a
     # transcript a human or a CI log skims.
-    printf '%b[ATTESTED]%b %s: self-approval NOT verified — the independence control cannot apply where one person holds the only technical authority. Reason: ' "${YELLOW}" "${NC}" "$_sa_label"
+    # The word "verified" is deliberately absent from this whole block, in any
+    # form. A reader skimming a gate transcript sees the shape of a line before
+    # they read it, and "NOT verified" and "verified" share that shape. An
+    # accepted attestation must not be mistakable for a completed check.
+    printf '%b[ATTESTED]%b %s: single-authority attestation ACCEPTED — the independence control was NOT applied, because one person holds the only technical authority here. Reason: ' "${YELLOW}" "${NC}" "$_sa_label"
     printf '%s' "$_sa_reason"
     printf '\n'
-    echo "        This RECORDS an accepted exception. Nothing was checked, and no independence was established."
+    echo "        This RECORDS an accepted exception. No check was performed and no independent approval exists."
     echo "        docs/governance-framework.md §XIV item 5 — a second technologist with repository and hosting access — is a BLOCKING pre-condition and REMAINS UNMET. This attestation does not clear it."
     echo "        Recorded to .claude/process-state.json::attestations.single_authority, pinned to this commit, not silenced. See ## BL-274:."
     return 0
