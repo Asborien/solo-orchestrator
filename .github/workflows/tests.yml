@@ -581,6 +581,7 @@ jobs:
             tests/test-bl287-reconfigure-ci-host.sh
             tests/test-bl288-scout-shallow-history-claim.sh
             tests/test-bl278-sentinel-root.sh
+            tests/test-bl280-bug-gate-unmeasured-source.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────
