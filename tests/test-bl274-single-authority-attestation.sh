@@ -307,6 +307,32 @@ else
 fi
 teardown
 
+# ── A16 — the one case in this file that reads SOURCE, and why ───────
+# MT1 removes BOTH transcript defences at once. That is deliberate, but it
+# leaves a hole the mutant itself cannot show: measured, removing ONLY the
+# `printf '%s'` and keeping the sanitiser leaves this suite at 18/0. The two
+# defences MASK each other behaviourally — with C0 controls and the backslash
+# stripped at ingest, there is no reason string an operator can supply that
+# `echo -e` renders differently from `printf '%s'`, so no behavioural case can
+# distinguish them.
+#
+# That is exactly the regression scripts/lib/accumulation.sh records having
+# already happened once: "round 7 replaced one with the other and the hole
+# reopened". A defence that can be deleted without any test noticing is not
+# defended, so this case pins the STRUCTURE — both must be present — and says
+# plainly that it is a structural assertion rather than a behavioural one.
+echo "A16: both transcript defences are present in source (they mask each other behaviourally)"
+a16_ok=1
+# ANCHORED on the label line. An unanchored grep for the same text matches the
+# TRIM six lines earlier and passes on a file whose DISPLAY call has been
+# replaced — measured: the first version of this case scored 19/0 against
+# exactly the mutation it exists to catch. Same wrong-site error as MT1's.
+grep -A1 '"\$_sa_label"' "$SCRIPT" | grep -q "printf '%s' \"\$_sa_reason\"" \
+  || { fail_ A16 "the DISPLAY printf '%s' is gone — and no behavioural case can catch that while the ingest sanitiser stands"; a16_ok=0; }
+grep -qE '_sa_reason=\$\(accum_oneline |LC_ALL=C tr -d' "$SCRIPT" \
+  || { fail_ A16 "the ingest sanitiser is gone — printf alone does not defeat a stored value carrying a real newline"; a16_ok=0; }
+[ "$a16_ok" -eq 1 ] && pass "A16 (both defences present; neither may be traded for the other)"
+
 # ── MUTANTS ──────────────────────────────────────────────────────────
 # Each mutates a MIRROR of the shipped script, asserts the mutation LANDED on
 # the intended line, and then requires the named case to flip red. A mutant
