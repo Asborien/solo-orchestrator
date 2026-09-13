@@ -15925,3 +15925,146 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+## BL-261: the TDD gate's branch axis resolves its base as the literal `main`, so on a project whose trunk is not `main` it exempts every commit — installed, healthy, inert
+
+**Status:** Open — reproduction + fix BUILT on branch `fix/bl261`, NOT yet submitted.
+`# BL-261-INTEGRATION-BRANCH`: `_tdd_triggers` reads the project's own integration branch from
+`integration_branch` in the project manifest and resolves the branch axis against that, falling back to
+today's literal `main` when the key is absent. Suite `tests/test-bl261-integration-branch.sh` **15 / 0**
+on bash 3.2.57 (macOS), against RED **4 / 11**; three mutants, EMBEDDED in the suite, each killing a
+different case. shellcheck 0.11.0 output on the gate is line-for-line unchanged by the fix (34 lines
+before, 34 after, same codes).
+
+**Read the scope limit before promoting this.** It does NOT close the keyless case, and that is every
+project today — see "What this does NOT fix" below. An entry claiming otherwise would be worse than no
+entry.
+
+**Numbering.** The number is not free-chosen. The marker token `BL-261-INTEGRATION-BRANCH` is already
+committed in a downstream adopting project's `scripts/pre-commit-gate.sh` and in that project's
+divergence record, where the fix was applied locally during adoption and never submitted. This entry
+claims the number that project's committed code already carries.
+
+**Logged:** 2026-09-13.
+
+**The defect.** `_tdd_triggers` (`scripts/pre-commit-gate.sh`) decides whether a test-less
+`feat:`/`fix:`/`refactor:` commit should trigger the TDD-ordering gate. Its third axis asks "did a test
+ride EARLIER on this branch", and to ask that it needs the branch's own base. The base was the literal
+string `main`:
+```
+$ git show main:scripts/pre-commit-gate.sh | grep -n 'rev-parse --verify --quiet \(main\|origin/main\)'
+202:  if git rev-parse --verify --quiet main >/dev/null 2>&1; then
+204:  elif git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+```
+On a project whose integration branch is `preview`, `develop` or `trunk`, `main` still resolves — it is
+usually a stale branch, or a remote-tracking ref left from a template — so `base` is set and the range
+`main...HEAD` stops meaning "this branch". It becomes the whole divergence between `main` and the real
+trunk, plus this branch. Any test anywhere in that divergence makes `b_test` greater than zero, the
+function returns 1 (EXEMPT), and the gate never fires.
+
+**This FAILS OPEN, which is why it outranks a merely wrong number.** An UNRESOLVABLE base already leaves
+`base` empty, skips the axis and falls through to fire — fail-closed, correct, and unchanged by this fix.
+A resolvable-but-WRONG base is the dangerous case, and it is the common one, precisely because `main`
+usually exists where it is not the trunk.
+
+**Measured, both directions.** The framework's own classifier (`scripts/lib/tdd-classify.sh`,
+`_bl072_classify_status`) over the two candidate ranges in a real adopting project whose integration
+branch is `preview`, on 2026-09-13:
+```
+origin/main     ...HEAD -> IMPL:1419 TEST:125   (files=4002)
+origin/preview  ...HEAD -> IMPL:76   TEST:8     (files=397)
+```
+and the number that makes it structural rather than incidental — the divergence every branch cut from
+`preview` inherits before it has done anything at all:
+```
+origin/main...origin/preview -> IMPL:1438 TEST:95   (files=3841)
+```
+95 test files in the inherited range. `b_test` on that project can never be 0, so the branch axis cannot
+ever fail to exempt, for any branch, on any commit. The gate is installed, `verify-install.sh` reports it
+healthy, and it has never fired.
+
+**What the operator sees, and why nothing complains.** Nothing. There is no output on the exempt path —
+the whole point of an exemption is silence — so the only observable is the absence of a block that was
+never going to arrive. The gate's own health check verifies that the hook is INSTALLED, not that its
+classifier can reach a firing verdict, so every reporting surface agrees the gate is working. A project
+adopts the framework for test-first enforcement, passes its install verification, and gets none. That is
+`## BL-229:`'s shape again: not a wrong answer, a MISSING one that reads exactly like a clean one.
+
+**Fix — BUILT on this branch.** Read an explicit `integration_branch` key from the project manifest and
+resolve the base against it (`$_ib`, then `origin/$_ib`), keeping the existing two-step resolution and
+the existing empty-base fall-through untouched. An ABSENT key resolves to `main`, which is today's
+behaviour exactly.
+
+**Options considered, and why an explicit key.**
+1. **An explicit manifest key.** The trunk becomes a fact the project states, which is what every other
+   governance input in this framework already is.
+2. **`origin/HEAD`.** Rejected. It is local git config, so a governance gate keyed on it is configurable
+   by the thing it governs — a contributor can move their own gate's base with one `git remote set-head`.
+3. **Infer the trunk** (longest-lived branch, most-merged-into, remote default). Rejected: it is the
+   class of guess `adopt-intake.sh` refuses, "a fact nobody gave", and a wrong inference is silent.
+4. **Fire whenever the key is absent.** Rejected: it false-blocks every keyless `main`-trunk project,
+   which is all of them, so the gate would be removed rather than fixed.
+Chose (1). Because the absent key keeps the literal `main`, the change introduces no new permissive
+resolution anywhere: it can only ever narrow a range that was too wide.
+
+**What this does NOT fix, stated plainly because it is tempting to overclaim.** On a wrong-trunk project
+with NO key — which is EVERY project today, since nothing in this repository writes `integration_branch`
+(`grep -rn integration_branch` over the tree at `ceb450e` returns nothing; the control token
+`BL-107-RUST-INLINE-TESTS` returns 22, so the pattern works) — the absent key still resolves to `main`
+and the gate stays inert. That is the permissive answer, and it is unchanged. This does not satisfy
+`## BL-221:` in the direction that matters. What it guarantees is (a) byte-identical behaviour for every
+existing project and (b) no NEW permissive resolution. Closing the keyless case needs a WRITER — the key
+set at `init.sh` / adoption time, and backfilled for existing projects — and this ships the reader
+without picking one, because the writer is a separate decision about where the trunk is recorded and who
+may change it. Whether that writer should also make an absent key fire is the open question; it cannot be
+answered by this change.
+
+**Build note (2026-09-13, branch `fix/bl261`).** Suite `tests/test-bl261-integration-branch.sh` drives
+the REAL gate end to end via `--terminal-mode --tdd-only` against hermetic scratch projects on a
+sponsored-POC tier (the non-bypassable one, so "fired" and "did not fire" are distinguishable by exit
+status alone). Fixture topology is the fixture: `main` carries no test, the real trunk is cut from it and
+adds one, the feature branch is cut from the trunk — so `main...HEAD` carries a test and `trunk...HEAD`
+does not. A0 asserts that topology rather than assuming it.
+
+GREEN **15 / 0**. RED **4 / 11**, measured by running the same suite against a tree whose
+`scripts/pre-commit-gate.sh` is `ceb450e:scripts/pre-commit-gate.sh` (asserted byte-identical by `cmp`
+before the run). A1 is the discriminator: with `integration_branch: preview`, a test-less `feat:` on a
+branch cut from `preview` must BLOCK; on unfixed code the divergence test exempts it and the gate
+answers rc 0. A2 (a test that rode earlier on THIS branch still exempts) and A3 (a test staged alongside
+the impl still exempts) are the controls that stop A1 being satisfiable by simply disabling the axis.
+C1 pins the fail-closed direction: a key naming a branch that resolves nowhere must fire, with no quiet
+fall-back to `main`, even though `main` resolves and carries a test.
+
+**The key-absent cases are the compatibility guarantee, and they are proven by byte comparison, not by
+argument.** b1-b5 each drive one fixture twice — same project, same cwd, same script path — once with
+the shipped gate and once with a reconstruction of the pre-fix gate, and require the combined
+stdout+stderr to be BYTE-IDENTICAL and the rc equal: absent manifest (rc 1), manifest with no key and a
+test earlier on the branch (rc 0), key `null` (rc 1), key `""` (rc 1), and an unresolvable base (rc 1,
+fail-closed). The reconstruction is built by reverse-mutating the shipped file, and the suite refuses to
+trust it until it has asserted the mutation landed — without that, a B case would compare the shipped
+script against itself and pass vacuously. Separately verified at build time, outside the suite because
+the comparison rots the moment this merges: the reconstruction is byte-identical to
+`ceb450e:scripts/pre-commit-gate.sh`, sha256 `5d51f6eb…`. Each B case also pins the rc today's code
+actually returns, so it cannot pass on two vacuous halves agreeing with each other.
+
+**Three mutants, each named with the case that kills it.** MP1 restores the literal `main` — A1 catches
+it (the test-less `feat:` is allowed again). MP2 deletes the `_ib` fallback line so an absent key leaves
+the base empty — b2 catches it, because a keyless project whose test rode earlier on the branch flips
+from exempt to blocked (rc 0 to rc 1), which is a behaviour change for existing projects even though it
+is the *stricter* direction. MP3 inserts a permissive `base="main"` fall-back after the resolution, a
+plausible-looking "be helpful when the key does not resolve" — C1 catches it.
+
+**A defect this suite's first cut had, recorded because the class is the point.** `mk_proj` took its
+trunk argument with the `:-` form of default substitution, and the B cases pass an EMPTY trunk to ask for
+a main-only project. `:-` substitutes the default for an empty value, so every "main-trunk" fixture was
+silently built with the two-branch topology, and b1/b3/b4 compared two runs that both exempted for the
+wrong reason — byte-identical, and testing nothing. It read green. Caught by noticing that an impl-only
+`feat:` on a main-trunk project reported rc 0 when running the same fixture by hand reported rc 1. Fixed
+to the plain `-` form, and a want-rc argument added so each case asserts what today's behaviour IS rather
+than only that two runs agree.
+
+**Related:** `## BL-072:` (the TDD-ordering detector this axis belongs to), `## BL-107:`
+(`# BL-107-RUST-INLINE-TESTS`, the two content probes that sit either side of this base resolution),
+`## BL-221:` (the fail-closed direction this does NOT close for a keyless project), `## BL-229:` (the
+missing-answer-reads-as-clean class), `## BL-231:` (the absent-vs-unreadable family — here, absent
+resolves to a DEFAULT and that is deliberate, not the family's defect).
