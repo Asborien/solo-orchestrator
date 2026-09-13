@@ -860,6 +860,10 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
   "BL-259: an empty @tsv field must not collapse and shift the resolver row" \
   "BL-259 tsv-field-shift tests FAILED (run tests/test-bl259-tsv-empty-field-shift.sh for details)"
 
+run_child_suite "tests/test-bl274-single-authority-attestation.sh" \
+  "BL-274: the single-authority attestation records an accepted exception and never claims the control was verified" \
+  "BL-274 single-authority attestation tests FAILED (run tests/test-bl274-single-authority-attestation.sh for details)"
+
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
 # ----------------------------------------------------------------
