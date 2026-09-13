@@ -918,6 +918,9 @@ run_child_suite "tests/test-bl286-integration-branch.sh" \
 run_child_suite "tests/test-bl209-hooksdir-resolution.sh" \
   "BL-209: the hooks directory is resolved through git, not a .git/hooks literal" \
   "BL-209 hooksdir-resolution tests FAILED (run tests/test-bl209-hooksdir-resolution.sh for details)"
+run_child_suite "tests/test-bl275-selfapproval-remedy.sh" \
+  "BL-275: the self-approval remedy names no non-existent flag and does not advise the failing action" \
+  "BL-275 self-approval remedy tests FAILED (run tests/test-bl275-selfapproval-remedy.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS

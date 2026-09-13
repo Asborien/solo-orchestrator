@@ -19281,10 +19281,16 @@ resolves to a DEFAULT and that is deliberate, not the family's defect).
 
 ## BL-275: the self-approval check enforces the INVERSE of the invariant it cites, and its remedy line advises the failing action and offers a flag that was never built
 
-**Status:** Open — **ENTRY ONLY as filed.** The fix SPLITS, and the split is the useful part. The
-half that removes two false statements needs no decision and is ready to apply. The half that tells
-the operator how to make the gate GREEN cannot be written until the maintainer picks which of two
-contradictory rules is the real one — because the two rules prescribe opposite actions.
+**Status:** Open — **HALF ONE SHIPPED, HALF TWO STILL THE MAINTAINER'S.** `# BL-275-REMEDY`: the two
+false statements are gone from the refusal and replaced with text that asserts neither rule. Suite
+`tests/test-bl275-selfapproval-remedy.sh` **8 / 0** on bash 3.2.57 (macOS) and 5.2.21 in `ubuntu:24.04`
+as a non-root user, against RED **2 / 7** at `ceb450e`; two mutants, each reinstating one of the two
+removed statements. The underlying CONTRADICTION is untouched and is what remains open.
+
+**The split is the useful part.** Removing a flag that does not exist and advice that reproduces the
+failure needs no governance ruling and cannot be invalidated by whichever of A/B/C below wins. Telling
+the operator how to make the gate PASS does need the ruling, because control 1 and the implementation
+prescribe opposite actions. Half one is shipped; half two is deliberately not attempted.
 
 **Logged:** 2026-09-13, while establishing why a single-authority organisation can never pass the
 Phase 1→2 gate (`## BL-274:`). The taxonomy question there is real; this is the defect underneath it,
@@ -19396,17 +19402,28 @@ satisfies both, and inventing an escape hatch to paper over the contradiction is
 - **C — neither, and the evidence model is control 2.** The out-of-band confirmation is the real
   control; the blame comparison is a weak proxy either way and should WARN rather than FAIL.
 
-**What is measured and what is not.** The `--force` half is MEASURED — the command was run and its
-output is quoted above. The parser enumeration is read from `:122`-`:145`. The three-source
-contradiction is read from the files named, all of which are quoted verbatim. **The behavioural
-claim in the two-row table is REASONED, NOT RUN:** a fixture that records an Approver row twice under
-different author identities and runs the gate against each was blocked by a local `enforce-evaluate`
-hook that matches git-commit text in any command, including inside a throwaway repository. It was not
-worked around. The reasoning rests on the comparison at `:1719` and on T1/T2 pinning both verdicts,
-which is strong, but it is not a run and should not be repeated as one.
+**What is measured — the two-row table is now DEMONSTRATED, not reasoned.** An earlier revision of
+this entry carried a caveat saying the compliant-vs-violation table rested on reading the comparison
+rather than on a run. That caveat is withdrawn because the run now exists, in two registered suites:
 
-**Related:** `## BL-274:` (the adopter-facing question this defect produces, and the attestation we
-designed and refused to build), `## BL-212:` (the same walker — its coverage stops at Phase 1→2, and
+- `tests/test-bl275-selfapproval-remedy.sh` **R5** drives a fixture whose Approver cell and row author
+  are the same person and requires the refusal to fire — the "violation" row.
+- `tests/test-bl274-single-authority-attestation.sh` **A12** drives the opposite fixture, Alice named
+  as Approver with Bob authoring the row, and requires the control to stay SILENT — the row control 1
+  forbids, passing cleanly.
+
+Both fixtures run in CI. So the table's claim — that the check gives the same verdict to an
+independent approver signing their own row as it gives to an Orchestrator approving themselves, and
+passes only when a non-approver authors the row — is observed behaviour on both shells.
+
+The `--force` half was always measured, and `tests/test-bl275-selfapproval-remedy.sh` **R2** now pins
+it as a permanent fact rather than a one-off observation: it runs `check-phase-gate.sh --force` and
+requires exit 2 with "Unknown argument". If the flag is ever implemented, R2 turns red and the removal
+in half one must be revisited. The three-source contradiction remains READ, from the files named and
+quoted verbatim — there is nothing to run about a disagreement between two documents and a comparison.
+
+**Related:** `## BL-274:` (the adopter-facing question this defect produces, and the attestation built
+for it — the shipped refusal text below points at it, so BL-274 should land first or alongside), `## BL-212:` (the same walker — its coverage stops at Phase 1→2, and
 whichever rule wins here must land before that widening reaches two more gates), `## BL-213:` (the
 category sibling: a shipped script advertising an exit code that does not exist), `## BL-055:` and
 `## BL-143:` (the per-line blame walker this check is built on), `## BL-060:` (the last time this

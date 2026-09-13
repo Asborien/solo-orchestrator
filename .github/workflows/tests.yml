@@ -577,6 +577,7 @@ jobs:
             tests/test-bl281-resume-after-115.sh
             tests/test-bl286-integration-branch.sh
             tests/test-bl209-hooksdir-resolution.sh
+            tests/test-bl275-selfapproval-remedy.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────
