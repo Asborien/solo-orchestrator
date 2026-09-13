@@ -240,8 +240,20 @@ case_R8() {
 # measure is that each call line must be FOUND first — a call that moved or was
 # renamed fails the case instead of passing it by absence.
 case_R9() {
-  local f n_found=0 n_swallow=0 missing=""
-  for f in "$REPO_ROOT/init.sh" "$REPO_ROOT/scripts/reconfigure-project.sh"; do
+  local f n_found=0 n_swallow=0 callers=""
+  # DISCOVER the call sites; do not hardcode them. A fixed list can only ever go
+  # stale in the PERMISSIVE direction: a third caller added later would never be
+  # checked, and this case would keep passing while its stderr was swallowed.
+  # Discovery also makes the case runnable in a PROJECT checkout, which ships
+  # reconfigure-project.sh but not init.sh — with a hardcoded pair it fails there
+  # forever, and a suite that can never go green teaches people to ignore it.
+  callers="$(grep -l 'bash "[^"]*" *--\(un\)\?install ' \
+               "$REPO_ROOT/init.sh" "$REPO_ROOT"/scripts/*.sh 2>/dev/null || true)"
+  if [ -z "$callers" ]; then
+    fail_ R9 "no installer call site found anywhere under $REPO_ROOT — this case would otherwise pass by absence"
+    return
+  fi
+  for f in $callers; do
     local lines
     # Both spellings: init.sh calls the installer by path, reconfigure through
     # an "$INSTALLER" variable it picked earlier. A pattern that only matched
@@ -270,14 +282,12 @@ case_R9() {
       n_swallow=$((n_swallow + 1))
     fi
   done
-  if [ -n "$missing" ]; then
-    fail_ R9 "could not find the installer call in:$missing — this case would otherwise pass by absence"
-  elif [ "$n_found" -ne 2 ]; then
-    fail_ R9 "expected the installer to be called from 2 files, found $n_found"
+  if [ "$n_found" -eq 0 ]; then
+    fail_ R9 "matched files but extracted no call line — the pattern and the discovery disagree"
   elif [ "$n_swallow" -ne 0 ]; then
     fail_ R9 "$n_swallow call site(s) still redirect the installer's stderr to /dev/null — its refusal cannot reach the operator"
   else
-    pass "R9 (source-level: neither init.sh nor reconfigure-project.sh swallows the installer's stderr)"
+    pass "R9 (source-level: none of the $n_found discovered call site(s) swallows the installer's stderr)"
   fi
 }
 
