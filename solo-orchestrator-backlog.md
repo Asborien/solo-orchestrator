@@ -15996,8 +15996,14 @@ absent, `prompt_input() {` still unique, changed-line count) before reading a ve
 the `?` arm, restoring main: the bare `?` comes back as the return value AND lands on disk, while an
 ordinary answer still works — the second half is what shows C1/S1 discriminate the defect rather than
 the fixture. **MP2** drops the `>&2` from the notice and nothing else: the `?` is still swallowed, C1
-and S1 and C3 all still pass, and the value saved to disk is `[INFO] No suggestions for this field —
-answer it directly, or type N/A.\n42`. C2 is the only case that sees it. Registered in
+and S1 and C3 all still pass, and the value saved to disk is the notice followed by the answer.
+MEASURED FROM THE CURRENT MUTANT, not from the draft: `  No suggestions available for this field —
+answer it directly, or type N/A.\n42`. (An earlier cut of this paragraph quoted
+`[INFO] No suggestions for this field — …` here. That was the ABANDONED FIRST CUT's output, pasted
+into a description of the shipped mutant: the shipped arm is a bare `echo`, so there is no `[INFO]`
+prefix, and its wording carries "available". The quote two paragraphs up is the same string but is
+correctly labelled as the first cut — that one is honest; this one was not.) C2 is the only case that
+sees it. Registered in
 `tests/full-project-test-suite.sh` and the `tests.yml` unit lane
 (`scripts/lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
 
@@ -16008,12 +16014,38 @@ that there are no suggestions. No data is corrupted, so it is not fixed here.
 
 That same loop carries `## BUG-010:` **defect (2)**, which this entry did not know about when it was
 written: the prompt has **no EOF guard**, so `read` returning non-zero is treated as a wrong answer
-rather than the end of input and the loop never terminates. The maintainer measured **19,819,553 bytes
-of "Invalid choice. Enter a number between 1 and 2." in under two minutes, still running when killed.**
-So the sibling helper this entry holds up as the correct idiom is correct about `?` and unbounded on
-EOF. Both live in `prompt_choice` and neither is fixed here. His prescribed shape is
+rather than the end of input. The maintainer measured **19,819,553 bytes of "Invalid choice. Enter a
+number between 1 and 2." in under two minutes, still running when killed.** His prescribed shape is
 `scripts/lib/adopt/adopt-core.sh`'s `adopt_read_optional` / `ADOPT_MANDATORY_REFUSAL` path, which
 treats EOF as an unanswered mandatory question and stops.
+
+**AND THAT DEFECT IS NOT ONLY IN `prompt_choice` — THIS WIDENS BUG-010 BEYOND WHAT IT RECORDS.** An
+earlier cut of this residual said "both live in `prompt_choice`". That is wrong, and wrong in the
+direction that matters: the second instance is in `prompt_with_suggestions`, the very function this
+entry holds up as the correct `?` idiom. Read from source on this branch — `while true`, then
+`read -rp … result` whose **exit status is never checked**, then `[ -z "$result" ] && [ -n "$default" ]`,
+then `[ -n "$result" ]`, then `echo "  Please enter a value or type ? for suggestions." >&2` and
+around again. **With NO DEFAULT, EOF leaves `result` empty and BOTH exit arms fail**: the first needs a
+default, the second needs a non-empty answer. Nothing else can stop it. With a default it terminates
+via the default arm, which is why the trigger is the no-default call specifically. BUG-010 locates
+this defect only in `prompt_choice`; it belongs in both.
+
+**Evidence, stated at the strength it has.** The SOURCE reading above is direct and is what this claim
+rests on. A dynamic reproduction here was inconclusive and is reported as such rather than dressed up:
+a bounded probe driving the function from a sourced harness at EOF produced no loop — but the SAME
+harness also produced no loop for `prompt_choice`, the case the maintainer measured at 19.8 MB, and
+reported `errexit` OFF inside it. A harness that cannot reproduce a known-true case cannot be used to
+confirm or refute a second one, so it is recorded as not-reproduced-here and nothing more.
+
+**The uncomfortable corollary, and it belongs in the same breath.** The loop this fix ADDS to
+`prompt_input` is safe by ACCIDENT OF ITS PREDICATE, not by a guard. `prompt_choice` hangs because its
+exit condition demands a VALID answer and EOF yields empty, which is invalid. `prompt_input` exits
+because its condition is "anything that is not `?`", and empty is not `?`. So this entry adopted a
+loop shape the maintainer had already filed as defective, and got away with it on the shape of the
+test rather than on an EOF check. It cannot hang — C0/C1/C3 and the python3-absent run all terminate,
+and the suite would not complete otherwise — but **if `prompt_choice` is reworked to his prescribed
+`adopt_read_optional` shape, this loop should be revisited in the same pass** rather than left as the
+one that happened not to need it.
 
 **Related:** `## BUG-010:` (its defect (2) is the EOF hang in the same `prompt_choice` loop this
 residual names; its defect (3) is the jq reserved word fixed on the BL-265 branch). BL-265 and BL-266,

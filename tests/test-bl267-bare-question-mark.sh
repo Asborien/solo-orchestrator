@@ -13,10 +13,13 @@
 #
 # The fix's own hazard is the second half of this suite. `prompt_input`
 # returns the answer on STDOUT — every call site is `x=$(prompt_input …)`
-# — and the repo's `print_info` writes to stdout too. A notice printed
-# without `>&2` is therefore CAPTURED AS PART OF THE ANSWER: measured, a
-# `?` followed by `42` yields `[INFO] No suggestions…\n42`. C2 is the case
-# for that; MP2 is the mutant that proves it is load-bearing.
+# — so ANY notice it prints without `>&2` is CAPTURED AS PART OF THE
+# ANSWER. Measured from the current mutant, a `?` followed by `42` yields
+# `  No suggestions available for this field — answer it directly, or type
+# N/A.\n42`. C2 is the case for that; MP2 is the mutant that proves it is
+# load-bearing. (The re-ask notice is a bare `echo … >&2`, matching the
+# sibling helpers; an earlier draft used `print_info`, which writes to
+# stdout — hence the hazard being worth a case at all.)
 #
 # This drives the REAL prompt_input with stdin, and the real save_answer,
 # against a hermetic progress file.
@@ -172,9 +175,8 @@ if ! mkdir -p "$MP1" || ! cp -Rp "$REPO_ROOT/scripts" "$MP1/"; then
   fail_ "MP1 setup" "could not mirror scripts/"
 else
   tgt="$MP1/scripts/intake-wizard.sh"; before="$(mktemp)"; cp "$tgt" "$before"
-  # the arm now sits INSIDE prompt_input's `while true` loop (BL-267 was
-  # converted from recursion to the sibling helper's loop idiom), so both the
-  # opener and its closing `fi` carry four spaces, not two.
+  # the arm sits INSIDE prompt_input's `while true` loop, so both the opener
+  # and its closing `fi` carry four spaces, not two.
   arm_ln="$(grep -n '^    if \[ "\$result" = "?" \]; then$' "$before" | head -1 | cut -d: -f1)"
   end_ln="$(awk -v s="$arm_ln" 'NR > s && $0 == "    fi" { print NR; exit }' "$before")"
   if [ -z "$arm_ln" ] || [ -z "$end_ln" ]; then
@@ -198,7 +200,11 @@ else
       save_through '?\n42\n' "$tgt"
       if [ "$mut_out" = "?" ] && [ "$ASK_OUT" = "42" ] \
          && { [ "$HAVE_PY3" -eq 0 ] || [ "$SAVED" = "?" ]; }; then
-        pass "MP1 (MUTATION) — without the arm a bare \`?\` is returned ([$mut_out]) and SAVED ([$SAVED]) while ordinary answers still work: C1/S1 are what stop it"
+        if [ "$HAVE_PY3" -eq 0 ]; then
+          pass "MP1 (MUTATION) — without the arm a bare \`?\` is returned ([$mut_out]) while ordinary answers still work; disk half SKIPPED (no python3): C1 is what stops it"
+        else
+          pass "MP1 (MUTATION) — without the arm a bare \`?\` is returned ([$mut_out]) and SAVED ([$SAVED]) while ordinary answers still work: C1/S1 are what stop it"
+        fi
       else
         fail_ "MP1 (MUTATION)" "removing the arm changed nothing (returned=[$mut_out] ordinary=[$ASK_OUT] saved=[$SAVED])"
       fi
@@ -228,7 +234,11 @@ else
       case "$ASK_OUT" in
         *"No suggestions available"*)
           if [ "$HAVE_PY3" -eq 0 ] || [ "$SAVED" != "42" ]; then
-            pass "MP2 (MUTATION) — an unredirected notice is captured into the answer and SAVED as [$(printf '%s' "$SAVED" | head -1)…]: C2 is what stops it"
+            if [ "$HAVE_PY3" -eq 0 ]; then
+              pass "MP2 (MUTATION) — an unredirected notice is captured into the answer ([$(printf '%s' "$ASK_OUT" | head -1)…]); disk half SKIPPED (no python3): C2 is what stops it"
+            else
+              pass "MP2 (MUTATION) — an unredirected notice is captured into the answer and SAVED as [$(printf '%s' "$SAVED" | head -1)…]: C2 is what stops it"
+            fi
           else
             fail_ "MP2 (MUTATION)" "the notice reached stdout but the saved answer was still [$SAVED]"
           fi ;;
