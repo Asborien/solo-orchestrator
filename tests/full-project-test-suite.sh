@@ -860,6 +860,13 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
   "BL-259: an empty @tsv field must not collapse and shift the resolver row" \
   "BL-259 tsv-field-shift tests FAILED (run tests/test-bl259-tsv-empty-field-shift.sh for details)"
 
+# BL-260: two verify-install.sh auto-fixers that could never run — has_context()
+# was unsatisfiable on an adopted project, and fix_superpowers ran a CLI verb
+# that does not exist.
+run_child_suite "tests/test-bl260-verify-install-context.sh" \
+  "BL-260: an adopted project's recorded context reaches has_context(); fix_superpowers uses a real CLI verb" \
+  "BL-260 verify-install context/plugin-verb tests FAILED (run tests/test-bl260-verify-install-context.sh for details)"
+
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
 # ----------------------------------------------------------------
