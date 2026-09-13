@@ -18158,6 +18158,8 @@ file recording sections 1-3 done. The sentinel is set by the REAL `prompt_input`
 word `pause` from stdin — not by a bare `touch` — and the harness exits 92 if that did not set it, so
 a case cannot pass because the fixture faked the trigger.
 
+**An earlier cut of this build note follows, superseded and kept for the reasoning trail.** Its figures and two of its claims are STALE and are corrected below at the `Suite 10 / 0` paragraph: the RED tally is **2 passed / 8 failed**, not 2/7; GREEN is **10 / 0**, not 9/0; MP2 was REPLACED rather than repaired, so the description of it as the plausible wrong fix no longer matches the shipped mutant; and R4 ships labelled `corroboration — seeded, cannot fail here; see E1`, so it is not the only thing standing between the fix and a silent skip. Read the corrected paragraph, not this one, for the shipped artefact.
+
 RED at `ceb450e`: **2 passed / 7 failed**, the two passes being honest controls — R0 (an UNPAUSED
 `save_section 4` still files section 4, so the fixture works) and R6 (the answer stored before the
 pause is untouched). The discriminators name the damage in the failure text: R1
