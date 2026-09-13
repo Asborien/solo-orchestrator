@@ -15925,3 +15925,136 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+## BL-275: the self-approval check enforces the INVERSE of the invariant it cites, and its remedy line advises the failing action and offers a flag that was never built
+
+**Status:** Open — **ENTRY ONLY as filed.** The fix SPLITS, and the split is the useful part. The
+half that removes two false statements needs no decision and is ready to apply. The half that tells
+the operator how to make the gate GREEN cannot be written until the maintainer picks which of two
+contradictory rules is the real one — because the two rules prescribe opposite actions.
+
+**Logged:** 2026-09-13, while establishing why a single-authority organisation can never pass the
+Phase 1→2 gate (`## BL-274:`). The taxonomy question there is real; this is the defect underneath it,
+and it affects every organizational deployment, not just single-authority ones.
+
+**THREE SOURCES, TWO ANSWERS, AND THE CODE IS THE ODD ONE OUT.**
+
+`scripts/check-phase-gate.sh:1719` fails when the blame author of the Approver row equals the name in
+the Approver cell, both sides lowercased and trimmed, full-string equality (`:1624`, `:1717`):
+
+```
+if [ -n "$commit_author_norm" ] && [ "$commit_author_norm" = "$approver_norm" ]; then
+    ... self-approval detected for organizational deployment
+```
+
+So the code requires **author ≠ approver**. Both governing statements say the opposite:
+
+| source | what it requires |
+|---|---|
+| `docs/governance-framework.md` §V, Approval Verification Control 1 | *"Each approval entry MUST be committed to `APPROVAL_LOG.md` by the **approver**, not the Orchestrator."* — author **=** approver |
+| baseline §5 invariant #9, as quoted by the code itself at `check-phase-gate.sh:1502-1505` | *"The git author on the commit adding the approval entry must be the approver, not the Orchestrator."* — author **=** approver |
+| `scripts/check-phase-gate.sh:1719` (the implementation) | author **≠** approver |
+
+**The code quotes the invariant in its own comment and then enforces its inverse.** And the baseline
+document that would settle it **is not in this repository** — a search for "invariant #9" returns only
+`check-phase-gate.sh:1502`, `:1736` and `tests/test-check-phase-gate-self-approval.sh:14`, `:139`,
+`:157`. The phrase *"must be the approver"* appears nowhere outside those two files. The only
+statement of the rule in the repo is a paraphrase inside the code that contradicts the code.
+
+**The tests pin the inverse deliberately, so this is not a slip.**
+`tests/test-check-phase-gate-self-approval.sh` T2: *"approver 'Karl Raulerson' committed by author
+'Karl Raulerson' → MUST FAIL (true self-approval — commit author matches approver)"*. And T1's
+fixture comment states the model outright: *"Karla was approved by someone else — **Bob committed the
+entry**."* The suite's happy path IS control 1's violation. Whatever is wrong here has been wrong
+consistently and on purpose for as long as the walker has existed.
+
+**WHY THE CHECK CANNOT TELL THE TWO CASES APART.** The gate never establishes who the Orchestrator
+is. It knows the Approver cell and the row's blame author, and nothing else about the roles. So:
+
+| situation | governance verdict | gate verdict |
+|---|---|---|
+| Alice (STA, not the Orchestrator) approves and commits her own row | **compliant** — control 1 and invariant #9 mandate exactly this | **FAIL** |
+| Bob (the Orchestrator) commits a row naming Bob as approver | **violation** — control 3 forbids it | **FAIL** |
+
+The control the framework wants is *"the Orchestrator must not author a row naming themselves"*
+(control 3). The check implemented is *"nobody may author a row naming themselves"*. Those coincide
+only when the approver IS the Orchestrator — which is `## BL-274:`'s case, and is why that adopter
+reads a governance question as a tooling fault.
+
+**How anyone passes today.** Two states clear it, and neither is a posture to rely on. Either a
+non-approver authors the row — which control 1 forbids — or the approver's git author name is spelled
+differently from the Approver cell, since the comparison is exact after lowercase and trim. My first
+reading of this was "following control 1 always fails", and that was too strong: **the spelling
+escape is real.** It is just not something anyone should want in an audit trail.
+`## BL-212:` records the same effect from the other side, and its sentence is the corroboration:
+*"solo's non-Orchestrator signers typically have no git identity in the repo, so approver-committed
+rows are rare in practice today."* Rows are rare precisely because when they happen, this fires.
+
+**THE REMEDY LINE IS WRONG IN BOTH HALVES.** `check-phase-gate.sh:1721-1722`:
+
+```
+  Governance requires a different individual to approve phase gates for organizational projects.
+  Have the approver commit the APPROVAL_LOG.md entry themselves, or use --force with documented justification.
+```
+
+1. *"Have the approver commit the entry themselves"* **is the failing condition.** An operator who
+   follows the advice reproduces the failure. The sentence was written from control 1; the code
+   implements its inverse; nobody reconciled them.
+2. *"or use `--force`"* — **the flag does not exist.** Measured, not read:
+   ```
+   $ bash scripts/check-phase-gate.sh --force
+   [FAIL] Unknown argument: '--force'
+   ```
+   The parser (`:122`-`:145`) accepts `--gate`, `--gate=`, `--help`/`-h` and exits 2 on everything
+   else. `--help` contains no `--force`; its only "force" is the word *"Forces"* describing what
+   `--gate` does. A tree-wide search for a caller passing `--force` to this script returns nothing —
+   no script, doc or template ever called it. This is `## BL-213:`'s category exactly: a shipped
+   script advertising an escape that was never built.
+
+**THE FIX SPLITS IN TWO, AND ONLY THE SECOND HALF IS BLOCKED.**
+
+**Half one — remove the two false statements. No decision required; true under every option below.**
+Drop the `--force` clause outright: it names a flag that does not exist, and no reading of the
+governance rules makes it exist. Replace the advice that reproduces the failure with a description of
+what the check actually compared — true whichever rule turns out to be the real one:
+
+> `This gate compared the Approver cell against the git author of that row, and they match.`
+> `It cannot tell an independent approver who signed their own row from an Orchestrator approving themselves — it compares only the two names, and never establishes who the Orchestrator is. Confirm by hand which case this is.`
+> `If this project has one technical authority, the blocking pre-condition is docs/governance-framework.md §XIV item 5 — a second technologist — and this gate is the symptom, not the cause. See ## BL-274:.`
+
+That wording asserts neither rule. It says what was compared, names the distinction the check cannot
+make, tells the operator which one to make by hand, and points a single-authority project at its
+actual blocker. It offers no way to turn the gate green, **which is the honest position** — see half
+two.
+
+**Half two — the prescription. BLOCKED, and it is the maintainer's to unblock.** Any sentence of the
+form "do X and the gate will pass" must pick a rule, because the two rules prescribe opposite
+actions: control 1 says the approver commits the row; the code requires that they do not. No wording
+satisfies both, and inventing an escape hatch to paper over the contradiction is the move
+`## BL-274:` refused for the same reason. The three ways out:
+
+- **A — the code is right, the doc is wrong.** Anti-self-approval means nobody signs their own row.
+  Then control 1 and invariant #9 must be rewritten, and `## BL-212:`'s widening inherits the corrected
+  rule before it reaches two more gates.
+- **B — the doc is right, the code is wrong.** The approver's git identity IS the signature, and the
+  check should compare the row's author against the ORCHESTRATOR, not against the approver. Then
+  `:1719` inverts, T1 and T2 swap verdicts, and the gate needs a source for who the Orchestrator is
+  that is better than the ambient `git config user.name`.
+- **C — neither, and the evidence model is control 2.** The out-of-band confirmation is the real
+  control; the blame comparison is a weak proxy either way and should WARN rather than FAIL.
+
+**What is measured and what is not.** The `--force` half is MEASURED — the command was run and its
+output is quoted above. The parser enumeration is read from `:122`-`:145`. The three-source
+contradiction is read from the files named, all of which are quoted verbatim. **The behavioural
+claim in the two-row table is REASONED, NOT RUN:** a fixture that records an Approver row twice under
+different author identities and runs the gate against each was blocked by a local `enforce-evaluate`
+hook that matches git-commit text in any command, including inside a throwaway repository. It was not
+worked around. The reasoning rests on the comparison at `:1719` and on T1/T2 pinning both verdicts,
+which is strong, but it is not a run and should not be repeated as one.
+
+**Related:** `## BL-274:` (the adopter-facing question this defect produces, and the attestation we
+designed and refused to build), `## BL-212:` (the same walker — its coverage stops at Phase 1→2, and
+whichever rule wins here must land before that widening reaches two more gates), `## BL-213:` (the
+category sibling: a shipped script advertising an exit code that does not exist), `## BL-055:` and
+`## BL-143:` (the per-line blame walker this check is built on), `## BL-060:` (the last time this
+script's documented CLI surface and its implemented CLI surface disagreed).
