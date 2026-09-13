@@ -331,13 +331,21 @@ if [ "$mt1_pre_ok" -eq 0 ]; then
   rm -rf "$M"; M=""
 fi
 if [ -n "$M" ]; then
-  perl -0pi -e "s/printf '%s' \"\\\$_sa_reason\"/echo -e \"\\\$_sa_reason\"/" "$M/scripts/check-phase-gate.sh"
+  # ANCHORED ON $_sa_label, which appears ONLY on the ATTESTED display line.
+  # An unanchored s/printf '%s' "$_sa_reason"/.../ hits the first match in the
+  # file, which is the TRIM inside $( ) roughly six lines earlier — so the
+  # mutant silently altered a different site than its name claims while still
+  # being killed, by a different mechanism, and the landing assertion could not
+  # tell the difference. Same class as the MT4 mangling.
+  perl -0pi -e "s/\"\\\$_sa_label\"\n    printf '%s' \"\\\$_sa_reason\"/\"\\\$_sa_label\"\n    echo -e \"\\\$_sa_reason\"/" "$M/scripts/check-phase-gate.sh"
   perl -0pi -e 's/_sa_reason=\$\(accum_oneline "\$\{SOLO_SINGLE_AUTHORITY_ATTESTED_REASON:-\}"\)/_sa_reason="\${SOLO_SINGLE_AUTHORITY_ATTESTED_REASON:-}"/' "$M/scripts/check-phase-gate.sh"
 fi
 if [ -z "$M" ]; then
   : # already reported
 elif ! grep -q 'echo -e "$_sa_reason"' "$M/scripts/check-phase-gate.sh"; then
   fail_ MT1 "mutation did NOT land — printf '%s' was not replaced by echo -e"
+elif grep -q "printf '%s' \"\$_sa_reason\"$" "$M/scripts/check-phase-gate.sh"; then
+  fail_ MT1 "mutation landed on the WRONG site — the display printf is still present, so the trim was mutated instead"
 elif grep -q 'accum_oneline "${SOLO_SINGLE_AUTHORITY_ATTESTED_REASON' "$M/scripts/check-phase-gate.sh"; then
   fail_ MT1 "mutation did NOT land — the ingest sanitiser is still in place"
 elif ! bash -n "$M/scripts/check-phase-gate.sh" 2>/dev/null; then
@@ -403,11 +411,18 @@ else
     fail_ MT3 "nothing to mutate — the HEAD-sensitive idempotence comparison is absent before mutation, so a 'kill' here would be meaningless"
     rm -rf "$M"; M=""
   fi
-  [ -n "$M" ] && perl -0pi -e 's/\[ "\$_sa_cur_reason" = "\$_sa_reason" \] && \[ "\$_sa_cur_head" = "\$_sa_head" \]/[ "$_sa_cur_reason" = "$_sa_reason" ]/' "$M/scripts/check-phase-gate.sh"
+  # `\$` ESCAPED IN THE REPLACEMENT. Unescaped, perl interpolates
+  # $_sa_cur_reason and $_sa_reason as its own (undefined) variables and emits
+  # `if [ "" = "" ]` — an ALWAYS-idempotent mutant rather than a reason-only
+  # one. A8 killed that too, so the suite looked healthy while the mutant
+  # tested something its name does not describe.
+  [ -n "$M" ] && perl -0pi -e 's/\[ "\$_sa_cur_reason" = "\$_sa_reason" \] && \[ "\$_sa_cur_head" = "\$_sa_head" \]/[ "\$_sa_cur_reason" = "\$_sa_reason" ]/' "$M/scripts/check-phase-gate.sh"
   if [ -z "$M" ]; then
     : # already reported
   elif grep -q '_sa_cur_head" = "$_sa_head' "$M/scripts/check-phase-gate.sh"; then
     fail_ MT3 "mutation did NOT land — the head comparison is still in the idempotence test"
+  elif ! grep -q '\[ "\$_sa_cur_reason" = "\$_sa_reason" \]; then' "$M/scripts/check-phase-gate.sh"; then
+    fail_ MT3 "mutation landed MANGLED — the reason comparison was interpolated away instead of preserved: $(grep -n 'if \[ "" = ""' "$M/scripts/check-phase-gate.sh" | head -1)"
   elif ! bash -n "$M/scripts/check-phase-gate.sh" 2>/dev/null; then
     fail_ MT3 "mutant does not parse"
   else
