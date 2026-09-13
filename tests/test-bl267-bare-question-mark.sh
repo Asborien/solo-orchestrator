@@ -16,7 +16,7 @@
 # — so ANY notice it prints without `>&2` is CAPTURED AS PART OF THE
 # ANSWER. Measured from the current mutant, a `?` followed by `42` yields
 # `  No suggestions available for this field — answer it directly, or type
-# N/A.\n42`. C2 is the case for that; MP2 is the mutant that proves it is
+# N/A.\n42`. C2 is the case for that, and it also asserts the notice REACHES stderr, which nothing else checks; MP2 is the mutant that proves it is
 # load-bearing. (The re-ask notice is a bare `echo … >&2`, matching the
 # sibling helpers; an earlier draft used `print_info`, which writes to
 # stdout — hence the hazard being worth a case at all.)
@@ -57,15 +57,20 @@ command -v python3 >/dev/null 2>&1 || HAVE_PY3=0
 ask() {
   local keys="$1" prompt="$2" default="$3" bin="${4:-$WIZARD}"
   local d; d="$(newtmp)"
+  # stderr is CAPTURED, not discarded: C2 asserts the re-ask notice actually
+  # REACHES the operator, which no other case checks. Discarding it here is
+  # what made C2 subsumed by C1 — both could then only see stdout.
+  ASK_ERR_FILE="$d/.ask-stderr"
   ASK_OUT="$(
     cd "$d" || exit 90
     __SOLO_INTAKE_WIZARD_SOURCED__=1
     # shellcheck disable=SC1090
     source "$bin" >/dev/null 2>&1 || exit 91
     _PAUSE_FILE="$d/.pause-sentinel"
-    printf '%b' "$keys" | prompt_input "$prompt" "$default" 2>/dev/null
+    printf '%b' "$keys" | prompt_input "$prompt" "$default" 2>"$ASK_ERR_FILE"
   )"
   ASK_RC=$?
+  ASK_ERR="$(cat "$ASK_ERR_FILE" 2>/dev/null || printf '')"
   return 0
 }
 
@@ -117,15 +122,23 @@ else
   fail_ "C1" "prompt_input returned [$ASK_OUT], want [42] — a question mark was taken as the answer"
 fi
 
-# C2 — the notice must not ride along on stdout. print_info writes to
-# stdout, so an unredirected notice is captured as part of the answer.
+# C2 — the notice must REACH THE OPERATOR, on stderr, and must not ride along
+# on stdout. Both halves matter and neither is covered elsewhere: C1 pins the
+# returned value, so a silent re-ask that emitted NO notice at all would leave
+# C1 green while the operator saw nothing explaining why the prompt repeated.
+# Asserting only "stdout is clean" made this case strictly subsumed by C1 —
+# same input, and no value matching the old glob could ever equal "42".
 ask '?\n42\n' "Expected users at 12 months" ""
-case "$ASK_OUT" in
-  *INFO*|*suggestion*|*Suggestion*)
-    fail_ "C2" "the re-ask notice was captured into the answer: [$ASK_OUT]" ;;
-  *)
-    pass "C2 — the re-ask notice goes to stderr, so the captured answer is clean" ;;
-esac
+if ! printf '%s' "$ASK_ERR" | grep -qi 'suggestion'; then
+  fail_ "C2" "no re-ask notice reached stderr — the prompt repeated with no explanation to the operator (stderr: [$ASK_ERR])"
+else
+  case "$ASK_OUT" in
+    *suggestion*|*Suggestion*|*INFO*)
+      fail_ "C2" "the re-ask notice was captured into the answer: [$ASK_OUT]" ;;
+    *)
+      pass "C2 — the notice reaches the operator on stderr and stays out of the captured answer" ;;
+  esac
+fi
 
 # C3 — the same with a DEFAULT in play (the one_time_budget shape,
 # `prompt_input "One-time budget (or N/A)" "N/A"`). The default must
