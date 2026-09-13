@@ -546,6 +546,54 @@ else
 fi
 teardown
 
+# ── MT4 — the mutant that proves A13 is load-bearing ─────────────────
+# The exact failure A13 exists to catch: the handler lifts the FAIL LINE but
+# still counts the gate as blocked. Every honesty case (A2/A3/A4) keeps
+# passing — the ATTESTED line is printed, names the pre-condition, claims
+# nothing — and the gate still exits non-zero. Only an exit-code assertion
+# sees it, which is why "no self-approval FAIL in the output" was never
+# sufficient evidence that the gate goes green.
+#
+# The mutation is a one-token change to the arm that lifts the block, so it is
+# the natural shape of this defect rather than a contrivance.
+echo "MT4: the block is lifted in the transcript but still counted → A13 must flip red"
+M=$(mutant_dir)
+if ! grep -q ': # attested and recorded' "$M/scripts/check-phase-gate.sh"; then
+  fail_ MT4 "nothing to mutate — the attested no-op arm is absent before mutation, so a 'kill' here would be meaningless"
+  rm -rf "$M"; M=""
+fi
+# `\$\(\(` escaped: perl interpolates a bare $( in the REPLACEMENT as its
+# effective-GID variable, which silently produced `issues=20 20 12 ...(issues
+# + 1))`. The marker-text landing assertion below still passed on that mangled
+# line — it was `bash -n` that caught it. So the assertion checks the operative
+# text too, not just the marker that proves a substitution happened.
+[ -n "$M" ] && perl -0pi -e 's/: # attested and recorded/issues=\$\(\(issues + 1\)\) # MUTANT: counted anyway/' "$M/scripts/check-phase-gate.sh"
+if [ -z "$M" ]; then
+  : # already reported
+elif ! grep -q 'issues=$((issues + 1)) # MUTANT: counted anyway' "$M/scripts/check-phase-gate.sh"; then
+  fail_ MT4 "mutation did NOT land intact — the attested arm was not replaced by a verbatim increment: $(grep -n 'MUTANT: counted anyway' "$M/scripts/check-phase-gate.sh" | head -1)"
+elif ! bash -n "$M/scripts/check-phase-gate.sh" 2>/dev/null; then
+  fail_ MT4 "mutant does not parse"
+else
+  setup_clean "$SOLO_NAME"
+  record_log_as "$SOLO_NAME" "$SOLO_MAIL"
+  ( cd "$PROJ" && SOLO_SINGLE_AUTHORITY_ATTESTED=1 \
+      SOLO_SINGLE_AUTHORITY_ATTESTED_REASON="$REASON" \
+      bash "$M/scripts/check-phase-gate.sh" >/dev/null 2>&1 ); mt4_rc=$?
+  mt4_out=$( cd "$PROJ" && SOLO_SINGLE_AUTHORITY_ATTESTED=1 \
+      SOLO_SINGLE_AUTHORITY_ATTESTED_REASON="$REASON" \
+      bash "$M/scripts/check-phase-gate.sh" 2>&1 || true )
+  if [ "$mt4_rc" -eq 0 ]; then
+    fail_ MT4 "mutant survived — the gate still exited 0 with the block counted, so A13 is not testing the exit code"
+  elif ! echo "$mt4_out" | grep -q "ATTESTED"; then
+    fail_ MT4 "mutant is not the intended one — it suppressed the ATTESTED line too, so a red A13 would not isolate the exit code"
+  else
+    pass "MT4 killed by A13 (ATTESTED still printed, gate still exited $mt4_rc — only the exit-code assertion catches it)"
+  fi
+  teardown
+fi
+[ -n "$M" ] && rm -rf "$M"
+
 echo
 echo "  Passed: $PASSED   Failed: $FAILED"
 [ "$FAILED" -eq 0 ] || exit 1
