@@ -15995,14 +15995,17 @@ GREEN **9 / 0** on macOS `/bin/bash` 3.2.57 and on bash 5.2.21 in `ubuntu:24.04`
 absent, `prompt_input() {` still unique, changed-line count) before reading a verdict. **MP1** deletes
 the `?` arm, restoring main: the bare `?` comes back as the return value AND lands on disk, while an
 ordinary answer still works — the second half is what shows C1/S1 discriminate the defect rather than
-the fixture. **MP2** drops the `>&2` from the notice and nothing else: the `?` is still swallowed, C1
-and S1 and C3 all still pass, and the value saved to disk is the notice followed by the answer.
+the fixture. **MP2** drops the `>&2` from the notice and nothing else: the `?` is still swallowed, and the value
+saved to disk is the notice followed by the answer, so C1, C3 and S1 ALL GO RED. An earlier cut of
+this sentence claimed those three still pass; that was false and self-refuting, since S1 asserts the
+saved value is `42` while the same sentence says the saved value is the notice. Measured under MP2:
+4 passed, 5 failed.
 MEASURED FROM THE CURRENT MUTANT, not from the draft: `  No suggestions available for this field —
 answer it directly, or type N/A.\n42`. (An earlier cut of this paragraph quoted
 `[INFO] No suggestions for this field — …` here. That was the ABANDONED FIRST CUT's output, pasted
 into a description of the shipped mutant: the shipped arm is a bare `echo`, so there is no `[INFO]`
 prefix, and its wording carries "available". The quote two paragraphs up is the same string but is
-correctly labelled as the first cut — that one is honest; this one was not.) C2 is the only case that
+correctly labelled as the first cut — that one is honest; this one was not.) C2 additionally pins that the notice still REACHES the operator on stderr, which is the one case that
 sees it. Registered in
 `tests/full-project-test-suite.sh` and the `tests.yml` unit lane
 (`scripts/lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
