@@ -145,8 +145,8 @@ echo ""
 echo "=== F. the attested escape — recorded, or refused ==="
 
 F="$(newtmp)"; mk "$F"
-f_out=$( cd "$F" && SOLO_PR_REVIEW_ATTESTED=1 bash "$CHECK" 2>&1 )
-f_rc=$( cd "$F" && SOLO_PR_REVIEW_ATTESTED=1 bash "$CHECK" >/dev/null 2>&1; echo $? )
+f_out=$( cd "$F" && SOLO_PR_REVIEW_ATTESTED=1 bash "$CHECK" </dev/null 2>&1 )   # BL-276-STDIN-REDIRECT
+f_rc=$( cd "$F" && SOLO_PR_REVIEW_ATTESTED=1 bash "$CHECK" </dev/null >/dev/null 2>&1; echo $? )   # BL-276-STDIN-REDIRECT
 if [ "$f_rc" -ne 0 ] && printf '%s' "$f_out" | grep -q 'with no reason'; then
   pass "F1: an attestation with no reason is REFUSED — a justification-free escape is the gate off with extra steps"
 else
@@ -154,7 +154,7 @@ else
 fi
 
 G="$(newtmp)"; mk "$G"
-g_rc=$( cd "$G" && SOLO_PR_REVIEW_ATTESTED=1 SOLO_PR_REVIEW_ATTESTED_REASON="live outage hotfix" bash "$CHECK" >/dev/null 2>&1; echo $? )
+g_rc=$( cd "$G" && SOLO_PR_REVIEW_ATTESTED=1 SOLO_PR_REVIEW_ATTESTED_REASON="live outage hotfix" bash "$CHECK" </dev/null >/dev/null 2>&1; echo $? )   # BL-276-STDIN-REDIRECT
 g_rec=$( cd "$G" && jq -r '.pr_review_attestations[0].reason // ""' .claude/process-state.json 2>/dev/null )
 if [ "$g_rc" -eq 0 ] && [ "$g_rec" = "live outage hotfix" ]; then
   pass "G1: an attested push passes AND the reason is durably recorded — an escape that leaves no trace is not an escape"
@@ -167,7 +167,7 @@ fi
 H="$(newtmp)"; mk "$H"
 printf '{"broken"' > "$H/.claude/process-state.json"
 chmod 444 "$H/.claude/process-state.json" 2>/dev/null
-h_rc=$( cd "$H" && SOLO_PR_REVIEW_ATTESTED=1 SOLO_PR_REVIEW_ATTESTED_REASON="x" bash "$CHECK" >/dev/null 2>&1; echo $? )
+h_rc=$( cd "$H" && SOLO_PR_REVIEW_ATTESTED=1 SOLO_PR_REVIEW_ATTESTED_REASON="x" bash "$CHECK" </dev/null >/dev/null 2>&1; echo $? )   # BL-276-STDIN-REDIRECT
 chmod 644 "$H/.claude/process-state.json" 2>/dev/null
 if [ "$h_rc" -ne 0 ]; then
   pass "H1: an attestation that cannot be recorded is REFUSED, not waved through"

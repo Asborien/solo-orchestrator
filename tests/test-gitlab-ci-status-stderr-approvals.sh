@@ -139,7 +139,7 @@ run_configure() {
     set +e
     # shellcheck disable=SC1090
     source "$DRIVER"
-    out=$(host_configure_protection main "$mode" 2>&1)
+    out=$(host_configure_protection main "$mode" </dev/null 2>&1)   # BL-276-STDIN-REDIRECT
     rc=$?
     printf '%s|%s' "$rc" "$(printf '%s' "$out" | tr '\n' ' ')"
   )
@@ -154,7 +154,7 @@ run_verify() {
     set +e
     # shellcheck disable=SC1090
     source "$DRIVER"
-    out=$(host_verify_protection main "$mode" 2>&1)
+    out=$(host_verify_protection main "$mode" </dev/null 2>&1)   # BL-276-STDIN-REDIRECT
     rc=$?
     printf '%s|%s' "$rc" "$(printf '%s' "$out" | tr '\n' ' ')"
   )
@@ -351,7 +351,7 @@ t9_org_configure_uses_approval_rules_post() {
     set +e
     # shellcheck disable=SC1090
     source "$DRIVER"
-    host_configure_protection main org >/dev/null 2>&1
+    host_configure_protection main org </dev/null >/dev/null 2>&1   # BL-276-STDIN-REDIRECT
   )
   # The required-approvals call must be a POST to .../approval_rules.
   if ! grep 'approval_rules' "$log" | grep -q -- '-X POST'; then
@@ -391,7 +391,7 @@ t10_org_verify_reads_approval_rules() {
     set +e
     # shellcheck disable=SC1090
     source "$DRIVER"
-    host_verify_protection main org >/dev/null 2>&1
+    host_verify_protection main org </dev/null >/dev/null 2>&1   # BL-276-STDIN-REDIRECT
   )
   # Verify must GET the approval-rules list.
   if ! grep -qF 'approval_rules' "$log"; then
@@ -423,7 +423,7 @@ t11_org_configure_sets_reset_approvals_on_push() {
     set +e
     # shellcheck disable=SC1090
     source "$DRIVER"
-    host_configure_protection main org >/dev/null 2>&1
+    host_configure_protection main org </dev/null >/dev/null 2>&1   # BL-276-STDIN-REDIRECT
   )
   # There must be a POST carrying reset_approvals_on_push...
   if ! grep 'reset_approvals_on_push' "$log" | grep -q -- '-X POST'; then

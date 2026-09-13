@@ -119,7 +119,10 @@ run_configure() {
     set +e
     # shellcheck disable=SC1090
     source "$DRIVER"
-    out=$(host_configure_protection main "$mode" 2>&1)
+    # The fake glab drains stdin whenever it is not a TTY, and the driver's
+    # argument-only calls hand it straight through; the --input - call brings
+    # its own here-string, so nothing downstream needs the caller's stdin.
+    out=$(host_configure_protection main "$mode" </dev/null 2>&1)   # BL-276-STDIN-REDIRECT
     rc=$?
     printf '%s|%s' "$rc" "$(printf '%s' "$out" | tr '\n' ' ')"
   )
@@ -433,7 +436,7 @@ t7_mutation_proof_intercept_is_load_bearing() {
     set +e
     # shellcheck disable=SC1090
     source "$mutant_driver"
-    out2=$(host_configure_protection main org 2>&1)
+    out2=$(host_configure_protection main org </dev/null 2>&1)   # BL-276-STDIN-REDIRECT
     rc=$?
     printf '%s' "$rc"
   )

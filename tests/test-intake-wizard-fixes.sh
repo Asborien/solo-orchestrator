@@ -615,7 +615,7 @@ D=$(mktemp -d)
 mkdir -p "$D/.claude"
 printf '{"current_phase": "2"}\n' > "$D/.claude/phase-state.json"
 printf '{"features_since_last_test": 4}\n' > "$D/.claude/build-progress.json"
-OUT=$( cd "$D" && bash "$SESSCHECK" 2>&1 ); RC=$?
+OUT=$( cd "$D" && bash "$SESSCHECK" </dev/null 2>&1 ); RC=$?   # BL-276-STDIN-REDIRECT
 if [ "$RC" -eq 0 ] && ! printf '%s' "$OUT" | grep -q 'integer expression' \
    && printf '%s' "$OUT" | grep -q 'TEST GATE BLOCKED'; then
   pass "T-bl203-session-check-null-safe (missing test_interval defaults to 2; 4>=2 correctly reports the gate, no bash error)"
