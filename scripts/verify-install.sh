@@ -112,6 +112,34 @@ load_context() {
     PROJECT_NAME=$(jq -r '.project // empty' ".claude/phase-state.json" 2>/dev/null || echo "")
   fi
 
+  # BL-260-CONTEXT-STATE — read platform/language/track from the STATE FILES
+  # before falling through to CLAUDE.md prose. Without this, has_context() is
+  # unsatisfiable on an ADOPTED project and fix_tool_prefs can never run:
+  #   * the only prior sources were .claude/tool-preferences.json — the file
+  #     fix_tool_prefs exists to CREATE, so it cannot be its own precondition —
+  #     and `grep 'Platform:'`-style anchors in CLAUDE.md, which are emitted by
+  #     the scaffolded CLAUDE.md and absent from a project that kept its own.
+  #   * so on a brownfield adoption every one of PLATFORM/LANGUAGE/TRACK stayed
+  #     empty, has_context() returned false, and verify-install listed
+  #     "Tool preferences not configured" as auto-fixable while --auto-fix
+  #     silently declined it on every run. Measured on an adopted project: the
+  #     row stayed fixable across repeated --auto-fix passes.
+  # Both files are already opened by this function for other fields, and both
+  # carry .track (adoption writes it), so this reads what is there rather than
+  # adding a source. Load order and the `-z` guards mirror DEPLOYMENT above:
+  # intake-progress, then phase-state, then the CLAUDE.md fallback — and an
+  # EMPTY value must not win, because adoption records platform/language as ""
+  # when it did not collect them.
+  if command -v jq &>/dev/null; then
+    for _ctx_src in ".claude/intake-progress.json" ".claude/phase-state.json"; do
+      [ -f "$_ctx_src" ] || continue
+      [ -z "$PLATFORM" ] && PLATFORM=$(jq -r '.platform // empty' "$_ctx_src" 2>/dev/null || echo "")
+      [ -z "$LANGUAGE" ] && LANGUAGE=$(jq -r '.language // empty' "$_ctx_src" 2>/dev/null || echo "")
+      [ -z "$TRACK" ]    && TRACK=$(jq -r '.track // empty' "$_ctx_src" 2>/dev/null || echo "")
+    done
+    unset _ctx_src
+  fi
+
   # Deployment from intake-progress, phase-state, or CLAUDE.md (in that
   # order of trust). Bonus catch alongside code-verify-reconfigure-9:
   # the prior load order skipped phase-state.json (which init.sh writes
