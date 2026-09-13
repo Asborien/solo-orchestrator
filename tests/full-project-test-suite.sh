@@ -878,6 +878,12 @@ run_child_suite "tests/test-bl263-bl264-uat-template-dom.sh" \
 section "Intake wizard + reconfigure field handlers (PRs #83, #84)"
 run_child_suite "tests/test-intake-wizard-fixes.sh" "tests/test-intake-wizard-fixes.sh"
 run_child_suite "tests/test-bl202-session-intake-check.sh" "tests/test-bl202-session-intake-check.sh"
+# BL-276: four child suites of THIS aggregator ran in ~1s against /dev/null and
+# blocked forever when the caller left stdin open — they invoked a stdin-reading
+# hook, stub or script inside $( ) with no redirect. CONTRIBUTING.md names this
+# aggregator as the way to validate a checkout, so the hang landed on exactly
+# the audience it addresses. This suite holds the redirects in place.
+run_child_suite "tests/test-bl276-stdin-hang.sh" "tests/test-bl276-stdin-hang.sh"
 # BL-202 residual 2: README § Quick Start carried the last hand-maintained
 # verbatim copy of the kickoff paste block. It now points at the one generator;
 # this suite pins that it stays pointed there, stays honest that resume.sh is

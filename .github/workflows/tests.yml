@@ -480,6 +480,7 @@ jobs:
             tests/test-bl202-readme-kickoff-consolidation.sh
             tests/test-bl202-session-intake-check.sh
             tests/test-bl214-gate-snapshot-staleness.sh
+            tests/test-bl276-stdin-hang.sh
             tests/test-intake-wizard-fixes.sh
             tests/test-lint-backlog-references.sh
             tests/test-lint-bl-markers.sh
