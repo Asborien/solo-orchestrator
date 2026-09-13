@@ -581,7 +581,10 @@ _run_idempotent_backfill() {
       git rev-parse HEAD 2>/dev/null > .claude/last-checked-commit.txt || true
     fi
     if [ -x "scripts/install-filesystem-gates.sh" ]; then
-      bash scripts/install-filesystem-gates.sh --install "$(pwd)" >/dev/null 2>&1 || true
+      # BL-209-INSTALLER-STDERR — stdout suppressed, stderr NOT. Best-effort
+      # (|| true), but the installer's reason for refusing must still reach the
+      # operator; `2>&1` sent it to /dev/null with the rest.
+      bash scripts/install-filesystem-gates.sh --install "$(pwd)" >/dev/null || true
     fi
     [ -f .claude/bypass-audit.json ] || echo "[]" > .claude/bypass-audit.json
     bf_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

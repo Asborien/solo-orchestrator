@@ -232,62 +232,102 @@ case_R8() {
   fi
 }
 
-# R9 — SOURCE-LEVEL, and labelled as such. The property is that neither caller
+# R9 — SOURCE-LEVEL, and labelled as such. The property is that no caller
 # throws the installer's stderr away, and it cannot be driven end to end here:
 # init.sh is not invocable hermetically in this suite (it scaffolds a whole
 # project), and reconfigure's enforcement-level arm needs a tier fixture that
 # tests/test-enforcement-level-reconfigure.sh already owns. The anti-vacuity
-# measure is that each call line must be FOUND first — a call that moved or was
-# renamed fails the case instead of passing it by absence.
+# measure is that at least one call line must be FOUND — a suite that finds
+# nothing fails instead of passing by absence.
+#
+# DISCOVERY IS BY THE INSTALLER'S IDENTITY, NOT BY HOW THE CALL IS PHRASED. An
+# earlier cut matched `bash "<path>" --install`, and that is spelling-bound in
+# the permissive direction: a caller written `bash "$INSTALLER" "--install" …
+# 2>/dev/null` (the flag quoted) or `bash scripts/install-filesystem-gates.sh
+# --install … >/dev/null 2>&1` (the path unquoted) matched nothing, so R9 kept
+# passing on the two callers it could see while a third swallowed the stderr
+# exactly as before — measured, not supposed: the upgrade-project.sh call was
+# such a third caller. A call site is therefore any non-comment line that RUNS
+# the installer — named by file, or through the "$INSTALLER" variable
+# reconfigure picks — either handed to an interpreter or sitting at command
+# position with an argument after it. The cp / chmod / `[ -x … ]` / assignment
+# / array-literal mentions the same files carry are not invocations and do not
+# match. The installer itself is excluded: the hook it emits calls back into it
+# with `__record_*` and silences those on purpose, and it is the SUBJECT of
+# this case, not a caller.
+R9_INSTALLER_TOKEN='("?[^"[:space:]]*install-filesystem-gates\.sh"?|"\$INSTALLER"|\$\{INSTALLER\}|\$INSTALLER)'
+R9_INVOKE_RE="(^|[[:space:];&|(!])(bash|sh)([[:space:]]+-[A-Za-z]+)*[[:space:]]+${R9_INSTALLER_TOKEN}([[:space:]]|\$)|(^|[;&|(]|[[:space:]](then|do|else|if|elif|!))[[:space:]]*${R9_INSTALLER_TOKEN}[[:space:]]+[^[:space:]]"
+
+# r9_statement <file> <line> — the installer's OWN simple command at that line:
+# the physical line with any `\`-continuations folded in, then cut to the
+# segment between the control operators (`||`, `&&`, `;`, `|`) around the
+# installer token. A redirect belongs to the command it follows, so `2>&1` on
+# the `print_warn` after an `||` is not the installer's, and a redirect moved
+# onto a continuation line still is.
+r9_statement() {
+  awk -v n="$2" '
+    NR >= n {
+      s = s $0
+      if ($0 ~ /\\$/) { sub(/\\$/, " ", s); next }
+      if (match(s, /install-filesystem-gates\.sh|\$[{]?INSTALLER[}]?/)) {
+        pre = substr(s, 1, RSTART - 1); post = substr(s, RSTART + RLENGTH)
+        while (match(pre, /[|][|]|&&|;|[|]/)) pre = substr(pre, RSTART + RLENGTH)
+        if (match(post, /[|][|]|&&|;|[|]/)) post = substr(post, 1, RSTART - 1)
+        print pre post
+      }
+      exit
+    }' "$1" 2>/dev/null
+}
+
+# r9_swallows <command-text> — true when the installer's stderr cannot reach the
+# operator: sent to a path (`2>/dev/null`, `2> file`), closed (`2>&-`), both
+# streams sent away together (`&>/dev/null`, `>&/dev/null`), or folded into a
+# stdout that was itself already sent to a path (`>/dev/null 2>&1`). The
+# reverse order, `2>&1 >/dev/null`, leaves stderr on the terminal and is not
+# flagged. The spelling is not the property; where the bytes end up is.
+r9_swallows() {
+  printf '%s' "$1" | grep -qE '2>>?[[:space:]]*[^&[:space:]]' && return 0
+  printf '%s' "$1" | grep -qE '2>&-' && return 0
+  printf '%s' "$1" | grep -qE '(&>|>&)>?[[:space:]]*[^-0-9&[:space:]]' && return 0
+  printf '%s' "$1" | grep -qE '(^|[^0-9&>])1?>>?[[:space:]]*[^&[:space:]][^[:space:]]*[[:space:]].*2>&1' && return 0
+  return 1
+}
+
 case_R9() {
-  local f n_found=0 n_swallow=0 callers=""
+  local hits hit f ln stmt n_found=0 n_swallow=0 swallowers=""
   # DISCOVER the call sites; do not hardcode them. A fixed list can only ever go
-  # stale in the PERMISSIVE direction: a third caller added later would never be
+  # stale in the PERMISSIVE direction: a caller added later would never be
   # checked, and this case would keep passing while its stderr was swallowed.
   # Discovery also makes the case runnable in a PROJECT checkout, which ships
   # reconfigure-project.sh but not init.sh — with a hardcoded pair it fails there
   # forever, and a suite that can never go green teaches people to ignore it.
-  callers="$(grep -l 'bash "[^"]*" *--\(un\)\?install ' \
-               "$REPO_ROOT/init.sh" "$REPO_ROOT"/scripts/*.sh 2>/dev/null || true)"
-  if [ -z "$callers" ]; then
+  hits="$(grep -nHE "$R9_INVOKE_RE" "$REPO_ROOT/init.sh" "$REPO_ROOT"/scripts/*.sh 2>/dev/null \
+            | grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' \
+            | grep -v "^$INSTALLER:" || true)"
+  if [ -z "$hits" ]; then
     fail_ R9 "no installer call site found anywhere under $REPO_ROOT — this case would otherwise pass by absence"
     return
   fi
-  for f in $callers; do
-    local lines
-    # Both spellings: init.sh calls the installer by path, reconfigure through
-    # an "$INSTALLER" variable it picked earlier. A pattern that only matched
-    # the literal filename found nothing in reconfigure — caught by the
-    # found-first guard below rather than reported as a pass.
-    lines="$(grep -n 'bash "[^"]*" *--\(un\)\?install ' "$f" 2>/dev/null || true)"
-    if [ -z "$lines" ]; then
-      missing="$missing $(basename "$f")"
-      continue
-    fi
+  while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    f="${hit%%:*}"; ln="${hit#*:}"; ln="${ln%%:*}"
     n_found=$((n_found + 1))
-    # ANY stderr redirection, not the single spelling `2>&1`. An earlier cut
-    # matched only that one, and the reviewer defeated it by reinstating the
-    # swallow as `>/dev/null 2>/dev/null` — R9 still PASSED while the installer's
-    # diagnostic was thrown away exactly as before. `2>` followed by anything is
-    # the property; the spelling is not.
-    #
-    # Read the WHOLE statement, not the matched line: the call is a single
-    # logical line today, but a redirect moved onto a `\`-continuation would sit
-    # on the next physical line and slip past a line-scoped grep. `paste` joins
-    # continued lines before the test.
-    local joined
-    joined="$(sed -e ':a' -e '/\\$/{N;s/\\\n//;ta' -e '}' "$f" 2>/dev/null \
-              | grep -E 'bash "[^"]*" *--(un)?install ')"
-    if printf '%s' "$joined" | grep -qE '2>'; then
-      n_swallow=$((n_swallow + 1))
+    stmt="$(r9_statement "$f" "$ln")"
+    if [ -z "$stmt" ]; then
+      fail_ R9 "discovered $(basename "$f"):$ln but could not extract its statement — discovery and extraction disagree"
+      return
     fi
-  done
-  if [ "$n_found" -eq 0 ]; then
-    fail_ R9 "matched files but extracted no call line — the pattern and the discovery disagree"
-  elif [ "$n_swallow" -ne 0 ]; then
-    fail_ R9 "$n_swallow call site(s) still redirect the installer's stderr to /dev/null — its refusal cannot reach the operator"
+    if r9_swallows "$stmt"; then
+      n_swallow=$((n_swallow + 1))
+      swallowers="$swallowers $(basename "$f"):$ln"
+    fi
+  done <<EOF
+$hits
+EOF
+  if [ "$n_swallow" -ne 0 ]; then
+    fail_ R9 "$n_swallow of $n_found discovered call line(s) still redirect the installer's stderr away — its refusal cannot reach the operator:$swallowers"
   else
-    pass "R9 (source-level: none of the $n_found discovered call site(s) swallows the installer's stderr)"
+    pass "R9 (source-level: none of the $n_found discovered call line(s) swallows the installer's stderr)"
   fi
 }
 
