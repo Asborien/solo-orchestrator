@@ -16157,6 +16157,23 @@ host.sh's `--backfill-host` remedy reaches the operator rather than being swallo
 mutant — it reinstates the GitHub default and requires T7 to catch it, the companion to M3 on the
 unrecognised path. Both halves of the contradiction now have a mutant, so neither can quietly return.
 
+**AND THE ABSENT-HOST CASE CANNOT BE COMPLETED BY ANY MECHANISM CURRENTLY REACHABLE FROM THIS SCRIPT.**
+That is a measured fact, not a scoping preference, and it holds whichever way the question below is
+answered. `_detect_pipeline_host` — the framework's own remote-inference helper, and the obvious thing
+to reuse — is defined only in `scripts/verify-install.sh:1319`, and that file carries
+`set -euo pipefail` at `:2` and `guard_not_in_framework || exit 1` at `:20`, both at TOP LEVEL with no
+sourced-detection guard. Sourcing it does not import a function; it runs the verification script, and
+inside the framework repo it exits the caller. Its only callers are inside that file.
+
+There is no shared home to reach for either: the same four-arm inference is duplicated at FOUR shipped
+sites — `check-gate.sh:159`, `upgrade-project.sh:511`, and `verify-install.sh` at BOTH `:242` and
+`:1328` — while `scripts/lib/host.sh`, the shared host library this arm already depends on, carries
+none. So the routes are a fifth copy, a subprocess call to `check-gate.sh --backfill-host` (which
+WRITES `.host`, so a language change would acquire a manifest mutation the operator did not ask for,
+and which is interactive — `prompt_yes_no` hard-returns N under CI), or a hoist into `host.sh`, which
+is a refactor. That is the structural defect recorded as `## BL-273:`, and this fix is one of the
+places it bites.
+
 **OPEN QUESTION FOR THE MAINTAINER, not settled here.** Refusing is consistent with the resolver this
 arm delegates to, but `init.sh`'s `generate_ci` warns and falls back on the same input. Whether
 reconfigure should refuse or follow `_detect_pipeline_host` and infer from the remote is a policy call
