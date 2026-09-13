@@ -371,6 +371,33 @@ reset_counter() {
   print_ok "Feature counter reset. Testing session recorded ($today)"
 }
 
+# BL-280-SEV-LABEL-PROBE — does this repository actually carry <label>?
+# `gh issue list --label X` on a label the repo does NOT have returns an EMPTY
+# LIST at rc 0 — measured on a 110-label repo: `--label SEV-1 --json number |
+# jq length` -> 0, rc 0, no error. So the four severity queries in
+# check_phase_gate cannot tell "no bugs" from "no such label", and neither can
+# they tell either from "this is not a GitHub project at all" (a repo with no
+# remote: `gh issue list` rc 1, empty stdout, and the count sanitizer turns
+# that into 0 too). This probe is the missing distinction.
+#
+# `gh api repos/{owner}/{repo}/labels/<name>` is the bounded form: rc 0 when
+# the label exists, rc 1 + 404 when it does not, one request, no pagination.
+# NOT `gh label list` — its own default limit is 30 (measured), which would
+# rebuild this entry's second arm inside the fix for it.
+_bl280_label_exists() {
+  gh api "repos/{owner}/{repo}/labels/$1" --jq '.name' >/dev/null 2>&1
+}
+
+# Length of a `--json number` body already known to come from a query that
+# exited 0 (see BL-280-QUERY-STATUS); anything unparseable reads as 0 here
+# because the caller has already ruled out the failed-query case.
+_bl280_count() {
+  local n
+  n=$(printf '%s' "$1" | jq 'length' 2>/dev/null | tr -d '[:space:]' || echo "0")
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  echo "$n"
+}
+
 check_phase_gate() {
   # Check for BUGS.md-based tracking
   local sev1_count=0
@@ -378,6 +405,15 @@ check_phase_gate() {
   local sev2_deferred=0
   local sev3_open=0
   local has_bugs=false
+  # BL-280-ARM-MEASURABLE — an arm is "measurable" when some source actually
+  # counted it. Default true: a BUGS.md project, and a project with no `gh` at
+  # all, are unchanged by this entry. Only the GitHub arm can clear these.
+  local sev1_measurable=true
+  local sev2_open_measurable=true
+  local sev2_deferred_measurable=true
+  local sev3_measurable=true
+  local sev1_why="" sev2_open_why="" sev2_deferred_why="" sev3_why=""
+  local gh_scope_note=""
 
   if [ -f "BUGS.md" ]; then
     has_bugs=true
@@ -396,24 +432,125 @@ check_phase_gate() {
 
   # Also check GitHub Issues if gh CLI available
   if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
-    local gh_sev1 gh_sev2_open gh_sev2_deferred gh_sev3
-    gh_sev1=$(gh issue list --label "SEV-1" --state open --json number 2>/dev/null | jq 'length' 2>/dev/null | tr -d '[:space:]' || echo "0")
-    case "$gh_sev1" in ''|*[!0-9]*) gh_sev1=0 ;; esac
-    gh_sev2_open=$(gh issue list --label "SEV-2" --label "fix-now" --state open --json number 2>/dev/null | jq 'length' 2>/dev/null | tr -d '[:space:]' || echo "0")
-    case "$gh_sev2_open" in ''|*[!0-9]*) gh_sev2_open=0 ;; esac
-    gh_sev2_deferred=$(gh issue list --label "SEV-2" --label "deferred" --state open --json number 2>/dev/null | jq 'length' 2>/dev/null | tr -d '[:space:]' || echo "0")
-    case "$gh_sev2_deferred" in ''|*[!0-9]*) gh_sev2_deferred=0 ;; esac
-    gh_sev3=$(gh issue list --label "SEV-3" --state open --json number 2>/dev/null | jq 'length' 2>/dev/null | tr -d '[:space:]' || echo "0")
-    case "$gh_sev3" in ''|*[!0-9]*) gh_sev3=0 ;; esac
+    # BL-280-REPO-PREFLIGHT — an authenticated `gh` in a directory it cannot
+    # map to a GitHub repository (no remote, a GitLab or Bitbucket project, a
+    # network failure) fails EVERY label probe with the same rc 1 + 404 an
+    # absent label produces. Without this preflight the operator was told
+    # "no SEV label exists in this repository" when the truth was that no
+    # repository could be resolved at all. One bounded request; on failure
+    # the probes are skipped and the scope note says what actually happened.
+    local gh_repo_ok=false
+    if gh repo view --json name >/dev/null 2>&1; then gh_repo_ok=true; fi
 
-    sev1_count=$((${sev1_count:-0} + ${gh_sev1:-0}))
-    sev2_open=$((${sev2_open:-0} + ${gh_sev2_open:-0}))
-    sev2_deferred=$((${sev2_deferred:-0} + ${gh_sev2_deferred:-0}))
-    sev3_open=$((${sev3_open:-0} + ${gh_sev3:-0}))
-    has_bugs=true
+    # BL-280-SEV-VOCAB — `gh auth status` says the OPERATOR is logged in. It
+    # says nothing about whether THIS repository tracks bugs in GitHub Issues
+    # under the SEV vocabulary, and the old code took it as proof of both:
+    # `has_bugs=true` unconditionally, on the strength of an authenticated CLI.
+    # Probe the five labels the queries below depend on, and let the answer
+    # decide whether GitHub is a source at all.
+    local has_sev1=false has_sev2=false has_sev3=false
+    local has_fixnow=false has_deferred=false
+    if [ "$gh_repo_ok" = true ]; then
+      if _bl280_label_exists "SEV-1";    then has_sev1=true;     fi
+      if _bl280_label_exists "SEV-2";    then has_sev2=true;     fi
+      if _bl280_label_exists "SEV-3";    then has_sev3=true;     fi
+      if _bl280_label_exists "fix-now";  then has_fixnow=true;   fi
+      if _bl280_label_exists "deferred"; then has_deferred=true; fi
+    fi
+
+    if [ "$gh_repo_ok" != true ]; then
+      gh_scope_note="GitHub Issues: could not resolve a GitHub repository, so its issues were NOT counted."
+    elif [ "$has_sev1" = true ] || [ "$has_sev2" = true ] || [ "$has_sev3" = true ]; then
+      local gh_sev1 gh_sev2_open gh_sev2_deferred gh_sev3
+      # BL-280-QUERY-LIMIT — `gh issue list` defaults to 30 and SILENTLY stops
+      # there: measured on a repo with 257 open `bug` issues, the bare query
+      # returned 30 and `--limit 1000` returned 257. Every threshold in this
+      # function is `-gt 0`, so saturation cannot turn a block into a pass —
+      # what it corrupts is the NUMBER the operator triages against, which is
+      # the difference between "30 bugs to clear" and "257". 1000 bounds the
+      # request cost at ten pages (the REST per_page cap is 100). Above 1000
+      # of one severity the figure is still understated; the verdict is not,
+      # because it is already a block.
+      # BL-280-QUERY-STATUS — each query's exit status is captured, and a
+      # failed query marks its arm NOT MEASURED instead of counting 0. The
+      # first cut of this entry sanitised rc≠0 + empty stdout to 0 exactly as
+      # main did, one step after a label probe that had just succeeded — so a
+      # transient failure between the probe and the query (rate limit,
+      # network, a token that can read labels but not issues) still printed
+      # `[OK]`. The `|| rc=$?` shape is what survives `set -e`: a bare
+      # `x=$(cmd); rc=$?` would exit the script on the failure it is trying
+      # to record. jq runs only on a successful query, so an empty body from
+      # a failed one can no longer become a number.
+      local gh_sev1_rc=0 gh_sev2_open_rc=0 gh_sev2_deferred_rc=0 gh_sev3_rc=0
+      gh_sev1=$(gh issue list --label "SEV-1" --state open --limit 1000 --json number 2>/dev/null) || gh_sev1_rc=$?
+      gh_sev2_open=$(gh issue list --label "SEV-2" --label "fix-now" --state open --limit 1000 --json number 2>/dev/null) || gh_sev2_open_rc=$?
+      gh_sev2_deferred=$(gh issue list --label "SEV-2" --label "deferred" --state open --limit 1000 --json number 2>/dev/null) || gh_sev2_deferred_rc=$?
+      gh_sev3=$(gh issue list --label "SEV-3" --state open --limit 1000 --json number 2>/dev/null) || gh_sev3_rc=$?
+      gh_sev1=$(_bl280_count "$gh_sev1")
+      gh_sev2_open=$(_bl280_count "$gh_sev2_open")
+      gh_sev2_deferred=$(_bl280_count "$gh_sev2_deferred")
+      gh_sev3=$(_bl280_count "$gh_sev3")
+
+      sev1_count=$((${sev1_count:-0} + ${gh_sev1:-0}))
+      sev2_open=$((${sev2_open:-0} + ${gh_sev2_open:-0}))
+      sev2_deferred=$((${sev2_deferred:-0} + ${gh_sev2_deferred:-0}))
+      sev3_open=$((${sev3_open:-0} + ${gh_sev3:-0}))
+      has_bugs=true
+
+      # BL-280-PARTIAL-VOCAB — the vocabulary is adopted, but not necessarily
+      # all of it, and a query naming an absent label still returns 0. When
+      # GitHub is the ONLY source that is an unearned all-clear; the two
+      # SEV-2 arms are the dangerous pair, because they AND a severity label
+      # with `fix-now` / `deferred` (measured: two --label flags intersect) and
+      # both of those arms BLOCK. With BUGS.md present these stay measurable —
+      # BUGS.md counted every severity, so GitHub contributing 0 is correct.
+      if [ ! -f "BUGS.md" ]; then
+        [ "$has_sev1" = true ] || { sev1_measurable=false; sev1_why="no 'SEV-1' label in this repository and no BUGS.md"; }
+        [ "$has_sev3" = true ] || { sev3_measurable=false; sev3_why="no 'SEV-3' label in this repository and no BUGS.md"; }
+        if [ "$has_sev2" != true ] || [ "$has_fixnow" != true ]; then
+          sev2_open_measurable=false
+          sev2_open_why="this query needs both 'SEV-2' and 'fix-now' as labels, and no BUGS.md is present"
+        fi
+        if [ "$has_sev2" != true ] || [ "$has_deferred" != true ]; then
+          sev2_deferred_measurable=false
+          sev2_deferred_why="this query needs both 'SEV-2' and 'deferred' as labels, and no BUGS.md is present"
+        fi
+      fi
+      # A failed query is unmeasured whether or not BUGS.md exists: the label
+      # is there, so GitHub may hold issues under it that nobody counted.
+      if [ "$gh_sev1_rc" -ne 0 ]; then
+        sev1_measurable=false; sev1_why="the 'SEV-1' query failed (gh exit $gh_sev1_rc), so GitHub's count is unknown"
+      fi
+      if [ "$gh_sev2_open_rc" -ne 0 ]; then
+        sev2_open_measurable=false; sev2_open_why="the 'SEV-2' + 'fix-now' query failed (gh exit $gh_sev2_open_rc), so GitHub's count is unknown"
+      fi
+      if [ "$gh_sev2_deferred_rc" -ne 0 ]; then
+        sev2_deferred_measurable=false; sev2_deferred_why="the 'SEV-2' + 'deferred' query failed (gh exit $gh_sev2_deferred_rc), so GitHub's count is unknown"
+      fi
+      if [ "$gh_sev3_rc" -ne 0 ]; then
+        sev3_measurable=false; sev3_why="the 'SEV-3' query failed (gh exit $gh_sev3_rc), so GitHub's count is unknown"
+      fi
+    else
+      # BL-280-NO-SEV-VOCAB — none of SEV-1/SEV-2/SEV-3 exists here, so the
+      # four queries would each have measured NOTHING and reported it as zero.
+      # `has_bugs` is deliberately NOT set: that assignment is what converted
+      # "not measured" into "measured zero" and cleared the gate. Falling
+      # through leaves it to BUGS.md, and if BUGS.md is absent too the
+      # function reaches its own honest no-source arm below (warn, exit 2)
+      # instead of printing four all-clears. Same doctrine as
+      # `# BL-112-SAST-NOTRUN`: a check that did not run must never read as a
+      # check that found nothing.
+      gh_scope_note="GitHub Issues: no SEV-1/SEV-2/SEV-3 label exists in this repository, so its issues were NOT counted."
+    fi
   fi
 
   if [ "$has_bugs" = false ]; then
+    # The scope note (BL-280-SCOPE-NOTE) is printed on this arm too: the
+    # no-source warning must say WHY GitHub was not a source, and "could not
+    # resolve a repository" and "no SEV label" are different answers.
+    if [ -n "$gh_scope_note" ]; then
+      print_info "$gh_scope_note"
+    fi
     print_warn "No bug tracking source found (BUGS.md or GitHub Issues)"
     print_info "Cannot verify bug status. Proceeding with warning."
     exit 2
@@ -426,8 +563,16 @@ check_phase_gate() {
   local blocked=false
   local warnings=false
 
+  # BL-280-SCOPE-NOTE — say what was counted before showing the counts.
+  if [ -n "$gh_scope_note" ]; then
+    print_info "$gh_scope_note"
+  fi
+
   # SEV-1: must be resolved
-  if [ "$sev1_count" -gt 0 ]; then
+  if [ "$sev1_measurable" = false ]; then
+    print_warn "SEV-1 bugs: NOT MEASURED — $sev1_why. This is NOT a clean result."
+    warnings=true
+  elif [ "$sev1_count" -gt 0 ]; then
     print_fail "SEV-1 bugs open: $sev1_count (BLOCKED — must resolve before Phase 3)"
     blocked=true
   else
@@ -435,7 +580,10 @@ check_phase_gate() {
   fi
 
   # SEV-2 open: must be resolved
-  if [ "$sev2_open" -gt 0 ]; then
+  if [ "$sev2_open_measurable" = false ]; then
+    print_warn "SEV-2 fix-now bugs: NOT MEASURED — $sev2_open_why. This is NOT a clean result."
+    warnings=true
+  elif [ "$sev2_open" -gt 0 ]; then
     print_fail "SEV-2 bugs open (fix-now): $sev2_open (BLOCKED — must resolve before Phase 3)"
     blocked=true
   else
@@ -443,7 +591,10 @@ check_phase_gate() {
   fi
 
   # SEV-2 deferred: must resolve or remove feature
-  if [ "$sev2_deferred" -gt 0 ]; then
+  if [ "$sev2_deferred_measurable" = false ]; then
+    print_warn "SEV-2 deferred bugs: NOT MEASURED — $sev2_deferred_why. This is NOT a clean result."
+    warnings=true
+  elif [ "$sev2_deferred" -gt 0 ]; then
     print_fail "SEV-2 bugs deferred: $sev2_deferred (BLOCKED — must resolve or remove/hide feature)"
     echo ""
     echo -e "${BOLD}For each deferred SEV-2 bug, you must:${NC}"
@@ -456,7 +607,10 @@ check_phase_gate() {
   fi
 
   # SEV-3: warning only, user attestation
-  if [ "$sev3_open" -gt 0 ]; then
+  if [ "$sev3_measurable" = false ]; then
+    print_warn "SEV-3 bugs: NOT MEASURED — $sev3_why. This is NOT a clean result."
+    warnings=true
+  elif [ "$sev3_open" -gt 0 ]; then
     print_warn "SEV-3 bugs open: $sev3_open (user attestation required)"
     warnings=true
   else
