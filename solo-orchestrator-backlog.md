@@ -15928,9 +15928,19 @@ absent-vs-unreadable family).
 
 ## BL-277: the bypass detector's PostToolUse arm scans text whose authorship it has not established, records it as `actor: "claude"`, and raises a BLOCKING sentinel on it — so reading the framework's own rules reports the agent for proposing a bypass
 
-**Status:** Open — **the fix is a policy choice and is NOT made here.** Three options are set out
-below with a recommendation; each moves a security control, so this entry files the defect and the
-measurement and stops there.
+**Status:** Open — **ENTRY-ONLY BY DECISION (2026-09-13), not by omission.** Three options are set out
+below with a recommendation, and none of them is built. Choosing among them is a judgement about this
+framework's risk appetite rather than about correct code: every candidate narrows a security control
+the maintainer owns, option 3 additionally changes an audit-row schema and needs a sweep of every
+reader of `actor`, and output-scanning is a TESTED CONTRACT (`tests/test-bypass-detector.sh` T1), so
+narrowing the scan surface breaks it deliberately. Picking one here would be deciding how much
+false-negative risk the maintainer's enforcement surface should absorb. The contribution is the
+reproduction, the measurement, and the three options with reasoning; the decision is his. Same posture
+as `## BL-263:` and as `## BL-275:`'s second half — **both of which are SIBLING BRANCHES not yet
+merged, so those two citations resolve only once `fix/ci-template-package-manager` and `fix/bl275`
+land** — so it is consistent rather than a retreat. The
+operational cost is recorded below in full so it can be weighed: **five blocking sentinels declined by
+hand in one day, each halting every agent in every repository touched from that session.**
 
 **Logged:** 2026-09-13, found while working the `## BL-260:` branch — which is a SIBLING BRANCH not yet
 merged, so that citation resolves only once `fix/bl260` lands; it is named for provenance, and nothing
