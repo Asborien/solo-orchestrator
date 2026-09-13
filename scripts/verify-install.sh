@@ -1997,10 +1997,27 @@ fi
 
 fix_superpowers() {
   # Drop `2>/dev/null` per the same rationale as the other auto-fix
-  # functions: a silenced `claude plugins add` failure cannot be
-  # distinguished from success and leaves the project without the
-  # superpowers plugin while reporting healthy.
-  claude plugins add superpowers
+  # functions: a silenced failure cannot be distinguished from success and
+  # leaves the project without the superpowers plugin while reporting healthy.
+  #
+  # BL-260-PLUGIN-VERB — the command was `claude plugins add superpowers`, which
+  # is not a command: `claude plugin --help` lists install|i, and `add` exits 1
+  # with "error: unknown command 'add'". The fixer could therefore never work,
+  # on any host. Two corrections, both load-bearing:
+  #   * `install`, not `add`.
+  #   * the MARKETPLACE-QUALIFIED name, because the check immediately above
+  #     keys on .enabledPlugins["superpowers@claude-plugins-official"]. A bare
+  #     `superpowers` can resolve through any configured marketplace, and an
+  #     install recorded under a different key satisfies the install but NOT the
+  #     detector — a fixer that "succeeds" and leaves the row red. This is the
+  #     spelling docs/cli-setup-addendum.md already documents.
+  # --scope user is git's default here and is stated explicitly because it is
+  # what writes ~/.claude/settings.json, the file the detector reads.
+  # `--yes` is deliberately NOT passed: it auto-accepts running a
+  # marketplace-declared command, and a fixer must not silently execute code on
+  # the operator's behalf. superpowers is a url-source plugin and needs no
+  # confirmation; a plugin that does will fail loudly here instead.
+  claude plugin install --scope user superpowers@claude-plugins-official
 }
 
 fix_context7() {
