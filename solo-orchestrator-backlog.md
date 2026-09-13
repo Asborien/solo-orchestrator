@@ -16806,3 +16806,187 @@ this hazard currently blocks), `## BL-285:` (BOTH remaining instances — the no
 nothing-to-detect half — and, like `## BL-287:`, a fix withdrawn because of this hazard),
 `## BL-084:` (`# BL-084-TIER-KEY`, the repo's own sync-siblings marker convention for the cases where
 a hoist is not taken).
+
+---
+
+## BL-277: the bypass detector's PostToolUse arm scans text whose authorship it has not established, records it as `actor: "claude"`, and raises a BLOCKING sentinel on it — so reading the framework's own rules reports the agent for proposing a bypass
+
+**Status:** Open — **the fix is a policy choice and is NOT made here.** Three options are set out
+below with a recommendation; each moves a security control, so this entry files the defect and the
+measurement and stops there.
+
+**Logged:** 2026-09-13, found while working the `## BL-260:` branch — which is a SIBLING BRANCH not yet
+merged, so that citation resolves only once `fix/bl260` lands; it is named for provenance, and nothing
+in this entry depends on it. A commit in the CONTRIBUTOR CLONE was refused because a sentinel existed
+in a DIFFERENT repository, raised by a `head -70` of the framework's own `commit-msg` hook. Reproduced
+from scratch against `origin/main` before filing.
+
+**Lead on provenance, not on pattern-matching.** The matcher's comment-blindness is real and is the
+lesser half: a comment-aware matcher would lower the rate and would not touch the class, because a
+`cat` of any file containing the vocabulary still trips it. The class is that
+`scripts/hooks/bypass-detector.sh:59` reads
+
+    TEXT=$(echo "$INPUT" | jq -r '.tool_response.stdout // .tool_response.stderr // .tool_response.output // .tool_response.content // ""')
+
+— the tool's OUTPUT, i.e. what a program printed or what a file contains — and every row it writes is
+stamped `actor: "claude"` at `:149`. Nothing establishes that the model authored the text. The Stop
+arm at `:65` reads `.last_assistant_message`, where authorship IS established; that arm is correct and
+this entry does not touch it. The framework's own doctrine is about authored output — CLAUDE.md's
+"Bypass-shaped suggestions in your output are auto-recorded … your suggestion is the audit event" — and
+the Stop arm already implements exactly that.
+
+**Measured, against `origin/main`, driving the real hook with a fixture project.** Every run below
+feeds text as `tool_response.stdout` with `tool_input.command` set to an innocuous read:
+
+    R1  the SHIPPED template's own line 129, read as tool output
+        source: templates/generated/claude-md.tmpl:129
+        rows=3  patterns=[fake_loop, manual_step_complete, no_verify]
+                severity=[normal, refuse_to_recommend]  actor=[claude]  sentinel=RAISED
+
+    R2  CONTROL: benign tool output ("file1 / file2 / total 2")
+        rows=0  sentinel=none
+
+    R3  the ledger feeding itself: a PRIOR ROW read back as tool output
+        rows=1  patterns=[no_verify]  actor=[claude]  sentinel=RAISED
+        nested excerpt now on record: {"timestamp":"…","type":"claude_bypass_proposal","actor":"claude",…
+
+    R4  the sentinel's own remedy sentence, read as tool output
+        rows=0  sentinel=none
+
+    R5  the other side: an authored skip-the-hooks commit in tool_input, clean output
+        rows=0  sentinel=none
+
+**R1 is the headline, and the line number is not a coincidence.** That is line 129 of
+`templates/generated/claude-md.tmpl` — the file `init.sh` renders into every generated project's
+`CLAUDE.md`. It is the **"Refuse-to-recommend"** paragraph: the rule that says *do NOT propose*
+synthetic Build Loop step completions, hook-skipping commit workarounds, or force-pushes. Reading the
+prohibition trips all three patterns at once, one of them at `refuse_to_recommend` severity, and raises
+a blocking sentinel. The rule against proposing bypasses is detected as proposing three.
+
+**R4 corrects a plausible-sounding claim that does not hold.** The sentinel's remedy text — "Review
+`.claude/bypass-audit.json` before deciding" — does NOT itself match anything. Following the remedy is
+a trigger only because the remedy tells the operator to READ THE LEDGER, and R3 is what reading the
+ledger does. State it that way; the shorter version is wrong.
+
+**R5 is a ledger-completeness gap and NOT a security hole, and the difference matters.** The arm never
+reads `tool_input`, so the one field the model actually authored is the one field it does not scan. But
+`scripts/pre-commit-gate.sh:845` independently DENIES an authored hook-skipping commit at PreToolUse
+with its own reason string, and the Stop arm catches a proposal made in prose. So the authored-bypass
+path is covered by other gates; what is missing here is only the ledger row. Do not file this as "a
+bypass the model wrote is invisible to the framework" — it is not.
+
+**Blast radius — measured, one whole-file read each, with two negative controls:**
+
+    BLOCKS rows=3  [fake_loop,manual_step_complete,no_verify]  templates/generated/claude-md.tmpl
+    ok     rows=0  []                                          CONTRIBUTING.md
+    BLOCKS rows=1  [no_verify]                                 CLAUDE.md
+    BLOCKS rows=1  [no_verify]                                 scripts/hooks/bypass-detector.sh
+    BLOCKS rows=3  [fake_loop,no_verify,soif_force_step]       scripts/lib/bypass-patterns.sh
+    ok     rows=0  []                                          (a file with no bypass vocabulary)
+
+Four of six reads raise a blocking sentinel. **Reading the detector reports you. Reading its pattern
+library reports you three times. Reading the operating rules every agent is required to read end to end
+reports you.** `CONTRIBUTING.md` and the clean file stay quiet, so the measurement discriminates.
+
+**And writing THIS ENTRY reproduced it a seventh time.** The first attempt to append this text was
+refused outright — not by the detector but by `pre-commit-gate.sh:845`, whose `_is_git_commit` arm
+matched the vocabulary quoted inside the entry's own prose and denied the shell call. Describing the
+defect is indistinguishable from committing it, to two independent gates, for the same reason: neither
+asks who wrote the text or why. The entry had to be routed through a file write to land at all, and
+the prose above still had to be written around the literal flag in places. **A defect whose author
+must obfuscate in order to describe it is a defect that suppresses its own bug reports.**
+
+**THE DEFECT OBSTRUCTS ITS OWN REMEDIATION, and that is the part that makes it self-sustaining rather
+than merely noisy.** Every activity required to fix it generates the false rows, and each one raises a
+blocking sentinel. Observed on one adopting project's ledger during a single day's work on this entry:
+
+- **The framework's OWN COMMITTED TEST SUITE trips it when read.** `tests/test-bypass-detector.sh`
+  (tracked on `origin/main`) produced two rows: line **28**, the comment
+  `# T1: PostToolUse output containing --no-verify writes a row.`, and line **57**, T3's fixture
+  `{"hook_event_name":"Stop","last_assistant_message":"Maybe set SOIF_FORCE_STEP=build_loop:tests_written",…}`
+  — matching `no_verify` and `soif_force_step` respectively.
+- **The bug report itself trips it.** A message describing this defect to the Orchestrator raised a
+  `no_verify` row.
+- **Reproducing it trips it.** The probe script written for the R-series above, and a `grep` for the
+  gate that handles the flag, each raised a row.
+
+**The test-suite rows are the structural half, and they generalise.** A correct suite for this defect
+CANNOT avoid containing the trigger strings: asserting "the detector fires on a genuine proposal"
+requires a genuine-looking proposal in a fixture, and a suite that avoided the vocabulary would be
+testing something else. So the fixture a correct test must contain is itself a trigger, the sentinel it
+raises then blocks the agent writing the fix, and — per the sentinel-scope defect noted below — it
+blocks them in every repository touched from that session, not just this one. That is a closed loop, and
+it is a stronger argument than the ledger's growth rate on its own.
+
+**Severity follows from that, and it is not "noisy log".** Each false row raises a BLOCKING sentinel.
+**Five were declined by hand in one day**, none of them corresponding to anything any agent proposed,
+each having silently halted in-flight work. This is `## BL-256:`'s unearned-receipt class running in
+the opposite direction: an unearned REFUSAL.
+
+**Rate on a live ledger, for scale.** On an adopting project's ledger, of **61** `claude_bypass_proposal`
+rows, **6 are provably echoed tool output** — 4 open with a `path/file.ext:NNN:` grep prefix and 2 with
+a `#` comment marker, neither of which any authored sentence begins with. A further 26 open with a
+markdown table pipe, bullet or backtick, consistent with echoed document content but not proof. The
+count went **61 → 64 during a few minutes spent verifying this entry**, from reads alone: the number
+tracks how much documentation has been read, not how many bypasses were proposed. Six rows carry a
+nested `"excerpt":` field — the detector quoting its own quotation — and one is doubly nested.
+
+**The existing mitigation is aimed at this class and cannot reach this case, by construction.**
+`:83`-`:94` already strips fenced code blocks, added as "BL-029.1 fix S3" because "documentation /
+CHANGELOG / docstring text wrapping a bypass pattern in a fence is descriptive, not advisory". That is
+the right diagnosis with a formatting-shaped remedy. The same comment states that inline backticks are
+deliberately PRESERVED "because Claude typesets active proposals with inline backticks too" — and the
+template's line 129 is prose with inline backticks. So the one mitigation that exists is disabled
+exactly where the worst case lives, on purpose, for a reason that is itself sound. Formatting cannot
+separate description from advocacy; authorship can.
+
+**Output-scanning is a TESTED CONTRACT, not an oversight.** `tests/test-bypass-detector.sh` T1 —
+"PostToolUse with the skip-hooks flag writes claude_bypass_proposal" — feeds the pattern through
+`tool_response.output` while `tool_input.command` is `echo x`, and asserts a row is written. Any fix
+that narrows the scan surface breaks T1 deliberately. That is why this entry does not pick one.
+
+**Operational consequence, which is what makes this more than noise.** Each match raises
+`.claude/pending-approval.json`, and `pre-commit-gate.sh`'s `pa_check` refuses commits and PR creation
+while it exists. Measured on 2026-09-13: that sentinel is read from the SESSION's project directory, so
+it blocks commits in every other repository touched from the same session and never blocks the
+repository it lives in — a throwaway repo carrying its own sentinel committed cleanly, while the session
+project's sentinel refused a commit in an unrelated clone. **That sentinel-scope defect is a separate
+finding in `pre-commit-gate.sh` and is NOT filed yet; it needs its own number.** Four of these were
+declined by hand in a single day's work, each one having silently stopped mid-flight work in unrelated
+trees.
+
+**Options, NOT decided here.**
+1. **Scan `tool_input` instead of `tool_response`.** Rejected as primary: it breaks T1's contract,
+   removes a capability someone chose deliberately, and trades one false-positive class for another —
+   a `grep -rn` for the vocabulary puts the vocabulary in the command.
+2. **Keep scanning output; let only Stop-event matches raise the sentinel.** Detection breadth and the
+   audit trail are both untouched; only the unearned REFUSAL goes. Strictly conservative — nothing
+   stops being detected.
+3. **(2) plus honest provenance: rows from PostToolUse carry an actor other than `claude`, and the
+   sentinel is gated on authorship.** RECOMMENDED. It fixes the refusal and the ledger's integrity
+   together, and the ledger is the governance record a successor or auditor is meant to reconstruct
+   from — rows attributing another program's output to the model are not a cosmetic problem there.
+   Cost: it changes an audit-row schema, so readers of `actor` must be swept first.
+
+**Why no regression suite lands with this entry, stated rather than quietly omitted — and the reason is
+NOT the one it looks like.** A suite here is perfectly writable. Its assertions are outcome-shaped and
+fix-agnostic — "reading the audit ledger does not append to it", "reading the shipped CLAUDE.md
+template does not raise a blocking sentinel" — and all three options satisfy both, so the suite would
+survive whichever is chosen. That is its spec, and it should be written.
+
+The blocker is redness, not authorship. **The defect is unfixed, so the suite is RED today**, and a red
+suite must be either registered — which turns CI red for everyone — or marked
+`LINT_TEST_REGISTRATION_EXEMPT`, which parks a known-red suite behind a marker and is precisely the
+unearned-receipt move this repo exists to refuse. So it lands WITH the chosen fix.
+
+Note the distinction from the self-obstruction above, because the two are easy to merge and only one is
+a blocker: that a correct suite must CONTAIN the trigger strings is evidence about the defect's
+severity and its closed loop. It is not what stops the suite shipping, and it would not stop it even
+after the fix. The reproduction in this entry is repeatable in the meantime.
+
+**Related:** `## BL-029:` (the detector, and the only backlog family that has ever touched this file —
+swept by file across full history: `scripts/hooks/bypass-detector.sh` and `scripts/lib/bypass-patterns.sh`
+carry 10 commits between them, all BL-029/BL-029.1), `## BL-161:` (the ledger is tracked and every row
+dirties the tree — the same file, a different defect), `## BL-256:` (the unearned-receipt family, of
+which an unearned REFUSAL is the mirror image), `## BL-250:` (a disclosure that exists but not where the
+operator reads it).
