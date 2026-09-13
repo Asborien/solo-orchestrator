@@ -931,6 +931,11 @@ run_child_suite "tests/test-bl287-reconfigure-ci-host.sh" \
 run_child_suite "tests/test-bl288-scout-shallow-history-claim.sh" \
   "BL-288: a shallow clone must not be reported as a full-history secrets scan" \
   "BL-288 shallow-history-claim tests FAILED (run tests/test-bl288-scout-shallow-history-claim.sh for details)"
+# BL-278: the pending-approval sentinel is read from the repo the commit
+# targets, not only from the session's project directory.
+run_child_suite "tests/test-bl278-sentinel-root.sh" \
+  "BL-278: a repo's own pending-approval sentinel gates its own commits" \
+  "BL-278 sentinel-root tests FAILED (run tests/test-bl278-sentinel-root.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS

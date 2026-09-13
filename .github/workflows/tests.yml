@@ -580,6 +580,7 @@ jobs:
             tests/test-bl275-selfapproval-remedy.sh
             tests/test-bl287-reconfigure-ci-host.sh
             tests/test-bl288-scout-shallow-history-claim.sh
+            tests/test-bl278-sentinel-root.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────
