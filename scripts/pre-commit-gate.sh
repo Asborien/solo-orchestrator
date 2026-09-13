@@ -890,6 +890,55 @@ If this is a stale file from a crashed session, remove it manually:
 EOF
 }
 
+# BL-278-SENTINEL-ROOT — the sentinel belonging to the repository that contains
+# the hook envelope's `.cwd`.
+#
+# WHAT `.cwd` IS, precisely: the directory Claude is in BEFORE the intercepted
+# command runs. It is NOT the repository the command will run in. So this arm
+# covers exactly one shape — a bare `git commit` issued while `.cwd` is inside
+# the repository that owns the sentinel — and no other. `git -C <path> commit`
+# and `cd <path> && git commit` carry their target only in the command text,
+# which nothing here parses (and `_is_git_commit` does not match the `-C` shape
+# at all). `## BL-278:` records both as an open residual with the probes that
+# showed it; resolving the target from the command text is a change to a
+# security arm and is left to the maintainer.
+#
+# `$sentinel` below is a BARE RELATIVE LITERAL, and on the PreToolUse path this
+# script never changes directory: its only `cd` is in the TERMINAL_MODE branch,
+# which this path does not take, and CLAUDE_PROJECT_DIR appears nowhere in this
+# file. So the literal resolves against whatever cwd Claude Code hands the hook
+# — the SESSION's project directory — never against the commit's target. That is
+# the ABSENCE of root resolution rather than a wrong one, and it cuts both ways.
+# Measured 2026-09-13: a sentinel in the session's project blocked a commit in
+# an unrelated clone with no .claude/ of its own, AND a repository carrying its
+# OWN sentinel was NOT blocked when committed to from a session rooted
+# elsewhere.
+#
+# The second case is what this arm closes, for the bare-`git commit` shape, and
+# it is the one the design says must work: docs/builders-guide.md § "Structured
+# Decision Points: The Pending-Approval Sentinel" ships this reader INTO each project (`upgrade-project.sh` "copies … the
+# updated scripts/pre-commit-gate.sh into existing projects, so the enforcement
+# … goes live immediately on upgrade") precisely so a project's own sentinel
+# gates that project's own commits.
+#
+# ADDITIVE ON PURPOSE. The session-relative read above is untouched, so nothing
+# that blocks today stops blocking; this only covers the case where NOTHING
+# fired. Whether a session-scoped hold SHOULD reach other repositories is
+# UNSTATED in the design and is deliberately left alone — `## BL-278:` records
+# both readings and decides neither.
+#
+# FAILS CLOSED: every unreadable or unresolvable input returns 1, which degrades
+# to exactly today's behaviour rather than to permissiveness.
+_pa_target_sentinel() {
+  local c root
+  c=$(printf '%s' "${INPUT:-}" | jq -r '.cwd // empty' 2>/dev/null) || return 1
+  [ -n "$c" ] || return 1
+  [ -d "$c" ] || return 1
+  root=$(git -C "$c" rev-parse --show-toplevel 2>/dev/null) || return 1
+  [ -n "$root" ] || return 1
+  printf '%s/.claude/pending-approval.json\n' "$root"
+}
+
 pa_check() {
   # Only applies to git commit or gh pr create. Other commands fall through.
   local is_commit=false is_pr=false
@@ -898,7 +947,10 @@ pa_check() {
   [ "$is_commit" = false ] && [ "$is_pr" = false ] && return 0
 
   local sentinel=".claude/pending-approval.json"
-  [ -f "$sentinel" ] || return 0
+  if [ ! -f "$sentinel" ]; then
+    sentinel="$(_pa_target_sentinel)" || sentinel=""
+    [ -n "$sentinel" ] && [ -f "$sentinel" ] || return 0
+  fi
 
   local action_label="commit"
   [ "$is_pr" = true ] && action_label="PR creation"
