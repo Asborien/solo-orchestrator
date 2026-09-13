@@ -15928,8 +15928,20 @@ absent-vs-unreadable family).
 
 ## BL-274: an organizational deployment REQUIRES a second technologist, so a company with one technical director cannot satisfy the tier — is that intended?
 
-**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** An attestation was designed
-in full and deliberately NOT built; the reasoning is the contribution and is recorded below.
+**Status:** Open — **the QUESTION is open; a MECHANISM is built and in use.** `# BL-274-SINGLE-AUTHORITY`:
+`SOLO_SINGLE_AUTHORITY_ATTESTED` + a mandatory `_REASON`, consulted inside the organizational
+self-approval arm of `check-phase-gate.sh`, recorded per gate and pinned to `HEAD`. Suite
+`tests/test-bl274-single-authority-attestation.sh` **14 / 0** on bash 3.2.57 (macOS) and 5.2.21 in
+`ubuntu:24.04` as a non-root user, against RED **4 / 17** at `ceb450e`; three mutants, embedded, each
+asserting the target existed BEFORE it was mutated. Five sibling suites on the same function
+unchanged (31 / 0).
+
+**This entry proposes an answer; it does not assert it is the right one.** The adopter cannot wait for
+a maintainer ruling, so the mechanism is built and used rather than merely suggested. If the
+maintainer's answer to the question below is "yes, organizational genuinely requires a second
+technologist and that is the point", then the correct outcome is that this mechanism is REJECTED and
+the adopter is told to use `personal`. That is a legitimate result and the entry is written to make it
+easy to reach.
 
 **Logged:** 2026-09-13, from an adopter with a real instance of the shape: a limited company with a
 liability entity, insurance, ITSM and an audit trail, and exactly ONE technical authority — the same
@@ -15967,11 +15979,12 @@ technologist is the first of them. If it IS intended, the gap is in the messagin
 taxonomy: nothing tells such an operator that the red gate is pre-condition 5 surfacing, so they read
 it as a tooling fault and look for a flag.
 
-**WE DESIGNED AN ATTESTATION AND DID NOT BUILD IT.** The mechanism was worked out completely and is
-native — `SOLO_SINGLE_AUTHORITY_ATTESTED` + a mandatory `_REASON`, checked inside the `organizational`
-block ahead of the FAIL arm, recorded to `.claude/process-state.json` per gate and pinned to
-`git rev-parse HEAD`, refusing if the reason is blank or the record cannot be written, printing a
-yellow `[ATTESTED]` naming the reason and never the word verified. Every property has a precedent:
+**THE MECHANISM — `SOLO_SINGLE_AUTHORITY_ATTESTED` + a mandatory `_REASON`.** Consulted INSIDE the
+organizational self-approval arm, so it can never fire on a project that had nothing to excuse.
+Recorded to `.claude/process-state.json::attestations.single_authority[<gate>]` per gate and pinned to
+`git rev-parse HEAD`; refused if the reason is blank, if the gate has no canonical key to pin against,
+or if the record cannot be written. Prints a yellow `[ATTESTED]` naming the reason, and never the word
+verified. Every property has a precedent, and none of it is invented:
 
 | property | precedent |
 |---|---|
@@ -15982,21 +15995,53 @@ yellow `[ATTESTED]` naming the reason and never the word verified. Every propert
 | a solo operator with no second person | `SOLO_UAT_SOLO_ATTESTED`, `process-checklist.sh:1201` |
 | a governance control met by written exception | `zdr_attestation_reason`, invariant #16 |
 
-**It was not built because it would attest past the wrong thing.** The attestation would record "this
-organisation has one technical authority" against the self-approval control, while the pre-condition
-that statement actually contradicts — §XIV.5 — stayed unmet and unmentioned. That turns a blocking
-pre-condition into a green gate line, which is the `## BL-256:` failure mode (a receipt for a check
-that did not happen) applied to governance rather than to tooling. **A thirteenth attestation is cheap
-to build and it was the wrong instrument.**
+**THE OBJECTION THAT NEARLY STOPPED THIS, AND HOW THE OUTPUT ANSWERS IT.** A first pass designed the
+mechanism and REFUSED to build it, on the grounds that it would record "this organisation has one
+technical authority" against the self-approval control while the pre-condition that statement actually
+contradicts — §XIV item 5 — stayed unmet and unmentioned. That turns a blocking pre-condition into a
+green gate line: `## BL-256:`'s failure mode, a receipt for a check that did not happen, moved from
+tooling into governance. The objection was right, and it is answered in the OUTPUT rather than waved
+away. Every time the escape fires it prints, in this order:
 
-**If an instrument is wanted, one already exists and is closer.** §X.1 requires the Application Owner
-and IT Security to acknowledge the concentrated-access risk in `APPROVAL_LOG.md` at the Phase 0→1
-gate. That is the framework's own home for "this organisation accepts the single-point-of-failure
-trade-off", it is already append-only and auditable, and it does not touch an independence control.
+```
+[ATTESTED] Phase 0→1: self-approval NOT verified — the independence control cannot apply
+           where one person holds the only technical authority. Reason: <the operator's words>
+        This RECORDS an accepted exception. Nothing was checked, and no independence was established.
+        docs/governance-framework.md §XIV item 5 — a second technologist with repository and hosting
+        access — is a BLOCKING pre-condition and REMAINS UNMET. This attestation does not clear it.
+        Recorded to .claude/process-state.json::attestations.single_authority, pinned to this commit,
+        not silenced. See ## BL-274:.
+```
 
-**Not measured beyond the reading above.** No fixture was built and no mechanism was prototyped,
-because no fix is proposed. The `docs/governance-framework.md` citations were read end to end (1,039
-lines), not grepped.
+The claim being made is "a named human accepted a named, still-unmet condition", not "the control
+passed". **A3 and A4 in the suite exist only to hold that line**: A3 fails if the output stops naming
+§XIV item 5, the words "second technologist", or this entry; A4 fails if the line omits "not verified"
+or ever claims the control was verified or satisfied. MT2 proves A3 can actually kill — it strips the
+citation from a mirror of the script and A3 flips red.
+
+**The distinction is load-bearing, and if it ever stops holding the mechanism should go.** An
+attestation that reads like a passed check is worse than a red gate, because a red gate is honest.
+
+**§X.1 remains the better home for the underlying acceptance, and this does not replace it.** §X.1
+requires the Application Owner and IT Security to acknowledge the concentrated-access risk in
+`APPROVAL_LOG.md` at the Phase 0→1 gate. That is append-only, auditable, and touches no independence
+control. An adopter using this attestation should record the §X.1 acknowledgement as well; the
+attestation unblocks the gate, it does not discharge the governance obligation.
+
+**What is measured.** RED **4 / 17** at `ceb450e` and GREEN **14 / 0** after, on both shells; the four
+that pass RED are the two controls (A1, A11) and two negative assertions that are true by absence
+before the change (A10, A12) and become load-bearing after it. An earlier cut of the suite scored 8
+RED passes, and four of those were VACUOUS — A5 and A9 were satisfied by the ordinary self-approval
+FAIL rather than by the refusal they name, and MT2/MT3 reported kills because their landing assertions
+("the string is gone") were true of a script that never had the string. All four were tightened before
+a line of implementation was written. The `docs/governance-framework.md` citations were read end to
+end (1,039 lines), not grepped.
+
+**A defect this suite caught in its own implementation.** The first cut called the handler bare. This
+script carries `set -euo pipefail` at line 2, so the handler's ordinary "no attestation offered"
+return of 2 aborted the entire gate run and printed NOTHING — a project with no attestation got silence
+instead of its self-approval refusal. A1, the control that exists to prove the unattested path is
+untouched, caught it on the first GREEN run. The call site is now `|| _sa_rc=$?`.
 
 **Counts corrected while writing this.** The attestation family is **nine** `SOLO_*_ATTESTED`
 environment variables in shipped code — `APPROVALS`, `TDD`, `REVIEWERS`, `UAT_SOLO`, `MCP`,
