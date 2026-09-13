@@ -17000,3 +17000,82 @@ carry 10 commits between them, all BL-029/BL-029.1), `## BL-161:` (the ledger is
 dirties the tree — the same file, a different defect), `## BL-256:` (the unearned-receipt family, of
 which an unearned REFUSAL is the mirror image), `## BL-250:` (a disclosure that exists but not where the
 operator reads it).
+
+---
+
+## BL-279: 34 of 71 `[WARN]` lines in `check-phase-gate.sh` block the gate and 37 do not, and the output gives the operator no way to tell which is which
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** The convention this drifts from
+is already the repo's own, documented by `## BL-104:`; what is missing is any way for a reader of the
+gate's output to apply it.
+
+**Logged:** 2026-09-13, from the other side: while building `## BL-274:`'s A13 case, which needed a
+project the Phase 0→1 gate clears cleanly so that an exit code could be attributed to one control.
+
+**THE FRAMEWORK ALREADY KNOWS, AND THAT IS THE POINT.** This is not an undiscovered trap.
+`## BL-104:` closed two scoring inversions in this script and recorded the rule in its third item:
+
+> *"The trap is documented in `CLAUDE.md` § ENFORCEMENT: `[WARN]`/`[FAIL]` text is cosmetic; the exit
+> predicate is `if [ $issues -eq 0 ]`, so any WARN that runs `issues=$((issues + 1))` BLOCKS, and a
+> true WARN must omit it."*
+
+`CLAUDE.md:308` still carries it. `## BL-166:`'s status update calls the same surface *"the BL-104
+[WARN]-trap surface"* by name. So the convention exists, is written down, and is cited by later work.
+
+**What is measured is that it is followed about half the time.**
+```
+grep -c '\[WARN\]' scripts/check-phase-gate.sh                      ->  71 emit sites
+grep -A1 '\[WARN\]' … | grep -c 'issues=$((issues + 1))'            ->  34 followed by an increment
+```
+**34 of 71 `[WARN]` lines block the gate. 37 do not.** Both kinds print the identical four-character
+label. Nothing in the transcript, the exit code, or the closing banner distinguishes them.
+
+**The two-line demonstration.** A fixture with a valid dated approval row, an independent approver, all
+eight `PRODUCT_MANIFESTO.md` sections and the three `docs/phase-0/` artefacts — **zero `[FAIL]` lines**:
+```
+[WARN] Pre-Phase 0: Organizational deployment — no pre-conditions section found in APPROVAL_LOG.md
+[WARN] Competency Matrix (Appendix B) not found in PRODUCT_MANIFESTO.md — the guide calls it 'not advisory'. WARN-first, not blocking.
+1 inconsistency(ies) found — blocking.
+exit = 1
+```
+The first WARN (`:2014`) increments; the second (`:3514`) does not. **The second one is honest — its
+text says "WARN-first, not blocking" and it genuinely does not block.** The first says nothing about
+its own weight and is the entire reason the project is refused. An operator reading this transcript
+sees two identical-looking advisories, one blocking verdict, and no mapping between them.
+
+**Why this is worth an entry rather than a shrug.** It makes the exit code a poor signal for exactly
+the kind of test the framework asks people to write. `## BL-274:`'s A13 has to assert that the gate
+exits 0 under an attestation; to make that assertion mean anything, the fixture must be clean of
+everything ELSE that counts — which required discovering, by trial, that a missing pre-conditions
+section counts while a missing Competency Matrix does not. **That is not discoverable from the
+output.** Anyone writing a gate test has to read the source and diff the increment sites, and any such
+fixture silently rots the next time a WARN changes weight.
+
+`## BL-256:`'s principle cuts both ways. That entry is about gates handing out receipts they did not
+earn; this is the mirror — a gate refusing on evidence it presented as advisory. A check that cannot
+fail must not pass, and a finding presented as a warning must not block.
+
+**Not a duplicate, and the distinction matters.** `## BL-104:` FIXED two specific inversions and chose
+to DOCUMENT the trap rather than remove it, which was a reasonable call at the time — the arms it
+touched were ones where blocking was correct and the label was wrong. This entry is about the
+population: the convention has no enforcement, so the ratio drifts with every new arm, and the
+label/verdict mismatch is now a property of the tool rather than of three known sites.
+
+**Shapes a fix could take, none proposed and none costed:**
+1. **Make the label carry the weight.** A blocking finding prints `[FAIL]`, or `[WARN]` gains a visible
+   marker when it counts. Largest diff, clearest output, and it touches 34 message sites.
+2. **Separate the counters.** `issues` for blocking and a distinct advisory count, with the banner
+   reporting both. Smaller surface; the exit predicate stays `-eq 0` on the blocking counter only.
+3. **Lint the convention instead of the output.** A check that every `[WARN]` emit site either
+   increments or does not, according to a declared list — turning a documented convention into an
+   enforced one without changing operator-visible behaviour at all.
+
+**Not measured beyond the above.** No fix was prototyped and no arm was reclassified. The 34/71 split
+is a mechanical count of emit sites against the line that follows each; a site whose increment sits
+more than one line away would not be counted, so **34 is a floor, not an exact figure**.
+
+**Related:** `## BL-104:` (fixed two inversions here and documented the trap this entry says is now
+unevenly applied), `## BL-166:` (names the same surface as "the BL-104 [WARN]-trap surface"; its own
+root cause was 3→4 readiness arms incrementing under a 2→3 scope), `## BL-256:` (the mirror principle —
+a gate must not claim what it did not check), `## BL-274:` (the A13 fixture whose construction exposed
+this), `## BL-149:` (a gate people cannot reason about is a gate they learn to ignore).
