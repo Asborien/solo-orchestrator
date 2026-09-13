@@ -19935,3 +19935,204 @@ deliberately not bundled into this change.
 **Related:** `## BL-147:` (a check that cannot run must not pass — the same principle, in CI),
 `## BL-256:` (gates handing out receipts they did not earn), `## BL-231:` (the absent-vs-unreadable
 family), `## BL-242:` (`# BL-242-RESCAN-HONEST`, the enumeration this widens).
+
+---
+
+## BL-278: the pending-approval sentinel is read from the SESSION's directory, so it gates every repository except the one it belongs to
+
+**Status:** Open — **the under-block half is FIXED on this branch for the bare-`git commit` shape; the over-block half is an OPEN QUESTION and is deliberately not answered; a second residual (the target named only in the command text) is OPEN.** See "Two halves" and "Open residual" below.
+
+**Logged:** 2026-09-13, out of the `## BL-277:` work: a commit in a contributor clone was refused
+because a sentinel existed in a completely different repository. Reproduced in both directions before
+filing, and the fix here is built and covered.
+
+**The mechanism, and it is an ABSENCE rather than a wrong answer.** `pa_check` in
+`scripts/pre-commit-gate.sh` runs as a **PreToolUse** hook — it matches `_is_git_commit "$COMMAND"`
+and emits `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", …}}`.
+The sentinel it consults is the bare relative literal
+
+    local sentinel=".claude/pending-approval.json"
+
+and **on that path the script never changes directory.** Its only `cd` is
+`cd "$PROJECT_ROOT"` inside the `if [ "$TERMINAL_MODE" -eq 1 ]` branch, which is the commit-msg-hook
+path, not this one; `CLAUDE_PROJECT_DIR` appears nowhere in the file. So the literal resolves against
+whatever cwd Claude Code hands the hook — the SESSION's project directory — and never against any
+other repository. There is no root resolution to be wrong; there is none at all.
+
+**Measured, both directions.**
+
+- A sentinel in the session's project **blocked a commit in `/Users/asborien/solo-orchestrator`**, a
+  different repository with no `.claude/` directory of its own.
+- A throwaway repository carrying **its OWN sentinel committed cleanly** when committed to from a
+  session rooted elsewhere:
+
+      $ git init -q .            # a scratch repo, with its own sentinel
+      $ printf '%s' '{"question":"BL278-PROBE-LOCAL-SENTINEL-QUESTION",…}' > .claude/pending-approval.json
+      $ git commit -s -m "chore: sentinel probe"
+      [main (root-commit) 13c8594] chore: sentinel probe
+
+So it gates every repository **except** the one it lives in — exactly inverted from what a pending
+decision means.
+
+**TWO HALVES, and only one of them is unambiguously a defect.**
+
+1. **Under-block — FIXED HERE, for one shape.** A repository carrying its own sentinel is not
+   protected when committed to from a session rooted elsewhere. This is the case the design says must
+   work. `docs/builders-guide.md` § "Structured Decision Points: The Pending-Approval Sentinel" ships
+   this reader INTO each project — "`upgrade-project.sh` copies … the updated
+   `scripts/pre-commit-gate.sh` **into existing projects**, so the **enforcement** (reader + helper)
+   goes live immediately on upgrade" (that section's "Upgrading existing projects" paragraph) — and
+   calls the sentinel "the single source of truth", singular (same section). A gate shipped to fire on
+   a project's own sentinel, that does not fire on it. The shape fixed here is a bare `git commit`
+   issued while the hook's `.cwd` is inside that repository; see "Open residual" for the shapes it is
+   not.
+2. **Over-block — OPEN, NOT ANSWERED HERE.** A sentinel in the session's project stops commits in
+   every other repository touched from that session. **Both readings are defensible and the design
+   states neither.** Against: the Builder's Guide model above is per-project throughout, and a
+   decision pending in project A silently halting unrelated work in project B — mid-flight, with a
+   message about a question B's operator never asked — is a poor outcome nobody designed. For: the
+   sentinel means "the agent is holding, do not advance", and the incident that produced it (the same
+   section's "Why this matters" paragraph, lancache 2026-04-24) was an agent advancing while the user
+   was still deciding —
+   advancing in a *different* repository is the same failure. Cross-repo reach is most likely an
+   accident of the PreToolUse path rather than a decision, but it is not obviously wrong, so this
+   entry leaves it to the maintainer and changes nothing about it.
+
+**Why the over-block is not fixed here, stated plainly because the operational cost is real.** Five
+blocking sentinels were declined by hand in one day, each halting every agent in every repository
+touched from that session. That cost is genuine and it is **attributable to `## BL-277:`, not to
+this entry**: BL-277 manufactures false sentinels from ordinary file reads, and a cross-repo hold is
+only painful in proportion to how often a sentinel is raised for nothing. Fixing BL-277 removes the
+pain; narrowing the scope here would spend a security control to relieve a symptom whose cause is
+elsewhere. That reasoning is the reason this half stays open rather than being quietly "fixed".
+
+**Fix — BUILT on this branch, additive, and narrower than its first cut claimed.**
+`# BL-278-SENTINEL-ROOT`: a `_pa_target_sentinel` helper reads `.cwd` from the hook envelope, resolves
+it with `git -C "$c" rev-parse --show-toplevel`, and returns the sentinel path of the repository that
+CONTAINS `.cwd`; `pa_check` consults it **only when the session-relative read found nothing**. **What
+`.cwd` is, precisely: the directory Claude is in BEFORE the intercepted command runs.** It is not the
+repository the command will run in, and nothing in the arm parses the command text. So the arm covers
+exactly one shape — **a bare `git commit` issued while `.cwd` is inside the repository that owns the
+sentinel** — which is the shape the measured under-block took, and no other. The `.cwd` field is real and already modelled by the repo's own fixtures
+(`tests/test-bl233-mcp-outcome-enforcement.sh` carries `"cwd"` in both PreToolUse and PostToolUse
+envelopes). The existing read is untouched, so **nothing that blocks today stops blocking** — that is
+what makes this strictly more blocking rather than a scope change. Every unreadable or unresolvable
+input returns 1 and degrades to exactly today's behaviour: absent `.cwd`, a `.cwd` that is not a
+directory, a directory that is not a repository. One property to know rather than a defect: a `.cwd`
+inside a LINKED WORKTREE resolves to that worktree's own root, so a sentinel held by the repository's
+main checkout does not reach it (reviewer probe S5, reproduced 2026-09-13: linked worktree ALLOW, main
+checkout DENY) — consistent with the sentinel being an untracked, per-checkout file.
+
+**Open residual — the target named only in the command text is not read.** A commit whose target is
+carried by the command rather than by `.cwd` is not covered. Adversarial review probed three shapes
+against the fixed gate (2026-09-13):
+
+    git -C target commit        .cwd = session   -> ALLOW
+    cd target && git commit     .cwd = session   -> ALLOW
+    git commit                  .cwd = target    -> DENY
+
+The first is doubly out of reach: `_is_git_commit` (`grep -qE '(^|[^"'\''])git[[:space:]]+commit\b'`)
+does not match `git -C <path> commit` at all, so that shape never reaches `pa_check` — a pre-existing
+gap in the classifier, not something this branch introduced. Resolving the target from the command
+text — parsing `-C` and `cd` out of an arbitrary shell line — is a change to a security arm with its
+own false-positive surface, and it is left to the maintainer; **the decision taken here is to narrow
+the claim rather than parse the command.** C6 in the suite pins the `cd <target> && git commit` shape
+at its CURRENT behaviour (rc 0, no sentinel denial) and is labelled a residual pin, not a control, so
+closing the residual has to invert a case rather than happen by accident.
+
+**Options considered.**
+1. **Additive** (chosen). Closes the under-block, spends no control, leaves the unstated scope
+   question to the maintainer with its measurement.
+2. **Replace — resolve only against the target repo.** Fixes the under-block AND removes the
+   over-block, which is the cost actually being felt. Rejected: it changes the behaviour of a
+   security control whose intent is unstated, and it would stop blocking in cases that block today.
+   If the maintainer decides the per-project reading is the right one, this is the one-line follow-up
+   and C2 in the suite is the case that would change.
+3. **Resolve from `CLAUDE_PROJECT_DIR`.** Rejected: it names the session, which is the value already
+   producing the wrong answer, and the variable is absent from this file by design.
+
+**Build note (2026-09-13, branch `fix/bl278`).** Suite `tests/test-bl278-sentinel-root.sh` drives the
+REAL gate over stdin the way Claude Code drives it, against two throwaway git repositories under one
+temp tree. After adversarial review: **RED 5 / 5** against `main`'s gate (`ceb450e`), GREEN **10 / 0**
+on bash 5.3.15 and on bash 3.2.57 (macOS 26.4.1). C1 and C1b are the discriminators and both failed
+RED for the right reason — rc 0 and EMPTY output, the gate allowing silently; M0, M1 and M2 fail RED
+because the marker and the operative lines are absent from `main`'s gate. The 7-case first cut also ran
+**7 / 0** on bash 5.2.21 in `ubuntu:24.04` as a non-root user; the 10-case suite has not been re-run on
+Linux.
+
+**The Linux run's C4 comparison is VACUOUS and does not count as a compatibility check.** That
+container has no real upstream, so the fixture points `refs/remotes/origin/main` at HEAD — which
+already carries this fix — and C4's comparison half therefore compares the fixed gate with itself. The
+macOS runs are where it has a genuine pristine baseline. Recorded rather than left for a reader to
+assume, because a case that cannot fail must not be counted as having passed. C2 (session sentinel
+still blocks), C3 (no sentinel ⇒ no sentinel denial), C4, C5 and C6 pass on `main` by construction;
+they are controls (C6 a residual pin), not evidence of the fix.
+
+**An earlier cut of this entry, and the fix commit's title, claimed more than `.cwd` can deliver.**
+Both said the helper resolved "the repository the intercepted commit targets". It resolves the
+repository containing the directory Claude was in before the command ran, which coincides with the
+target only for a bare `git commit`; the three probes under "Open residual" are what showed the
+difference. And no case exercised the toplevel resolution at all: every case set `.cwd` to a repository
+ROOT, so replacing `root=$(git -C "$c" rev-parse --show-toplevel …) || return 1` with `root="$c"`
+survived the whole suite — **reproduced at 7 / 0 with the mutant in place** before anything was
+changed. Both findings came from adversarial review, not from the suite; C1b and M2 are the repair for
+the second, the reworded claim and C6 for the first.
+
+Three things the suite had to learn the hard way, each caught by a control rather than by review:
+
+- **The fixture repos need an `origin` remote.** An earlier arm of this same gate — the "no git
+  remote configured" guard — denies BEFORE `pa_check` is reached, and denies on the SESSION repo.
+  Without a remote every case "passed" by denying for a reason that had nothing to do with sentinels.
+  **C3 is what exposed it**, by refusing to accept a denial when no sentinel existed.
+- **Assertions are scoped to the suite's own unique question strings, not to "denied at all".** This
+  gate has many arms and a bare fixture legitimately trips some of them, so the broader predicate
+  would fire on unrelated enforcement.
+- **The `origin/main` baseline must live in a COMPLETE MIRROR of `scripts/`.** The gate resolves its
+  siblings through `SCRIPT_DIR` — `process-checklist.sh` among them — so a lone copy in a temp dir
+  denies with "…/process-checklist.sh: No such file or directory". Measured: bare copy 334 bytes of
+  stdout where the in-tree gate produced 0. A first cut compared against a bare copy and was
+  measuring the copy's isolation.
+
+**C4 is the `.cwd`-absent compatibility check, scoped to the sentinel decision.** A first cut compared
+the WHOLE of stdout, stderr and rc with `cmp` against the pristine `origin/main` gate. Review pointed
+out what that becomes: a permanent tripwire that fails on any later change to any other arm's output on
+a branch, for reasons unrelated to this fix, and a comparison of `main` with itself once BL-278 lands.
+The reviewer confirmed the comparison was NOT vacuous as built — in a fresh worktree `origin/main` is
+`ceb450e` with the marker absent, and the CI unit lane checks out with `fetch-depth: 0`, so
+`origin/main` is present there too; the hazard is later PRs changing the gate's output, and the
+self-comparison after merge. Of the two minimal remedies — restrict the comparison to the allow/deny
+decision plus the `pa_check` reason string, or pin the baseline to the pre-BL-278 blob of the gate
+instead of `origin/main` — the first was chosen: a pinned blob keeps the whole-output tripwire and
+merely freezes it, whereas restricting the comparison to the one envelope this fix touches keeps a
+genuine comparison while `main` lacks the arm and stops being a tripwire afterwards. The compared line
+is the JSON deny envelope, which carries both the decision and the reason. C4 now asserts, per case
+(sentinel present / absent):
+(a) against this gate alone, a session sentinel denies on the session's question and no sentinel
+produces no sentinel denial and rc 0 — this half can never go vacuous; and (b) against `origin/main`
+on identical fresh fixtures, the pending-approval deny envelope (the stdout line carrying "pending user
+decision") is identical, or identically absent. A fresh fixture per gate is still load-bearing — with
+no sentinel the gate falls through to arms that WRITE project state, so running both gates over one
+fixture compares run 1 with run 2 rather than gate with gate.
+
+**Two mutants.** M1 removes the operative line and asserts C1 re-opens. Following MT4's lesson, a
+marker-only landing check is necessary and not sufficient: M1 asserts the OPERATIVE TEXT verbatim
+(`sentinel="$(_pa_target_sentinel)" || sentinel=""`) occurs exactly once before mutating, that it
+occurs zero times and exactly one line changed after, and runs `bash -n` on the mutated file so a
+mangled substitution cannot pass as a landed mutation. M2 is the reviewer's survivor: it substitutes
+`root="$c"` for the toplevel resolution under the same discipline (once before, zero after, exactly
+one line removed and one added, parse check), confirms the mutant still passes C1's fixture — `.cwd`
+at the root resolves correctly either way — and then asserts C1b's fixture, `.cwd` two directories
+below the target's root, stops blocking. Killed in-tree as well as in the mirror: C1b and M2 both fail
+with the substitution in place, GREEN again on restore. (`bash -c 'set -n; . file'` is not a parse
+check — once `set -n` is active the `. file` after it is never executed, so it returns 0 on a file
+with an unterminated `if`; measured while building M2.) Registered in
+`tests/full-project-test-suite.sh` and the `tests.yml` unit lane (`lint-tests-registered.sh --list`:
+`registered`; confirmed by a negative control — removing the `tests.yml` line flips the same lint to
+`FAIL  not-in-unit-lane`).
+
+**Related:** `## BL-277:` (the detector that manufactures the false sentinels this arm then enforces —
+the two entries are a pair, and the operational pain belongs to that one; it is a **SIBLING BRANCH not
+yet merged**, `fix/bl277`, so that citation resolves only once it lands), `## BL-015:` (the sentinel
+reader this arm extends), `## BL-176:` (`# BL-176-GITPATH-EDITMSG`, the sibling case where a linked
+worktree's `.git` POINTER FILE silently disabled two gates — the same class of path assumption in the
+same file).
