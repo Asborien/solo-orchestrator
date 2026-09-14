@@ -16207,16 +16207,34 @@ clean result it did not earn. The defect is that the condition is permanent and 
 acts on it, so the loudest line in every commit is one the operator is trained to ignore.
 
 **"There is nothing to scan here" is FALSE, and that was this entry's first draft.**
-Measured: the tracked tree holds **6** `.html` files under `templates/uat/`, and the
-shipped ruleset's markup rule scopes `paths: include: *.vue, *.html, *.htm`. So the arm
-has real targets in this repo. The other two configs are live too — `p/owasp-top-ten`
-alone resolves and returns rc 0 here.
+Measured: the tracked tree holds **6** markup files the rule's
+`paths: include: *.vue, *.html, *.htm` scopes — **5** under `templates/uat/` plus
+`workflow.html` at the repo root. (A draft of this line said "6 under `templates/uat/`";
+the count was right for the repo and wrong for the directory.) The other two configs are
+live too — `p/owasp-top-ten` alone resolves and returns rc 0 here.
 
-**What the fix is NOT.** Not "skip the SAST arm in the framework repo". The hook already
-detects the framework root for the BL-006 arm (`# BL-087-MOTHERSHIP-PASS`, matched on
-`init.sh` + its banner + `templates/generated/`), so skipping would be a two-line change —
-and it would turn a loud non-scan into a silent one over 6 real targets. That is the wrong
-direction for a repo whose whole doctrine is `# BL-182-NO-UNEARNED-RECEIPT`.
+**Be honest about how thin that is.** Running the ruleset over all six today yields
+`{"findings":0,"files":[]}` — see `## BL-262:`, where the two `innerHTML +=` lines in the
+UAT template are excluded by the rule's literal-RHS guard. So "the arm has real targets"
+means it has files in scope, not findings waiting. The argument for making it run is
+`# BL-182-NO-UNEARNED-RECEIPT`, not a pending discovery.
+
+**What the fix is NOT.** Not "skip the SAST arm in the framework repo" — that would trade
+a loud non-scan for a silent one, which is the wrong direction for this repo's doctrine.
+**And skipping is NOT the two-line change a draft of this entry claimed.** That draft
+pointed at `# BL-087-MOTHERSHIP-PASS` as existing framework detection; measured, that
+marker lives only in `bl006_terminal_enforce()` in `scripts/pre-commit-gate.sh` — a
+different script, at commit-msg time. The generated pre-commit hook that carries the SAST
+arm has NO framework detection of any kind:
+```
+BL-087-MOTHERSHIP-PASS in .git/hooks/pre-commit          -> 0
+'Solo Orchestrator — Project Initialization Script'       -> 0
+templates/generated                                       -> 0
+_gnif_dir_is_framework                                    -> 0
+```
+(same four, all 0, in `scripts/lib/hook-templates.sh`). The rejected option costs more
+than the draft said, which strengthens the recommendation rather than weakening it — but
+the reason it was rejected must be the doctrine, not a cost number that was wrong.
 
 **Fix shape.** Make the arm RUN here. Either point the framework repo's own hook at
 `templates/semgrep/soif-dom-sinks.yml` (the source of the file `init.sh` copies), or lay a
@@ -16225,6 +16243,11 @@ hook. Prefer the first: one source of truth, and `## BL-175:` already tracks tha
 ruleset sits outside every mechanical scaffold-closure surface — a second copy would widen
 that. Whichever is chosen, the receipt must keep distinguishing "scanned clean" from "did
 not run"; do not let this become a green that means nothing.
+
+**A constraint on any fix.** `tests/test-bl147-ci-template-integrity.sh` derives "ONE
+unambiguous semgrep policy" from the `# BL-194-HOOK-SEMGREP-POLICY` anchor and enforces
+hook-to-CI-template parity. Changing the emitted `--config` path must preserve that, or
+the change lands as a red required check rather than as a fix.
 
 **Note on CI.** `.github/workflows/tests.yml` installs semgrep in every `unit-shard` leg,
 but to run the live SAST **test cases** (`# BL-190`), not to scan this repo's source.
@@ -16265,28 +16288,55 @@ Only the plain assignment is caught. Both compound assignments are missed, and
 `x.innerHTML += untrusted` is exactly as exploitable as `x.innerHTML = untrusted`.
 
 **Why the other ruleset does not cover it.** The js/ts registry pack DOES catch `+=` —
-same fixture as `.js`: `{"findings":2}`. But it cannot reach markup: `## BL-131:` records
+on a two-line `.js` fixture (`innerHTML =` plus `innerHTML +=`) it returns 2. The
+THREE-line fixture above saved as `.js` returns 3, not 2 — an earlier draft quoted 2
+against the three-line fixture and the two numbers did not belong together. Saved as
+`.js` WITH its `<script>` tags it returns 0 findings and no errors, which is its own
+quiet trap. It cannot reach markup: `## BL-131:` records
 the empirical finding that semgrep's `vue`/`html` parsers do not expose embedded `<script>`
 JS as a matchable AST, which is why the markup rule is `generic` + regex in the first
 place. Confirmed here — the soif ruleset returns `{"findings":0}` on the `.js` fixture,
 deliberately, so the two packs do not overlap. **So markup files with compound assignment
 are covered by NEITHER pack.**
 
-**A live instance, in a file this repo ships:**
+**The pattern occurs in a file this repo ships:**
 ```
 $ grep -nE 'innerHTML' templates/uat/test-session-template.html
 246:    container.innerHTML += '<div class="scenario" id="scenario-' + s.id + '">' +
 299:  document.getElementById('bugs-list').innerHTML +=
 ```
+**AND THE WIDENED RULE FLAGS NEITHER OF THEM — stated plainly rather than left to imply
+otherwise.** Measured over all six of this repo's markup files:
+`{"findings":0,"files":[]}`. Both right-hand sides open with a STRING LITERAL
+(`'<div class="scenario" …'`), and the `[^"'\s]` guard excludes exactly that —
+deliberately, because without it the rule is unusable on template files. So the widening
+closes a real gap for code shaped `x.innerHTML += userInput`, and these two lines are
+evidence the PATTERN occurs in practice, not instances the rule now catches.
+
 **TRIAGED 2026-09-14. Verdict: NOT exploitable as shipped; a real CORRECTNESS bug; and an
 UNDOCUMENTED, UNENFORCED trust assumption.** Taken site by site, because they are not alike:
 
-- **`:299` (`addBug`, the `bugs-list` sink) — inert.** Everything concatenated there is a
-  string literal, `n` (an integer from `bugCount++`), or `__FEATURE_OPTIONS__`, which the
-  authoring agent substitutes at GENERATION time and which the template's own comment
-  declares is raw markup by design. No runtime path reaches it. Tester input does not:
-  `exportResults` reads the notes and bug fields with `.value` and builds a MARKDOWN
-  string, never HTML.
+- **`:299` (`addBug`, the `bugs-list` sink) — inert to INJECTION, and DEFECTIVE by
+  RE-SERIALIZATION. A first draft of this entry said "inert" full stop and was wrong.**
+  The injection half holds: everything concatenated is a string literal, `n` (an integer
+  from `bugCount++`), or `__FEATURE_OPTIONS__`, which the authoring agent substitutes at
+  GENERATION time and which the template's own comment declares is raw markup by design.
+  Tester input does not reach it either — `exportResults` reads the notes and bug fields
+  with `.value` and builds a MARKDOWN string, never HTML.
+  **But `innerHTML +=` re-serializes and re-parses the whole container, and a typed
+  `value` is not reflected into the attribute — so every field the tester has already
+  filled in is wiped the next time they click "+ Add Bug".** Measured in jsdom against
+  the template's exact `addBug` concatenation:
+  ```
+  after typing into bug 1   -> {"desc":"crash on export","steps":"1. open  2. click export"}
+  after a 2nd addBug()      -> {"desc":"","steps":""}
+  what exportResults emits  ->  Description: "" | Steps: ""
+  ```
+  Silent data loss in a template shipped to every generated project, at the exact site
+  this entry was clearing, caused by the exact construct this entry is about. Filed as
+  `## BL-264:` with the fix. **`renderScenarios` is NOT affected** — `grep -n
+  renderScenarios` gives three hits and only line 377 is an invocation (144 is a comment,
+  242 the definition), so it runs once, before any typing.
 - **`:246` (`renderScenarios`) — injects, from generation-time-authored text.** `s.id`,
   `s.title`, `s.steps` and `s.expected` are concatenated raw out of `__SCENARIOS_JSON__`,
   and `s.steps.replace(/\n/g,'<br>')` treats steps as HTML deliberately. Nothing escapes:
@@ -16357,10 +16407,19 @@ thing a later change alters without noticing.
 
 1. **Escape the three fields** (`textContent` where possible; an `escapeHtml` helper where
    the `<br>` substitution is wanted). Makes the template correct for any input and closes
-   the assumption permanently. **Cost:** it changes rendered output for every populated
-   template that currently relies on markup passing through — and the `<br>` line proves
-   at least one such reliance is deliberate. Anyone with a populated session in flight sees
-   their scenarios render differently.
+   the assumption permanently. **Cost: much smaller than a draft of this entry claimed.**
+   That draft said it "changes rendered output for every populated template" and cited the
+   `<br>` line as proof of deliberate markup pass-through. Both halves are wrong. The
+   `<br>`s come from the template's OWN `.replace(/\n/g,'<br>')`, applied AFTER escaping,
+   so they survive untouched; and escaping is a no-op for any text without `<`, `&` or a
+   quote. Measured in jsdom on the template's own shipped example scenario:
+   ```
+   rendered TEXT identical?    true
+   element-node count raw/esc: 12 / 12
+   <br> count raw/esc:          6 / 6
+   ```
+   The real cost is confined to scenarios whose text genuinely contains markup characters —
+   which today render as broken markup anyway, so "different" there means "fixed".
 2. **Document and enforce the assumption instead** — state it in the template's authoring
    comment and add a rule to `lint-uat-scenarios.sh` that rejects `<`, unescaped `&` and
    raw quotes in the three fields. Keeps rendering identical and makes the constraint
@@ -16368,8 +16427,9 @@ thing a later change alters without noticing.
    template's OWN shipped example does ("Read the Repair button's `disabled` attribute" is
    fine; "Repair has `<button disabled>`" would be rejected).
 
-Option 1 is the more capable fix and the one to prefer if rendering changes are
-acceptable; option 2 is the one that preserves existing output. Do not do both halves
+Option 1 is the more capable fix, and with the cost re-measured above it is also the
+cheaper one; option 2 buys nothing that option 1 does not, and forbids input option 1
+handles. Do not do both halves
 badly — an escape that misses one field is worse than a documented assumption, because it
 reads as a guarantee.
 
@@ -16380,3 +16440,48 @@ which inputs inject and which do not.
 **Related:** `## BL-262:` (the triage that produced this), `## BL-131:` (the ruleset whose
 widened rule would flag the same pattern in a GENERATED project's code),
 `## BL-009:` (UAT-template guardrails).
+
+---
+
+## BL-264: `addBug()` in the shipped UAT template WIPES every field the tester has already filled in — `innerHTML +=` re-serializes the container
+
+**Status:** Open
+
+**Found:** 2026-09-14, by the adversarial review of `## BL-262:`'s branch — in the site
+that entry's first triage draft had just cleared as "inert". It is inert to INJECTION; it
+is not inert.
+
+**What happens.** `templates/uat/test-session-template.html:299`:
+```
+document.getElementById('bugs-list').innerHTML +=
+  '<div class="bug-entry" id="bug-' + n + '">' + …
+```
+`innerHTML +=` reads the container's current markup, concatenates, and re-parses the whole
+thing. A value the tester TYPED into a `<textarea>` or `<input>` lives in the element's
+`value` property and is **not** reflected into the serialized attribute — so it does not
+survive the round trip. Every "+ Add Bug" click therefore blanks every bug already on the
+page. Measured in jsdom against the template's exact concatenation:
+```
+after typing into bug 1   -> {"desc":"crash on export","steps":"1. open  2. click export"}
+after a 2nd addBug()      -> {"desc":"","steps":""}
+what exportResults emits  ->  Description: "" | Steps: ""
+```
+The loss is SILENT in the worst way: `exportResults` reads those same ids with `.value`
+and emits empty `Description:` and `Steps:` lines into the session's markdown, so a tester
+who reported two bugs ships a report where the first one is blank. Severity is a function
+of how many bugs a session finds — one bug, no loss; five bugs, four blank reports.
+
+**Scope — the sibling site is NOT affected.** `renderScenarios` uses the same construct
+but runs exactly once, before any typing: `grep -n renderScenarios` gives three hits and
+only line 377 is an invocation (144 is a comment, 242 the definition).
+
+**Fix shape.** `document.getElementById('bugs-list').insertAdjacentHTML('beforeend', …)`
+— appends without touching existing nodes, so typed values survive. Note the interaction
+with `## BL-262:`: `insertAdjacentHTML` is itself a sink the shipped ruleset matches
+(`soif-insert-adjacent-html`), and the argument here is a literal-prefixed concatenation,
+so the rule's `[^"'\s]` guard excludes it — but confirm that rather than assume it, and
+add a regression case pinning that a second `addBug()` preserves the first bug's fields.
+A UAT template with no test that survives its own second click is how this got shipped.
+
+**Related:** `## BL-262:` (whose triage this corrects), `## BL-263:` (the escaping
+decision on the sibling site), `## BL-009:` (UAT-template guardrails).

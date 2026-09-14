@@ -296,11 +296,20 @@ if [ "$HAVE_SEMGREP" -eq 1 ] && [ -f "$RULESET_SRC" ]; then
   elif ! semgrep --validate --config="$MUT" >/dev/null 2>&1; then
     fail_ "T-rule-compound-MUTATION" "the mutant is not a valid semgrep config — the mutation broke the file instead of narrowing the rule"
   else
+    # THE CONTROL IS THE POINT. Without it, a mutant that kills the inner/outer
+    # arm OUTRIGHT satisfies all three landed-guards and scores as a pass — the
+    # compound sink goes unflagged for the wrong reason, and the proof degrades
+    # into "some edit broke something". A TRUE narrowing still flags a plain
+    # `=`; a dead arm flags neither. Assert both halves.
+    printf '<script>\n  a.innerHTML = userInput;\n</script>\n' > "$FX/sink_plain.html"
     rcm="$(scan_one "$MUT" "$FX/sink_compound.html")"
-    if [ "$rcm" -eq 0 ]; then
-      pass "T-rule-compound-MUTATION: narrowed back to a bare '=', the compound sink goes UNFLAGGED — T-rule-compound-assign is load-bearing"
-    else
+    rcp="$(scan_one "$MUT" "$FX/sink_plain.html")"
+    if [ "$rcm" -ne 0 ]; then
       fail_ "T-rule-compound-MUTATION" "the narrowed mutant still flagged the compound sink (rc=$rcm, want 0) — T-rule-compound-assign proves nothing"
+    elif [ "$rcp" -ne 1 ]; then
+      fail_ "T-rule-compound-MUTATION" "the mutant no longer flags a PLAIN '=' either (rc=$rcp, want 1) — the arm is dead, not narrowed, so the unflagged compound sink proves nothing"
+    else
+      pass "T-rule-compound-MUTATION: narrowed back to a bare '=' the compound sink goes UNFLAGGED while a plain '=' still fires — a true narrowing, and T-rule-compound-assign is what kills it"
     fi
   fi
 else
