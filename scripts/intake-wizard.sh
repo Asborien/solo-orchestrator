@@ -1830,12 +1830,58 @@ PYEOF
 }
 
 # ================================================================
+# SECTION ORDER: the runner's list, defined ONCE
+# ================================================================
+# BL-281-SECTION-ORDER — section ids in the order the wizard runs them.
+# 1..11, then 115 (Section 11.5, Testing & Bug Tracking), then 12, 13.
+# The 115 id encodes "between 11 and 12" while staying an integer for
+# save_section / is_section_complete, which means the list is NOT
+# monotonic: 115 comes before 12. Anything that reasons about "the
+# next section" must walk this list by POSITION, never by arithmetic
+# on the id — `115 + 1` is 116, which is not a section, and a numeric
+# `-lt` skip against 116 drops every id in the list.
+INTAKE_SECTION_ORDER=(1 2 3 4 5 6 7 8 9 10 11 115 12 13)
+
+# next_section_after <last_completed_id> — the id of the element AFTER
+# the given one in INTAKE_SECTION_ORDER. 0 (nothing completed) yields
+# the first element; the last element yields the empty string (nothing
+# left to run). An id that is not in the list also yields the first
+# element: the runner re-skips whatever is_section_complete already
+# knows about, so starting from the top is safe and loses nothing.
+next_section_after() {
+  local last="$1" i n
+  n=${#INTAKE_SECTION_ORDER[@]}
+  if [ "$last" = "0" ]; then
+    echo "${INTAKE_SECTION_ORDER[0]}"
+    return 0
+  fi
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ "${INTAKE_SECTION_ORDER[$i]}" = "$last" ]; then
+      # BL-281-NEXT-SECTION — the successor by position, not by value.
+      if [ $((i + 1)) -lt "$n" ]; then
+        echo "${INTAKE_SECTION_ORDER[$((i + 1))]}"
+      else
+        echo ""
+      fi
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  echo "${INTAKE_SECTION_ORDER[0]}"
+}
+
+# ================================================================
 # MODE: Run all sections in order (script path)
 # ================================================================
+# run_script_mode [start_id] — run every section from start_id to the
+# end of INTAKE_SECTION_ORDER, skipping any the progress file already
+# records as complete. start_id is a section id (the caller gets it
+# from next_section_after); an empty start_id means nothing is left.
 run_script_mode() {
-  local start_section="${1:-1}"
+  local start_section="${1:-${INTAKE_SECTION_ORDER[0]}}"
 
-  if [ "$start_section" -gt 1 ]; then
+  if [ -n "$start_section" ] && [ "$start_section" != "${INTAKE_SECTION_ORDER[0]}" ]; then
     print_info "Resuming from Section $start_section"
   fi
 
@@ -1844,20 +1890,27 @@ run_script_mode() {
   print_info "Type '?' at prompts marked with [? for suggestions] to see options."
   echo ""
 
-  # Section IDs: 1..11, 115 (Testing & Bug Tracking), 12, 13.
-  # The 115 ID encodes "between 11 and 12" while keeping the value an
-  # integer for save_section / is_section_complete; the runner maps it
-  # back to function name run_section_11_5 below.
+  # The order lives in INTAKE_SECTION_ORDER (# BL-281-SECTION-ORDER);
+  # the runner maps 115 back to run_section_11_5 below.
   #
   # Audit code-intake-wizard-3: §12 (Tooling Configuration, auto-
   # populated) and §13 (Agent Initialization Prompt, auto-generated)
   # are now distinct wizard steps that mirror the template's
   # numbering, instead of the old single "Section 12" that ran §13's
   # content.
-  local sections=(1 2 3 4 5 6 7 8 9 10 11 115 12 13)
-  for section in "${sections[@]}"; do
-    if [ "$section" -lt "$start_section" ]; then
-      continue
+  #
+  # BL-281-POSITION-SKIP — skip by POSITION, not by value. This used to
+  # be `[ "$section" -lt "$start_section" ]` with start_section set to
+  # `LAST_SECTION + 1`. After a clean finish of Section 11.5 that is 116,
+  # every id in the list is below it, and --resume ran nothing and
+  # printed "Intake Complete!" with Sections 12 and 13 never run.
+  local reached=0
+  for section in "${INTAKE_SECTION_ORDER[@]}"; do
+    if [ "$reached" -eq 0 ]; then
+      if [ "$section" != "$start_section" ]; then
+        continue
+      fi
+      reached=1
     fi
 
     if is_section_complete "$section" 2>/dev/null; then
@@ -2263,7 +2316,11 @@ main() {
       if ! load_progress; then
         exit 1
       fi
-      local next_section=$((LAST_SECTION + 1))
+      # BL-281-RESUME-POINT — the element after the last completed one,
+      # by position in the runner's list; `LAST_SECTION + 1` is not a
+      # section id once LAST_SECTION is 115.
+      local next_section
+      next_section="$(next_section_after "$LAST_SECTION")"
       echo ""
       print_info "Sections completed: ${COMPLETED_SECTIONS:-none}"
       run_script_mode "$next_section"
@@ -2374,12 +2431,18 @@ main() {
         load_progress
         if [ "$LAST_SECTION" -gt 0 ]; then
           print_info "Found existing progress (through Section $LAST_SECTION)."
-          local resume_choice
+          local resume_choice next_section resume_label
+          next_section="$(next_section_after "$LAST_SECTION")"
+          if [ -n "$next_section" ]; then
+            resume_label="Resume from Section $next_section"
+          else
+            resume_label="Resume (every section is already complete — re-print the summary)"
+          fi
           resume_choice=$(prompt_choice "Resume or start over?" \
-            "Resume from Section $((LAST_SECTION + 1))" \
+            "$resume_label" \
             "Start over (previous progress will be overwritten)")
           if [[ "$resume_choice" == "Resume"* ]]; then
-            run_script_mode "$((LAST_SECTION + 1))"
+            run_script_mode "$next_section"
             exit 0
           fi
         fi
