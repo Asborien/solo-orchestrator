@@ -17284,3 +17284,139 @@ because no fix is proposed; a reproduction belongs with whatever shape the maint
 **Related:** `## BL-288:` (the shallow half, fixed; this is the same blind spot by another route),
 `## BL-147:` (a check that cannot run must not pass), `## BL-256:` (gates handing out receipts they
 did not earn).
+
+---
+
+## BL-282: the wizard offers no route to correct a recorded answer once its section is complete — `--resume` skips the section, and `reconfigure-project.sh --field` covers seven fields of the 122 the wizard records
+
+**Status:** Open — **ENTRY ONLY BY DECISION (2026-09-14), not by omission.** Four options are set out
+below with their trade-offs and none is built. Every one of them adds or documents a CLI surface the
+maintainer will own — a flag on the wizard, an arm in `reconfigure-project.sh`, or a written promise
+that a JSON file is hand-editable — and a surface, once documented, is the hard-to-reverse kind. The
+contribution is the measurement and the options; the choice is his.
+
+**Logged:** 2026-09-14, from a downstream adoption's `intake-progress.json`, where `monthly_budget`
+is the literal string `"3"`. The operator typed `?` at the budget prompt, was shown a numbered list,
+and typed the number of the one they meant. Nothing turned it back into a budget, and nothing since
+has offered to ask again.
+
+**Numbering:** BL-280 is the highest number on any ref — 56 refs under `refs/heads` and
+`refs/remotes` swept with `git grep -q -w`, zero hits for BL-281/282/283, positive control BL-280 hit
+on `heads/fix/bl280` and `remotes/fork/fix/bl280`. BL-281 and BL-283 are the same batch.
+
+**How the answer gets recorded that way — the trigger, measured.** `prompt_with_suggestions` in
+`scripts/intake-wizard.sh` prints the suggestions as a numbered list via `show_suggestions` /
+`parse_suggestions` (`"    {i}. {item['name']}{rank_label}"`) and then reads FREE TEXT: `?` re-shows
+the list, empty takes the default, anything else is returned verbatim. There is no numbered-selection
+arm — that lives in `prompt_choice`, a different helper, which validates `1..N` and returns the
+option's text. So the two prompts LOOK the same to the operator and behave differently. Driven with
+canned stdin (`SOIF_NONINTERACTIVE=1`, `--resume` from a record with sections 1-2 done) and `?` then
+`3` at the budget prompt:
+
+    [INFO] 3.2 Budget
+      Suggestions:
+        1. $0-50/month (recommended)
+        2. $50-500/month
+        3. $500+/month
+      [OK] Section 3 saved.
+    monthly_budget = '3'
+    last_section = 4  completed_sections = [1, 2, 3, 4]
+
+(`mvp_date = 'Q4 2026'`, `geo_distribution = 'UK'` and the rest of the section landed correctly, so
+the canned stream lined up; `3` is what the operator typed and `3` is what was kept.)
+
+**Why it cannot be corrected — three doors, all closed.**
+
+1. **`--resume` will not ask again.** `is_section_complete` is a membership test on
+   `completed_sections`, and section 3 is in it. The next `--resume` on the same record:
+
+       [INFO] Resuming from Section 5
+       (lines mentioning Section 3 in the transcript: 0)
+
+   The question is never re-asked, and — as `## BL-266:` records for the pause path — nothing says so.
+
+2. **`reconfigure-project.sh --field` does not know the key.** Its `--help` lists `test_interval`,
+   `language`, `platform`, `name`, `data_classification`, `zdr_attested`, `zdr_attestation_reason`.
+   Of those, only the last three are intake answers at all; `test_interval` writes the ENFORCED field
+   in `build-progress.json` (`## BL-203:`), and the rest reconfigure the project, not the intake.
+
+       $ bash scripts/reconfigure-project.sh --field monthly_budget --old 3 --new '$50-500/month'
+       [STEP] Reconfiguring project: monthly_budget (3 → $50-500/month)
+       [FAIL] Unknown field: monthly_budget
+       Supported: language, platform, track, name, deployment,
+                  data_classification, zdr_attested, zdr_attestation_reason
+       exit=1
+
+   (An aside, not this entry's subject: that refusal lists `track` and `deployment` as Supported while
+   the same script's `--help` says, in as many words, *"Track and deployment changes are NOT supported
+   here."* One of the two is wrong.)
+
+3. **The wizard's own flag surface has no generic write.** `--help` offers `--resume`, the five
+   `--upgrade-*` / `--to-*-poc` transitions, and — this is the precedent that matters — THREE
+   targeted non-interactive setters: `--data-classification VALUE`, `--zdr-attested`,
+   `--zdr-attestation-reason "<text>"` (tier-crosscheck-6). So the pattern "set one recorded answer
+   from the command line, re-persist where the gate reads it" already exists in this script, for the
+   three keys a phase gate consumes. The other 119 `save_answer` keys (`grep -c 'save_answer "'` on
+   `ceb450e` → 122 call sites) have nothing.
+
+The remaining door is opening `.claude/intake-progress.json` in an editor. That works — `--resume`
+and `render_intake_file` read it back — but the wizard's own comment at `persist_phase1_artifacts`
+calls the `answers/` copy *"for resume/audit only"*, and no document tells an operator that editing
+it is supported, what else must be re-run afterwards (`render_intake_file` regenerates the
+`PROJECT_INTAKE.md` appendix on the NEXT `save_section`, not on edit), or that some keys have a
+SECOND home the edit will not reach (the ZDR trio in `process-state.json`; `testing_interval` in
+`build-progress.json`). That second-home trap is `## BL-203:` in one sentence.
+
+**What it costs.** `monthly_budget` feeds nothing enforced today, so a `"3"` is a wrong number in a
+document. The same door is closed for every key — including the ones that DO feed something: an
+operator who mistypes `sev_critical_sla` or `bug_tracking_tool` in Section 11.5 has the same three
+refusals in front of them, and the intake is what the Project Bible and the Phase 1 artefacts are
+synthesised from.
+
+**Options, NOT decided here. Trade-offs as measured or read, not as preferred.**
+
+1. **`--reask N` on the wizard** — remove `N` from `completed_sections`, set `last_section` to the
+   runner-order predecessor, run that one section, stop. Uses the runner, the prompts and
+   `save_section` as they are; re-asks EVERY question in the section (Section 3 is twelve prompts),
+   which is also its virtue — the operator is shown the suggestions again and the fix is made through
+   the same prompt that took the wrong answer. Touches the `115` ordering: the predecessor must come
+   from the runner's list, not from `N - 1` (BL-281, same batch, puts that list in one place). Smallest
+   new surface: one flag, one section id.
+2. **`--set KEY VALUE` on the wizard** — a generic writer into `answers/`, then `render_intake_file`.
+   Precise and scriptable; the shape the three tier-crosscheck-6 flags already have, generalised. Its
+   cost is validation: the wizard does not enumerate its keys anywhere a flag could check against, so
+   either it accepts any key (a typo becomes a new key, silently) or a registry of the 122 keys must
+   be built and kept in step with the prompts. And the second-home keys need the flag to know which
+   home — exactly the per-key logic that made the three existing flags three separate arms.
+3. **Extend `reconfigure-project.sh --field`.** It already carries the APPROVAL_LOG audit row and the
+   `process-state.json` mirror for the ZDR trio, and `--old`/`--new` gives the change a before and
+   after. But every `--field` arm there is a heavy per-field handler (`language` regenerates CI;
+   `platform` copies a module), and a generic `answers/` arm would be a different animal living in the
+   same `case`. Also the operator's mental model: "reconfigure the project" versus "fix an intake
+   answer" are not the same act, and the ZDR trio is the only overlap.
+4. **Document hand-editing `intake-progress.json` as the supported route** (plus "then run any
+   section, or `--resume`, to re-render"). Cheapest by far; adds no code. It documents the two traps
+   above rather than closing them, and it makes a JSON file's key names a public contract.
+
+A **narrower fifth** change removes this TRIGGER without touching the class: let
+`prompt_with_suggestions` accept a bare number when suggestions were just shown, returning that
+item's text (what `prompt_choice` already does). Worth doing alongside whichever route is chosen; on
+its own it leaves every other wrong answer uncorrectable.
+
+**What this entry recommends, and why it stops short of choosing.** Option 1 is the smallest
+surface with the most reuse and no validation problem, and it composes with the fifth. But it is a
+new flag on a script whose flag surface the maintainer curates (the `--help` text lists each one by
+hand), and options 2-4 are each defensible on cost. That is a product call about the wizard's CLI,
+not a correctness call, so it is left with the measurement.
+
+**Not measured beyond the above.** No option was prototyped. The 122 figure is `save_answer` CALL
+SITES on `ceb450e`, not distinct keys — loop-generated keys (`input_${i}_name`, …) count once per
+call site and expand at runtime, so the key count is higher, not lower.
+
+**Related:** `## BL-266:` (SIBLING BRANCH, PR #390 — the pause path files an unfinished section as
+complete; the door this entry finds closed is the same `is_section_complete` membership test, reached
+by a finished section with a wrong answer in it; the citation resolves once `fix/bl266` lands),
+`## BL-203:` (an answer with two homes, one of which the write did not reach), `## BUG-010:`
+(`load_progress` and what a hand-edited progress file can do to it — option 4 walks straight into
+that defect). BL-281 and BL-283, filed in this batch, are named without `## …:` citations because
+each lands on its own branch.
