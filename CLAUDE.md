@@ -101,7 +101,8 @@ here.
     && chown -R t /home/t/r && su t -c "cd /home/t/r && bash tests/<file>.sh"'
   ```
   Run as a NON-root user or every `chmod 555` fixture silently stays writable.
-- **THAT CONTAINER IS A bash/git VERSION EMULATOR AND NOT A CI EMULATOR.** It
+- **THE CONTAINER RECIPE ABOVE IS A bash/git VERSION EMULATOR AND NOT A CI
+  EMULATOR.** It
   diverges from both this Mac and the runner far beyond anything one missing
   tool explains, so **a red suite in it is not evidence of a defect until you
   diff it against the same suite at the parent commit IN THE SAME IMAGE.** That
@@ -126,8 +127,8 @@ here.
   ```
   S=$(awk '/^[[:space:]]*tests=\(/{print NR; exit}' .github/workflows/tests.yml)
   E=$(awk -v s="$S" 'NR>s && /^[[:space:]]*\)[[:space:]]*$/{print NR; exit}' .github/workflows/tests.yml)
-  sed -n "$((S+1)),$((E-1))p" .github/workflows/tests.yml | sed 's/[[:space:]]//g' \
-    | grep '^tests/' > list.txt            # 191 entries, verified
+  sed -n "$((S+1)),$((E-1))p" .github/workflows/tests.yml | sed 's/#.*//' \
+    | sed 's/[[:space:]]//g' | grep '^tests/' > list.txt      # 191 entries, verified
   while IFS= read -r t; do bash "$t" </dev/null >/dev/null 2>&1 || echo "RED $t"; done < list.txt
   ```
   `tr -d '[:space:]'` instead of the `sed` **deletes the newlines too** and
@@ -139,6 +140,10 @@ here.
   BL-181 residual, one section down), and it drops the real member
   `tests/host-drivers/error-translate.test.sh` because that path does not match
   `tests/test-*`. Both lists were 191 long. Length is not membership.
+  The `sed 's/#.*//'` is the third failure mode, latent rather than measured:
+  whitespace-stripping alone turns a TRAILING comment into `tests/test-foo.sh#pinned`,
+  which still matches `^tests/` and reaches `bash` as a spurious RED. The array
+  carries no comments today — strip them anyway.
 
   **REDIRECT STDIN OR THE LOOP LIES.** `bash "$t"` inherits the `while read`
   loop's fd 0, so the first stdin-reading suite EATS THE REST OF THE LIST. Not
@@ -148,14 +153,24 @@ here.
   `glab` stub (`[ ! -t 0 ] && cat >/dev/null`). `TOTAL=2` is absurd enough to
   catch; a plausible wrong number would not have been.
 
-  **THE MEMBERSHIP OF THAT SET IS UNSTABLE, AND THE IMAGE IS NOT THE VARIABLE.**
-  A draft of this bullet said it was, and six back-to-back runs of
+  **THE MEMBERSHIP OF THAT SET IS UNSTABLE — DO NOT READ A ONE-RUN LIST AS A
+  PROPERTY OF ANYTHING.** Six back-to-back runs of
   `tests/test-specs-plans-host-aware-quartet.sh` inside ONE unchanged container
-  refute it: four distinct outcomes (8/0, 7/1, 6/2, 6/2), with the failing
-  element changing run to run (`T8` naming `Task7.3` then `Task7.4`; `T11`
-  counting `found 1` then `found 2`). Nothing varied but the run. That suite is
-  nondeterministic on Linux and is in the PR-blocking unit lane — `## BL-260:`.
-  Do not read a one-run membership list as a property of the image.
+  gave four distinct outcomes — 8/0, 7/1, and two DIFFERENT 6/2s — with the
+  failing element changing run to run (`T8` naming `Task7.3` then `Task7.4`;
+  `T11` counting `found 1`, then `found 2`, then failing a different assertion
+  entirely). Repeated with a fresh `cp -r` of the tree per run, same spread.
+  **Every measurement of this is `linux/arm64`, which is NOT the lane's
+  architecture**: on `--platform linux/amd64`, same image, same recipe, the
+  suite is 12/12 clean, and on this Mac 6/6. `ubuntu-latest` is x86_64, so
+  there is no evidence of a PR-lane risk here. Two drafts of this paragraph
+  named a cause — first "the image, not the suite", then "the suite is
+  nondeterministic on Linux" — and both were refuted. What is measured is that
+  the ARM container returns different answers for the same deterministic
+  pipeline over byte-identical input (`T8` and `T11` are pure `grep`/`awk` over
+  static files; no `sort`, `find`, glob, backgrounding, `RANDOM` or clock, and
+  the tree checksums identical before and after every run). Recorded as
+  `## BL-260:` with the cause explicitly unisolated.
 
   gitleaks is the single biggest lever on the brownfield ten — bare image six
   fail (`wp4-driver` 9/15, `wp5b-test-debt` 55/2, `wp6-collision-archive`

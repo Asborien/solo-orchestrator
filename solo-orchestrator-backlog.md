@@ -16076,63 +16076,88 @@ absent-vs-unreadable family).
 
 ---
 
-## BL-260: `tests/test-specs-plans-host-aware-quartet.sh` is NONDETERMINISTIC on Linux — four outcomes from six identical runs, in the PR-blocking unit lane
+## BL-260: `tests/test-specs-plans-host-aware-quartet.sh` returns different answers run-to-run in an ARM64 Linux container — a deterministic pipeline over byte-identical input, so the container is executing it wrongly
 
 **Status:** Open
 
-**Found:** 2026-09-14, by the seventh adversarial review of `## BL-225:`'s branch, while
-checking a `CLAUDE.md` claim about container flakiness. Not caused by that branch —
-reproduced on `65ba700` and on the rewritten tip alike, and the suite does not read
-anything either commit touched.
+**Found:** 2026-09-14, by the seventh and eighth adversarial reviews of `## BL-225:`'s
+branch, while checking a `CLAUDE.md` claim about container flakiness. Not caused by that
+branch — the suite is byte-identical on `main`, and it reads `check-gate.sh`,
+`phase2-state.sh` and `host.sh`, none of which the branch touched.
 
-**What it is.** Six back-to-back runs of the suite inside ONE unchanged `ubuntu:24.04`
-container — same `docker run`, same image layer, same installed tools, nothing altered
-between runs — produce four distinct outcomes, and the failing element changes run to
-run:
+**What is measured.** On `--platform linux/arm64`, six back-to-back runs inside ONE
+unchanged `ubuntu:24.04` container — same image layer, same tools, nothing altered
+between runs — give four distinct outcomes, and the failing element changes run to run:
 
 ```
 run 1 rc=0   == Total: 8 | Passed: 8 | Failed: 0 ==
 run 2 rc=1   == Total: 8 | Passed: 6 | Failed: 2 ==
-  [FAIL] T8  — missing translation delta tables in plan: Task7.3:no-delta-table
-  [FAIL] T11 — cmd_repair must reference >=3 named steps for resume logic, found 1
+  [FAIL] T8 — missing translation delta tables in plan: Task7.3:no-delta-table
+  [FAIL] T11 — cmd_repair must reference ≥3 named steps for resume logic, found 1
 run 3 rc=1   == Total: 8 | Passed: 6 | Failed: 2 ==   (same two)
 run 4 rc=1   == Total: 8 | Passed: 7 | Failed: 1 ==
-  [FAIL] T11 — cmd_repair must reference >=3 named steps for resume logic, found 2
+  [FAIL] T11 — cmd_repair must reference ≥3 named steps for resume logic, found 2
 run 5 rc=1   == Total: 8 | Passed: 6 | Failed: 2 ==
-  [FAIL] T8  — missing translation delta tables in plan: Task7.4:no-delta-table
+  [FAIL] T8 — missing translation delta tables in plan: Task7.4:no-delta-table
   [FAIL] T11 — cmd_repair must still probe git remote as fallback for legacy projects
 run 6 rc=1   == Total: 8 | Passed: 7 | Failed: 1 ==   (T11, found 2)
 ```
 
-`T8` names `Task7.3` on one run and `Task7.4` on another; `T11` counts `found 1` then
-`found 2` then fails a different assertion entirely. An independent reviewer's six runs
-gave the same shape with a different distribution. On this Mac the suite is 8/0, six
-times out of six, with and without stdin redirected.
+`T8` names `Task7.3` on one run and `Task7.4` on another; `T11` counts `found 1`, then
+`found 2`, then fails a DIFFERENT assertion. A reviewer's independent 20 runs gave 14
+failures with the same shape. Repeating with a fresh `cp -r` of the tree per run gives
+the same spread, so it is not cross-run residue.
 
-**Why it matters.** The suite is a member of the `tests.yml` unit list (the `tests=(`
-array), it is in no `pin_*` array so it lands in the `rest` shard, and `unit` is a
-REQUIRED status check on `main`. A nondeterministic member of that lane can turn a PR
-red for no reason, and — worse in this repo's terms — can turn one GREEN on a re-run,
-which is how a real regression gets waved through as "just the flake".
+**Where it does NOT happen — and this is the load-bearing half.** On
+`--platform linux/amd64`, same image, same recipe: **12 of 12 clean** (a reviewer's
+independent 27 runs: 27 clean). On this Mac: 6 of 6 clean, with and without stdin
+redirected. `ubuntu-latest` — the runner every PR-blocking lane uses — is **x86_64**, so
+**there is no measured PR-lane risk.** An earlier draft of this entry was titled
+"nondeterministic on Linux" and claimed the unit lane was exposed; both were asserted
+from arm64 runs alone and are withdrawn.
 
-**What is NOT established.** The cause. Candidates not tested: a `sort` whose input has
-ties resolved by filesystem order (ext4 vs APFS), a `find`/glob traversal order
-dependence, a counter that races, or a fixture reused across cases. Do not write a
-cause into this entry until it is measured — the `CLAUDE.md` paragraph this was found
-under asserted four causes in four drafts and every one was refuted
-(`# BL-234-FIXTURE-BARE-HEAD` is the closest documented sibling: a host-property
-dependence that is silent locally).
-
-**Reproduce:**
+**Why the suite is not the suspect.** `T8` and `T11` are pure text pipelines over static
+files — `t8_plan_has_translation_delta_tables` is `grep -nE | head -n1 | cut` then `awk`
+over an archived plan; `t11_cmd_repair_consults_steps_completed` is `awk` plus `grep -q`
+over `scripts/check-gate.sh`. Neither body contains `sort`, `find`, a glob, `&`, `wait`,
+`$RANDOM` or `date`:
 ```
-docker run --rm -v "$PWD:/repo:ro" ubuntu:24.04 bash -c 'apt-get update -qq \
-  && apt-get install -y -qq jq git && useradd -m t && cp -r /repo /home/t/r \
-  && chown -R t /home/t/r && su t -c "cd /home/t/r && for i in 1 2 3 4 5 6; do \
-    bash tests/test-specs-plans-host-aware-quartet.sh </dev/null 2>&1 | tail -1; done"'
+sed -n '176,280p' tests/test-specs-plans-host-aware-quartet.sh \
+  | grep -nE 'sort|find |\*|&$|wait|RANDOM|date'      # no output
 ```
-Run as a NON-root user. A single run proves nothing — the suite passes clean on some
-runs; take six.
+And the inputs are provably unchanged: md5 over all 947 files before and after every run,
+including failing ones, differs by zero lines. A deterministic pipeline over byte-identical
+input cannot return three different answers unless the EXECUTION is wrong. The suspect is
+the arm64 container's execution layer, not the test's logic.
+
+**What is NOT established.** The cause. The four candidates an earlier draft listed —
+a `sort` tie broken by filesystem order, a `find`/glob traversal dependence, a racing
+counter, a reused fixture — are all already EXCLUDED by the evidence above; they were
+written before the mechanism was examined and are recorded here only so nobody re-proposes
+them. What remains untested: the emulation layer itself (these arm64 runs are Docker
+Desktop on Apple Silicon, so "arm64 Linux" and "QEMU/Rosetta" are not yet separated), and
+whether a NATIVE arm64 Linux host reproduces it at all. Do not write a cause into this
+entry until it is measured — the `CLAUDE.md` paragraph this was found under asserted five
+causes across five drafts and every one was refuted.
+
+**Why it might still matter, conditionally.** Nothing in the PR-blocking set is at risk on
+today's `ubuntu-latest`. It becomes a real lane risk only if runners move to arm64, which
+GitHub now offers. Until then the concrete cost is local: this suite is in the `tests=(`
+unit list and in no `pin_*` array, so anyone reproducing CI in an arm64 container sees an
+unexplained red and may chase it into a test that is fine.
+
+**Reproduce — BOTH architectures, because one alone is what produced the withdrawn claim:**
+```
+for P in linux/arm64 linux/amd64; do
+  docker run --rm --platform "$P" -v "$PWD:/repo:ro" ubuntu:24.04 bash -c 'apt-get update -qq \
+    && apt-get install -y -qq jq git && useradd -m t && cp -r /repo /home/t/r \
+    && chown -R t /home/t/r && su t -c "cd /home/t/r && echo ARCH=\$(uname -m); \
+      for i in 1 2 3 4 5 6; do bash tests/test-specs-plans-host-aware-quartet.sh </dev/null 2>&1 | tail -1; done"'
+done
+```
+Run as a NON-root user. A single run proves nothing in either direction — the suite passes
+clean on some arm64 runs; take six.
 
 **Related:** `## BL-225:` (found under it, not caused by it), `## BL-234:` (host-property
-dependence that is silent on this Mac), `## BL-181:` (the unit-lane membership
-surface this suite sits in).
+dependence that is silent on this Mac), `## BL-181:` (the unit-lane membership surface this
+suite sits in).
