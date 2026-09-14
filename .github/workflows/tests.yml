@@ -574,6 +574,7 @@ jobs:
             tests/test-bl259-tsv-empty-field-shift.sh
             tests/test-bl263-bl264-uat-template-dom.sh
             tests/test-bl284-verify-install-context.sh
+            tests/test-bl281-resume-after-115.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────

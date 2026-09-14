@@ -901,6 +901,9 @@ run_child_suite "tests/test-bl270-mode-vocabulary-backfill.sh" \
 run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
   "BL-268: adoption writes mode=org and every host driver refuses the deployment vocabulary" \
   "BL-268 mode-vocabulary tests FAILED (run tests/test-bl268-mode-vocabulary.sh for details)"
+run_child_suite "tests/test-bl281-resume-after-115.sh" \
+  "BL-281: --resume after a clean Section 11.5 must run Sections 12 and 13" \
+  "BL-281 resume-after-115 tests FAILED (run tests/test-bl281-resume-after-115.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
