@@ -108,11 +108,14 @@ here.
   diff it against the same suite at the parent commit IN THE SAME IMAGE.** That
   diff is the whole technique; everything below is scale and traps.
 
-  **DO NOT TRUST A CAUSE HERE — four drafts of this bullet asserted one and all
-  four were refuted**: twice the missing `~/.claude-dev-framework`, once a
-  node/npm underrun, once "the instability is the image, not the suite". State
-  what you measured; leave the rest unexplained. Naming a cause here has a
-  perfect record of being wrong.
+  **DO NOT TRUST A CAUSE HERE — five drafts of this bullet asserted one and all
+  five were refuted**: twice the missing `~/.claude-dev-framework`, once a
+  node/npm underrun, once "the instability is the image, not the suite", once
+  "the suite is nondeterministic on Linux". State what you measured; leave the
+  rest unexplained. Naming a cause here has a perfect record of being wrong —
+  and **if you refute one, increment this counter in the same commit**: the
+  draft that refuted the fifth updated `## BL-260:` to five and left this line
+  saying four.
 
   Scale, measured 2026-09-14 with gitleaks installed and `~/.claude-dev-framework`,
   `python3` and `node` all still ABSENT: **roughly 20 of the 191 suites in the

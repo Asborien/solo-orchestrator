@@ -16076,7 +16076,7 @@ absent-vs-unreadable family).
 
 ---
 
-## BL-260: `tests/test-specs-plans-host-aware-quartet.sh` returns different answers run-to-run in an ARM64 Linux container — a deterministic pipeline over byte-identical input, so the container is executing it wrongly
+## BL-260: `tests/test-specs-plans-host-aware-quartet.sh` returns different answers run-to-run in an ARM64 Linux container over byte-identical input — the arm64 execution layer is the suspect, cause UNISOLATED
 
 **Status:** Open
 
@@ -16119,16 +16119,27 @@ from arm64 runs alone and are withdrawn.
 **Why the suite is not the suspect.** `T8` and `T11` are pure text pipelines over static
 files — `t8_plan_has_translation_delta_tables` is `grep -nE | head -n1 | cut` then `awk`
 over an archived plan; `t11_cmd_repair_consults_steps_completed` is `awk` plus `grep -q`
-over `scripts/check-gate.sh`. Neither body contains `sort`, `find`, a glob, `&`, `wait`,
-`$RANDOM` or `date`:
+over `scripts/check-gate.sh`. Neither body contains `sort`, `find`, a glob,
+backgrounding `&`, `wait`, `$RANDOM` or `date` — the probe below tests `&$`, a
+TRAILING `&`; the three `&&`s in those bodies are awk's logical AND:
 ```
 sed -n '176,280p' tests/test-specs-plans-host-aware-quartet.sh \
   | grep -nE 'sort|find |\*|&$|wait|RANDOM|date'      # no output
 ```
 And the inputs are provably unchanged: md5 over all 947 files before and after every run,
-including failing ones, differs by zero lines. A deterministic pipeline over byte-identical
-input cannot return three different answers unless the EXECUTION is wrong. The suspect is
-the arm64 container's execution layer, not the test's logic.
+including failing ones, differs by zero lines. (That md5 walk counts 947 where the tree
+holds 948 files: `xargs md5` splits the one repo path containing a space. The count is
+incidental — the fresh-`cp -r` datum above is what actually excludes residue.) A
+deterministic pipeline over byte-identical input cannot return three different answers
+unless the EXECUTION is wrong. The suspect is the arm64 container's execution layer, not
+the test's logic — a DEDUCTION from the two premises above, not a measurement.
+
+**A datum that narrows it, and does not fit the deduction comfortably.** Running T8's and
+T11's extraction pipelines STANDALONE — 40 iterations each, same `ubuntu:24.04`, both
+platforms — gives byte-identical results every time: `s=2599`, `plan_window_lines=400`,
+`cmd_repair_body_lines=304`, 40/40 on arm64 and 40/40 on amd64. So the pipelines in
+isolation are stable on the architecture where the suite is not. Whatever perturbs them is
+contextual to the whole-suite run, which is the next rung and is untried.
 
 **What is NOT established.** The cause. The four candidates an earlier draft listed —
 a `sort` tie broken by filesystem order, a `find`/glob traversal dependence, a racing
