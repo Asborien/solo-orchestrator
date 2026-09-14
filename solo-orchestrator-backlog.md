@@ -15925,3 +15925,132 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+## BL-281: `intake-wizard.sh --resume` after a CLEAN finish of Section 11.5 runs nothing, prints "Intake Complete!", and never runs Sections 12 and 13 — the resume point is `115 + 1`
+
+**Status:** Open — fix + suite built on branch `fix/bl281`, not yet checked in, not pushed, no PR. The
+operator verifies and submits.
+
+**Logged:** 2026-09-14, from a downstream adoption's intake: the operator finished Section 11.5 cleanly,
+came back with `--resume`, and the wizard printed the completion banner with Section 13 — the Agent
+Initialization Prompt, the thing `scripts/resume.sh` is later told to print — never generated. The
+banner's own closing line, *"it prints your project's own Section 13 initialization prompt"*, names
+the artefact the run just skipped.
+
+**Numbering, swept rather than assumed.** BL-280 is the highest number on any ref. Swept all 56 refs
+under `refs/heads` and `refs/remotes` with `git grep -q -w "BL-NNN" <ref>` for BL-281, BL-282 and
+BL-283: zero hits on every ref. Positive control BL-280 hit on `heads/fix/bl280` and
+`remotes/fork/fix/bl280`, so the sweep discriminates. (A first pass with `-E 'BL-NNN\b'` returned
+zero for the control too — `\b` is not a `git grep -E` atom — and was discarded; the `-w` pass is the
+one recorded here.) BL-282 and BL-283 are filed in the same batch on sibling branches.
+
+**Mechanism — the runner's list is not monotonic and the resume point is arithmetic on an id.**
+`run_script_mode` in `scripts/intake-wizard.sh` walks `1 2 3 4 5 6 7 8 9 10 11 115 12 13`, where
+`115` encodes Section 11.5 as an integer so it can pass through `save_section` and
+`is_section_complete` (the comment at the `save_section 115` call site says so, and says `115` "sits
+between 11 and 12 which preserves 'what's next' arithmetic in resume logic" — it does not). The
+runner skipped with `[ "$section" -lt "$start_section" ]`, and both resume paths — the `--resume`
+flag and the interactive "Resume or start over?" menu — passed `$((LAST_SECTION + 1))`. After
+`save_section 115` writes `last_section: 115`, that is **116**. Every id in the list is below 116,
+so the loop skipped all fourteen, `render_intake_file` ran, and the banner printed at exit 0.
+
+**Measured, against `main` (`ceb450e`), in a throwaway copy of the wizard and its helpers with a
+progress file recording `last_section: 115` and `completed_sections: [1..11, 115]`,
+`SOIF_NONINTERACTIVE=1`, stdin from `/dev/null`:**
+
+    $ SOIF_NONINTERACTIVE=1 bash scripts/intake-wizard.sh --resume </dev/null
+    [INFO] Sections completed: 1 2 3 4 5 6 7 8 9 10 11 115
+    [INFO] Resuming from Section 116
+    …
+    ║              Intake Complete!                           ║
+      [OK] Done — your answers are recorded in the appendix at the end of PROJECT_INTAKE.md.
+        3. Paste the first message printed by:  bash scripts/resume.sh
+           (it prints your project's own Section 13 initialization prompt)
+    exit=0
+    last_section = 115
+    completed_sections = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 115]
+
+No `[STEP] Section 12`, no `[STEP] Section 13`, no `saved` line, the record unchanged, rc 0. The
+`jq: error: syntax error, unexpected label` line in the same transcript is `render_intake_file`'s
+reserved-keyword defect recorded under `## BUG-010:` in `solo-orchestrator-bugs.md`; it fires on every
+run here and is unrelated.
+
+**`## BL-266:` (PR #390) does not reach this, and says so.** That branch — a SIBLING not yet merged,
+so the citation resolves only once `fix/bl266` lands — stops the PAUSE path from filing an unfinished
+section as complete. Its own entry records this case as a residual in as many words: *"the same `115`
+arithmetic bites without any pause … a run interrupted between section 115 and section 12 by ANYTHING
+other than `pause` … resumes at `start_section` 116 and skips sections 12 and 13 in silence. This fix
+does not reach that path."* And the case is wider than "interrupted": a **clean** finish of 11.5 with
+nothing interrupting it — the ordinary path — writes 115 and the next `--resume` does the same. This
+entry is the durable repair that entry asked for.
+
+**Fix, on `fix/bl281`.** Four markers, one list:
+- `# BL-281-SECTION-ORDER` — `INTAKE_SECTION_ORDER=(1 … 11 115 12 13)` defined ONCE at file scope,
+  replacing the `local sections=(…)` inside the runner. The literal `115` still has exactly two
+  homes (the `save_section 115` call site and this list); `save_section` still knows nothing about
+  order, which is the boundary `## BL-266:`'s review insisted on.
+- `# BL-281-NEXT-SECTION` — `next_section_after <last>` returns the element AFTER `<last>` by
+  position: `0 → 1`, `11 → 115`, `115 → 12`, `13 → ""` (nothing left). An id not in the list yields the
+  first element; `is_section_complete` re-skips whatever is already recorded, so starting from the
+  top loses nothing.
+- `# BL-281-POSITION-SKIP` — the runner skips until it REACHES the start id, then runs everything
+  after it (still honouring `is_section_complete`). No `-lt`.
+- `# BL-281-RESUME-POINT` — `--resume` and the interactive menu both call `next_section_after`; the
+  menu label reads "Resume from Section 12" rather than "Resume from Section 116", and when nothing
+  is left it says so instead of naming a section that does not exist.
+
+Verified on the same fixture: `Resuming from Section 12`, `[STEP] Section 12`, `[STEP] Section 13`,
+`last_section = 13`, `completed_sections = [1, …, 11, 12, 13, 115]`, banner AFTER Section 13, rc 0. A
+fully complete record (`last_section: 13`) resumes straight to the banner with nothing re-run and no
+`integer expression expected` leak from the now-possibly-empty start id.
+
+**Two shapes considered and not taken.**
+1. **Always start at position 0 and let `is_section_complete` do all the skipping.** Smallest diff,
+   and correct for the record — but the resume point is also what the operator is SHOWN
+   ("Resuming from Section N", the menu label), so it has to be derived somewhere; deriving it once
+   in `next_section_after` and using it for both the skip and the message keeps one truth.
+2. **Give 11.5 a monotonic id** (string `"11.5"`, or renumber). `save_section` casts with `int()`
+   and sorts `completed_sections` as integers; every downstream project's progress file already
+   carries `115`; sixteen `save_section` call sites and `## BL-266:`'s fixtures are written against
+   it. A migration for a comparison bug is the wrong size.
+
+**Suite: `tests/test-bl281-resume-after-115.sh`**, every case driving the REAL wizard through
+`--resume` from a pipe against a copy of the wizard in a fixture project (`--resume` is dispatched
+before the non-TTY refusal, as `## BL-266:`'s E1 established). Run with `</dev/null`.
+- **RED at `ceb450e`: 3 passed / 16 failed, exit 1.** The three passes are honest controls — C1
+  (`last_section 3` resumes at Section 4), C2 (`11` resumes at 11.5 — 115 is never below 12, so base
+  passes), C3 (a fully complete record resumes to the banner, rc 0). The discriminators name the
+  damage: `R1 — Section 12 never ran: [INFO] Resuming from Section 116`; `R3 — completed_sections=[1,
+  …, 11, 115] last_section=115`; the six U cases report `next_section_after` `<<MISSING>>`.
+- **GREEN on `fix/bl281`: 19 passed / 0 failed, exit 0**, on macOS `/bin/bash` 3.2.57 and under
+  `/usr/bin/env bash`, and **19 / 0, exit 0** under bash 5.2 in `ubuntu:24.04` as the non-root user
+  the CLAUDE.md recipe creates (`docker run … ubuntu:24.04`, `python3` added to its apt line).
+- **Two mutants on a mirror, each asserting it LANDED** (syntax still parses, changed-line count,
+  the mutated text present) before reading a verdict. **MP1 is the plausible wrong fix**: keep the
+  position skip but derive the resume point as `last + 1` again — `next_section_after 115` then
+  answers 116, no element matches, and the run is base's by another route: `MP1 (MUTATION) — with
+  the resume point back to last+1 (=[116]) Section 12 never runs again: R1 is what stops it`. **MP2**
+  deletes `reached=1`: the start section runs (it matches) and every later one is skipped: `MP2
+  (MUTATION) — without reached=1 Section 12 runs but Section 13 is skipped: R2 is what stops it`.
+- Registered in `tests/full-project-test-suite.sh` and the `tests.yml` unit-lane array (one line
+  each, after the BL-259 entries). The three neighbouring wizard suites still pass on the branch:
+  `tests/test-intake-wizard-fixes.sh`, `tests/test-bl202-session-intake-check.sh` (23 / 0), and the
+  two other suites that mention the runner are recorded in the build note below.
+
+**Left to the maintainer, stated rather than quietly omitted.**
+- The interactive "Resume or start over?" path is covered through `next_section_after` (the U cases)
+  and by reading, not driven end to end — it sits behind the TTY-only mode menu, and the suite does
+  not fake a TTY.
+- `next_section_after` on an id that is not in the list starts from the top rather than refusing.
+  That is the forgiving choice; a record carrying `last_section: 116` (written by nothing on `main`,
+  but a hand edit could) would silently restart at Section 1 with the finished sections skipped.
+  Refusing by name is the stricter alternative and is a one-line change in the helper.
+- `## BUG-010:` defect (1) — `load_progress` subscripting keys with no `.get` — is untouched here and
+  produces this entry's ending ("skipped section, Intake Complete!") by its own route.
+
+**Related:** `## BL-266:` (sibling branch, PR #390 — the pause half of the same `115` arithmetic; its
+entry names this residual), `## BUG-010:` (same observable ending, a different mechanism, still open),
+`## BL-203:` (an intake answer that did not reach the place the framework reads — the same "recorded
+but not acted on" family, here a section rather than a value). BL-282 and BL-283, filed in this batch,
+are the same wizard on the same downstream session and are named without `## …:` citations because
+each lands on its own branch.
