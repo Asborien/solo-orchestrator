@@ -101,30 +101,51 @@ here.
     && chown -R t /home/t/r && su t -c "cd /home/t/r && bash tests/<file>.sh"'
   ```
   Run as a NON-root user or every `chmod 555` fixture silently stays writable.
-  **That container is a bash/git VERSION emulator, not a CI emulator, and the
-  thing it is missing that actually matters is `gitleaks`.** Derive the set,
-  never transcribe it:
+  **That container is a bash/git VERSION emulator and NOT a CI emulator.** It
+  diverges from the runner far beyond anything one missing tool explains, so
+  **a red suite in it is not evidence of a defect until you diff it against
+  the same suite at the parent commit IN THE SAME IMAGE.** That diff is the
+  whole technique; everything below is scale and traps.
+
+  **Do not trust a cause here — three drafts of this bullet asserted one and
+  all three were refuted** (twice the missing `~/.claude-dev-framework`, once a
+  node/npm underrun). State what you measured; leave the rest unexplained.
+
+  Scale, measured 2026-09-14 with gitleaks installed and `~/.claude-dev-framework`,
+  `python3` and `node` all still ABSENT: **22 of the 191 suites in the
+  `tests.yml` unit list fail in that image**, and they pass on this Mac. So
+  **never generalise from the ten `tests/test-brownfield-*.sh` files** — most
+  of the divergence is outside them.
+
+  **The membership of that set is UNSTABLE.** Two runs of the same list
+  disagreed by three suites (`test-bl180-interactive-scaffold-pty.sh` and
+  `test-brownfield-wp1-scout.sh` red in one and not the other;
+  `test-specs-plans-host-aware-quartet.sh` the reverse) — and `wp1-scout` is
+  35/0 on this Mac with and without stdin, so the instability is the image,
+  not the suite. **Re-derive; never quote this list or its count.**
+
+  **Redirect stdin or the loop lies.** `bash "$s"` inherits the `while read`
+  loop's fd 0, so the first stdin-reading suite EATS THE REST OF THE LIST. That
+  is not theoretical: it silently reported `TOTAL=2 FAILED=0` over a 191-entry
+  list, twice, and `TOTAL=2` is the only reason it was caught.
   ```
-  for f in tests/test-brownfield-*.sh; do printf '%-46s ' "$(basename "$f")"; bash "$f" 2>&1 | tail -1; done
+  while IFS= read -r s; do bash "$s" </dev/null >/dev/null 2>&1 || echo "RED $s"; done < list.txt
   ```
-  Measured 2026-09-14, bare image, all ten — SIX fail, identically on a branch
-  tip and its parent: `wp4-driver` 9/15, `wp5b-test-debt` 55/2,
-  `wp6-collision-archive` 12/27, `wp9-act-boundaries` 0/1,
-  `wp9b-preflight-approval` 48/38, `wp10a-tool-resolution` 52/2. **Install
-  gitleaks and five of the six go fully green** — `wp9b` drops to 102/1 — with
-  `~/.claude-dev-framework`, `python3` and `node` STILL ABSENT:
+
+  gitleaks is the single biggest lever on the brownfield ten — bare image six
+  fail (`wp4-driver` 9/15, `wp5b-test-debt` 55/2, `wp6-collision-archive`
+  12/27, `wp9-act-boundaries` 0/1, `wp9b-preflight-approval` 48/38,
+  `wp10a-tool-resolution` 52/2); install it and five go fully green. The
+  residue is `wp9b`'s `AM2` at 102/1, where the gate blocks on `[WARN] Phase
+  0→1: … gate date not recorded in phase-state.json`. **Cause not isolated —
+  and NOT node/npm**, measured with `node`, `npm` and `python3` all installed.
+  Add `curl ca-certificates` to the apt line; `ubuntu:24.04` has neither, and
+  the fetch below exits 127 without them. Runs as root, BEFORE `su t`:
   ```
-  curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+  A=x64; [ "$(uname -m)" = aarch64 ] && A=arm64        # the x64 asset needs emulation on Apple Silicon
+  curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_${A}.tar.gz" \
     -o /tmp/g.tgz && tar xzf /tmp/g.tgz -C /tmp gitleaks && install -m0755 /tmp/gitleaks /usr/local/bin/
   ```
-  So do **not** pin these on the missing framework clone: two drafts of this
-  bullet did, and the measurement above refutes both. The residue after
-  gitleaks is the node/npm intake underrun (`wp9b`), which is a different
-  cause again. **Diff a suite against its own parent commit in the SAME image
-  before attributing any container failure to a change**, and never quote a
-  count from a run that covered part of the set — a commit message here said
-  "two of them fail" after running two, and its correction said "five" after
-  running six.
 - **This Mac's git is configured and an ubuntu-latest runner's is not — and the
   difference is silent.** Xcode ships
   `/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig`
