@@ -16278,18 +16278,105 @@ $ grep -nE 'innerHTML' templates/uat/test-session-template.html
 246:    container.innerHTML += '<div class="scenario" id="scenario-' + s.id + '">' +
 299:  document.getElementById('bugs-list').innerHTML +=
 ```
-Both are string concatenation into `innerHTML +=`. Triage before fixing: this is a UAT
-session template rendered from a populated fixture, so reachability depends on whether the
-concatenated values can carry operator- or tester-supplied text. Do not assume it is inert
-and do not assume it is exploitable — `## BL-261:` exists because a first draft of ITS
-entry assumed the safe answer without measuring.
+**TRIAGED 2026-09-14. Verdict: NOT exploitable as shipped; a real CORRECTNESS bug; and an
+UNDOCUMENTED, UNENFORCED trust assumption.** Taken site by site, because they are not alike:
 
-**Fix shape.** Widen the regex to admit compound assignment — `\s*\+?=\s*` for the
-inner/outer arm — and add a mutation case to `tests/test-bl131-domsink-rules.sh` pinning
-that `+=` is caught in `.html`, since that suite's existing cases all use plain `=`. Keep
-the `[^"'\s]` guard that excludes literal-only assignments, or the false-positive rate on
-template files will make the arm unusable. Then re-triage the two template hits.
+- **`:299` (`addBug`, the `bugs-list` sink) — inert.** Everything concatenated there is a
+  string literal, `n` (an integer from `bugCount++`), or `__FEATURE_OPTIONS__`, which the
+  authoring agent substitutes at GENERATION time and which the template's own comment
+  declares is raw markup by design. No runtime path reaches it. Tester input does not:
+  `exportResults` reads the notes and bug fields with `.value` and builds a MARKDOWN
+  string, never HTML.
+- **`:246` (`renderScenarios`) — injects, from generation-time-authored text.** `s.id`,
+  `s.title`, `s.steps` and `s.expected` are concatenated raw out of `__SCENARIOS_JSON__`,
+  and `s.steps.replace(/\n/g,'<br>')` treats steps as HTML deliberately. Nothing escapes:
+  the file's only two `textContent` uses are the progress counter and the `<h1>` read, and
+  `scripts/lint-uat-scenarios.sh` matches ZERO of `innerHTML|escap|<script|xss|sanit`.
+  Measured on the exact concatenation lifted out of the template:
+  ```
+  safe    | ordinary prose with a comparison        ("fails when a < b")
+  INJECTS | prose naming an HTML attribute          ("Repair has <button disabled>")
+  INJECTS | a script tag in steps
+  INJECTS | an image onerror in title
+  ```
+
+**Why that is not a vulnerability today.** `__SCENARIOS_JSON__` is written at generation
+time by the operator's own agent from the operator's own feature docs. There is no
+untrusted-input path in the shipped template, so this is not XSS — nobody who can set
+`s.title` needs an injection to run script in that page.
+
+**Why it is still a bug.** UAT scenario text routinely NAMES markup — the template's own
+shipped example says "Read the Repair button's `disabled` attribute". A title or steps
+field containing `<`, `&` or a quote silently renders as markup or breaks the page, and
+the tester sees a mangled scenario with no error. That is the first row above going wrong
+for a reason that has nothing to do with security.
+
+**And the assumption is load-bearing but unwritten.** Nothing states "scenario text must
+be HTML-safe", the quality linter does not check it, and no test pins it. The day a
+generator derives scenario text from anything external — a dependency name, a failing
+test's message, a filename, an issue title — this becomes a live injection with no guard
+in the way. That is a decision for `## BL-263:`, filed separately, because escaping the
+fields changes rendered output for every existing populated template and is not this
+entry's call to make.
+
+**FIXED HERE (the rule itself).** The inner/outer arm now reads `\s*\+?=\s*`, and
+`tests/test-bl131-domsink-rules.sh` gained three cases: `+=` from a variable IS flagged in
+`.html`, `+=` of a string LITERAL is NOT (the `[^"'\s]` guard survives the widening, which
+is what keeps the rule usable on template files), and a MUTATION that narrows the regex
+back to a bare `=` on a mirror and asserts the compound sink then goes unflagged. The
+mutant asserts it LANDED by its own literal text — the first draft of that sed silently
+changed nothing and the postcondition caught it. Suite: 21/0.
 
 **Related:** `## BL-131:` (ships the rule and records the html-AST finding),
 `## BL-118:` (the registry pack that owns js/ts), `## BL-175:` (this ruleset is outside
 scaffold-closure tracking), `## BL-261:` (found under it).
+
+---
+
+## BL-263: the UAT template's trust assumption — "scenario text is HTML-safe" — is load-bearing, unwritten and unenforced
+
+**Status:** Open
+
+**Found:** 2026-09-14, triaging `## BL-262:`.
+
+**The assumption.** `templates/uat/test-session-template.html`'s `renderScenarios()`
+concatenates `s.title`, `s.steps` and `s.expected` straight into `innerHTML`, and
+`s.steps.replace(/\n/g,'<br>')` treats steps as markup on purpose. The template is
+therefore correct only if every scenario field is HTML-safe. Nothing says so: no comment
+in the template, no rule in `scripts/lint-uat-scenarios.sh` (which matches zero of
+`innerHTML|escap|<script|xss|sanit`), and no test.
+
+**Why it holds today, and exactly how far.** `__SCENARIOS_JSON__` is substituted at
+generation time by the operator's own agent from the operator's own feature docs, so there
+is no untrusted input — see `## BL-262:`'s triage, which measured that tester-typed input
+never reaches `innerHTML` either (`exportResults` reads `.value` and builds markdown).
+The assumption is about PROVENANCE, not about the text, and provenance is the kind of
+thing a later change alters without noticing.
+
+**The decision this entry exists for.** Two options, and the trade is real:
+
+1. **Escape the three fields** (`textContent` where possible; an `escapeHtml` helper where
+   the `<br>` substitution is wanted). Makes the template correct for any input and closes
+   the assumption permanently. **Cost:** it changes rendered output for every populated
+   template that currently relies on markup passing through — and the `<br>` line proves
+   at least one such reliance is deliberate. Anyone with a populated session in flight sees
+   their scenarios render differently.
+2. **Document and enforce the assumption instead** — state it in the template's authoring
+   comment and add a rule to `lint-uat-scenarios.sh` that rejects `<`, unescaped `&` and
+   raw quotes in the three fields. Keeps rendering identical and makes the constraint
+   checkable. **Cost:** it forbids scenario text that legitimately names markup, which the
+   template's OWN shipped example does ("Read the Repair button's `disabled` attribute" is
+   fine; "Repair has `<button disabled>`" would be rejected).
+
+Option 1 is the more capable fix and the one to prefer if rendering changes are
+acceptable; option 2 is the one that preserves existing output. Do not do both halves
+badly — an escape that misses one field is worse than a documented assumption, because it
+reads as a guarantee.
+
+**Not a vulnerability.** Filing this as a correctness-and-hygiene item, not a security one.
+`## BL-262:` records the measurement that says so, including the four-case fixture showing
+which inputs inject and which do not.
+
+**Related:** `## BL-262:` (the triage that produced this), `## BL-131:` (the ruleset whose
+widened rule would flag the same pattern in a GENERATED project's code),
+`## BL-009:` (UAT-template guardrails).

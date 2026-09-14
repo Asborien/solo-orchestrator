@@ -82,7 +82,16 @@ rules:
         - "*.htm"
     patterns:
       - pattern-either:
-          - pattern-regex: '\.(inner|outer)HTML\s*=\s*[^"''\s]'
+          # `\+?=` — COMPOUND ASSIGNMENT IS THE SAME SINK. `x.innerHTML += u` is
+          # exactly as exploitable as `x.innerHTML = u`, and a bare `=` regex
+          # misses it because `+` is the next non-space character. Measured:
+          # a three-line fixture with one `=` and two `+=` yielded
+          # {"findings":1,"lines":[2]} before this. The js/ts registry pack DOES
+          # catch `+=`, but it cannot reach markup — semgrep's html/vue parsers
+          # do not expose embedded <script> JS as a matchable AST (`## BL-131:`),
+          # which is why this rule is regex at all. So markup + `+=` was covered
+          # by NEITHER pack. `## BL-262:`.
+          - pattern-regex: '\.(inner|outer)HTML\s*\+?=\s*[^"''\s]'
           - pattern-regex: '\bdocument\s*\.\s*write(ln)?\s*\(\s*[^"''\s)]'
           - pattern-regex: '\.insertAdjacentHTML\s*\([^,]*,\s*[^"''\s)]'
           - pattern-regex: '\.html\s*\(\s*[^"''\s)]'
