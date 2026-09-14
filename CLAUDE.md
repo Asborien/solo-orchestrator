@@ -101,16 +101,30 @@ here.
     && chown -R t /home/t/r && su t -c "cd /home/t/r && bash tests/<file>.sh"'
   ```
   Run as a NON-root user or every `chmod 555` fixture silently stays writable.
-  **That container is a bash/git VERSION emulator, not a CI emulator.** It has
-  no `~/.claude-dev-framework`, which tests and `init.sh` hard-require (see
-  "Two repos required" below), and no `python3`, `node` or `gitleaks`. Measured
-  on 2026-09-13: five brownfield suites fail in it identically on a branch tip
-  and its parent — `wp4-driver` 9/15, `wp6-collision-archive` 12/27,
-  `wp9-act-boundaries` 0/1, `wp9b-preflight-approval` 48/38,
-  `wp10a-tool-resolution` 52/2. **Diff a suite against its own parent commit in
-  the SAME image before attributing any container failure to a change**, and do
-  not quote a count from a run that only covered part of the set — a commit
-  message here said "two of them fail" after running two of them.
+  **That container is a bash/git VERSION emulator, not a CI emulator, and the
+  thing it is missing that actually matters is `gitleaks`.** Derive the set,
+  never transcribe it:
+  ```
+  for f in tests/test-brownfield-*.sh; do printf '%-46s ' "$(basename "$f")"; bash "$f" 2>&1 | tail -1; done
+  ```
+  Measured 2026-09-14, bare image, all ten — SIX fail, identically on a branch
+  tip and its parent: `wp4-driver` 9/15, `wp5b-test-debt` 55/2,
+  `wp6-collision-archive` 12/27, `wp9-act-boundaries` 0/1,
+  `wp9b-preflight-approval` 48/38, `wp10a-tool-resolution` 52/2. **Install
+  gitleaks and five of the six go fully green** — `wp9b` drops to 102/1 — with
+  `~/.claude-dev-framework`, `python3` and `node` STILL ABSENT:
+  ```
+  curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+    -o /tmp/g.tgz && tar xzf /tmp/g.tgz -C /tmp gitleaks && install -m0755 /tmp/gitleaks /usr/local/bin/
+  ```
+  So do **not** pin these on the missing framework clone: two drafts of this
+  bullet did, and the measurement above refutes both. The residue after
+  gitleaks is the node/npm intake underrun (`wp9b`), which is a different
+  cause again. **Diff a suite against its own parent commit in the SAME image
+  before attributing any container failure to a change**, and never quote a
+  count from a run that covered part of the set — a commit message here said
+  "two of them fail" after running two, and its correction said "five" after
+  running six.
 - **This Mac's git is configured and an ubuntu-latest runner's is not — and the
   difference is silent.** Xcode ships
   `/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig`

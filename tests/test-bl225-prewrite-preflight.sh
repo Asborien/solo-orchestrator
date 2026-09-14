@@ -285,19 +285,20 @@ _run_resolver() {
     _adopt_rescan_secrets()  { return 0; }
     adopt_ask_choice()       { ADOPT_ANSWER="set it up now"; return 0; }
     adopt_resolve_tools "$root" "" >/dev/null 2>&1
-    printf '%s|%s\n' \
+    printf '%s|%s|%s\n' \
       "$(adopt_has_touched_disk    && echo raised || echo unraised)" \
-      "$(adopt_has_unbounded_write && echo raised || echo unraised)" )
+      "$(adopt_has_unbounded_write && echo raised || echo unraised)" \
+      "$ADOPT_WORK" )
 }
 
 TA="$WORK/t10a"; _adoptee "$TA"
-IFS='|' read -r t10a_c t10a_u <<<"$(_run_resolver "$TA" 'true')"
+IFS='|' read -r t10a_c t10a_u _ <<<"$(_run_resolver "$TA" 'true')"
 chk "T10a: a recipe that ran and changed nothing raises the COARSE marker" "${t10a_c:-x}" "raised"
 chk "T10a: and does NOT raise the unbounded flag — the tree is provably unchanged" \
   "${t10a_u:-x}" "unraised"
 
 TB="$WORK/t10b"; _adoptee "$TB"
-IFS='|' read -r t10b_c t10b_u <<<"$(_run_resolver "$TB" "printf x > '$TB/installer-escaped.txt'")"
+IFS='|' read -r t10b_c t10b_u _ <<<"$(_run_resolver "$TB" "printf x > '$TB/installer-escaped.txt'")"
 chk "T10b: a recipe that writes INTO the adoptee raises the unbounded flag" \
   "${t10b_u:-x}" "raised"
 chk "T10b: and the file really is there, so the flag is evidence and not a guess" \
@@ -308,9 +309,43 @@ chk "T10b: and the file really is there, so the flag is evidence and not a guess
 # and T10b is what notices. This case pins the other direction: a recipe that
 # writes into the WORK dir, where the eval already runs, must NOT raise it.
 TC="$WORK/t10c"; _adoptee "$TC"
-IFS='|' read -r _ t10c_u <<<"$(_run_resolver "$TC" 'printf x > ./relative-write.txt')"
-chk "T10c: a relative write lands in the work dir, not the adoptee — flag stays down" \
+IFS='|' read -r t10c_c t10c_u t10c_w <<<"$(_run_resolver "$TC" 'printf x > ./relative-write.txt')"
+# REACH GUARD AND RECEIPT, because T10c is the SOLE killer of the highest-value
+# mutant in this file — the eval's `cd` drifting back to the adoptee, which is
+# the original measured BL-242/BL-225 escape. A bare negative assertion is
+# green when the recipe never ran at all, and the stub's hand-built JSON is one
+# quote character away from that: a recipe containing `"` or `\` empties
+# `name` and `adopt_resolve_tools` returns before the eval. So assert the arm
+# was reached AND that the write actually landed where this case says it does.
+chk "T10c: the run reached the eval arm (coarse marker raised)" "${t10c_c:-x}" "raised"
+chk "T10c: and the relative write really landed in the work dir" \
+  "$([ -f "${t10c_w:-/nonexistent}/relative-write.txt" ] && echo yes || echo no)" "yes"
+chk "T10c: so a relative write misses the adoptee — flag stays down" \
   "${t10c_u:-x}" "unraised"
+
+# T10d — THE FAIL-CLOSED ARM, which nothing tested. `adopt_tree_fingerprint`
+# returning rc 1 with empty stdout is only worth something because the resolver
+# turns it into a RAISE. Deleting that `-z` half — or making the `||` sentinel
+# non-empty so `-z` can never fire — left the suite at 45/0 and the lints at
+# 16/0, while an installer's real leftover file sat in the tree under "nothing
+# was written". An unreadable subdirectory is the reachable trigger: `find`
+# exits non-zero, the fingerprint refuses to answer, and the refusal must take
+# the pessimistic branch rather than compare two empty strings and call them
+# equal. Root can read anything, so the case says so rather than passing
+# vacuously.
+TD="$WORK/t10d"; _adoptee "$TD"; mkdir -p "$TD/unreadable"
+printf 'x\n' > "$TD/unreadable/x"; chmod 300 "$TD/unreadable"
+if find "$TD" -print >/dev/null 2>&1; then
+  ok "T10d: SKIPPED — this user can read a chmod 300 directory (root?), so the case cannot discriminate"
+else
+  IFS='|' read -r t10d_c t10d_u _ <<<"$(_run_resolver "$TD" "printf x > '$TD/installer-escaped.txt'")"
+  chk "T10d: the run reached the eval arm (coarse marker raised)" "${t10d_c:-x}" "raised"
+  chk "T10d: an UNANSWERABLE fingerprint raises the flag — it does not read as unchanged" \
+    "${t10d_u:-x}" "raised"
+  chk "T10d: and the installer's file really is there, so the pessimism is earned" \
+    "$([ -f "$TD/installer-escaped.txt" ] && echo yes || echo no)" "yes"
+fi
+chmod 700 "$TD/unreadable" 2>/dev/null || true
 
 echo "=== E — the REAL driver, un-stubbed ==="
 
