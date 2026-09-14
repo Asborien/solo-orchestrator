@@ -17420,3 +17420,122 @@ by a finished section with a wrong answer in it; the citation resolves once `fix
 (`load_progress` and what a hand-edited progress file can do to it — option 4 walks straight into
 that defect). BL-281 and BL-283, filed in this batch, are named without `## …:` citations because
 each lands on its own branch.
+
+---
+
+## BL-283: `prompt_yes_no` answers itself "N" under `SOIF_NONINTERACTIVE` / `CI` / a non-TTY without reading stdin, so a harness-driven intake records "ZDR not attested" whatever the canned input says — and the next canned line lands on the exception-reason prompt
+
+**Status:** Open — **ENTRY ONLY. May be by design.** Two readings are set out below; this entry
+recommends consistency and leaves the call to the maintainer, because the behaviour is in a shared
+helper (`prompt_yes_no` in `scripts/lib/helpers-core.sh`) with callers in ten other scripts, and
+"a yes/no must not be answerable by canned input" is a defensible policy for most of them.
+
+**Logged:** 2026-09-14, from a downstream adoption driving `scripts/intake-wizard.sh` from a harness
+with `SOIF_NONINTERACTIVE=1` and canned stdin, as the wizard's own refusal text invites
+(*"set SOIF_NONINTERACTIVE=1 to drive it from a harness"*). Every prompt took its canned line except
+one, and from that prompt on the stream was off by one.
+
+**Numbering:** BL-280 is the highest number on any ref — 56 refs under `refs/heads` and
+`refs/remotes` swept with `git grep -q -w`, zero hits for BL-281/282/283, positive control BL-280 hit
+on `heads/fix/bl280` and `remotes/fork/fix/bl280`. BL-281 and BL-282 are the same batch.
+
+**Mechanism.** The wizard OVERRIDES three prompt helpers with its own — `prompt_input`,
+`prompt_choice`, `prompt_with_suggestions` — each an unconditional `read -rp` carrying a
+`lint-raw-read-prompt: allow` note that says, in as many words, *"intake-wizard.sh defines its own
+prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's
+centralized prompt helper"*. It does NOT override `prompt_yes_no`; it inherits the library one, whose
+first arm is:
+
+    if [ ! -t 0 ] || [ -n "${CI:-}" ] || [ -n "${SOIF_NONINTERACTIVE:-}" ]; then
+      echo -e "${YELLOW}[WARN]${NC} Non-interactive context: skipping prompt (\"$message\") — defaulting to 'N' (caller default '$default_answer' ignored in non-interactive context)." >&2
+      return 1
+    fi
+
+No `read`. The wizard calls `prompt_yes_no` at exactly ONE site (`grep -c` on `ceb450e` → 1):
+Section 5.5's *"Is ZDR (Zero Data Retention) or self-hosted LLM in place for this project? [Y/n]"*,
+with caller default `Y`. On `return 1` the wizard takes the not-attested arm and immediately runs
+`prompt_input` for the documented exception — the wizard's own helper, which DOES read stdin — so
+the canned line the operator wrote for the yes/no is consumed as the exception text.
+
+**Measured, against `main` (`ceb450e`), three canned runs of Section 5 in a throwaway copy of the
+wizard, resumed from a record with sections 1-4 done.** The canned stream answers every 5.1-5.4 prompt,
+then `2` (classification `internal`), then `Y` (meant for the ZDR question), then `pause`.
+
+    A  SOIF_NONINTERACTIVE=1, --resume, canned stdin
+       [INFO] 5.5 Data Classification & ZDR Attestation (Phase 1 invariant — tier-crosscheck-6)
+       [WARN] Non-interactive context: skipping prompt ("Is ZDR (Zero Data Retention) or self-hosted LLM in place for this project? [Y/n]") — defaulting to 'N' (caller default 'Y' ignored in non-interactive context).
+         [OK]   Phase 1 artifacts persisted to process-state.json (classification=internal, zdr_attested=false)
+         [OK] Section 5 saved.
+       input_1_name = 'Alpha'            <- the canned stream lined up everywhere else
+       data_classification = 'internal'
+       zdr_attested = 'false'
+       zdr_attestation_reason = 'Y'      <- the yes/no's line, recorded as the written exception
+       process-state.json phase1_artifacts = {'data_classification': 'internal', 'zdr_attested': False, 'zdr_attestation_reason': 'Y'}
+
+    B  same stdin, NO SOIF_NONINTERACTIVE — `--resume` is dispatched BEFORE the wizard's TTY refusal,
+       so a piped --resume reaches the same arm through `[ ! -t 0 ]` alone:
+       [WARN] Non-interactive context: skipping prompt (…) — defaulting to 'N' …
+       zdr_attested = 'false'
+       zdr_attestation_reason = 'Y'
+
+    C  CONTROL — classification `public`: the yes/no is never asked, the stream stays aligned
+       [INFO]   Public data: ZDR not required (governance-framework.md § VII line 297-299).
+       data_classification = 'public'   zdr_attested = 'false'   zdr_attestation_reason = ''
+
+C shows the measurement discriminates: the one-line shift appears exactly when `prompt_yes_no` is
+reached and nowhere else.
+
+**What it costs, and why "it defaults to N" is not the whole of it.** Two things land in
+`.claude/process-state.json::phase1_artifacts`, which `scripts/check-phase-gate.sh` reads as the
+Phase 1→2 invariant: `zdr_attested: false` — the opposite of what the operator answered — and
+`zdr_attestation_reason: "Y"`. The gate's predicate is *"zdr_attested=true OR a non-empty
+zdr_attestation_reason"* (its own remediation text). A one-character exception is non-empty, so the
+gate CLEARS on a written exception nobody wrote. The safe default produced an unsafe record. And the
+`[WARN]` that explains it goes to stderr in the middle of a sixty-line transcript, where a harness that
+checks the exit code (0) and the `Section 5 saved` line sees nothing.
+
+**Two readings, both stated in full.**
+
+*Reading 1 — correct, by design.* A yes/no in this framework frequently GRANTS something (an
+attestation, a gate override, a destructive confirmation — `check-gate.sh` has 7 call sites,
+`process-checklist.sh` 7, `upgrade-project.sh` 12). Refusing to let canned input answer one is a
+deliberate safety property of the shared helper, the `[WARN]` discloses it, and the arm text says
+outright that the caller's default is ignored. Under this reading the defect is only that the
+wizard's not-attested arm then reads a free-text prompt from the same stream — the shift, not the N.
+
+*Reading 2 — inconsistent.* The wizard is the one script that has explicitly opted INTO canned input:
+it defines `SOIF_NONINTERACTIVE`'s meaning in its own refusal text, overrides every other prompt to
+read unconditionally, and documents that the harness path exists so the intake can be scripted. In
+that script — 122 `save_answer` call sites on `ceb450e` — one prompt silently declines the stream and
+shifts it. An operator cannot
+make a harness-driven intake attest ZDR at all — there is no canned line that does it — and cannot
+keep the following answer aligned without knowing to omit a line for a question that is printed.
+
+**Shapes a fix could take, none proposed and none costed.**
+1. **Leave the helper alone; make the wizard consistent with itself.** A wizard-local `prompt_yes_no`
+   with the same pause-file semantics as its three siblings, reading stdin unconditionally. Touches
+   only `scripts/intake-wizard.sh`; every other caller keeps the safe default. The `lint-raw-read-prompt`
+   allow-note pattern the three siblings use already covers it.
+2. **Leave everything alone; document it.** State beside the `SOIF_NONINTERACTIVE` refusal text that
+   yes/no prompts consume NO canned input and default to N, so a harness author omits the line. The
+   ZDR attestation stays unreachable from a harness, which under Reading 1 is the point.
+3. **Change the shared helper** so `SOIF_NONINTERACTIVE` (explicit opt-in) reads stdin while bare
+   `CI` / non-TTY keeps defaulting to N. Widest blast radius — 50 lines naming `prompt_yes_no` across 11 files on
+   `ceb450e` (`grep -c`; a line count that includes the helper's own definition and
+   `lint-raw-read-prompt.sh`'s patterns, so a ceiling on call sites, not the figure), several of them
+   confirmations that should never be scriptable by accident.
+
+This entry recommends 1 — the inconsistency is the wizard's, so the repair belongs there — but the
+recommendation is exactly the judgement the maintainer owns: whether a harness should be able to
+attest ZDR at all. If the answer is no, option 2 is the honest one and the shift should still be
+closed (the exception prompt should not run on a declined yes/no in non-interactive mode).
+
+**Not measured beyond the above.** No option was prototyped. The other lines naming `prompt_yes_no`
+were counted, not read; which of them a harness might legitimately want to answer is not assessed
+here.
+
+**Related:** `## BL-203:` (a recorded answer and an enforced field that disagree — here the recorded
+answer is itself wrong), `## BL-256:` (a gate clearing on a receipt it did not earn — a one-character
+exception is that receipt), `## BL-266:` (SIBLING BRANCH, PR #390 — the same wizard's other
+non-interactive-adjacent path; the citation resolves once `fix/bl266` lands). BL-281 and BL-282,
+filed in this batch, are named without `## …:` citations because each lands on its own branch.
