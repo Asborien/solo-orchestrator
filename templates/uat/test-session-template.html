@@ -239,6 +239,41 @@ __FEATURE_SECTIONS__
 // ]
 const scenarios = __SCENARIOS_JSON__;
 
+// BL-263-ESCAPE-SCENARIO-TEXT
+// Scenario text is DATA, not markup. (`//` and not `#` because this is JS; the
+// token is still greppable, which is what the citation rule is for.)
+// Before this, `s.title`, `s.steps` and `s.expected` were concatenated straight
+// into innerHTML, so a scenario that merely NAMED markup rendered as markup.
+// That is not hypothetical: this template's own shipped example says "Read the
+// Repair button's disabled attribute", and a title written as
+// "Repair has <button disabled>" silently produced a real element and a mangled
+// scenario with no error. Measured, four cases: "fails when a < b" was fine,
+// while an attribute name, a <script> in steps, and an <img onerror> in a title
+// all injected.
+// NOT a security fix — `__SCENARIOS_JSON__` is substituted at generation time
+// from the operator's own docs, so there is no untrusted input (`## BL-262:`
+// has the measurement). It is a correctness fix, and it closes the trust
+// assumption before some future generator sources scenario text from a
+// dependency name, a failing test's message or an issue title (`## BL-263:`).
+// Escaping first and substituting <br> AFTER is what keeps the line breaks:
+// measured on the shipped example, output is byte-identical — 12/12 element
+// nodes, 6/6 <br>s, same text.
+// `expected` is escaped but NOT given the <br> substitution, because it never
+// had one — its newlines collapsed to spaces before this change and they still
+// do. Adding it would be a rendering change nobody asked for, and this edit is
+// scoped to escaping. That `steps` wraps and `expected` does not is a
+// pre-existing inconsistency, left alone deliberately.
+// `s.id` is deliberately NOT passed through this: it is a number per the
+// scenario schema and it lands in an `onclick="setResult(N,…)"` JS context,
+// where HTML-escaping a quote would corrupt the call rather than protect it.
+function escapeHtml(t) {
+  return String(t)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function renderScenarios() {
   scenarios.forEach(s => {
     const container = document.getElementById('feature' + s.feature);
@@ -246,7 +281,7 @@ function renderScenarios() {
     container.innerHTML += '<div class="scenario" id="scenario-' + s.id + '">' +
       '<div class="scenario-header">' +
         '<span class="scenario-num">' + s.id + '</span>' +
-        '<span class="scenario-title">' + s.title + '</span>' +
+        '<span class="scenario-title">' + escapeHtml(s.title) + '</span>' +
         '<button class="toggle-details" onclick="toggleDetails(' + s.id + ')">details</button>' +
         '<div class="btn-group">' +
           '<button class="btn pass-btn" onclick="setResult(' + s.id + ',\'pass\',this)">Pass</button>' +
@@ -255,8 +290,8 @@ function renderScenarios() {
         '</div>' +
       '</div>' +
       '<div class="scenario-details" id="details-' + s.id + '">' +
-        '<div class="steps"><strong>Steps:</strong><br>' + s.steps.replace(/\n/g,'<br>') + '</div>' +
-        '<div class="steps"><strong>Expected:</strong><br>' + s.expected + '</div>' +
+        '<div class="steps"><strong>Steps:</strong><br>' + escapeHtml(s.steps).replace(/\n/g,'<br>') + '</div>' +
+        '<div class="steps"><strong>Expected:</strong><br>' + escapeHtml(s.expected) + '</div>' +
       '</div>' +
       '<div class="scenario-notes">' +
         '<textarea class="notes-input" id="notes-' + s.id + '" placeholder="Notes — observations, issues, anything worth recording"></textarea>' +

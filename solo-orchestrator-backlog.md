@@ -16385,7 +16385,37 @@ scaffold-closure tracking), `## BL-261:` (found under it).
 
 ## BL-263: the UAT template's trust assumption — "scenario text is HTML-safe" — is load-bearing, unwritten and unenforced
 
-**Status:** Open
+**Status:** Open — fix built 2026-09-14 (`# BL-263-ESCAPE-SCENARIO-TEXT`), stays Open
+pending PR + merge. `lint-backlog-references.sh` requires a PR # or SHA on a Closed entry
+and is right to; close this in the ledger once the PR number exists.
+
+**BUILD NOTE (2026-09-14).** Karl chose option 1. `escapeHtml()` now wraps `s.title`, `s.steps` and
+`s.expected` in `renderScenarios`; `steps` keeps its `<br>` substitution, applied AFTER
+escaping so line breaks survive. Three things were deliberately NOT done, each because it
+is a change nobody asked for:
+- `s.id` is not escaped. It is a number per the scenario schema and it lands in an
+  `onclick="setResult(N,…)"` JS context, where HTML-escaping a quote would corrupt the
+  call rather than protect it.
+- `expected` did not gain a `<br>` substitution. It never had one, its newlines collapsed
+  to spaces before and they still do. That `steps` wraps and `expected` does not is a
+  pre-existing inconsistency, left alone.
+- `addBug`'s sink is untouched — that is `## BL-264:`, a different defect.
+
+Pinned by `tests/test-bl263-uat-scenario-escaping.sh`, three sections and 21 checks, and
+the section split is the interesting part. `S` greps the template; `R` executes the real
+render body in jsdom. **`R` alone was not enough: the gating lane has no jsdom, so it
+skips there, which would have left the PR-blocking checks resting on greps — and a grep
+cannot tell `escapeHtml(s.title)` from a helper that returns its argument.** Measured: an
+identity-function mutant passed every static case. So `E` lifts `escapeHtml` out of the
+shipped template and asserts what it RETURNS, using node alone, which the runner has.
+Without jsdom the suite is 16/0 with 1 loud skip, and the identity mutant takes it to
+11/5.
+
+Every arm is pinned separately because a helper that DELETES a character also "changes"
+the input: a mutant replacing the `"` arm's replacement with `''` passed an earlier draft
+at 14/14. Mutants now killed: escaping removed from all three fields (4/10), identity
+function (10/4 with jsdom, 11/5 without), and each of the `<`, `>`, `&`, `"` arms deleting
+instead of escaping (13/1 each).
 
 **Found:** 2026-09-14, triaging `## BL-262:`.
 
@@ -16403,7 +16433,8 @@ never reaches `innerHTML` either (`exportResults` reads `.value` and builds mark
 The assumption is about PROVENANCE, not about the text, and provenance is the kind of
 thing a later change alters without noticing.
 
-**The decision this entry exists for.** Two options, and the trade is real:
+**The decision this entry exists for — DECIDED, option 1; kept for the reasoning.** Two
+options, and the trade was real:
 
 1. **Escape the three fields** (`textContent` where possible; an `escapeHtml` helper where
    the `<br>` substitution is wanted). Makes the template correct for any input and closes
