@@ -16073,3 +16073,66 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+---
+
+## BL-260: `tests/test-specs-plans-host-aware-quartet.sh` is NONDETERMINISTIC on Linux — four outcomes from six identical runs, in the PR-blocking unit lane
+
+**Status:** Open
+
+**Found:** 2026-09-14, by the seventh adversarial review of `## BL-225:`'s branch, while
+checking a `CLAUDE.md` claim about container flakiness. Not caused by that branch —
+reproduced on `65ba700` and on the rewritten tip alike, and the suite does not read
+anything either commit touched.
+
+**What it is.** Six back-to-back runs of the suite inside ONE unchanged `ubuntu:24.04`
+container — same `docker run`, same image layer, same installed tools, nothing altered
+between runs — produce four distinct outcomes, and the failing element changes run to
+run:
+
+```
+run 1 rc=0   == Total: 8 | Passed: 8 | Failed: 0 ==
+run 2 rc=1   == Total: 8 | Passed: 6 | Failed: 2 ==
+  [FAIL] T8  — missing translation delta tables in plan: Task7.3:no-delta-table
+  [FAIL] T11 — cmd_repair must reference >=3 named steps for resume logic, found 1
+run 3 rc=1   == Total: 8 | Passed: 6 | Failed: 2 ==   (same two)
+run 4 rc=1   == Total: 8 | Passed: 7 | Failed: 1 ==
+  [FAIL] T11 — cmd_repair must reference >=3 named steps for resume logic, found 2
+run 5 rc=1   == Total: 8 | Passed: 6 | Failed: 2 ==
+  [FAIL] T8  — missing translation delta tables in plan: Task7.4:no-delta-table
+  [FAIL] T11 — cmd_repair must still probe git remote as fallback for legacy projects
+run 6 rc=1   == Total: 8 | Passed: 7 | Failed: 1 ==   (T11, found 2)
+```
+
+`T8` names `Task7.3` on one run and `Task7.4` on another; `T11` counts `found 1` then
+`found 2` then fails a different assertion entirely. An independent reviewer's six runs
+gave the same shape with a different distribution. On this Mac the suite is 8/0, six
+times out of six, with and without stdin redirected.
+
+**Why it matters.** The suite is a member of the `tests.yml` unit list (the `tests=(`
+array), it is in no `pin_*` array so it lands in the `rest` shard, and `unit` is a
+REQUIRED status check on `main`. A nondeterministic member of that lane can turn a PR
+red for no reason, and — worse in this repo's terms — can turn one GREEN on a re-run,
+which is how a real regression gets waved through as "just the flake".
+
+**What is NOT established.** The cause. Candidates not tested: a `sort` whose input has
+ties resolved by filesystem order (ext4 vs APFS), a `find`/glob traversal order
+dependence, a counter that races, or a fixture reused across cases. Do not write a
+cause into this entry until it is measured — the `CLAUDE.md` paragraph this was found
+under asserted four causes in four drafts and every one was refuted
+(`# BL-234-FIXTURE-BARE-HEAD` is the closest documented sibling: a host-property
+dependence that is silent locally).
+
+**Reproduce:**
+```
+docker run --rm -v "$PWD:/repo:ro" ubuntu:24.04 bash -c 'apt-get update -qq \
+  && apt-get install -y -qq jq git && useradd -m t && cp -r /repo /home/t/r \
+  && chown -R t /home/t/r && su t -c "cd /home/t/r && for i in 1 2 3 4 5 6; do \
+    bash tests/test-specs-plans-host-aware-quartet.sh </dev/null 2>&1 | tail -1; done"'
+```
+Run as a NON-root user. A single run proves nothing — the suite passes clean on some
+runs; take six.
+
+**Related:** `## BL-225:` (found under it, not caused by it), `## BL-234:` (host-property
+dependence that is silent on this Mac), `## BL-181:` (the unit-lane membership
+surface this suite sits in).
