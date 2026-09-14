@@ -162,6 +162,7 @@ _adopt_scanner_present() {
 adopt_resolve_tools() {
   local root="$1" report="$2"
   local resolver out lang devos name cmd
+  local _bl225_fp_before="" _bl225_fp_after=""
 
   resolver="$(_adopt_resolver_path)"
   adopt_head "Making sure the tools this needs are here"
@@ -319,7 +320,7 @@ adopt_resolve_tools() {
       # ATTEMPTED writes to this project" over a provably unchanged tree.
       # Paths before, paths after; a difference — or an unreadable answer —
       # raises the flag, and nothing clears it afterwards.
-      _bl225_fp_before="$(adopt_tree_fingerprint "${ADOPT_ROOT_ABS:-}")" || _bl225_fp_before=""
+      _bl225_fp_before="$(adopt_tree_fingerprint "${root:-}")" || _bl225_fp_before=""
       # `</dev/null` IS NOT TIDINESS. The eval inherits fd 0 — the same open
       # file description `adopt_stdin_init`'s `exec 3<&0` reads the operator's
       # answers from — so an installer that reads stdin CONSUMES THEM.
@@ -333,7 +334,7 @@ adopt_resolve_tools() {
       if ( cd "$ADOPT_WORK" 2>/dev/null && eval "$cmd" ) </dev/null >/dev/null 2>&1; then   # BL-242-RESOLVER-INSTALL
         :
       fi
-      _bl225_fp_after="$(adopt_tree_fingerprint "${ADOPT_ROOT_ABS:-}")" || _bl225_fp_after=""
+      _bl225_fp_after="$(adopt_tree_fingerprint "${root:-}")" || _bl225_fp_after=""
       if [ -z "$_bl225_fp_before" ] || [ -z "$_bl225_fp_after" ] \
          || [ "$_bl225_fp_before" != "$_bl225_fp_after" ]; then
         adopt_touched_disk_unbounded   # BL-225-TOUCHED-UNBOUNDED

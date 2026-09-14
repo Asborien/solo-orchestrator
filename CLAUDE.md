@@ -101,6 +101,16 @@ here.
     && chown -R t /home/t/r && su t -c "cd /home/t/r && bash tests/<file>.sh"'
   ```
   Run as a NON-root user or every `chmod 555` fixture silently stays writable.
+  **That container is a bash/git VERSION emulator, not a CI emulator.** It has
+  no `~/.claude-dev-framework`, which tests and `init.sh` hard-require (see
+  "Two repos required" below), and no `python3`, `node` or `gitleaks`. Measured
+  on 2026-09-13: five brownfield suites fail in it identically on a branch tip
+  and its parent — `wp4-driver` 9/15, `wp6-collision-archive` 12/27,
+  `wp9-act-boundaries` 0/1, `wp9b-preflight-approval` 48/38,
+  `wp10a-tool-resolution` 52/2. **Diff a suite against its own parent commit in
+  the SAME image before attributing any container failure to a change**, and do
+  not quote a count from a run that only covered part of the set — a commit
+  message here said "two of them fail" after running two of them.
 - **This Mac's git is configured and an ubuntu-latest runner's is not — and the
   difference is silent.** Xcode ships
   `/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig`

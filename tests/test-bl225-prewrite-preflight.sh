@@ -210,8 +210,31 @@ chk "T9a: the fingerprint is stable across two reads of an unchanged tree" \
   "$([ -n "$(_t9 fp0)" ] && [ "$(_t9 fp0)" = "$(_t9 fp1)" ] && echo yes || echo no)" "yes"
 chk "T9b: and CHANGES when a recipe leaves a file behind" \
   "$([ "$(_t9 fp0)" != "$(_t9 fp2)" ] && echo yes || echo no)" "yes"
-chk "T9c: an unreadable tree returns non-zero — callers must read that as 'assume it changed'" \
+chk "T9c: a MISSING tree returns non-zero — callers must read that as 'assume it changed'" \
   "$([ "$(_t9 rc_missing)" != "0" ] && echo yes || echo no)" "yes"
+
+# T9e — FAIL-CLOSED WITHOUT BORROWING IT FROM THE CALLER. A first cut piped
+# `find` straight into `cksum`, so on a tree with an unreadable subdirectory it
+# printed a PARTIAL fingerprint and returned 0 unless the caller happened to
+# have `pipefail` on — measured, `OLD rc=0 out=[2705595490 24]` with pipefail
+# off against `NEW rc=1 out=[]`. A truncated path list that compares equal on
+# both sides is a silent all-clear, and the guarantee must not depend on a
+# shell option set three files away. Root can read anything, so the case
+# states that rather than passing vacuously.
+T9E="$WORK/t9unreadable"; mkdir -p "$T9E/good" "$T9E/bad"
+printf 'a\n' > "$T9E/good/a"; printf 'b\n' > "$T9E/bad/b"; chmod 300 "$T9E/bad"
+if find "$T9E" -print >/dev/null 2>&1; then
+  ok "T9e: SKIPPED — this user can read a chmod 300 directory (root?), so the case cannot discriminate"
+else
+  _t9e="$( set +o pipefail
+    . "$LIB/adopt-core.sh" >/dev/null 2>&1
+    out="$(adopt_tree_fingerprint "$T9E")"; printf '%s|%s' "$?" "$out" )"
+  chk "T9e: an UNREADABLE tree returns non-zero even with pipefail OFF" \
+    "$([ "${_t9e%%|*}" != "0" ] && echo yes || echo no)" "yes"
+  chk "T9e: and prints nothing — a partial fingerprint would compare equal and read as clean" \
+    "${_t9e#*|}" ""
+fi
+chmod 700 "$T9E/bad" 2>/dev/null || true
 
 # T9d — the resolver's gate, structurally: the fingerprint is taken BEFORE the
 # eval and compared AFTER it, and the flag is raised from the comparison rather
@@ -225,6 +248,69 @@ chk "T9d: and it is guarded by a fingerprint comparison, not unconditional" \
 chk "T9d: the BEFORE fingerprint precedes the eval" \
   "$([ "$(grep -n '_bl225_fp_before=' "$TOOLS" | head -1 | cut -d: -f1)" \
      -lt "$(grep -n 'BL-242-RESOLVER-INSTALL' "$TOOLS" | head -1 | cut -d: -f1)" ] && echo yes || echo no)" "yes"
+
+# T10 — THE RESOLVER'S OWN GATE, BEHAVIOURALLY, ON ANY HOST.
+#
+# T9d is three greps, and a grep cannot see a one-token drift that keeps the
+# shape and loses the meaning: renaming the variable that supplies the tree
+# leaves both fingerprints empty, which fails closed, which raises the flag
+# ALWAYS, which puts "ATTEMPTED writes" back on every clean tree — and that
+# mutant passed all 38 checks and all 16 lints. Neither CI lane can catch it
+# either: `E4`/`E5` are the only cases that reach the eval and they reach it
+# only when gitleaks is ABSENT, while `unit-shard` and `full` both install it
+# unconditionally. So this case drives `adopt_resolve_tools` itself with a
+# stubbed matrix — no gitleaks, no network, no container — and reads the flag.
+_run_resolver() {
+  local root="$1" recipe="$2"
+  ( set +e
+    ADOPT_PROJECT_NAME=t
+    . "$LIB/adopt-core.sh"  >/dev/null 2>&1
+    . "$LIB/adopt-tools.sh" >/dev/null 2>&1
+    ADOPT_WORK="$WORK/wr.$$.$RANDOM"; mkdir -p "$ADOPT_WORK"
+    ADOPT_FRAMEWORK_ROOT="$ADOPT_WORK/fw"; mkdir -p "$ADOPT_FRAMEWORK_ROOT"
+    # A resolver that always offers gitleaks in the auto bucket, carrying the
+    # recipe this case wants evaluated.
+    RES="$ADOPT_WORK/resolver.sh"
+    {
+      printf '#!/usr/bin/env bash\n'
+      printf 'cat <<JSON\n'
+      printf '{"already_installed":[],"manual_install":[],"auto_install":[{"name":"gitleaks","category":"Secret Detection","install_cmd":"%s"}]}\n' "$recipe"
+      printf 'JSON\n'
+    } > "$RES" && chmod +x "$RES"
+    _adopt_resolver_path()  { printf '%s' "$RES"; }
+    _adopt_scanner_present() { return 1; }
+    _adopt_tools_language()  { printf 'shell'; }
+    _adopt_tools_devos()     { printf 'macos'; }
+    _adopt_cmd_is_runnable() { return 0; }
+    _adopt_rescan_secrets()  { return 0; }
+    adopt_ask_choice()       { ADOPT_ANSWER="set it up now"; return 0; }
+    adopt_resolve_tools "$root" "" >/dev/null 2>&1
+    printf '%s|%s\n' \
+      "$(adopt_has_touched_disk    && echo raised || echo unraised)" \
+      "$(adopt_has_unbounded_write && echo raised || echo unraised)" )
+}
+
+TA="$WORK/t10a"; _adoptee "$TA"
+IFS='|' read -r t10a_c t10a_u <<<"$(_run_resolver "$TA" 'true')"
+chk "T10a: a recipe that ran and changed nothing raises the COARSE marker" "${t10a_c:-x}" "raised"
+chk "T10a: and does NOT raise the unbounded flag — the tree is provably unchanged" \
+  "${t10a_u:-x}" "unraised"
+
+TB="$WORK/t10b"; _adoptee "$TB"
+IFS='|' read -r t10b_c t10b_u <<<"$(_run_resolver "$TB" "printf x > '$TB/installer-escaped.txt'")"
+chk "T10b: a recipe that writes INTO the adoptee raises the unbounded flag" \
+  "${t10b_u:-x}" "raised"
+chk "T10b: and the file really is there, so the flag is evidence and not a guess" \
+  "$([ -f "$TB/installer-escaped.txt" ] && echo yes || echo no)" "yes"
+
+# T10c — the fingerprint reads THE ADOPTEE. A drift to any other tree (an
+# unset global, the work dir, the cwd) leaves both sides equal or both empty,
+# and T10b is what notices. This case pins the other direction: a recipe that
+# writes into the WORK dir, where the eval already runs, must NOT raise it.
+TC="$WORK/t10c"; _adoptee "$TC"
+IFS='|' read -r _ t10c_u <<<"$(_run_resolver "$TC" 'printf x > ./relative-write.txt')"
+chk "T10c: a relative write lands in the work dir, not the adoptee — flag stays down" \
+  "${t10c_u:-x}" "unraised"
 
 echo "=== E — the REAL driver, un-stubbed ==="
 

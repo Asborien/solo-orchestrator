@@ -9659,12 +9659,22 @@ measured-but-nonexistent mechanism is that defect one level up.
 
 **Residuals.** (0) **PRE-EXISTING, found by this review and not fixed here: an
 adoptee whose `.claude` is a symlink to an absolute path OUTSIDE the repository
-has files written there — SEVEN of them, measured twice, on base and on this
-branch — while the refusal correctly reports the repository itself untouched.**
-Measuring it on base as well as on the tip is what shows the escape predates the
-preflight; what this branch adds is the refusal that now sits
-in front of it, which is why the guard is fail-closed on `check-ignore`'s rc 128
-rather than reading it as clean. Escaping symlinks want their own entry.
+has files written there — SEVEN of them — while the refusal correctly reports the
+repository itself untouched.** The count is the same on base and on this branch,
+which is what shows the escape predates the preflight; what this branch adds is
+the refusal that now sits in front of it, which is why the guard is fail-closed
+on `check-ignore`'s rc 128 rather than reading it as clean. Escaping symlinks
+want their own entry.
+(0b) THE UNBOUNDED FLAG IS PATH-LIST ONLY, so an install recipe that MODIFIES a
+file already in the adoptee — rather than creating one — does not raise it, and
+the refusal then says "nothing was written" over a changed file. Measured
+end-to-end through the real resolver: create -> flag raised; modify-in-place ->
+flag NOT raised, adoptee really changed. It is the same class as the escape the
+flag exists to catch, at strictly lower reachability: the eval runs with `cd
+"$ADOPT_WORK"` (a `mktemp -d` outside the adoptee), so reaching it needs a
+recipe that writes into the adoptee by ABSOLUTE path and only in place.
+Deliberately not fixed here — content hashing the whole tree is residual (a)'s
+cost on every install, and the measured historical escape was created files.
 (a) The rehearsal copies the whole tree, `.git` included, because
 its git behaviour must match the real run's; on a large adoptee that is time and
 disk. Hardlink copies are NOT available — the writers truncate in place, so a
