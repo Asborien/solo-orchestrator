@@ -16172,3 +16172,124 @@ clean on some arm64 runs; take six.
 **Related:** `## BL-225:` (found under it, not caused by it), `## BL-234:` (host-property
 dependence that is silent on this Mac), `## BL-181:` (the unit-lane membership surface this
 suite sits in).
+
+---
+
+## BL-261: the contributor hook's SAST arm is PERMANENTLY INERT in the framework repo — it `--config`s a path only `init.sh` creates, and the hook already knows it is not a scaffolded project
+
+**Status:** Open
+
+**Found:** 2026-09-14, on every commit of `## BL-225:`'s branch. Not new — `## BL-239:`
+already records it in its measured arm-by-arm table (*"SAST (semgrep) | **INERT** |
+… unable to find a config; path .semgrep/soif-dom-sinks.yml does not exist"*). This
+entry is the FIX, which that table did not propose.
+
+**What happens.** `soif_write_precommit_hook` in `scripts/lib/hook-templates.sh` emits,
+under `# BL-194-HOOK-SEMGREP-POLICY`:
+```
+semgrep scan --config=p/owasp-top-ten \
+  --config=r/javascript.browser.security.insecure-document-method \
+  --config=.semgrep/soif-dom-sinks.yml \
+  …
+```
+`.semgrep/` is laid down by `init.sh` for GENERATED projects (grep `soif-dom-sinks` in
+init.sh). It does not exist in the framework checkout and never will. semgrep therefore
+exits **7** — one config invalid, so nothing runs at all — and the hook prints, on every
+single commit:
+```
+[WARN] semgrep could not complete (exit 7) — the tool itself failed.
+  SAST NOT ENFORCED for this commit — the scanner did not run.
+  [ERROR] WARNING: unable to find a config; path `.semgrep/soif-dom-sinks.yml` does not exist
+  running 171 rules from 2 configs  (1 config error)
+```
+The receipt is honest — `# BL-112-SAST-NOTRUN` doing exactly its job, refusing to record a
+clean result it did not earn. The defect is that the condition is permanent and nothing
+acts on it, so the loudest line in every commit is one the operator is trained to ignore.
+
+**"There is nothing to scan here" is FALSE, and that was this entry's first draft.**
+Measured: the tracked tree holds **6** `.html` files under `templates/uat/`, and the
+shipped ruleset's markup rule scopes `paths: include: *.vue, *.html, *.htm`. So the arm
+has real targets in this repo. The other two configs are live too — `p/owasp-top-ten`
+alone resolves and returns rc 0 here.
+
+**What the fix is NOT.** Not "skip the SAST arm in the framework repo". The hook already
+detects the framework root for the BL-006 arm (`# BL-087-MOTHERSHIP-PASS`, matched on
+`init.sh` + its banner + `templates/generated/`), so skipping would be a two-line change —
+and it would turn a loud non-scan into a silent one over 6 real targets. That is the wrong
+direction for a repo whose whole doctrine is `# BL-182-NO-UNEARNED-RECEIPT`.
+
+**Fix shape.** Make the arm RUN here. Either point the framework repo's own hook at
+`templates/semgrep/soif-dom-sinks.yml` (the source of the file `init.sh` copies), or lay a
+`.semgrep/` into the framework checkout the way `install-contributor-hooks.sh` lays the
+hook. Prefer the first: one source of truth, and `## BL-175:` already tracks that this
+ruleset sits outside every mechanical scaffold-closure surface — a second copy would widen
+that. Whichever is chosen, the receipt must keep distinguishing "scanned clean" from "did
+not run"; do not let this become a green that means nothing.
+
+**Note on CI.** `.github/workflows/tests.yml` installs semgrep in every `unit-shard` leg,
+but to run the live SAST **test cases** (`# BL-190`), not to scan this repo's source.
+So this repo currently has no SAST of its own on any surface. Whether it needs one is a
+separate question from whether the arm should stop lying about having tried.
+
+**Related:** `## BL-239:` (measured the inertness, did not fix it), `## BL-131:` (ships the
+ruleset), `## BL-175:` (the ruleset is outside scaffold-closure tracking), `## BL-112:`
+(the no-unearned-receipt arm that is behaving correctly here), `## BL-262:` (a coverage
+gap in the same ruleset, found while measuring this one).
+
+---
+
+## BL-262: the shipped DOM-sink markup rule misses COMPOUND ASSIGNMENT (`innerHTML +=`), and there is a live instance in a shipped template
+
+**Status:** Open
+
+**Found:** 2026-09-14, while measuring `## BL-261:` — specifically while disproving the
+claim that the framework repo has nothing for the ruleset to scan.
+
+**The gap.** `templates/semgrep/soif-dom-sinks.yml`'s markup rule matches with:
+```
+- pattern-regex: '\.(inner|outer)HTML\s*=\s*[^"''\s]'
+```
+`\s*=\s*` requires the `=` to be the next non-space character. `innerHTML += x` puts a `+`
+there, so it does not match. Measured on a three-line fixture:
+```
+<script>
+  el.innerHTML = userInput;     <- line 2
+  el2.innerHTML += userInput;   <- line 3
+  el3.outerHTML += userInput;   <- line 4
+</script>
+```
+```
+a.html   {"findings":1,"lines":[2]}
+```
+Only the plain assignment is caught. Both compound assignments are missed, and
+`x.innerHTML += untrusted` is exactly as exploitable as `x.innerHTML = untrusted`.
+
+**Why the other ruleset does not cover it.** The js/ts registry pack DOES catch `+=` —
+same fixture as `.js`: `{"findings":2}`. But it cannot reach markup: `## BL-131:` records
+the empirical finding that semgrep's `vue`/`html` parsers do not expose embedded `<script>`
+JS as a matchable AST, which is why the markup rule is `generic` + regex in the first
+place. Confirmed here — the soif ruleset returns `{"findings":0}` on the `.js` fixture,
+deliberately, so the two packs do not overlap. **So markup files with compound assignment
+are covered by NEITHER pack.**
+
+**A live instance, in a file this repo ships:**
+```
+$ grep -nE 'innerHTML' templates/uat/test-session-template.html
+246:    container.innerHTML += '<div class="scenario" id="scenario-' + s.id + '">' +
+299:  document.getElementById('bugs-list').innerHTML +=
+```
+Both are string concatenation into `innerHTML +=`. Triage before fixing: this is a UAT
+session template rendered from a populated fixture, so reachability depends on whether the
+concatenated values can carry operator- or tester-supplied text. Do not assume it is inert
+and do not assume it is exploitable — `## BL-261:` exists because a first draft of ITS
+entry assumed the safe answer without measuring.
+
+**Fix shape.** Widen the regex to admit compound assignment — `\s*\+?=\s*` for the
+inner/outer arm — and add a mutation case to `tests/test-bl131-domsink-rules.sh` pinning
+that `+=` is caught in `.html`, since that suite's existing cases all use plain `=`. Keep
+the `[^"'\s]` guard that excludes literal-only assignments, or the false-positive rate on
+template files will make the arm unusable. Then re-triage the two template hits.
+
+**Related:** `## BL-131:` (ships the rule and records the html-AST finding),
+`## BL-118:` (the registry pack that owns js/ts), `## BL-175:` (this ruleset is outside
+scaffold-closure tracking), `## BL-261:` (found under it).
