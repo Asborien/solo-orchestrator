@@ -101,6 +101,103 @@ here.
     && chown -R t /home/t/r && su t -c "cd /home/t/r && bash tests/<file>.sh"'
   ```
   Run as a NON-root user or every `chmod 555` fixture silently stays writable.
+- **THE CONTAINER RECIPE ABOVE IS A bash/git VERSION EMULATOR AND NOT A CI
+  EMULATOR.** It
+  diverges from both this Mac and the runner far beyond anything one missing
+  tool explains, so **a red suite in it is not evidence of a defect until you
+  diff it against the same suite at the parent commit IN THE SAME IMAGE.** That
+  diff is the whole technique; everything below is scale and traps.
+
+  **DO NOT TRUST A CAUSE HERE — five drafts of this bullet asserted one and all
+  five were refuted**: twice the missing `~/.claude-dev-framework`, once a
+  node/npm underrun, once "the instability is the image, not the suite", once
+  "the suite is nondeterministic on Linux". State what you measured; leave the
+  rest unexplained. Naming a cause here has a perfect record of being wrong —
+  and **if you refute one, increment this counter in the same commit**: the
+  draft that refuted the fifth updated `## BL-260:` to five and left this line
+  saying four.
+
+  Scale, measured 2026-09-14 with gitleaks installed and `~/.claude-dev-framework`,
+  `python3` and `node` all still ABSENT: **roughly 20 of the 191 suites in the
+  `tests.yml` unit list fail in that image** — three runs gave 22, 20 and 19,
+  and the 22 was over a list with two wrong members (above), so treat even the
+  spread as soft. Every one of them passes on this Mac. So **never generalise from the ten
+  `tests/test-brownfield-*.sh` files** — 19 of 20 are outside them, and 10 of
+  the 11 `test-upgrade-*` suites are in. **Re-derive; never quote this list or
+  its count.** Derive it ANCHORED and SLICED, and do not improvise the spelling
+  — two drafts of this recipe were wrong in two different ways, and both
+  produced a plausible-looking list:
+  ```
+  S=$(awk '/^[[:space:]]*tests=\(/{print NR; exit}' .github/workflows/tests.yml)
+  E=$(awk -v s="$S" 'NR>s && /^[[:space:]]*\)[[:space:]]*$/{print NR; exit}' .github/workflows/tests.yml)
+  sed -n "$((S+1)),$((E-1))p" .github/workflows/tests.yml | sed 's/#.*//' \
+    | sed 's/[[:space:]]//g' | grep '^tests/' > list.txt      # 191 entries, verified
+  while IFS= read -r t; do bash "$t" </dev/null >/dev/null 2>&1 || echo "RED $t"; done < list.txt
+  ```
+  `tr -d '[:space:]'` instead of the `sed` **deletes the newlines too** and
+  yields ONE line — caught only because `wc -l` said 1. And scoping with the
+  unanchored `/tests=\(/` the repo's own lint uses, then `grep -o
+  'tests/test-[a-z0-9._-]*\.sh'`, gets the membership wrong in BOTH
+  directions: it pulls in `tests/test-bl180-interactive-scaffold-pty.sh` from a
+  COMMENT at line ~1098, half a file below the array that ends at ~541 (the
+  BL-181 residual, one section down), and it drops the real member
+  `tests/host-drivers/error-translate.test.sh` because that path does not match
+  `tests/test-*`. Both lists were 191 long. Length is not membership.
+  The `sed 's/#.*//'` is the third failure mode, latent rather than measured:
+  whitespace-stripping alone turns a TRAILING comment into `tests/test-foo.sh#pinned`,
+  which still matches `^tests/` and reaches `bash` as a spurious RED. The array
+  carries no comments today — strip them anyway.
+
+  **REDIRECT STDIN OR THE LOOP LIES.** `bash "$t"` inherits the `while read`
+  loop's fd 0, so the first stdin-reading suite EATS THE REST OF THE LIST. Not
+  theoretical: without `</dev/null` the loop above silently reports
+  `TOTAL=2` over a 191-entry list, on this Mac and in the container, and the
+  drainer is `tests/test-bl032-gitlab-free-approvals-attestation.sh`'s fake
+  `glab` stub (`[ ! -t 0 ] && cat >/dev/null`). `TOTAL=2` is absurd enough to
+  catch; a plausible wrong number would not have been.
+
+  **THE MEMBERSHIP OF THAT SET IS UNSTABLE — DO NOT READ A ONE-RUN LIST AS A
+  PROPERTY OF ANYTHING.** Six back-to-back runs of
+  `tests/test-specs-plans-host-aware-quartet.sh` inside ONE unchanged container
+  gave four distinct outcomes — 8/0, 7/1, and two DIFFERENT 6/2s — with the
+  failing element changing run to run (`T8` naming `Task7.3` then `Task7.4`;
+  `T11` counting `found 1`, then `found 2`, then failing a different assertion
+  entirely). Repeated with a fresh `cp -r` of the tree per run, same spread.
+  **Every measurement of this is `linux/arm64`, which is NOT the lane's
+  architecture**: on `--platform linux/amd64`, same image, same recipe, the
+  suite is 12/12 clean, and on this Mac 6/6. `ubuntu-latest` is x86_64, so
+  there is no evidence of a PR-lane risk here. Two drafts of this paragraph
+  named a cause — first "the image, not the suite", then "the suite is
+  nondeterministic on Linux" — and both were refuted. What is measured is that
+  the ARM container returns different answers for the same deterministic
+  pipeline over byte-identical input (`T8` and `T11` are pure `grep`/`awk` over
+  static files; no `sort`, `find`, glob, backgrounding, `RANDOM` or clock, and
+  the tree checksums identical before and after every run). Recorded as
+  `## BL-260:` with the cause explicitly unisolated.
+
+  gitleaks is the single biggest lever on the brownfield ten — bare image six
+  fail (`wp4-driver` 9/15, `wp5b-test-debt` 55/2, `wp6-collision-archive`
+  12/27, `wp9-act-boundaries` 0/1, `wp9b-preflight-approval` 48/38,
+  `wp10a-tool-resolution` 52/2); install it and five go fully green. The
+  residue is `wp9b`'s `AM2` at 102/1, where the gate blocks on `[WARN] Phase
+  0→1: … gate date not recorded in phase-state.json`. **Cause not isolated —
+  and NOT node/npm**, measured with `node`, `npm` and `python3` all installed.
+  Add `curl ca-certificates` to the apt line; `ubuntu:24.04` has neither, and
+  the fetch below exits 127 without them. Runs as root, BEFORE `su t`. Note
+  `-f`: without it curl writes a 9-byte `Not Found` body and the failure
+  surfaces as `gzip: stdin: not in gzip format` two commands later.
+  ```
+  A=x64; [ "$(uname -m)" = aarch64 ] && A=arm64        # the x64 asset needs emulation on Apple Silicon
+  curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_${A}.tar.gz" \
+    -o /tmp/g.tgz && tar xzf /tmp/g.tgz -C /tmp gitleaks && install -m0755 /tmp/gitleaks /usr/local/bin/
+  ```
+  **UNVERIFIED BY CHECKSUM, DELIBERATELY AND ONLY HERE.** `tests.yml`'s
+  `Install gitleaks (pinned + checksum-verified)` step pins
+  `GITLEAKS_SHA256` and calls `scripts/ci-verify-sha256.sh` — but that pin is
+  for the **x64** asset and there is no arm64 pin in the repo, so verifying
+  would break the arch selection above. This recipe is a local diagnostic that
+  never gates anything; **do not copy it into anything that does** without
+  pinning both digests.
 - **This Mac's git is configured and an ubuntu-latest runner's is not — and the
   difference is silent.** Xcode ships
   `/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig`

@@ -162,6 +162,7 @@ _adopt_scanner_present() {
 adopt_resolve_tools() {
   local root="$1" report="$2"
   local resolver out lang devos name cmd
+  local _bl225_fp_before="" _bl225_fp_after=""
 
   resolver="$(_adopt_resolver_path)"
   adopt_head "Making sure the tools this needs are here"
@@ -308,6 +309,18 @@ adopt_resolve_tools() {
       # the driver cannot know what an arbitrary recipe writes — the honest
       # position is that from here on, something may have been.
       adopt_touched_disk   # BL-225-TOUCHED-DISK
+      # AND FINGERPRINT THE ADOPTEE ACROSS THE EVAL, because "an arbitrary
+      # recipe ran" and "the operator's repository changed" are different
+      # facts and the refusal is only allowed to assert the second. Raising
+      # the unbounded flag on the ATTEMPT alone is what the coarse marker
+      # already does, and it is exactly the over-claim `# BL-225-REFUSE-HONEST`
+      # exists to remove: measured, on a host with neither node nor npm the
+      # resolver evals an install recipe that leaves the adoptee byte-identical,
+      # and an attempt-based flag then told the operator adoption "had already
+      # ATTEMPTED writes to this project" over a provably unchanged tree.
+      # Paths before, paths after; a difference — or an unreadable answer —
+      # raises the flag, and nothing clears it afterwards.
+      _bl225_fp_before="$(adopt_tree_fingerprint "${root:-}")" || _bl225_fp_before=""
       # `</dev/null` IS NOT TIDINESS. The eval inherits fd 0 — the same open
       # file description `adopt_stdin_init`'s `exec 3<&0` reads the operator's
       # answers from — so an installer that reads stdin CONSUMES THEM.
@@ -320,6 +333,11 @@ adopt_resolve_tools() {
       # of hanging on a prompt this run has redirected to /dev/null.
       if ( cd "$ADOPT_WORK" 2>/dev/null && eval "$cmd" ) </dev/null >/dev/null 2>&1; then   # BL-242-RESOLVER-INSTALL
         :
+      fi
+      _bl225_fp_after="$(adopt_tree_fingerprint "${root:-}")" || _bl225_fp_after=""
+      if [ -z "$_bl225_fp_before" ] || [ -z "$_bl225_fp_after" ] \
+         || [ "$_bl225_fp_before" != "$_bl225_fp_after" ]; then
+        adopt_touched_disk_unbounded   # BL-225-TOUCHED-UNBOUNDED
       fi
       # VERIFIED, NOT ASSERTED (`# BL-242-RESOLVER-VERIFY`). The exit status of
       # an install recipe is not evidence the tool is there.

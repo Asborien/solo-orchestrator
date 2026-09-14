@@ -68,6 +68,14 @@ _adopt_state_order() {
 # row unless the ORDER ITSELF is wrong, which is exactly what it is here to
 # detect.
 _adopt_halt_requested() {
+  # NEVER during the pre-write rehearsal. `SOIF_ADOPT_HALT_AFTER` is a test seam
+  # for the REAL run — it makes the driver stop after a named stage so a suite
+  # can inspect a partial adoption. The rehearsal replays the same write phase,
+  # so without this guard the seam fires there first: the rehearsal "fails", the
+  # preflight refuses, and the real adoption never runs at all. Measured — that
+  # is 12 failures across four adoption suites, including a `rc=127` whose real
+  # cause was the adopted project's own gate script never being installed.
+  [ "${ADOPT_REHEARSING:-0}" = "1" ] && return 1   # BL-225-REHEARSAL-NO-HALT
   [ "${SOIF_ADOPT_HALT_AFTER:-}" = "$1" ]
 }
 
@@ -1038,6 +1046,240 @@ adopt_obtain_report() {
   return 0
 }
 
+# ── `## BL-225:` — ONE WRITE PHASE, RUN TWICE ───────────────────────────────
+#
+# `_adopt_write_phase` is the ONLY place the adoptee's files are written, and it
+# is called twice: once by `adopt_prewrite_preflight` against a COPY of the
+# tree, and once for real. That is the whole anti-drift argument. The planned
+# path set is not a maintained list that can fall behind the writers — it IS
+# what the writers produced, on a rehearsal. A new writer added to this function
+# is in the preflight the moment it is in the real run, with no second edit.
+#
+# Everything after this function — staging, the commit, the hooks — is git work,
+# not file writing, and is already guarded by `# BL-225-STAGE-PREFLIGHT`.
+_adopt_write_phase() {
+  local root="$1" work="$2" report="$3" stage
+
+  # `.claude/test-debt.json` is the FIRST thing written into the adoptee, and a
+  # first cut of the pre-write preflight sat BELOW it — so the preflight printed
+  # "nothing was written to your project" while its own derived count said one
+  # file had been. Measured on `## BL-242:`'s S5 fixture, and it is the exact
+  # defect class this entry exists to close, in the guard written to close it.
+  # It is in the phase so the rehearsal covers it and the preflight can precede
+  # every writer.
+  adopt_test_debt_record "$root" || return 1
+
+  # Deliberately FIRST among the framework writers: an archive taken after a
+  # writer has run is a copy of the framework's file, not of theirs.
+  adopt_archive_write "$root" "$work" || return 1
+
+  adopt_install_framework "$root" || return 1
+  if _adopt_halt_requested install; then
+    adopt_refuse "halted after the framework install, before any state was written (SOIF_ADOPT_HALT_AFTER)"
+    return 1
+  fi
+
+  while IFS= read -r stage; do
+    [ -n "$stage" ] || continue
+    case "$stage" in
+      approval_log) adopt_write_approval_log "$root" || return 1 ;;   # BL-242-APPROVAL-LOG-WRITE
+      phase_state) adopt_write_phase_state "$root" || return 1 ;;
+      intake)      adopt_write_intake "$root" "$report" || return 1 ;;
+      manifest)    adopt_write_manifest "$root" "$report" || return 1 ;;
+      *)           adopt_refuse "unknown state stage '$stage'"; return 1 ;;
+    esac
+    if _adopt_halt_requested "$stage"; then
+      adopt_refuse "halted after the '$stage' stage (SOIF_ADOPT_HALT_AFTER)"
+      return 1
+    fi
+  done <<STATE_ORDER
+$(_adopt_state_order)
+STATE_ORDER
+  return 0
+}
+
+# adopt_prewrite_preflight ROOT REPORT — refuse BEFORE the first write if any
+# path the adoption is about to write is refused by the adoptee's ignore rules.
+#
+# THE HALF THIS CLOSES. `# BL-225-STAGE-PREFLIGHT` protects the INDEX: it asks
+# `git add --dry-run` before staging and stops whole. By the time it runs, ~78
+# files are already on disk. This runs before the first one.
+#
+# WHY A COPY AND NOT A NO-WRITE FLAG. A flag on each writer is a second thing
+# that can be forgotten; a writer that ignored it would write during the
+# "rehearsal". The copy needs no per-writer cooperation: the rehearsal is the
+# real write phase, running for real, somewhere else. It also cannot be
+# redirected by destination alone — `adopt_archive_write` copies FROM the
+# adoptee into an archive inside it, so a scratch destination with the real
+# source would rehearse nothing. The whole tree is copied, `.git` included,
+# because the rehearsal's git behaviour must match the real one's.
+#
+# THE ORACLE IS NOT THE STAGING HALF'S. That half asks `git add --dry-run`,
+# which needs the files to EXIST; here they do not yet. What replaces it is TWO
+# questions, not one — see the block at the loop below, which carries the
+# measurement. An earlier version of this header claimed a single
+# `check-ignore --no-index` agreed with `git add` "in all eight" shapes; it does
+# not, and asking it alone over-refused working projects. The header is kept
+# short deliberately: one description of this oracle, in one place.
+adopt_prewrite_preflight() {
+  local root="$1" report="$2" copy work saved rc=0 planned ignored=""
+  local _bl225_landed=0 _bl225_p=""
+  copy="$ADOPT_WORK/rehearsal/tree"
+  work="$ADOPT_WORK/rehearsal/work"
+  mkdir -p "$ADOPT_WORK/rehearsal" "$work" 2>/dev/null || {
+    adopt_refuse "could not create the rehearsal directory"; return 1; }
+
+  # `cp -a` keeps modes and symlinks; the trailing `/.` copies the CONTENTS so
+  # the copy is the tree rather than a directory holding it.
+  cp -a "$root/." "$copy" 2>/dev/null || {
+    adopt_refuse "could not copy the project for the pre-write rehearsal (disk space?)"
+    return 1; }
+
+  # The ledger is global. Point it at the rehearsal's own file and restore it
+  # afterwards, or the real run would start with the rehearsal's paths already
+  # recorded and stage files it never wrote.
+  saved="$ADOPT_WRITTEN_LEDGER"
+  adopt_ledger_init "$work/written" || { adopt_refuse "could not open the rehearsal ledger"; return 1; }
+
+  # The touched-disk marker is a FILE at $ADOPT_WORK/touched and it is GLOBAL,
+  # so the rehearsal's writers raise it for the copy and `adopt_refuse` then
+  # tells the operator adoption "had already ATTEMPTED writes to this project".
+  # Measured on `## BL-242:`'s S5 fixture. Remember whether it was already up
+  # and put it back exactly as found — the rehearsal must leave no trace in the
+  # facts a refusal derives from.
+  local _touched_before=0
+  adopt_has_touched_disk && _touched_before=1
+  ADOPT_REHEARSING=1
+  # THE REHEARSAL'S OWN DIAGNOSTIC IS OTHERWISE UNREACHABLE. Its output is
+  # discarded so the operator sees one adoption, not two — but then a refusal
+  # can only say "the rehearsal did not complete (rc=N)", which is exactly the
+  # unhelpful shape `# BL-225-REFUSE-HONEST` exists to prevent. `SOIF_REHEARSAL_ERR`
+  # names a file to keep it in, and finding `## BL-242:`'s S5 cause needed it:
+  # the reversed state order fails at `manifest` because that writer hashes the
+  # kept scan report, which `intake` writes earlier in the correct order.
+  _adopt_write_phase "$copy" "$work" "$report" >/dev/null 2>"${SOIF_REHEARSAL_ERR:-/dev/null}" || rc=$?
+  ADOPT_REHEARSING=0
+  if [ "$_touched_before" -eq 0 ] && [ -n "${ADOPT_WORK:-}" ]; then
+    rm -f "$ADOPT_WORK/touched" 2>/dev/null || true   # BL-225-REHEARSAL-NO-TRACE
+  fi
+  planned="$(adopt_written_paths)"
+
+  ADOPT_WRITTEN_LEDGER="$saved"
+  rm -rf "$ADOPT_WORK/rehearsal" 2>/dev/null || true
+
+  if [ "$rc" -ne 0 ]; then
+    adopt_refuse "the pre-write rehearsal did not complete (rc=$rc) — nothing was written to your project"
+    return 1
+  fi
+  if [ -z "$planned" ]; then
+    adopt_refuse "the pre-write rehearsal recorded no files — refusing rather than guessing"
+    return 1
+  fi
+
+  # THE ORACLE, AND WHY IT IS TWO QUESTIONS AND NOT ONE. `git add` refuses an
+  # ignored path — but for a path already TRACKED it refuses only when an
+  # ANCESTOR DIRECTORY is ignored, not when a file or glob rule covers it.
+  # Measured across four rule shapes on a tracked path (`git add` rc):
+  #     .claude/   -> 1     .claude/*  -> 0     *.json -> 0     exact path -> 0
+  # A first cut asked `check-ignore --no-index` for every path, which says
+  # IGNORED in all four and so REFUSED THREE PROJECTS THAT WORK TODAY — any
+  # adoptee that tracks a file the adoption rewrites and has a non-directory
+  # rule covering it. Two measurements of the same thing had been generalised
+  # from one rule shape each, in opposite directions; twelve shapes settled it.
+  # `--no-index` stays for the untracked half: without it git reports nothing
+  # for a tracked path, the index-aware false-clean that defeated the first fix
+  # of `# BL-225-STAGE-PREFLIGHT`.
+  #
+  # FAIL CLOSED. `check-ignore` exits 128 on a pathspec beyond a symbolic link,
+  # and treating that as "not ignored" would be a fail-OPEN guard — the shape
+  # this entry exists to remove. Anything but 0 or 1 refuses.
+  while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    local _ci=0 _dir
+    if ( cd "$root" && git ls-files --error-unmatch -- "$rel" ) >/dev/null 2>&1; then
+      _dir="${rel%/*}"
+      [ "$_dir" = "$rel" ] && continue        # top-level tracked file: git add accepts it
+      ( cd "$root" && git check-ignore --no-index -q -- "$_dir" ) 2>/dev/null || _ci=$?
+    else
+      ( cd "$root" && git check-ignore --no-index -q -- "$rel" ) 2>/dev/null || _ci=$?
+    fi
+    case "$_ci" in
+      0) ignored="$ignored
+$rel" ;;
+      1) : ;;                                  # not ignored
+      *) adopt_refuse "cannot tell whether '$rel' is covered by your ignore rules (git check-ignore exited $_ci) — refusing rather than guessing"   # BL-225-ORACLE-FAIL-CLOSED
+         return 1 ;;
+    esac
+  done <<PLANNED
+$planned
+PLANNED
+
+  if [ -n "$ignored" ]; then
+    # DERIVE THE BLAST RADIUS FROM THE TREE, NOT FROM THE MARKER — BUT ONLY
+    # WHERE THE TREE CAN ANSWER. The touched-disk marker records an ATTEMPT and
+    # is raised BEFORE each write, so an arm that attempted one and left nothing
+    # still raises it — the tool resolver does exactly that on a host missing
+    # node/npm. The refusal then told the operator adoption "had already
+    # ATTEMPTED writes to this project" over a provably clean tree: measured in
+    # `ubuntu:24.04`, 0 files under `.claude/`, and the message still claiming
+    # otherwise. That is the false-claim class `# BL-225-REFUSE-HONEST` exists
+    # to remove, and it was invisible on macOS because the resolver's arm is not
+    # taken when the tools are present.
+    #
+    # WHY THE PLANNED SET AND NOT `git status --porcelain --ignored`. Not
+    # because git mis-reports an empty directory — it does not; measured on
+    # macOS git 2.50.1 and ubuntu git 2.43.0, an empty ignored `.claude/`
+    # yields ZERO rows under the default `--ignored=traditional` (only
+    # `--ignored=matching` prints `!! .claude/`, and that is the directory
+    # matching the pattern, not a file). An earlier draft of this comment
+    # claimed the opposite and was refuted on both hosts; do not reinstate it.
+    # The real reason is that a working project's OWN ignored content answers
+    # the question wrongly: on a fixture ignoring `node_modules/ .env dist/`,
+    # `git status --porcelain --ignored` returns 3 rows on both hosts before
+    # adoption touches anything at all. git answers "is this tree dirty",
+    # which is not the question. The planned set is exactly what THIS adoption
+    # would have written, so if not one of those paths exists, this adoption
+    # wrote none of them. A planned path the OPERATOR already had counts as
+    # existing, which only makes this arm more conservative: it keeps the
+    # marker and says less.
+    #
+    # AND IT IS AN INTERSECTION, NOT A REPLACEMENT. The planned set bounds the
+    # driver's own writers; it does not bound the tool resolver's `eval`, whose
+    # recipe may write anything anywhere. Clearing on the planned set alone
+    # would let the refusal say "nothing was written" over an installer's
+    # leftover file — the exact sentence adopt-tools.sh records as measured
+    # history. So the clear requires BOTH: no planned path landed AND
+    # `# BL-225-TOUCHED-UNBOUNDED` unraised. That flag is evidence-based, not
+    # attempt-based — the resolver fingerprints the adoptee's path list either
+    # side of the eval and raises it only on a real difference, or when it
+    # could not read the tree at all. So a recipe that ran and changed nothing
+    # does not cost the operator an honest message, and one that changed
+    # something cannot be argued away by a derivation that never saw it.
+    _bl225_landed=0
+    while IFS= read -r _bl225_p; do
+      [ -n "$_bl225_p" ] || continue
+      [ -e "$root/$_bl225_p" ] && { _bl225_landed=1; break; }
+    done <<LANDED
+$planned
+LANDED
+    if [ "$_bl225_landed" -eq 0 ] && ! adopt_has_unbounded_write \
+       && [ -n "${ADOPT_WORK:-}" ]; then
+      rm -f "$ADOPT_WORK/touched" 2>/dev/null || true   # BL-225-REFUSE-DERIVED
+    fi
+    # The paths go IN the refusal, not after it in `adopt_note`s: notes print on
+    # STDOUT and refusals on STDERR, so a reader piping stderr to a log would
+    # get "some of your files are refused" with no list of which.
+    # ROWS, not words: `wc -w` counted "my file.txt" as two refused files.
+    adopt_refuse "your ignore rules refuse $(printf '%s' "$ignored" | grep -c .) of the files this adoption must write, so it would leave the project half-installed. NOTHING WAS WRITTEN. The refused path(s):$ignored"   # BL-225-PREWRITE-REFUSE
+    adopt_note "These are the files the adoption IS — skipping one produces a broken install,"
+    adopt_note "not a disclosed omission. Un-ignore them (or narrow the rule) and run this again."
+    adopt_note "Note that git cannot re-include a file under an ignored DIRECTORY, so a"
+    adopt_note "'!.claude/manifest.json' under '.claude/' does not help — narrow the rule itself."
+    return 1
+  fi
+  return 0
+}
+
 adopt_main() {
   local root="$1" given_report="$2"
   local report stage rc=0
@@ -1121,8 +1363,6 @@ adopt_main() {
   # A REFUSAL HERE ABORTS THE ADOPTION, and that is the safe direction: this is
   # before any state write, so a run that cannot measure the debt leaves the
   # project exactly as it found it rather than adopting it with no baseline.
-  adopt_test_debt_record "$root" || return 1
-
   # §7 — THE COLLISION ARCHIVE, BEFORE ANY FRAMEWORK WRITER RUNS.
   #
   # It has to precede adopt_install_framework and adopt_install_hooks for one
@@ -1131,30 +1371,9 @@ adopt_main() {
   # framework's own output back under the operator's name. The commit-msg hook
   # is the live case — adopt_install_hooks appends a marked block to it — so
   # the archived copy is deliberately the PRE-composition one.
-  adopt_archive_write "$root" "$ADOPT_WORK" || return 1
+  adopt_prewrite_preflight "$root" "$report" || return 1   # BL-225-PREWRITE-CALL
 
-  adopt_install_framework "$root" || return 1
-  if _adopt_halt_requested install; then
-    adopt_refuse "halted after the framework install, before any state was written (SOIF_ADOPT_HALT_AFTER)"
-    return 1
-  fi
-
-  while IFS= read -r stage; do
-    [ -n "$stage" ] || continue
-    case "$stage" in
-      approval_log) adopt_write_approval_log "$root" || return 1 ;;   # BL-242-APPROVAL-LOG-WRITE
-      phase_state) adopt_write_phase_state "$root" || return 1 ;;
-      intake)      adopt_write_intake "$root" "$report" || return 1 ;;
-      manifest)    adopt_write_manifest "$root" "$report" || return 1 ;;
-      *)           adopt_refuse "unknown state stage '$stage'"; return 1 ;;
-    esac
-    if _adopt_halt_requested "$stage"; then
-      adopt_refuse "halted after the '$stage' stage (SOIF_ADOPT_HALT_AFTER)"
-      return 1
-    fi
-  done <<STATE_ORDER
-$(_adopt_state_order)
-STATE_ORDER
+  _adopt_write_phase "$root" "$ADOPT_WORK" "$report" || return 1   # BL-225-WRITE-PHASE-REAL
 
   adopt_stub_adoption_record
   adopt_stage_and_commit "$root" || return 1

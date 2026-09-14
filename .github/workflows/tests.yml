@@ -517,6 +517,7 @@ jobs:
             tests/test-brownfield-wp5b-test-debt.sh
             tests/test-brownfield-wp6-collision-archive.sh
             tests/test-bl225-staging-preflight.sh
+            tests/test-bl225-prewrite-preflight.sh
             tests/test-brownfield-wp9-act-boundaries.sh
             tests/test-brownfield-wp9b-preflight-approval.sh
             tests/test-brownfield-wp10a-tool-resolution.sh

@@ -9535,8 +9535,156 @@ git names the culprit) but the adoptee is left half-written with no way back
 except by hand.
 **Status:** Open
 
-**PARTIALLY CLOSED 2026-08-31 — the STAGING half. The BEFORE-ANY-WRITE half is
-still open, and this entry stays Open for it.** What shipped: a preflight in
+**BOTH HALVES NOW BUILT (2026-09-12, branch `fix/bl225-prewrite-preflight`) — the
+before-any-write half is below, after the staging half it completes.**
+
+**THE BEFORE-ANY-WRITE HALF.** `_adopt_write_phase` is extracted as the ONLY
+writer of the adoptee's files and is called TWICE: once by
+`adopt_prewrite_preflight` against a full COPY of the tree, once for real
+(`# BL-225-PREWRITE-CALL`, `# BL-225-WRITE-PHASE-REAL`, and the refusal itself at
+`# BL-225-PREWRITE-REFUSE`). The planned path set is therefore not a
+maintained list that can drift behind the writers — **it is what the writers
+produced on a rehearsal**, so a new writer is in the preflight the moment it is
+in the real run. Karl chose the copy over a per-writer "don't actually write"
+flag, and the reason held up: a flag is a second thing each writer can forget,
+and a writer that ignored it would write during the rehearsal.
+
+**The oracle is TWO questions, and a first cut that asked only one over-refused
+three working projects.** The staging half asks `git add --dry-run`, which needs
+the files to EXIST; here they do not yet, so this half asks `check-ignore
+--no-index` instead — but only for paths that are UNTRACKED. For a TRACKED path
+`git add` refuses **only when an ancestor DIRECTORY is ignored**, not when a file
+or glob rule covers it. Measured, `git add` rc on a tracked path, one rule each:
+
+    .claude/  -> 1        .claude/*  -> 0        *.json -> 0        exact path -> 0
+
+`check-ignore --no-index` says IGNORED for all four, so asking it alone refused
+any adoptee that tracks a file the adoption rewrites under a non-directory rule —
+projects that work today. **Two measurements of this had been generalised from
+one rule shape each, in OPPOSITE directions**: the entry claimed `git add` exits
+1 on tracked+ignored (true only of the directory rule), review measured 0 (true
+of the other three), and neither was general. Twelve shapes settled it and the
+oracle now agrees with `git add` on all twelve. `--no-index` stays for the
+untracked half: without it git reports nothing for a tracked path, the
+index-aware false-clean that defeated this entry's first fix.
+
+**It also fails CLOSED** (`# BL-225-ORACLE-FAIL-CLOSED`). `check-ignore` exits
+128 on a pathspec beyond a symbolic link, and the first cut read any non-zero as
+"not ignored" — a fail-open guard inside the entry that exists to remove them.
+Anything but 0 or 1 now refuses and says which path it could not classify.
+
+Two further measurements worth keeping: git cannot re-include a file under an
+ignored DIRECTORY, so `!.claude/manifest.json` under `.claude/` stays ignored and
+refusing it is correct — but the `.claude/*` form DOES re-include, which is why
+the rule shape is load-bearing above. And `git add` given a MIXED pathspec exits
+1 while staging the clean paths, which is the shape `adopt_stage_and_commit`
+produces and what `# BL-225-STAGE-PREFLIGHT` exists for.
+
+**TWO BUGS IN THIS FIX, BOTH FOUND BY MEASUREMENT, BOTH THE CLASS THIS ENTRY IS
+ABOUT.** (1) The preflight first sat BELOW `adopt_test_debt_record`, which writes
+`.claude/test-debt.json` — so it printed "nothing was written to your project"
+while its own derived count said one file had been, in the same message block.
+That writer is now inside the rehearsed phase. (2) The rehearsal raised the
+GLOBAL touched-disk marker, so a refusal told the operator adoption "had already
+ATTEMPTED writes to this project" when it had only touched the copy; the marker
+is now restored exactly as found (`# BL-225-REHEARSAL-NO-TRACE`). A third
+interaction was found and fixed the same way: the rehearsal honoured
+`SOIF_ADOPT_HALT_AFTER`, a seam meant for the real run, so the rehearsal
+"failed", the preflight refused and adoption never ran — 12 failures across four
+suites (`# BL-225-REHEARSAL-NO-HALT`).
+
+**THE SUITE'S STUB WAS A HOLE, AND REVIEW FOUND IT.** T1-T5 stub
+`_adopt_write_phase` to test the decision cheaply, and a stub that writes nowhere
+cannot fail a byte-identical assertion — so a rehearsal pointed at `"$root"`
+instead of `"$copy"`, which is the original defect with a false refusal on top,
+passed all 20 cases. Two more survived for the same reason: moving the test-debt
+writer back above the preflight, and dropping the touched-marker restore. Section
+E now runs the REAL `scripts/adopt-project.sh` once, un-stubbed, and all three
+die (23/2, 22/3, 23/2). A stub is a fine way to test a decision and a useless way
+to test that nothing was written.
+
+**FOUR MUTATION PROOFS LOST THEIR END-TO-END OBSERVABLE, AND THAT IS THE REAL
+COST OF THIS CHANGE.** `S5` (wp4-driver), `G4` (wp6-collision-archive), `PM1` and
+`TM1b` (wp9b-preflight-approval) each proved their guard by showing files were
+written on a failure path. Nothing is now written on any failure path, so the
+guards are unprovable END TO END — not broken, **masked by a second barrier**.
+Each was re-proved at the level where it is still observable, and each masking
+was measured rather than assumed: `S5` asserts the adoptee keeps neither file;
+`G4` needed its FIXTURE changed (it ignored a directory the framework install
+writes into, so the preflight refused it mutated or not, and it paired with `G5`
+to discriminate); `TM1b` moved to the composite because the mutation excises the
+CALL SITE, not the function; `PM1` moved to the arm plus a structural check,
+because excising arms 1 AND 2 together still refuses, so no composite-level
+claim about which arm masks it would be honest.
+
+**`SOIF_REHEARSAL_ERR`** names a file to keep the rehearsal's own stderr in. It
+is discarded by default so the operator sees one adoption and not two, but then a
+refusal can only say "the rehearsal did not complete (rc=N)" — the unhelpful
+shape `# BL-225-REFUSE-HONEST` exists to prevent. Finding `S5`'s cause required
+it: the reversed state order fails at `manifest` because that writer hashes the
+KEPT SCAN REPORT, which `adopt_write_intake` writes earlier in the correct order.
+
+**THE MARKER IS TWO MARKERS, and the third review cycle is why.** A refusal that
+arrives before the first write still has to say whether anything was written,
+and `# BL-225-TOUCHED-DISK` cannot answer it: it records an ATTEMPT, is raised
+before each write, and an arm that attempted one and left nothing still raises
+it. Clearing it from the PLANNED SET fixes the over-claim for the driver's own
+writers and breaks it for the one writer the planned set does not bound — the
+tool resolver's `eval` of a matrix install recipe. So the clear is an
+intersection: no planned path landed AND `# BL-225-TOUCHED-UNBOUNDED` unraised.
+That second flag is EVIDENCE-BASED, and the distinction is load-bearing in both
+directions, measured: raised on the attempt, a bare `ubuntu:24.04` (no node, no
+npm, no gitleaks) runs a recipe that leaves the adoptee byte-identical and the
+refusal still claims adoption "ATTEMPTED writes to this project" — measured by
+mutating the flag back to attempt-based and re-running in that container:
+`Results: 35 passed, 3 failed`, failing `E4`, `E5` and `T9d`. That is the
+over-claim this entry exists to remove. Not raised at all, an installer's
+leftover file sits in the tree under "nothing was written". So the resolver fingerprints the adoptee's PATH LIST either side of
+the eval (`adopt_tree_fingerprint`) and raises the flag on a difference, or when
+it could not read the tree — an unreadable answer is not a clean one.
+
+**Three sentences in the first draft of `# BL-225-REFUSE-DERIVED` were false and
+are recorded here so the next editor does not reinstate them.** They claimed git
+reports an empty IGNORED DIRECTORY as a row, that a `mkdir -p` therefore read as
+a dirty tree, and that this was the Linux failure unfixed. Refuted on both
+hosts: under the default `--ignored=traditional`, an empty ignored `.claude/`
+yields ZERO rows on macOS git 2.50.1 and ubuntu git 2.43.0 — only
+`--ignored=matching` prints `!! .claude/`, and that is the directory matching the
+pattern, not a file. The real reason to prefer the planned set is that a working
+project's OWN ignored content answers the wrong question: a fixture ignoring
+`node_modules/ .env dist/` returns 3 rows on both hosts before adoption touches
+anything. Same class as `## BL-258:` — added prose is a failure surface, and in
+an entry about refusals that assert what they never derived, a comment stating a
+measured-but-nonexistent mechanism is that defect one level up.
+
+**Residuals.** (0) **PRE-EXISTING, found by this review and not fixed here: an
+adoptee whose `.claude` is a symlink to an absolute path OUTSIDE the repository
+has files written there — SEVEN of them — while the refusal correctly reports the
+repository itself untouched.** The count is the same on base and on this branch,
+which is what shows the escape predates the preflight; what this branch adds is
+the refusal that now sits in front of it, which is why the guard is fail-closed
+on `check-ignore`'s rc 128 rather than reading it as clean. Escaping symlinks
+want their own entry.
+(0b) THE UNBOUNDED FLAG IS PATH-LIST ONLY, so an install recipe that MODIFIES a
+file already in the adoptee — rather than creating one — does not raise it, and
+the refusal then says "nothing was written" over a changed file. Measured
+end-to-end through the real resolver: create -> flag raised; modify-in-place ->
+flag NOT raised, adoptee really changed. It is the same class as the escape the
+flag exists to catch, at strictly lower reachability: the eval runs with `cd
+"$ADOPT_WORK"` (a `mktemp -d` outside the adoptee), so reaching it needs a
+recipe that writes into the adoptee by ABSOLUTE path and only in place.
+Deliberately not fixed here — content hashing the whole tree is residual (a)'s
+cost on every install, and the measured historical escape was created files.
+(a) The rehearsal copies the whole tree, `.git` included, because
+its git behaviour must match the real run's; on a large adoptee that is time and
+disk. Hardlink copies are NOT available — the writers truncate in place, so a
+hardlinked rehearsal would corrupt the operator's originals. (b) PRE-EXISTING and
+deliberately not fixed here: `adopt_write_manifest` refuses with "neither shasum
+nor sha256sum is available" when the real cause is a MISSING INPUT (the kept scan
+report). Both tools exist; the message misattributes itself, and it is the
+message a rehearsal failure surfaces first.
+
+**The staging half, shipped 2026-08-31:** What shipped: a preflight in
 `adopt_stage_and_commit` (`# BL-225-STAGE-PREFLIGHT`) that asks
 `git add --dry-run` before it stages and stops WHOLE, so the index is never
 half-written; an honest refusal (`# BL-225-REFUSE-HONEST`) that derives the
@@ -15925,3 +16073,102 @@ drive `resolve-tools.sh` re-run green (`test-brownfield-wp10a-tool-resolution`
 **Related:** `## BL-258:` (the lead this reproduces — strike its #5 fourth atom when this closes),
 `## BL-256:` (residual 4, the same jq-on-empty silent success), `## BL-231:` (the
 absent-vs-unreadable family).
+
+---
+
+## BL-260: `tests/test-specs-plans-host-aware-quartet.sh` returns different answers run-to-run in an ARM64 Linux container over byte-identical input — the arm64 execution layer is the suspect, cause UNISOLATED
+
+**Status:** Open
+
+**Found:** 2026-09-14, by the seventh and eighth adversarial reviews of `## BL-225:`'s
+branch, while checking a `CLAUDE.md` claim about container flakiness. Not caused by that
+branch — the suite is byte-identical on `main`, and it reads `check-gate.sh`,
+`phase2-state.sh` and `host.sh`, none of which the branch touched.
+
+**What is measured.** On `--platform linux/arm64`, six back-to-back runs inside ONE
+unchanged `ubuntu:24.04` container — same image layer, same tools, nothing altered
+between runs — give four distinct outcomes, and the failing element changes run to run:
+
+```
+run 1 rc=0   == Total: 8 | Passed: 8 | Failed: 0 ==
+run 2 rc=1   == Total: 8 | Passed: 6 | Failed: 2 ==
+  [FAIL] T8 — missing translation delta tables in plan: Task7.3:no-delta-table
+  [FAIL] T11 — cmd_repair must reference ≥3 named steps for resume logic, found 1
+run 3 rc=1   == Total: 8 | Passed: 6 | Failed: 2 ==   (same two)
+run 4 rc=1   == Total: 8 | Passed: 7 | Failed: 1 ==
+  [FAIL] T11 — cmd_repair must reference ≥3 named steps for resume logic, found 2
+run 5 rc=1   == Total: 8 | Passed: 6 | Failed: 2 ==
+  [FAIL] T8 — missing translation delta tables in plan: Task7.4:no-delta-table
+  [FAIL] T11 — cmd_repair must still probe git remote as fallback for legacy projects
+run 6 rc=1   == Total: 8 | Passed: 7 | Failed: 1 ==   (T11, found 2)
+```
+
+`T8` names `Task7.3` on one run and `Task7.4` on another; `T11` counts `found 1`, then
+`found 2`, then fails a DIFFERENT assertion. A reviewer's independent 20 runs gave 14
+failures with the same shape. Repeating with a fresh `cp -r` of the tree per run gives
+the same spread, so it is not cross-run residue.
+
+**Where it does NOT happen — and this is the load-bearing half.** On
+`--platform linux/amd64`, same image, same recipe: **12 of 12 clean** (a reviewer's
+independent 27 runs: 27 clean). On this Mac: 6 of 6 clean, with and without stdin
+redirected. `ubuntu-latest` — the runner every PR-blocking lane uses — is **x86_64**, so
+**there is no measured PR-lane risk.** An earlier draft of this entry was titled
+"nondeterministic on Linux" and claimed the unit lane was exposed; both were asserted
+from arm64 runs alone and are withdrawn.
+
+**Why the suite is not the suspect.** `T8` and `T11` are pure text pipelines over static
+files — `t8_plan_has_translation_delta_tables` is `grep -nE | head -n1 | cut` then `awk`
+over an archived plan; `t11_cmd_repair_consults_steps_completed` is `awk` plus `grep -q`
+over `scripts/check-gate.sh`. Neither body contains `sort`, `find`, a glob,
+backgrounding `&`, `wait`, `$RANDOM` or `date` — the probe below tests `&$`, a
+TRAILING `&`; the three `&&`s in those bodies are awk's logical AND:
+```
+sed -n '176,280p' tests/test-specs-plans-host-aware-quartet.sh \
+  | grep -nE 'sort|find |\*|&$|wait|RANDOM|date'      # no output
+```
+And the inputs are provably unchanged: md5 over all 947 files before and after every run,
+including failing ones, differs by zero lines. (That md5 walk counts 947 where the tree
+holds 948 files: `xargs md5` splits the one repo path containing a space. The count is
+incidental — the fresh-`cp -r` datum above is what actually excludes residue.) A
+deterministic pipeline over byte-identical input cannot return three different answers
+unless the EXECUTION is wrong. The suspect is the arm64 container's execution layer, not
+the test's logic — a DEDUCTION from the two premises above, not a measurement.
+
+**A datum that narrows it, and does not fit the deduction comfortably.** Running T8's and
+T11's extraction pipelines STANDALONE — 40 iterations each, same `ubuntu:24.04`, both
+platforms — gives byte-identical results every time: `s=2599`, `plan_window_lines=400`,
+`cmd_repair_body_lines=304`, 40/40 on arm64 and 40/40 on amd64. So the pipelines in
+isolation are stable on the architecture where the suite is not. Whatever perturbs them is
+contextual to the whole-suite run, which is the next rung and is untried.
+
+**What is NOT established.** The cause. The four candidates an earlier draft listed —
+a `sort` tie broken by filesystem order, a `find`/glob traversal dependence, a racing
+counter, a reused fixture — are all already EXCLUDED by the evidence above; they were
+written before the mechanism was examined and are recorded here only so nobody re-proposes
+them. What remains untested: the emulation layer itself (these arm64 runs are Docker
+Desktop on Apple Silicon, so "arm64 Linux" and "QEMU/Rosetta" are not yet separated), and
+whether a NATIVE arm64 Linux host reproduces it at all. Do not write a cause into this
+entry until it is measured — the `CLAUDE.md` paragraph this was found under asserted five
+causes across five drafts and every one was refuted.
+
+**Why it might still matter, conditionally.** Nothing in the PR-blocking set is at risk on
+today's `ubuntu-latest`. It becomes a real lane risk only if runners move to arm64, which
+GitHub now offers. Until then the concrete cost is local: this suite is in the `tests=(`
+unit list and in no `pin_*` array, so anyone reproducing CI in an arm64 container sees an
+unexplained red and may chase it into a test that is fine.
+
+**Reproduce — BOTH architectures, because one alone is what produced the withdrawn claim:**
+```
+for P in linux/arm64 linux/amd64; do
+  docker run --rm --platform "$P" -v "$PWD:/repo:ro" ubuntu:24.04 bash -c 'apt-get update -qq \
+    && apt-get install -y -qq jq git && useradd -m t && cp -r /repo /home/t/r \
+    && chown -R t /home/t/r && su t -c "cd /home/t/r && echo ARCH=\$(uname -m); \
+      for i in 1 2 3 4 5 6; do bash tests/test-specs-plans-host-aware-quartet.sh </dev/null 2>&1 | tail -1; done"'
+done
+```
+Run as a NON-root user. A single run proves nothing in either direction — the suite passes
+clean on some arm64 runs; take six.
+
+**Related:** `## BL-225:` (found under it, not caused by it), `## BL-234:` (host-property
+dependence that is silent on this Mac), `## BL-181:` (the unit-lane membership surface this
+suite sits in).

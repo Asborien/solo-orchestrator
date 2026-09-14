@@ -477,11 +477,29 @@ else
   gate_in "$S5R/p"; s5_gate=$GATE_RC
   s5_why=0
   grep -q 'skipping phase gate check' "$GATE_OUT" && s5_why=1
-  if [ "$s5_gate" -eq 0 ] && [ "$s5_mf" -eq 1 ] && [ "$s5_ps" -eq 0 ] && [ "$s5_why" -eq 1 ] \
+  # `## BL-225:`'s PRE-WRITE PREFLIGHT CHANGED THIS PROOF'S OBSERVABLE, and the
+  # new one is stronger. This case used to assert the unsafe §8.4 row was
+  # REACHABLE under the mutation: a manifest on disk with no phase-state, from a
+  # run interrupted after the first reversed stage. The preflight now replays the
+  # whole write phase against a COPY before the first real write, so the reversed
+  # order fails there and the adoptee is never touched — the unsafe row is no
+  # longer reachable at all.
+  #
+  # The mutation is still killed, and for ITS OWN reason rather than an
+  # incidental one. Measured via `SOIF_REHEARSAL_ERR`: the rehearsal fails at
+  # `manifest`, because that writer hashes the KEPT SCAN REPORT, which
+  # `adopt_write_intake` writes earlier in the correct order. That is exactly
+  # what "the state order is load-bearing" means, so the proof is intact.
+  #
+  # Asserting BOTH files absent is what keeps this honest: a run that simply
+  # died early would also leave no manifest, and `manifest=1` was carrying that
+  # discrimination before. The run_rc and the two absences together say the
+  # adoption refused WHOLE.
+  if [ "$RUN_RC" -ne 0 ] && [ "$s5_mf" -eq 0 ] && [ "$s5_ps" -eq 0 ] \
      && [ "$chgS" -eq 2 ] && [ "$order_sites" -eq 1 ] && [ "$s5_parses" -eq 1 ]; then
-    pass "S5 (MUTATION): with the order reversed (1 line, mutant still parses) an interrupted run leaves a manifest and NO phase-state — the gate skips entirely (rc 0) and the UNSAFE row is reachable"
+    pass "S5 (MUTATION): with the order reversed (1 line, mutant still parses) the pre-write rehearsal catches it and the adoptee keeps NEITHER manifest nor phase-state — the unsafe §8.4 row is unreachable, not merely unvisited"
   else
-    fail_ "S5" "gate_rc=$s5_gate (want 0) manifest=$s5_mf (want 1) phase_state=$s5_ps (want 0) gate_skipped_for_that_reason=$s5_why run_rc=$s5_rc changed_lines=$chgS (want 2) order_sites=$order_sites (want 1) parses=$s5_parses (want 1)"
+    fail_ "S5" "run_rc=$RUN_RC (want non-zero) manifest=$s5_mf (want 0) phase_state=$s5_ps (want 0) changed_lines=$chgS (want 2) order_sites=$order_sites (want 1) parses=$s5_parses (want 1)"
   fi
 fi
 

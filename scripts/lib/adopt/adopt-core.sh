@@ -337,6 +337,50 @@ adopt_touched_disk() {          # BL-225-TOUCHED-DISK
 adopt_has_touched_disk() {      # BL-225-TOUCHED-DISK
   [ -n "${ADOPT_WORK:-}" ] && [ -f "$ADOPT_WORK/touched" ]
 }
+# THE SECOND MARKER EXISTS BECAUSE THE FIRST ONE IS TOO COARSE TO CLEAR SAFELY.
+# `touched` records that SOMETHING may have been written. Most of the arms that
+# raise it write a KNOWN set, so a later check can look at that set and decide
+# the marker was pessimistic. Exactly one arm cannot be checked that way: the
+# tool resolver's `eval` of a matrix install recipe, whose output is unbounded
+# by construction — `# BL-225-TOUCHED-DISK` in adopt-tools.sh says so in as
+# many words, and the two untracked files an installer once left in an
+# adoptee are the measured case. This marker separates the two, so a
+# derivation over a known set can clear the first while the unbounded writer
+# still forces the pessimistic message.
+adopt_touched_disk_unbounded() {   # BL-225-TOUCHED-UNBOUNDED
+  [ -n "${ADOPT_WORK:-}" ] || return 0
+  { : > "$ADOPT_WORK/touched-unbounded"; } 2>/dev/null || true
+  return 0
+}
+# adopt_tree_fingerprint DIR — the adoptee's path list, hashed. Paths only, not
+# contents: the question this answers is "did anything APPEAR", which is what an
+# eval'd install recipe escaping into the operator's repository looks like. A
+# recipe that MODIFIES a file already there is invisible to it — recorded as a
+# residual on `## BL-225:`, deliberately, because the eval runs with `cd
+# "$ADOPT_WORK"` and reaching that case needs an absolute-path in-place write.
+# `.git` is deliberately included; a recipe that writes there has written.
+#
+# IT DOES NOT "PRINT NOTHING ON FAILURE" — an earlier version of this comment
+# said so and was refuted: with an unreadable subdirectory it prints a PARTIAL
+# fingerprint and returns 1, and it returns 1 only because `find`'s status
+# reaches the pipeline. So the check is explicit rather than implied: `find`'s
+# own status is captured, and a partial walk returns 1 with NOTHING on stdout,
+# under any shell options. Callers must read rc 1 as "assume it changed"; a
+# truncated path list is not a clean answer. The cost is one `find` walk —
+# measured at 0.084s over 31,202 entries, and `adopt_resolve_tools` resolves at
+# most one recipe per run, so at most two walks.
+adopt_tree_fingerprint() {      # BL-225-TOUCHED-UNBOUNDED
+  [ -n "${1:-}" ] && [ -d "$1" ] || return 1
+  # The assignment's status IS the subshell's, which IS `find`'s, so a partial
+  # walk returns 1 here with nothing printed — no `pipefail` required, because
+  # the `cksum` pipeline only runs after `find` has already succeeded.
+  local _lst
+  _lst="$(cd "$1" 2>/dev/null && find . -print 2>/dev/null)" || return 1
+  printf '%s\n' "$_lst" | LC_ALL=C sort | cksum
+}
+adopt_has_unbounded_write() {      # BL-225-TOUCHED-UNBOUNDED
+  [ -n "${ADOPT_WORK:-}" ] && [ -f "$ADOPT_WORK/touched-unbounded" ]
+}
 # BL-225-OPERATION: `--re-add` is a DIFFERENT OPERATION, not a mode of the
 # adoption run (adopt-project.sh says so), and it never calls
 # adopt_ledger_init — so every one of its refusals landed in the arm that says

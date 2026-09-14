@@ -779,6 +779,10 @@ run_child_suite "tests/test-bl225-staging-preflight.sh" \
   "Adoption staging preflight (refuse whole, never half-stage; fail-closed check-ignore)" \
   "BL-225 staging-preflight tests FAILED (run tests/test-bl225-staging-preflight.sh for details)"
 
+run_child_suite "tests/test-bl225-prewrite-preflight.sh" \
+  "BL-225: the refusal must arrive before the FIRST write, not just before staging" \
+  "BL-225 pre-write preflight tests FAILED (run tests/test-bl225-prewrite-preflight.sh for details)"
+
 # BL-242 WP9a: the chooser deletion and the act boundaries. Almost every
 # assertion in it is an ABSENCE (a question no longer asked, a field no longer
 # recorded, a stub no longer printed), so every one of them is paired with a

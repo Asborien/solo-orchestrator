@@ -127,8 +127,14 @@ if ! grep -q '# BL-225-STAGE-PREFLIGHT' "$REPO_ROOT/scripts/lib/adopt/adopt-stat
   bad "T4: # BL-225-STAGE-PREFLIGHT marker absent (RED before the fix)"
 else
   ok "T4: # BL-225-STAGE-PREFLIGHT marker present in adopt_stage_and_commit"
+  # SCOPED TO THE FUNCTION. This was a whole-file "last occurrence wins" awk,
+  # and `## BL-225:`'s pre-write half broke it by doing the right thing: its
+  # comment CITES the staging marker to say which half it is, that citation sits
+  # after adopt_stage_and_commit, and the check read the mention as the guard.
+  # The marker has no end-of-line form to anchor on (all occurrences are prose),
+  # so look only inside the function whose ordering is being asserted.
   chk "T4: the guard precedes the git add" \
-    "$(awk '/# BL-225-STAGE-PREFLIGHT/{g=NR} /BF-ADOPT-STAGE-EXPLICIT/{a=NR} END{print (g && a && g<a) ? "yes" : "no"}' "$REPO_ROOT/scripts/lib/adopt/adopt-state.sh")" "yes"
+    "$(awk '/^adopt_stage_and_commit\(\) \{/{f=1} f&&/# BL-225-STAGE-PREFLIGHT/{if(!g)g=NR} f&&/BF-ADOPT-STAGE-EXPLICIT/{if(!a)a=NR} f&&/^}/{if(f&&NR>1)exit} END{print (g && a && g<a) ? "yes" : "no"}' "$REPO_ROOT/scripts/lib/adopt/adopt-state.sh")" "yes"
   # NOT a grep of adopt-state.sh: the sentence never lived there, so that
   # assertion was true of the unfixed tree too. The claim is adopt_refuse's,
   # in adopt-core.sh, and it is asserted by BEHAVIOUR.
@@ -241,9 +247,16 @@ _writers() {
     | grep -vE ':[0-9]+:[[:space:]]*(adopt_note|adopt_say|adopt_head|adopt_refuse|printf|echo)([[:space:]]|$)' \
     | grep -vE '\$ADOPT_WORK|\$TD_TMP|\$TMPDIR|mktemp|\$ADOPT_WRITTEN_LEDGER' \
     | grep -vE '"\$work/|"\$ADOPT_ANSWERS"|> "\$names"' \
+    | grep -vE '"\$copy"' \
     | cut -d: -f1,2 | sort -u
 }
 # ^ THE ALLOWLIST, and every arm carries its reason:
+#   `"$copy"` — `## BL-225:`'s pre-write rehearsal copies the adoptee to
+#   `$ADOPT_WORK/rehearsal/tree` and writes THERE, not into the project. Same
+#   class as the `$ADOPT_WORK` arm, listed separately only because the
+#   destination is held in a local for readability. It must NOT raise the
+#   touched-disk marker: raising it would make a refusal claim the project was
+#   written to when the rehearsal is what ran.
 #   :N: #        — a comment describing a write is not a write
 #   a line whose FIRST TOKEN is an output function
 #                — output functions whose ARGUMENTS contain write verbs
