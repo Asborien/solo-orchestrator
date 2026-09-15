@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# tests/test-bl261-integration-branch.sh
+# tests/test-bl286-integration-branch.sh
 #
-# `## BL-261:` — THE TDD GATE'S BRANCH AXIS RESOLVED ITS BASE AS THE LITERAL
+# `## BL-286:` — THE TDD GATE'S BRANCH AXIS RESOLVED ITS BASE AS THE LITERAL
 # `main`, SO ON A PROJECT WHOSE TRUNK IS NOT `main` IT EXEMPTED EVERY COMMIT.
 #
 # `_tdd_triggers` (scripts/pre-commit-gate.sh) asks "did a test ride EARLIER on
@@ -19,7 +19,7 @@
 # the trunk.
 #
 # CASES
-#   M0   the `# BL-261-INTEGRATION-BRANCH` marker occurs exactly once.
+#   M0   the `# BL-286-INTEGRATION-BRANCH` marker occurs exactly once.
 #   A0   the fixture builds and the gate runs (honest-outcome control).
 #   A1   KEY PRESENT AND VALID — impl-only `feat:` on a branch cut from the
 #        real trunk, with a test sitting in the main..trunk divergence, must
@@ -53,7 +53,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 GATE="$REPO_ROOT/scripts/pre-commit-gate.sh"
 
-MARKER="# BL-261-INTEGRATION-BRANCH"
+MARKER="# BL-286-INTEGRATION-BRANCH"
 
 PASSED=0
 FAILED=0
@@ -89,8 +89,8 @@ mk_proj() {
     cd "$d" || exit 1
     git init -q || exit 1
     git symbolic-ref HEAD refs/heads/main || exit 1
-    git config user.email "bl261@test.invalid" || exit 1
-    git config user.name  "BL-261 Test" || exit 1
+    git config user.email "bl286@test.invalid" || exit 1
+    git config user.name  "BL-286 Test" || exit 1
     git config commit.gpgsign false || exit 1
     echo "# scratch" > README.md
     git add README.md || exit 1

@@ -199,7 +199,7 @@ _tdd_triggers() {
       return 1
     fi
   fi
-  # BL-261-INTEGRATION-BRANCH — the branch axis asks "did a test ride EARLIER
+  # BL-286-INTEGRATION-BRANCH — the branch axis asks "did a test ride EARLIER
   # on this branch", which needs the branch's OWN base. That base was the
   # literal `main`. On a project whose integration branch is not `main`, the
   # range stops being "this branch" and becomes the whole divergence between

@@ -18928,12 +18928,15 @@ each lands on its own branch.
 
 ---
 
-## BL-261: the TDD gate's branch axis resolves its base as the literal `main`, so on a project whose trunk is not `main` it exempts every commit — installed, healthy, inert
+## BL-286: the TDD gate's branch axis resolves its base as the literal `main`, so on a project whose trunk is not `main` it exempts every commit — installed, healthy, inert
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/bl261`, NOT yet submitted.
-`# BL-261-INTEGRATION-BRANCH`: `_tdd_triggers` reads the project's own integration branch from
+**Renumbered BL-261 → BL-286 on merge (2026-09-15):** BL-261 was taken on `main` before this landed;
+the marker, the test file and both registrations were renamed to match.
+
+**Status:** Open — reproduction + fix BUILT on branch `fix/bl286`, NOT yet submitted.
+`# BL-286-INTEGRATION-BRANCH`: `_tdd_triggers` reads the project's own integration branch from
 `integration_branch` in the project manifest and resolves the branch axis against that, falling back to
-today's literal `main` when the key is absent. Suite `tests/test-bl261-integration-branch.sh` **15 / 0**
+today's literal `main` when the key is absent. Suite `tests/test-bl286-integration-branch.sh` **15 / 0**
 on bash 3.2.57 (macOS), against RED **4 / 11**; three mutants, EMBEDDED in the suite, each killing a
 different case. shellcheck 0.11.0 output on the gate is line-for-line unchanged by the fix (34 lines
 before, 34 after, same codes).
@@ -18942,7 +18945,7 @@ before, 34 after, same codes).
 project today — see "What this does NOT fix" below. An entry claiming otherwise would be worse than no
 entry.
 
-**Numbering.** The number is not free-chosen. The marker token `BL-261-INTEGRATION-BRANCH` is already
+**Numbering.** The number is not free-chosen. The marker token `BL-286-INTEGRATION-BRANCH` is already
 committed in a downstream adopting project's `scripts/pre-commit-gate.sh` and in that project's
 divergence record, where the fix was applied locally during adoption and never submitted. This entry
 claims the number that project's committed code already carries.
@@ -19021,7 +19024,7 @@ without picking one, because the writer is a separate decision about where the t
 may change it. Whether that writer should also make an absent key fire is the open question; it cannot be
 answered by this change.
 
-**Build note (2026-09-13, branch `fix/bl261`).** Suite `tests/test-bl261-integration-branch.sh` drives
+**Build note (2026-09-13, branch `fix/bl286`).** Suite `tests/test-bl286-integration-branch.sh` drives
 the REAL gate end to end via `--terminal-mode --tdd-only` against hermetic scratch projects on a
 sponsored-POC tier (the non-bypassable one, so "fired" and "did not fire" are distinguishable by exit
 status alone). Fixture topology is the fixture: `main` carries no test, the real trunk is cut from it and
