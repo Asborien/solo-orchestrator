@@ -16819,13 +16819,13 @@ reader of `actor`, and output-scanning is a TESTED CONTRACT (`tests/test-bypass-
 narrowing the scan surface breaks it deliberately. Picking one here would be deciding how much
 false-negative risk the maintainer's enforcement surface should absorb. The contribution is the
 reproduction, the measurement, and the three options with reasoning; the decision is his. Same posture
-as `## BL-263:` and as `## BL-275:`'s second half — **both of which are SIBLING BRANCHES not yet
+as `## BL-285:` (was BL-263) and as `## BL-275:`'s second half — **both of which are SIBLING BRANCHES not yet
 merged, so those two citations resolve only once `fix/ci-template-package-manager` and `fix/bl275`
 land** — so it is consistent rather than a retreat. The
 operational cost is recorded below in full so it can be weighed: **five blocking sentinels declined by
 hand in one day, each halting every agent in every repository touched from that session.**
 
-**Logged:** 2026-09-13, found while working the `## BL-260:` branch — which is a SIBLING BRANCH not yet
+**Logged:** 2026-09-13, found while working the `## BL-284:` branch (was BL-260) — which is a SIBLING BRANCH not yet
 merged, so that citation resolves only once `fix/bl260` lands; it is named for provenance, and nothing
 in this entry depends on it. A commit in the CONTRIBUTOR CLONE was refused because a sentinel existed
 in a DIFFERENT repository, raised by a `head -70` of the framework's own `commit-msg` hook. Reproduced
