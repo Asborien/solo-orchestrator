@@ -146,9 +146,25 @@ fi
 
 echo "=== R — the template's OWN render body, executed in a DOM ==="
 
+# `npm install --no-save jsdom` (what `unit-shard` runs) lands in
+# `$REPO_ROOT/node_modules`, but every script below executes from `$WORK`, a
+# mktemp dir outside the repo — and node resolves `require` relative to the
+# SCRIPT, not the cwd. So the repo's node_modules has to be put on NODE_PATH
+# explicitly or the runs cannot see what the guard just found.
+if [ -d "$REPO_ROOT/node_modules" ]; then
+  NODE_PATH="${NODE_PATH:+$NODE_PATH:}$REPO_ROOT/node_modules"; export NODE_PATH
+fi
+
 HAVE_JSDOM=0
+# THE GUARD MUST PROBE EXACTLY WHAT THE RUNS DO. A draft probed with
+# `node -e`, which resolves from the CWD — the repo root, where jsdom IS
+# visible — while the real cases run a script in `$WORK`, where it was not.
+# That set HAVE_JSDOM=1 and then failed at R0/B0 on CI: green locally (a
+# NODE_PATH was exported in the shell) and red on the runner. Probe from
+# `$WORK`, with the same resolution the cases get.
+printf "require('jsdom'); process.exit(0);\n" > "$WORK/probe.js"
 if command -v node >/dev/null 2>&1 \
-   && node -e "require.resolve('jsdom')" >/dev/null 2>&1; then
+   && node "$WORK/probe.js" >/dev/null 2>&1; then
   HAVE_JSDOM=1
 else
   echo ""

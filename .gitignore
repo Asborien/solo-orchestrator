@@ -57,3 +57,9 @@ test-logs/
 # tracked-ledger defect for generated projects committed its own ledger here on
 # the first `git add -A`. The scaffold's rule does not cover the framework repo.
 .claude/tool-usage.json
+
+# `unit-shard` installs jsdom with `npm install --no-save` for the BL-263/BL-264
+# behavioural cases (see .github/workflows/tests.yml). `--no-save` keeps
+# package.json out of a repo that has none, but node_modules/ still lands here
+# — on the runner and for anyone reproducing the lane locally.
+node_modules/
