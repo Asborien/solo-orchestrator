@@ -78,10 +78,15 @@ chk "S5: and no RAW s.id survives in the render body" \
 # S6 — THE FIFTH `g`. `escapeHtml` has four `g` flags and `E7` pins each; the
 # `<br>` substitution one line below it carries a fifth that `E7` cannot reach.
 # `R4` catches it behaviourally, but R needs jsdom and no CI lane has jsdom, so
-# dropping that one letter left the gating lane at 27/0. Static, therefore, and
+# dropping that one letter left the gating lane at 24/0. Static, therefore, and
 # by its literal bytes: a changed-line count would not know which `g` moved.
+# IT MUST SPAN THE REPLACEMENT STRING TOO. A draft stopped at the `g`, which
+# left `,'<br>'` free — changing it to `,''` kept S6 matching and the gating
+# lane at 28/0 while every multi-line `steps` rendered as run-together text.
+# A pin that stops one character short of the thing it protects is the pattern
+# three reviews in a row have found here.
 chk "S6: the steps <br> substitution is GLOBAL (the fifth g flag)" \
-  "$(grep -c 'escapeHtml(s\.steps)\.replace(/\\n/g' "$_body")" "1"
+  "$(grep -c "escapeHtml(s\.steps)\.replace(/\\\\n/g,'<br>')" "$_body")" "1"
 
 echo "=== E — escapeHtml's BEHAVIOUR, node only, no jsdom ==="
 
@@ -136,7 +141,7 @@ else
   # do its job, and saying so is `# BL-182-NO-UNEARNED-RECEIPT`: a green that
   # measured nothing is worse than a red. `ubuntu-latest` ships node, and
   # tests.yml's "Verify required tools are available" step now asserts it.
-  bad "E0-E7 — node unavailable, so the escape was NOT verified; the static pins cannot distinguish escapeHtml(x) from identity"
+  bad "E0-E8 — node unavailable, so the escape was NOT verified; the static pins cannot distinguish escapeHtml(x) from identity"
 fi
 
 echo "=== R — the template's OWN render body, executed in a DOM ==="
@@ -200,6 +205,10 @@ const out = {
   title_text:      (c.querySelector('.scenario-title') || {}).textContent,
   // SCOPED to the second scenario — the one with the string id. Container-wide
   // it would duplicate R3 and could not say WHICH scenario injected.
+  // The COUNT goes with it: a draft used `|| {querySelectorAll:()=>[]}`, so when
+  // the render produced nothing the fallback returned 0 and the assertion
+  // PASSED over a blank page. Report the count and let R5 require 2.
+  scenario_count:  c.querySelectorAll('.scenario').length,
   id_imgs:         (c.querySelectorAll('.scenario')[1] || {querySelectorAll:()=>[]}).querySelectorAll('img').length,
   id_num_text:     (c.querySelectorAll('.scenario-num')[1] || {}).textContent,
   br_in_steps:     (c.querySelectorAll('.steps')[0] || {querySelectorAll:()=>[]}).querySelectorAll('br').length,
@@ -235,6 +244,7 @@ JSEOF
     # does NOT close the JS context — an id shaped as JS still executes; see the
     # template comment. The scenario schema says `id` is a number;
     # `lint-uat-scenarios.sh` never checks that, so this is the guard.
+    chk "R5: BOTH scenarios rendered (or id_imgs=0 proves nothing)" "$(_f scenario_count)" "2"
     chk "R5: a string id carrying markup injects NOTHING"     "$(_f id_imgs)" "0"
     chk "R5: and the scenario num still reads as written"     "$(_f id_num_text)" '1"><img src=q onerror=PWN>'
   fi

@@ -16463,6 +16463,32 @@ gating lane until a review found them, because their only pins lived behind jsdo
 and `S6` are the static pins that now hold them, and `E8` is the one that catches
 `String(t)`: `_esc` passes argv, always a string, so no other `E` case can see it.
 
+**AND THEN THE GREP-PER-HOLE PATTERN WAS ABANDONED, because a review showed where it
+ends.** Three rounds each found a one-token regression green on the gating lane; three
+rounds each answered with one more literal-byte grep; and each grep closed exactly the
+token it named. `S6` is the proof — added in one commit to pin the `g` flag on the `<br>`
+substitution, it stopped one character short of the replacement string, so changing
+`,'<br>'` to `,''` kept `S6` matching and the lane at 28/0 while every multi-line `steps`
+rendered as run-together text. A further review then found five more of the same shape:
+inverting `if (!container) return`, `container.innerHTML +=` -> `=`, a typo in
+`'feature' + s.feature`, a typo in `'bugs-list'`, and dropping `bugCount++` — all green
+on the gating lane, three of them rendering ZERO scenarios.
+
+The fix is structural, not another grep: **`unit-shard` now installs jsdom**, which turns
+the twelve behavioural checks (`R1`-`R5`, `B0`-`B3`) from skips into gating checks and
+kills all six at once with no new assertions. Measured on the CI lane with jsdom present:
+the `<br>` replacement 38/2, `!container` 37/4, `innerHTML =` 37/3, the `'featur'` typo
+37/3, `'bugs-lists'` 36/1, `bugCount` 36/1. The install is `--no-save` and `|| true`: a
+registry blip degrades to the previous grep-only coverage, and the suite's jsdom arm skips
+with a banner rather than silently, so it cannot become a false green.
+
+**Residual (c): `exportResults`'s `.replace(/\n/g, ' ')` is unguarded, on both lanes.**
+Dropping that `g` leaves embedded newlines in a tester's notes and breaks the markdown
+table row. No case in the suite touches `exportResults` — `S4`'s comment scopes it out
+deliberately, because it builds markdown rather than HTML and is not a sink. Recorded
+rather than fixed: a different surface from the one this entry is about, and the review
+that found it rated it minor and out of scope.
+
 **Found:** 2026-09-14, triaging `## BL-262:`.
 
 **The assumption.** `templates/uat/test-session-template.html`'s `renderScenarios()`

@@ -256,10 +256,12 @@ const scenarios = __SCENARIOS_JSON__;
 // assumption before some future generator sources scenario text from a
 // dependency name, a failing test's message or an issue title (`## BL-263:`).
 // Escaping first and substituting <br> AFTER is what keeps the line breaks:
-// measured on the shipped example, output is byte-identical — 12/12 element
-// nodes, 6/6 <br>s, same text. (A draft said "12/12 element nodes"; measured on
-// the shipped example it is 22/22, with the innerHTML and the textContent both
-// byte-identical. The load-bearing halves were right; the count was not.)
+// measured on the shipped example, output is byte-identical — 22/22 element
+// nodes, 6/6 <br>s, same text. (A draft of this line said "12/12 element
+// nodes" and a first correction appended 22/22 as a parenthetical while leaving
+// 12/12 asserting itself one sentence earlier. 22/22 is the measurement; the
+// load-bearing halves — innerHTML byte-identical, textContent identical — were
+// right all along.)
 // `expected` is escaped but NOT given the <br> substitution, because it never
 // had one — its newlines collapsed to spaces before this change and they still
 // do. Adding it would be a rendering change nobody asked for, and this edit is
@@ -290,7 +292,8 @@ const scenarios = __SCENARIOS_JSON__;
 // measured that — and deliberately not fixed here, because widening this edit
 // from "escape" to "validate the id type" is the scope creep this fix twice
 // caught itself in. The guard that would close it is a type check in
-// `scripts/lint-uat-scenarios.sh`. The "it is a number per the schema" half was also load-bearing
+// `scripts/lint-uat-scenarios.sh`. The "it is a number per the schema" half
+// was also load-bearing
 // and unenforced: `scripts/lint-uat-scenarios.sh` checks duplicate ids, field
 // lengths and banned phrases, but never the TYPE of `id`.
 function escapeHtml(t) {
