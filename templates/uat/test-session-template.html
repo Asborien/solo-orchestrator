@@ -328,10 +328,25 @@ var bugCount = 0;
 // Example:
 //   '<option>7 - Mesh Repair</option><option>8 - Scale/Rotate/Mirror</option>'
 // The number must match the feature numbers used in __SCENARIOS_JSON__ and __FEATURE_SECTIONS__.
+// BL-264-APPEND-NOT-RESERIALIZE
+// `insertAdjacentHTML('beforeend', …)` and NOT `innerHTML +=`. The old form read
+// the container's current markup, concatenated, and re-parsed the whole thing —
+// and a value the tester TYPED lives in the element's `value` PROPERTY, not in
+// the serialized attribute, so it did not survive the round trip. Every
+// "+ Add Bug" click therefore blanked every bug already on the page. Measured in
+// jsdom against this exact concatenation:
+//   after typing into bug 1  -> {"desc":"crash on export","steps":"1. open  2. click export"}
+//   after a 2nd addBug()     -> {"desc":"","steps":""}
+// And it was SILENT: `exportResults` reads the same ids with `.value`, so a
+// tester who filed two bugs shipped a report whose first one was blank.
+// `insertAdjacentHTML` appends without touching the existing nodes, so typed
+// values, chosen <select> options and scroll position all survive. `## BL-264:`.
+// `renderScenarios` used the same construct but runs exactly once, before any
+// typing, so it was never affected — it is left alone deliberately.
 function addBug() {
   bugCount++;
   var n = bugCount;
-  document.getElementById('bugs-list').innerHTML +=
+  document.getElementById('bugs-list').insertAdjacentHTML('beforeend',
     '<div class="bug-entry" id="bug-' + n + '">' +
       '<button class="remove-bug" onclick="document.getElementById(\'bug-' + n + '\').remove()">remove</button>' +
       '<div class="bug-row">' +
@@ -346,7 +361,7 @@ function addBug() {
       '<div class="bug-field"><label>Description</label><input id="bug-desc-' + n + '" placeholder="What went wrong?"></div>' +
       '<div class="bug-field" style="margin-top:8px"><label>Steps to Reproduce</label><textarea id="bug-steps-' + n + '" placeholder="1. ...\n2. ...\n3. ..."></textarea></div>' +
       '<div class="bug-field" style="margin-top:8px"><label>Expected vs Actual</label><textarea id="bug-exp-' + n + '" placeholder="Expected: ...\nActual: ..."></textarea></div>' +
-    '</div>';
+    '</div>');
 }
 
 function exportResults() {

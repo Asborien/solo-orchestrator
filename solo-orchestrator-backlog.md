@@ -16476,7 +16476,33 @@ widened rule would flag the same pattern in a GENERATED project's code),
 
 ## BL-264: `addBug()` in the shipped UAT template WIPES every field the tester has already filled in — `innerHTML +=` re-serializes the container
 
-**Status:** Open
+**Status:** Open — fix built 2026-09-14 (`# BL-264-APPEND-NOT-RESERIALIZE`), stays Open
+pending PR + merge.
+
+**BUILD NOTE (2026-09-14).** `innerHTML +=` replaced with
+`insertAdjacentHTML('beforeend', …)`, which appends without touching the existing nodes.
+`renderScenarios` uses the same construct and is left alone deliberately — it runs exactly
+once, before any typing, so it was never affected.
+
+Pinned in `tests/test-bl263-bl264-uat-template-dom.sh`, section `B`, which lifts the real
+`addBug` out of the shipped template rather than copying it. Four behavioural cases and
+two static ones, and the split matters for the same reason it did on `## BL-263:`: **the
+gating lane has no jsdom**, so `B1`-`B3` skip there and `B4`/`B5` are what hold the line.
+Measured — reverting to `innerHTML +=` goes 25/5 with jsdom and still 18/2 without, on
+`B5` alone.
+
+The `<select>` case is the sharper one and is pinned separately: re-serialization does not
+blank a select, it reverts it to the `selected` ATTRIBUTE, so a tester who chose
+`SEV-1 (crash/data loss)` silently gets `SEV-3 (minor UX)` in the exported report. That is
+a different wrong answer from empty and a checklist that only looked for blanks would miss
+it. `B3` exists so a "fix" that preserved the old entry by never adding the new one cannot
+pass — it asserts the second entry really was added.
+
+The interaction `## BL-262:` flagged was checked rather than assumed: `insertAdjacentHTML`
+is itself a sink the shipped ruleset matches (`soif-insert-adjacent-html`), and the
+argument here is a literal-prefixed concatenation, so the rule's `[^"'\s]` guard excludes
+it — the widened ruleset returns 0 findings over this repo's markup, unchanged by this
+edit.
 
 **Found:** 2026-09-14, by the adversarial review of `## BL-262:`'s branch — in the site
 that entry's first triage draft had just cleared as "inert". It is inert to INJECTION; it

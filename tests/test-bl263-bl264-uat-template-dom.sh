@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# tests/test-bl263-uat-scenario-escaping.sh
+# tests/test-bl263-bl264-uat-template-dom.sh
 #
 # `## BL-263:` — SCENARIO TEXT IS DATA, NOT MARKUP.
+# `## BL-264:` — APPENDING A BUG MUST NOT ERASE THE ONES ALREADY THERE.
+#
+# Two defects in one shipped template, both in how it writes to the DOM, so one
+# suite. B1-B3 are BL-264's; everything else is BL-263's.
 #
 # `templates/uat/test-session-template.html` concatenates `s.title`, `s.steps`
 # and `s.expected` into innerHTML. Before `# BL-263-ESCAPE-SCENARIO-TEXT` they
@@ -172,6 +176,65 @@ JSEOF
 else
   skip_ "R1-R4 — node + jsdom unavailable"
 fi
+
+echo "=== B — `## BL-264:` a second addBug() must not erase the first ==="
+
+if [ "$HAVE_JSDOM" -eq 1 ]; then
+  # Lift the REAL addBug out of the shipped template, same as above — a
+  # hand-copied body is how a proof stops testing the artifact.
+  awk '/^function addBug\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$TPL" > "$WORK/addbug.js"
+  chk "B0: addBug was extracted from the template" \
+    "$([ -s "$WORK/addbug.js" ] && echo yes || echo no)" "yes"
+  cat > "$WORK/bug.js" <<'JSEOF'
+const { JSDOM } = require('jsdom');
+const fs = require('fs');
+const dom = new JSDOM('<!doctype html><body><div id="bugs-list"></div></body>');
+global.document = dom.window.document;
+var bugCount = 0;
+eval(fs.readFileSync(process.argv[2], 'utf8'));
+addBug();
+document.getElementById('bug-desc-1').value  = 'crash on export';
+document.getElementById('bug-steps-1').value = '1. open  2. click export';
+document.getElementById('bug-sev-1').value   = 'SEV-1 (crash/data loss)';
+addBug();   // the tester clicks "+ Add Bug" a second time
+console.log(JSON.stringify({
+  desc:    document.getElementById('bug-desc-1').value,
+  steps:   document.getElementById('bug-steps-1').value,
+  sev:     document.getElementById('bug-sev-1').value,
+  entries: document.querySelectorAll('.bug-entry').length,
+}));
+JSEOF
+  BRES="$(node "$WORK/bug.js" "$WORK/addbug.js" 2>"$WORK/berr")" || BRES=""
+  if [ -z "$BRES" ]; then
+    bad "B0 — the lifted addBug did not execute (see $WORK/berr)"
+    head -3 "$WORK/berr" 2>/dev/null | sed 's/^/        /'
+  else
+    _b() { printf '%s' "$BRES" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s)['$1']))"; }
+    # The whole defect in one assertion: this read '' before the fix.
+    chk "B1: a typed Description survives a second addBug()" "$(_b desc)"  "crash on export"
+    chk "B1: a typed Steps survives a second addBug()"       "$(_b steps)" "1. open  2. click export"
+    # A <select> is the sharper case — re-serialization reverts it to the
+    # `selected` ATTRIBUTE, which is a different wrong answer from empty.
+    chk "B2: a chosen <select> option survives too"          "$(_b sev)"   "SEV-1 (crash/data loss)"
+    # And the append still appends — a fix that preserved the old entry by
+    # never adding the new one would pass B1/B2 and be useless.
+    chk "B3: and the second entry was actually added"        "$(_b entries)" "2"
+  fi
+else
+  skip_ "B0-B3 — node + jsdom unavailable"
+fi
+
+echo "=== B — statically, the construct is gone ==="
+chk "B4: the marker is present exactly once, alone on its line" \
+  "$(grep -c '^// BL-264-APPEND-NOT-RESERIALIZE$' "$TPL")" "1"
+_abody="$WORK/addbug-static.js"
+awk '/^function addBug\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$TPL" > "$_abody"
+chk "B4: the addBug body is non-empty (the extraction found it)" \
+  "$([ -s "$_abody" ] && echo yes || echo no)" "yes"
+chk "B5: addBug no longer uses innerHTML at all" \
+  "$(grep -c 'innerHTML' "$_abody")" "0"
+chk "B5: and appends with insertAdjacentHTML beforeend" \
+  "$(grep -c "insertAdjacentHTML('beforeend'" "$_abody")" "1"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
