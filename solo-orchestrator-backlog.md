@@ -15935,17 +15935,20 @@ caught by review, not by the lint.
 
 ---
 
-## BL-263: every CI template hardcodes `npm`, so each pnpm and yarn project is scaffolded with a pipeline that cannot run
+## BL-285: every CI template hardcodes `npm`, so each pnpm and yarn project is scaffolded with a pipeline that cannot run
 
 **Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** A fix WAS built on branch
 `fix/ci-template-package-manager` and is **withdrawn**; the reasoning that withdrew it is the substance
 of this entry and is recorded below. The branch now carries this entry and nothing else.
 
-**Numbering.** Filed as BL-263, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
+**Renumbered BL-263 → BL-285 on merge (2026-09-15).** BL-263 was taken on `main` by the time this
+landed; the paragraph below is the original reasoning, kept as written.
+
+**Numbering (as filed).** Filed as BL-263, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
 the next free number here, and two carried fixes in a DOWNSTREAM project already hold BL-260 and
 BL-261 in committed code and in a committed audit trail, unfiled in this backlog. <!-- lint-bl-markers: allow the downstream marker tokens are deliberately not backticked; they are markers in another project, not in this code surface -->
-So **BL-260 and BL-261 are reserved, not free.** The other two of the three are `## BL-262:` and
-`## BL-264:`; read all three numbers as provisional until those downstream carries are filed, since
+So **BL-260 and BL-261 are reserved, not free.** The other two of the three are `## BL-287:` and
+`## BL-288:`; read all three numbers as provisional until those downstream carries are filed, since
 nothing here holds a number until an entry header claims it.
 
 **Logged:** 2026-09-12, from a read of `templates/pipelines/ci/github/typescript.yml` against the release
@@ -16086,12 +16089,12 @@ templates; `tests/test-bl263-ci-template-package-manager.sh`; and its registrati
 3/9 RED with three mutants — it worked. It is withdrawn because working in the one consumer that cannot
 reach the operator is not the same as fixing the defect.
 
-**The reconfigure host-path arm is `## BL-262:`'s, not this entry's.** This build independently found
-the same `scripts/reconfigure-project.sh` host-path defect that `## BL-262:` was opened for: the missing
-`$host/` segment, the hardcoded GitHub destination, the `other` arm. **Read `## BL-262:` for that
+**The reconfigure host-path arm is `## BL-287:`'s, not this entry's.** This build independently found
+the same `scripts/reconfigure-project.sh` host-path defect that `## BL-287:` was opened for: the missing
+`$host/` segment, the hardcoded GitHub destination, the `other` arm. **Read `## BL-287:` for that
 defect; it is not restated here.** Two independent reproductions of one defect is one defect.
 
-**Related:** `## BL-262:` (the same file, the host-path defect, and itself held on the same class of
+**Related:** `## BL-287:` (the same file, the host-path defect, and itself held on the same class of
 blocker), `## BL-273:` (the systemic finding this is the fourth instance of — reusable logic that is not
 reachable from the places that need it), `## BL-229:` (the `_extract_fn` idiom the withdrawn suite used),
 `## BL-113:` (the `__SOLO_TEMPLATE_ONLY__` marker idiom the withdrawn block marker was modelled on),
