@@ -17253,12 +17253,12 @@ this), `## BL-149:` (a gate people cannot reason about is a gate they learn to i
 ## BL-272: a plain `--single-branch` clone is not shallow, so Scout's shallow detection never fires — and the blind spot is identical
 
 **Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** Filed separately at both
-reviewers' recommendation rather than bundled into `## BL-264:`.
+reviewers' recommendation rather than bundled into `## BL-288:`.
 
 **Logged:** 2026-09-13, while fixing BL-264's remediation advice. It is the same blind spot reached by
 a different clone flag.
 
-**The defect.** `## BL-264:` makes Scout stop calling a shallow clone `full-history`. Its detection
+**The defect.** `## BL-288:` makes Scout stop calling a shallow clone `full-history`. Its detection
 keys on SHALLOWNESS — `git rev-parse --is-shallow-repository`. A clone made with `--single-branch`
 and no `--depth` is **not shallow**: full history, every commit of the cloned branch present,
 `--is-shallow-repository` returns `false`. So the new detection does not fire, the report says
@@ -17281,6 +17281,6 @@ from 1 to 2. Both reviewers said file it rather than widen that change, and this
 **Not measured beyond the reasoning above.** No fixture was built and no detection was prototyped,
 because no fix is proposed; a reproduction belongs with whatever shape the maintainer chooses.
 
-**Related:** `## BL-264:` (the shallow half, fixed; this is the same blind spot by another route),
+**Related:** `## BL-288:` (the shallow half, fixed; this is the same blind spot by another route),
 `## BL-147:` (a check that cannot run must not pass), `## BL-256:` (gates handing out receipts they
 did not earn).
