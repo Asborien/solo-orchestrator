@@ -19379,7 +19379,7 @@ what the check actually compared — true whichever rule turns out to be the rea
 
 > `This gate compared the Approver cell against the git author of that row, and they match.`
 > `It cannot tell an independent approver who signed their own row from an Orchestrator approving themselves — it compares only the two names, and never establishes who the Orchestrator is. Confirm by hand which case this is.`
-> `If this project has one technical authority, the blocking pre-condition is docs/governance-framework.md §XIV item 5 — a second technologist — and this gate is the symptom, not the cause. See ## BL-274:.`
+> `If this project has one technical authority, the blocking pre-condition is docs/governance-framework.md §XIV item 5 — a second technologist — and this gate is the symptom, not the cause. See ## BL-275:.`
 
 That wording asserts neither rule. It says what was compared, names the distinction the check cannot
 make, tells the operator which one to make by hand, and points a single-authority project at its
@@ -19422,8 +19422,8 @@ requires exit 2 with "Unknown argument". If the flag is ever implemented, R2 tur
 in half one must be revisited. The three-source contradiction remains READ, from the files named and
 quoted verbatim — there is nothing to run about a disagreement between two documents and a comparison.
 
-**Related:** `## BL-274:` (the adopter-facing question this defect produces, and the attestation built
-for it — the shipped refusal text below points at it, so BL-274 should land first or alongside), `## BL-212:` (the same walker — its coverage stops at Phase 1→2, and
+**Related:** `## BL-274:` (never filed on any branch — a placeholder entry now holds the number; the shipped
+refusal text points at THIS entry instead), `## BL-212:` (the same walker — its coverage stops at Phase 1→2, and
 whichever rule wins here must land before that widening reaches two more gates), `## BL-213:` (the
 category sibling: a shipped script advertising an exit code that does not exist), `## BL-055:` and
 `## BL-143:` (the per-line blame walker this check is built on), `## BL-060:` (the last time this
@@ -20393,3 +20393,31 @@ silent success — the mechanism by which a failed query becomes 0 here), `## BL
 as the unread `bug_tracker` above), `## BL-258:` #7 (the comment-blind predicate this suite walked
 into), `## BL-275:` (the one-entry-two-halves shape, and the precedent for leaving a maintainer
 judgement explicitly undecided).
+
+---
+
+## BL-274: PLACEHOLDER — the self-approval gate's single-technical-authority case, cited by BL-275 and BL-279 but never filed
+
+**Status:** Open — PLACEHOLDER, written by the maintainer on merge (2026-09-15), not by the
+contributor who cited it.
+
+**Why this exists.** The 2026-09-13 contributor batch (`## BL-275:`, `## BL-279:`) cites
+`## BL-274:` nine times — as "the A13 fixture whose construction exposed" the WARN-vs-block
+drift, and as "the adopter-facing question this defect produces, and the attestation built
+for it". No branch on the contributor's fork carries the entry (`git grep BL-274` finds
+nothing on `main` before this batch, and no `fix/bl274` ref exists), so every one of those
+cites resolved to nothing. `lint-backlog-references.sh` checks commit messages and
+`lint-bl-markers.sh` checks `# BL-NNN-` markers; neither covers an in-file `## BL-NNN:` cite,
+so this dangled silently. A placeholder holds the number so the cites resolve, in the same
+never-delete-the-trail spirit as every Closed entry above.
+
+**What it appears to be, from the citing text.** A project with ONE technical authority
+cannot satisfy `docs/governance-framework.md` §XIV item 5 (a second technologist with
+repository and hosting access), so the organizational self-approval check will always
+fire for it — the gate is the symptom, the missing second person is the cause. BL-275
+rewrote the gate's message to say exactly that; BL-279 built an "A13" case around it. What
+BL-274 was going to propose — an attestation route, a documented pre-condition check, or
+nothing — is not recoverable from the cites and is deliberately not invented here.
+
+**To close:** either write the real entry over this placeholder, or fold the number into
+`## BL-275:` and re-point the cites. Not both, and not by deleting the number.

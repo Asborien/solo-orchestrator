@@ -159,19 +159,20 @@ run_gate_to() {
 mk_prefix() {
   local out="$1" mark_ln end_ln
   mark_ln="$(grep -n "${MARKER}" "$GATE" | head -1 | cut -d: -f1)"
-  end_ln="$(grep -n '^  \[ -n "\$_ib" \] || _ib="main"$' "$GATE" | head -1 | cut -d: -f1)"
+  end_ln="$(grep -n '^  if \[ -n "\$_ib" \]; then _ib_from_key=1; else _ib="main"; fi$' "$GATE" | head -1 | cut -d: -f1)"
   [ -n "$mark_ln" ] && [ -n "$end_ln" ] && [ "$end_ln" -gt "$mark_ln" ] || return 1
   # the blank line separating the resolution from `local base=""` goes too
   {
     head -n $((mark_ln - 1)) "$GATE"
     tail -n +$((end_ln + 2)) "$GATE"
   } | sed \
-      -e 's|git rev-parse --verify --quiet "\$_ib"|git rev-parse --verify --quiet main|' \
+      -e 's|git rev-parse --verify --quiet "refs/heads/\$_ib"|git rev-parse --verify --quiet main|' \
       -e 's|base="\$_ib"|base="main"|' \
-      -e 's|git rev-parse --verify --quiet "origin/\$_ib"|git rev-parse --verify --quiet origin/main|' \
-      -e 's|base="origin/\$_ib"|base="origin/main"|' > "$out"
+      -e 's|git rev-parse --verify --quiet "refs/remotes/origin/\$_ib"|git rev-parse --verify --quiet origin/main|' \
+      -e 's|base="origin/\$_ib"|base="origin/main"|' \
+      -e '/_tdd_note_key_exempt "\$base" "\$_ib_from_key"/d' > "$out"
   bash -n "$out" 2>/dev/null || return 1
-  [ "$(grep -c '_ib' "$out")" -eq 0 ] || return 1
+  [ "$(grep -c 'quiet "refs/heads/\$_ib"\|quiet "refs/remotes/origin/\$_ib"\|_ib_from_key=1' "$out")" -eq 0 ] || return 1
   [ "$(grep -c "${MARKER}" "$out")" -eq 0 ] || return 1
   [ "$(grep -c '^    base="main"$' "$out")" -eq 1 ] || return 1
   [ "$(grep -c '^    base="origin/main"$' "$out")" -eq 1 ] || return 1
@@ -303,6 +304,53 @@ else
   fi
 fi
 
+# A3 — A TAG IS NOT A BRANCH. `rev-parse --verify` accepts any revision spec, so a
+# key naming a tag cut before the tests widened `<base>...HEAD` until it held
+# one — measured: rc 0, zero bytes, no ledger row, on a non-bypassable tier.
+# A tag must NOT resolve; the axis falls through to the fail-closed arm.
+PA3="$TOPTMP/a3"
+if ! mk_proj "$PA3" "{$MANIFEST_BASE,\"integration_branch\":\"v0\"}" preview; then
+  fail_ "A3" "fixture setup failed"
+else
+  ( cd "$PA3" && git tag v0 "$(git rev-list --max-parents=0 HEAD)" ) >/dev/null 2>&1
+  if ! ( cd "$PA3" && git rev-parse --verify --quiet v0 >/dev/null 2>&1 ); then
+    fail_ "A3" "fixture invalid — tag v0 does not resolve"
+  elif ! stage_impl "$PA3"; then
+    fail_ "A3" "could not stage the impl file"
+  else
+    run_gate "$PA3" "feat: add"
+    if [ "$GATE_RC" -ne 0 ]; then
+      pass "A3 — integration_branch naming a TAG (v0, at the root) does not widen the range: still BLOCKED (rc=$GATE_RC)"
+    else
+      fail_ "A3" "the gate ALLOWED (rc=$GATE_RC) — a tag resolved as the base and the branch axis exempted the commit"
+    fi
+  fi
+fi
+
+# A4 — WHEN THE KEY DECIDES, IT SAYS SO. A real branch cut behind the tests
+# cannot be told apart from a real trunk by any read-side check; what the gate
+# must not do is exempt SILENTLY on a tracked file's say-so. Same fixture as
+# A1's trunk, but the key names `stale`, a branch parked at the root commit.
+PA4="$TOPTMP/a4"
+if ! mk_proj "$PA4" "{$MANIFEST_BASE,\"integration_branch\":\"stale\"}" preview; then
+  fail_ "A4" "fixture setup failed"
+else
+  ( cd "$PA4" && git branch stale "$(git rev-list --max-parents=0 HEAD)" ) >/dev/null 2>&1
+  if ! stage_impl "$PA4"; then
+    fail_ "A4" "could not stage the impl file"
+  else
+    run_gate "$PA4" "feat: add"
+    if [ "$GATE_RC" -eq 0 ] && printf '%s' "$GATE_OUT" | grep -q "EXEMPT on the branch axis" \
+       && printf '%s' "$GATE_OUT" | grep -q "integration_branch 'stale'"; then
+      pass "A4 — a key naming a stale branch still exempts (nothing can tell it from a trunk) but LOUDLY, naming the base"
+    elif [ "$GATE_RC" -eq 0 ]; then
+      fail_ "A4" "exempted SILENTLY on a manifest key (rc=0, no note naming the base) — the off-switch is back"
+    else
+      fail_ "A4" "unexpected rc=$GATE_RC for a resolvable stale branch: $(printf '%s' "$GATE_OUT" | head -2)"
+    fi
+  fi
+fi
+
 echo "=== B — the key is absent: BYTE-IDENTICAL to the pre-fix behaviour ==="
 if [ "$PREFIX_OK" -eq 1 ]; then
   pass "B0 — the pre-fix reconstruction built and the reverse mutation landed (no _ib, literal main restored)"
@@ -379,9 +427,9 @@ fi
 # axis is then skipped on every keyless project and the gate fires where it
 # used to exempt. b2 is the case that catches this.
 MP2_SCRIPT="$TOPTMP/mp2-gate.sh"
-if ! grep -v '^  \[ -n "\$_ib" \] || _ib="main"$' "$GATE" > "$MP2_SCRIPT" \
+if ! grep -v '^  if \[ -n "\$_ib" \]; then _ib_from_key=1; else _ib="main"; fi$' "$GATE" > "$MP2_SCRIPT" \
    || ! bash -n "$MP2_SCRIPT" 2>/dev/null \
-   || [ "$(grep -c '^  \[ -n "\$_ib" \] || _ib="main"$' "$MP2_SCRIPT")" -ne 0 ] \
+   || [ "$(grep -c '^  if \[ -n "\$_ib" \]; then _ib_from_key=1; else _ib="main"; fi$' "$MP2_SCRIPT")" -ne 0 ] \
    || [ "$(diff "$GATE" "$MP2_SCRIPT" 2>/dev/null | grep -c '^[<>]')" -ne 1 ]; then
   fail_ "MP2 (MUTATION) setup" "the dropped-fallback mutation did not apply cleanly"
 else

@@ -138,6 +138,20 @@ if echo "$block" | grep -q "XIV"; then
 else
   fail_ R6 "the refusal does not point at the blocking pre-condition: $(echo "$block" | tail -3)"
 fi
+
+# ── R7 — the pointer names an entry that EXISTS ───────────────────────
+# The shipped text said `See ## BL-274:.` — an entry filed on no branch. It now
+# points at BL-275, the entry about this exact message. Pinned by its literal
+# token, because a repoint nobody asserts is a repoint that drifts back.
+echo "R7: the refusal points at BL-275, not the never-filed BL-274"
+setup
+out=$(refusal)
+block=$(echo "$out" | grep -A 8 "self-approval detected")
+if echo "$block" | grep -q 'See ## BL-275:'; then
+  pass "R7 (the pointer resolves — See ## BL-275:)"
+else
+  fail_ R7 "the refusal still points elsewhere: $(echo "$block" | grep -o 'See ## BL-[0-9]*:' | head -1)"
+fi
 teardown
 
 # ── MUTANTS ──────────────────────────────────────────────────────────

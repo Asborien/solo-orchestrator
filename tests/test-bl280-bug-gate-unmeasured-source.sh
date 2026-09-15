@@ -151,6 +151,7 @@ SHIM
 # the feature-completeness section downstream warns on a bare fixture, so
 # rc 2 is reached on main AND on the fix. The operator-visible LINES are what
 # discriminate, and asserting rc here would be an assertion that cannot fail.
+RCFILE="$(mktemp)"
 run_gate() {
   T=$(mktemp -d)
   mkdir -p "$T/proj/.claude" "$T/bin"
@@ -158,7 +159,15 @@ run_gate() {
   if [ "$4" = "yes" ]; then
     printf '# BUGS\n\n| # | SEV | Status | Feature |\n|---|---|---|---|\n' > "$T/proj/BUGS.md"
   fi
-  ( cd "$T/proj" && PATH="$T/bin:$PATH" bash "${5:-$GATE}" --check-phase-gate 2>&1 </dev/null ) || true
+  # `rich`: a fixture the downstream feature-completeness section does NOT warn
+  # on, so the exit code becomes a discriminating assertion — see R11/R12.
+  if [ "${6:-}" = "rich" ]; then
+    printf '# Features\n\n## Login\n\nShipped.\n' > "$T/proj/FEATURES.md"
+    printf '{"features_completed":["Login"],"features_since_last_test":0,"test_interval":3,"testing_required":false}\n' > "$T/proj/.claude/build-progress.json"
+  fi
+  # The rc travels through a file: callers capture stdout with $( ), which is
+  # a subshell, so a variable set here would never reach them.
+  ( cd "$T/proj" && PATH="$T/bin:$PATH" bash "${5:-$GATE}" --check-phase-gate 2>&1 </dev/null ); printf '%s' "$?" > "$RCFILE"
   rm -rf "$T"
 }
 
@@ -202,6 +211,32 @@ for line in "No open SEV-1 bugs" "No open SEV-2 fix-now bugs" "No deferred SEV-2
   echo "$out" | grep -qF "$line" || { fail_ R0 "a clean project lost its all-clear: '$line' missing"; r0_ok=0; break; }
 done
 [ "$r0_ok" -eq 1 ] && pass "R0 (a genuinely clean project still reads clear)"
+
+# ── R11/R12 — THE VERDICT, not only the lines. A review deleted `warnings=true`
+# from all four NOT-MEASURED arms and this suite stayed 19/0: the gate printed
+# four "NOT MEASURED — This is NOT a clean result" lines and then declared the
+# phase gate CLEAR with exit 0. The header above explains why rc was not
+# asserted (a bare fixture warns downstream on main and fix alike); a fixture
+# the feature-completeness section is happy with turns rc into a real check.
+echo "R11: enriched control — a clean project exits 0 (the fixture itself does not warn)"
+out=$(run_gate "SEV-1 SEV-2 SEV-3 fix-now deferred" 0 ok yes "" rich); rc=$(cat "$RCFILE")
+if [ "$rc" -eq 0 ]; then
+  pass "R11 (rc=0 on the enriched clean fixture — so R12's rc is discriminating)"
+else
+  fail_ R11 "the enriched clean fixture does not exit 0 (rc=$rc) — R12 cannot discriminate; output: $(echo "$out" | grep -E 'WARN|FAIL' | head -2 | tr '\n' '|')"
+fi
+# Which arm is which, measured: `norepo` with a BUGS.md is a NOTE (BUGS.md is a
+# measured source, GitHub is merely not counted); no BUGS.md and no labels is
+# the "No bug tracking source found" arm — a different warning. The four
+# NOT-MEASURED arms are reached when the labels EXIST and the `gh issue list`
+# query FAILS: GitHub's count is then unknown even with a BUGS.md present.
+echo "R12: labels present, gh query fails — four arms NOT MEASURED — must NOT clear: rc 2, not 0"
+out=$(run_gate "SEV-1 SEV-2 SEV-3 fix-now deferred" 0 queryfail yes "" rich); rc=$(cat "$RCFILE")
+if [ "$rc" -eq 2 ] && echo "$out" | grep -q "NOT MEASURED"; then
+  pass "R12 (NOT MEASURED is a warning arm: rc=2, 'User attestation required' — never a clear)"
+else
+  fail_ R12 "an unmeasured bug source cleared the gate (rc=$rc, want 2) — the four NOT-MEASURED arms are not raising warnings"
+fi
 
 # ── R1 — arm 1. No SEV labels, no BUGS.md: nothing was measured ──────
 echo "R1: no SEV label and no BUGS.md — the gate must not report zero bugs"

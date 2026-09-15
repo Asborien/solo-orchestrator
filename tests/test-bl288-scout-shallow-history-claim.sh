@@ -499,6 +499,33 @@ else
   pass "S9 — all 5 printed remedies render the glob QUOTED (\`origin '*'\`), across three different quoting contexts"
 fi
 
+# ── S10: findings from the commits a shallow clone CAN read are EMITTED ─────
+# The fix claims "scanned-partial findings are REAL … so they are emitted rather
+# than nulled" — and nothing above tests it, because the only shallow fixture
+# plants its secret in the part a --depth 1 clone cannot reach (findingCount is
+# 0 either way). A reviewer narrowed `produced` back to `scanned` alone and this
+# suite stayed 14/0 while two live credentials vanished from the report and the
+# rotate-first advice with them. This fixture plants the secret in the TIP
+# commit, which a depth-1 clone DOES read.
+echo "S10: a secret in the commit a shallow clone CAN read is reported, not nulled"
+D2="$(newtmp)"; mkdir -p "$D2/src"
+( cd "$D2/src" && unset GITHUB_BASE_REF
+  git init -q -b main . && git config user.email t@t.local && git config user.name T \
+    && printf 'hello\n' > README.md && git add -A && git commit -q -m "add a readme" \
+    && printf 'more\n' >> README.md && git add -A && git commit -q -m "more readme" \
+    && printf 'aws_key = %s\n' "$HIST_PLANT" > config.ini && git add -A && git commit -q -m "add config (tip)" ) >/dev/null 2>&1
+( cd "$D2" && git clone -q --depth 1 "file://$D2/src" shallow ) >/dev/null 2>&1
+tip_json=$(scout_json "$SCOUT" "$D2/shallow")
+tip_status=$(jqv "$tip_json" '.secrets.status')
+tip_fc=$(_num "$(jqv "$tip_json" '.secrets.findingCount')")
+tip_n=$(printf '%s' "$tip_json" | jq -r '.secrets.findings | length' 2>/dev/null)
+tip_hr=$(printf '%s' "$tip_json" | jq -r '.secrets.historyRewrite | type' 2>/dev/null)
+if [ "$tip_status" = "scanned-partial" ] && [ "${tip_fc:-0}" -ge 1 ] && [ "${tip_n:-0}" -ge 1 ] && [ "$tip_hr" != "null" ]; then
+  pass "S10 — --depth 1 clone with the plant in its one reachable commit: status=scanned-partial, findingCount=$tip_fc, findings=$tip_n, historyRewrite=$tip_hr"
+else
+  fail_ "S10" "shallow-reachable finding was dropped: status=$tip_status findingCount=${tip_fc:-?} findings=${tip_n:-?} historyRewrite=${tip_hr:-?} (want scanned-partial / >=1 / >=1 / non-null)"
+fi
+
 echo ""
 echo "Results: $PASSED passed, $FAILED failed${SKIPPED:+, $SKIPPED skipped}"
 [ "$FAILED" -eq 0 ] && exit 0

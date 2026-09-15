@@ -163,6 +163,15 @@ _bl072_tier_bypassable() {
 #   • AND no test rode earlier on the branch (git diff <base>...HEAD).
 # Pure detection, mode-independent: both the PreToolUse WARN path and the
 # --terminal-mode enforcement call it (single source of truth). set -e safe.
+# _tdd_note_key_exempt <base> <from_key> — one line on stderr when, and ONLY
+# when, the branch-axis exemption was measured against an integration_branch
+# read from .claude/manifest.json. A silent exemption sourced from a tracked
+# file is the framework's own `# BL-147` shape; a keyless project is unchanged.
+_tdd_note_key_exempt() {   # BL-286-EXEMPT-BY-KEY
+  [ "${2:-0}" -eq 1 ] || return 0
+  echo "[note] BL-072 TDD ordering: EXEMPT on the branch axis — a test rode earlier on this branch, measured against integration_branch '$1' from .claude/manifest.json. That key is a tracked file; if it does not name this project's real trunk, this exemption is wrong." >&2
+}
+
 _tdd_triggers() {
   local subject="$1" staged="$2"
   echo "$subject" | grep -qE '^(feat|fix|refactor)(\([^)]*\))?!?:' || return 1
@@ -228,17 +237,28 @@ _tdd_triggers() {
   # it would false-block every keyless main-trunk project. What this guarantees
   # is byte-identity and no NEW permissive resolution; closing the keyless case
   # needs a writer, and this ships the reader without picking one.
-  local _ib=""
+  local _ib="" _ib_from_key=0
   if [ -f .claude/manifest.json ] && command -v jq >/dev/null 2>&1; then
     _ib=$(jq -r '.integration_branch // ""' .claude/manifest.json 2>/dev/null || echo "")
-    [ "$_ib" = "null" ] && _ib=""
   fi
-  [ -n "$_ib" ] || _ib="main"
+  if [ -n "$_ib" ]; then _ib_from_key=1; else _ib="main"; fi
 
+  # BRANCH REFS ONLY, AND LOUD WHEN THE KEY DECIDES. Two things a review found
+  # after the block above was written, both measured:
+  #   * `rev-parse --verify` accepts ANY revision spec. A key naming a tag,
+  #     `HEAD~50` or a sha resolved, widened `<base>...HEAD` until it held a
+  #     test, and the non-bypassable block became rc 0 with zero bytes of
+  #     output and no ledger row. `refs/heads/` and `refs/remotes/origin/`
+  #     accept a branch and nothing else.
+  #   * a REAL branch cut behind the tests does the same, and no read-side
+  #     check can tell a wrong trunk from a right one. What it can do is stop
+  #     being silent: when the key — a tracked file in the repo the gate
+  #     governs — is what exempted the commit, say so and name the base.
+  #     Keyless projects print nothing new, so the B-case byte-identity holds.
   local base=""
-  if git rev-parse --verify --quiet "$_ib" >/dev/null 2>&1; then
+  if git rev-parse --verify --quiet "refs/heads/$_ib" >/dev/null 2>&1; then
     base="$_ib"
-  elif git rev-parse --verify --quiet "origin/$_ib" >/dev/null 2>&1; then
+  elif git rev-parse --verify --quiet "refs/remotes/origin/$_ib" >/dev/null 2>&1; then
     base="origin/$_ib"
   fi
   if [ -n "$base" ]; then
@@ -246,12 +266,16 @@ _tdd_triggers() {
     branch_status=$(git diff --name-status "$base"...HEAD 2>/dev/null || true)
     bcounts=$(printf '%s\n' "$branch_status" | _bl072_classify_status)
     b_test=${bcounts##*TEST:}
-    [ "${b_test:-0}" -gt 0 ] 2>/dev/null && return 1
+    if [ "${b_test:-0}" -gt 0 ] 2>/dev/null; then
+      _tdd_note_key_exempt "$base" "$_ib_from_key"   # BL-286-EXEMPT-BY-KEY
+      return 1
+    fi
     # BL-107-RUST-INLINE-TESTS (branch axis): a test that rode EARLIER on the
     # branch may be an inline .rs test — same content probe over base...HEAD
     # (same attribute family + --no-ext-diff rationale as the staged probe).
     if printf '%s\n' "$branch_status" | grep -qE '\.rs([[:space:]]|$)'; then
       if git diff --no-ext-diff -U0 "$base"...HEAD -- '*.rs' 2>/dev/null | grep -qE "$_bl107_attr_re"; then
+        _tdd_note_key_exempt "$base" "$_ib_from_key"   # BL-286-EXEMPT-BY-KEY
         return 1
       fi
     fi

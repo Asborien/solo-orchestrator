@@ -443,7 +443,43 @@ case_R7() {
 
 run_all_cases() {
   case_G0; case_R1; case_R2; case_R3; case_R4; case_R5; case_R6; case_R7
-  case_R8; case_R9; case_R10
+  case_R8; case_R9; case_R10; case_R11; case_R12
+}
+
+# R11 — A ROOT THAT IS NOT A DIRECTORY MUST SAY SO. `set -euo pipefail` plus a
+# bare `x="$(cd … && pwd -P)"` aborted the script at rc 1 with ZERO bytes of
+# output — while main printed "[FAIL] not a git repo". init.sh's warning now
+# says "the installer's reason is above", so the reason has to be there.
+case_R11() {
+  local out rc
+  out=$(bash "$INST" --install "$WORKROOT/no-such-root-$$" 2>&1); rc=$?
+  if [ "$rc" -eq 0 ]; then
+    fail_ R11 "accepted a nonexistent root at rc=0"
+  elif ! printf '%s' "$out" | grep -q 'not a git repo'; then
+    fail_ R11 "refused at rc=$rc with no diagnostic (output: '${out:-<empty>}') — the silent abort is back"
+  else
+    pass "R11 (a nonexistent root is refused AND says why)"
+  fi
+}
+
+# R12 — A hooksPath THAT IS THIS REPO'S OWN HOOKS DIR IS NOT A REDIRECTION. The
+# refusal message said a gate written to .git/hooks "would never run" — false
+# when core.hooksPath points at exactly .git/hooks — and, because `git config`
+# reads the whole chain, a GLOBAL hooksPath refused every install with no
+# escape hatch. Same directory -> proceed and write the gate.
+case_R12() {
+  local d out rc hd
+  d=$(setup_repo r12) || { fail_ R12 "fixture could not be created"; return; }
+  hd=$(common_hooks_dir "$d")
+  ( cd "$d" && git config core.hooksPath "$hd" ) || { fail_ R12 "could not set core.hooksPath"; return; }
+  out=$(bash "$INST" --install "$d" 2>&1); rc=$?
+  if [ "$rc" -ne 0 ]; then
+    fail_ R12 "refused (rc=$rc) although core.hooksPath IS the repo's own hooks dir: $(printf '%s' "$out" | head -1)"
+  elif [ ! -f "$hd/framework-gate.sh" ]; then
+    fail_ R12 "rc=0 but no gate was written to $hd"
+  else
+    pass "R12 (core.hooksPath == own hooks dir: installed, gate written to $hd)"
+  fi
 }
 
 echo "== BL-209: hooks-directory resolution in install-filesystem-gates.sh =="

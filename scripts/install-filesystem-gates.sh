@@ -70,7 +70,12 @@ PROJECT_ROOT="$2"
 _soif_top="$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null)" || _soif_top=""
 _soif_top_phys=""
 [ -n "$_soif_top" ] && _soif_top_phys="$(cd "$_soif_top" 2>/dev/null && pwd -P)"
-_soif_want_phys="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)"
+# `|| _soif_want_phys=""`: `set -euo pipefail` is on, and a bare `x="$(cd …)"`
+# that fails ABORTS the script with no diagnostic — measured, `--install
+# /nonexistent` exited 1 with zero bytes of output while main printed
+# "[FAIL] not a git repo". The two rev-parse calls above already take their rc
+# explicitly; this `cd` did not. An empty value falls into that same arm.
+_soif_want_phys="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd -P)" || _soif_want_phys=""   # BL-209-ROOT-RC
 if [ -z "$_soif_top_phys" ] || [ "$_soif_top_phys" != "$_soif_want_phys" ]; then
   echo "[FAIL] not a git repo: $PROJECT_ROOT" >&2
   [ -n "$_soif_top_phys" ] && \
@@ -235,10 +240,25 @@ case "$ACTION" in
       if [ -z "$_hp" ]; then
         _hp="$(git -C "$PROJECT_ROOT" config core.hooksPath 2>/dev/null)" || _hp=""
       fi
-      echo "[FAIL] core.hooksPath is set to '${_hp:-(empty)}' — git runs hooks from there, so a gate written to .git/hooks/ would never run." >&2
-      echo "       This installer will not write into a configured hooksPath (it can be shared across repos or tracked in the project)." >&2
-      echo "       To let the framework manage the commit-time gate: git config --unset core.hooksPath" >&2
-      exit 1
+      # A hooksPath that RESOLVES TO THIS REPO'S OWN HOOKS DIRECTORY is not a
+      # redirection — a gate written there WILL run. Refusing it made the
+      # message below false in that case, and because `git config` reads the
+      # whole chain, a GLOBAL core.hooksPath (husky, pre-commit, corporate
+      # dotfiles) refused every install with no way around it: through
+      # reconfigure-project.sh that rc 1 hit rollback, so such an operator
+      # could not switch a project to strict at all. Compare directories.
+      _hp_phys=""
+      case "$_hp" in
+        /*) _hp_phys="$(cd "$_hp" 2>/dev/null && pwd -P)" || _hp_phys="" ;;
+        ?*) _hp_phys="$(cd "$PROJECT_ROOT" 2>/dev/null && cd "$_hp" 2>/dev/null && pwd -P)" || _hp_phys="" ;;
+      esac
+      _hd_phys="$(mkdir -p "$HOOKS_DIR" 2>/dev/null; cd "$HOOKS_DIR" 2>/dev/null && pwd -P)" || _hd_phys=""
+      if [ -z "$_hp_phys" ] || [ "$_hp_phys" != "$_hd_phys" ]; then   # BL-209-HOOKSPATH-SAME-DIR
+        echo "[FAIL] core.hooksPath is set to '${_hp:-(empty)}' — git runs hooks from there, not from $HOOKS_DIR, so a gate written to $HOOKS_DIR would never run." >&2
+        echo "       This installer will not write into a configured hooksPath (it can be shared across repos or tracked in the project)." >&2
+        echo "       To let the framework manage the commit-time gate: git config --unset core.hooksPath" >&2
+        exit 1
+      fi
     fi
     mkdir -p "$HOOKS_DIR" \
       || { echo "[FAIL] could not create the git hooks directory: $HOOKS_DIR" >&2; exit 1; }
