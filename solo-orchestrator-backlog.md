@@ -20160,7 +20160,7 @@ of this repository — 0 hits across all `refs/heads` and `refs/remotes` — aga
 of `BL-279`, which the identical sweep finds on exactly the two refs that carry it
 (`fix/bl279`, `fork/fix/bl279`). The first cut of that sweep piped `git grep` into `head -1` inside
 an `if`, so the pipeline's exit status was `head`'s and **every ref reported a hit**; the number was
-only established once the predicate was fixed and controlled. `## BL-262:` records that BL-260 and
+only established once the predicate was fixed and controlled. `## BL-287:` records that BL-260 and
 BL-261 are reserved by downstream carries.
 
 **Duplicate sweep — by file touched, not by keyword.** `scripts/test-gate.sh` is modified by **no**
