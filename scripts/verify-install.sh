@@ -112,7 +112,7 @@ load_context() {
     PROJECT_NAME=$(jq -r '.project // empty' ".claude/phase-state.json" 2>/dev/null || echo "")
   fi
 
-  # BL-260-CONTEXT-STATE — read platform/language/track from the STATE FILES
+  # BL-284-CONTEXT-STATE — read platform/language/track from the STATE FILES
   # before falling through to CLAUDE.md prose. Without this, has_context() is
   # unsatisfiable on an ADOPTED project and fix_tool_prefs can never run:
   #   * the only prior sources were .claude/tool-preferences.json — the file
@@ -2000,7 +2000,7 @@ fix_superpowers() {
   # functions: a silenced failure cannot be distinguished from success and
   # leaves the project without the superpowers plugin while reporting healthy.
   #
-  # BL-260-PLUGIN-VERB — the command was `claude plugins add superpowers`, which
+  # BL-284-PLUGIN-VERB — the command was `claude plugins add superpowers`, which
   # is not a command: `claude plugin --help` lists install|i, and `add` exits 1
   # with "error: unknown command 'add'". The fixer could therefore never work,
   # on any host. Two corrections, both load-bearing:

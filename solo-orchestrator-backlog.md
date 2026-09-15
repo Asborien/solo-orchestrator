@@ -17726,9 +17726,10 @@ class: an instrument that yields no evidence about the failure it is reporting).
 
 ---
 
-## BL-260: two `verify-install.sh` auto-fixers that could never run — `has_context()` is unsatisfiable on an adopted project, and `fix_superpowers` calls a CLI verb that does not exist
+## BL-284: two `verify-install.sh` auto-fixers that could never run — `has_context()` is unsatisfiable on an adopted project, and `fix_superpowers` calls a CLI verb that does not exist
 
-**Status:** Open
+**Renumbered BL-260 → BL-284 on merge (2026-09-15):** BL-260 was taken on `main` before this landed;
+the markers, the test file and both registrations were renamed to match. The contributor's prose is unchanged.\n\n**Status:** Open
 
 **Logged:** 2026-09-13, out of a brownfield adoption. Both arms were found and fixed in the ADOPTED
 project's installed copy of `scripts/verify-install.sh` before either was submitted here, so until this
@@ -17737,7 +17738,7 @@ registered with `register_fixable`, offered to the operator as auto-fixable, and
 `run_remediation` to a function that CANNOT succeed — which is why they are one entry; the blast
 radius differs per arm and is stated per arm below.
 
-**Arm 1 — `# BL-260-CONTEXT-STATE`. The fixer's precondition is the file the fixer creates.**
+**Arm 1 — `# BL-284-CONTEXT-STATE`. The fixer's precondition is the file the fixer creates.**
 `has_context()` is `[ -n "$PLATFORM" ] && [ -n "$LANGUAGE" ] && [ -n "$TRACK" ]`, and `load_context()`
 had exactly two sources for those three:
 
@@ -17774,7 +17775,7 @@ than guessed" is the comment on `adopt_render_intake_progress`. `jq -r '.platfor
 yields `""`, because `""` is TRUTHY in jq and `//` only fires on `null`/`false`. So the `-z` guards are
 what stop a pre-intake adoptee from being handed a fabricated context.
 
-**Arm 2 — `# BL-260-PLUGIN-VERB`. `add` is not a subcommand, on any host.** `fix_superpowers` ran
+**Arm 2 — `# BL-284-PLUGIN-VERB`. `add` is not a subcommand, on any host.** `fix_superpowers` ran
 `claude plugins add superpowers`. Measured on Claude Code `2.1.269` (macOS 26.4.1):
 
 ```
@@ -17864,8 +17865,8 @@ why not `--yes`.
 4. **Arm 2: `claude plugin install superpowers` (bare).** Rejected, and it is the mutation the suite
    keeps dead: it succeeds at the CLI and does not satisfy the detector.
 
-**Build note (2026-09-13, branch `fix/bl260`).** Suite
-`tests/test-bl260-verify-install-context.sh` drives the REAL `verify-install.sh` end to end from inside
+**Build note (2026-09-13, branch `fix/bl284`).** Suite
+`tests/test-bl284-verify-install-context.sh` drives the REAL `verify-install.sh` end to end from inside
 a fixture project, with a fixture `HOME` and a `claude` shim on `PATH` that mirrors the real CLI's
 dispatch (`plugin`/`plugins` are one group; the group validates its VERB first) and records its argv.
 It is hermetic: the fixture `HOME` carries a `~/.claude-dev-framework/.git` directory so

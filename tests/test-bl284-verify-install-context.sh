@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# tests/test-bl260-verify-install-context.sh
+# tests/test-bl284-verify-install-context.sh
 #
-# `## BL-260:` — TWO AUTO-FIXERS IN verify-install.sh THAT COULD NEVER RUN.
+# `## BL-284:` — TWO AUTO-FIXERS IN verify-install.sh THAT COULD NEVER RUN.
 #
-# ARM 1 (`# BL-260-CONTEXT-STATE`). `has_context()` requires PLATFORM, LANGUAGE
+# ARM 1 (`# BL-284-CONTEXT-STATE`). `has_context()` requires PLATFORM, LANGUAGE
 # and TRACK, and `load_context()` had exactly two sources for them:
 # `.claude/tool-preferences.json` — the file `fix_tool_prefs` exists to CREATE,
 # so it cannot be its own precondition — and `grep 'Platform:'`-style anchors in
@@ -16,7 +16,7 @@
 # `.claude/phase-state.json`), behind `-z` guards so an EMPTY recorded value
 # cannot win.
 #
-# ARM 2 (`# BL-260-PLUGIN-VERB`). `fix_superpowers` ran `claude plugins add
+# ARM 2 (`# BL-284-PLUGIN-VERB`). `fix_superpowers` ran `claude plugins add
 # superpowers`. `add` IS NOT A SUBCOMMAND — the real CLI advertises `install|i`
 # and answers `add` with rc 1 and `error: unknown command 'add'` — so the fixer
 # could never work on any host, adopted or scaffolded. The fix uses `install`
@@ -109,7 +109,7 @@ mk_fixture() {
   : > "$FX_LOG" || return 1
   mk_claude_shim "$FX_SHIM" || return 1
 
-  printf '# bl260-adopted-project\n\nThis project kept its own CLAUDE.md.\n' \
+  printf '# bl284-adopted-project\n\nThis project kept its own CLAUDE.md.\n' \
     > "$FX_PROJ/CLAUDE.md" || return 1
 
   # The scaffolded CLAUDE.md anchors must be ABSENT — they are the other source
@@ -120,14 +120,14 @@ mk_fixture() {
 
   jq -n --arg p "$plat" --arg l "$lang" --arg t "$FX_TRACK_VAL" \
     '{version:1, started_at:"2026-09-13T00:00:00Z", last_section:1, completed_sections:[1],
-      source:"adopt-project.sh", project_name:"bl260-adopted-project",
+      source:"adopt-project.sh", project_name:"bl284-adopted-project",
       platform:$p, track:$t, deployment:"personal", language:$l, description:"",
       answers:{}}' > "$FX_PROJ/.claude/intake-progress.json" || return 1
 
   # Exactly what adopt_write_phase_state emits: a track, and no platform or
   # language at all.
   jq -n --arg t "$FX_TRACK_VAL" \
-    '{project:"bl260-adopted-project", framework_version:"1.0", current_phase:0,
+    '{project:"bl284-adopted-project", framework_version:"1.0", current_phase:0,
       track:$t, deployment:"personal", poc_mode:null, compliance_ready:false,
       review_gate_enforced:true,
       gates:{phase_0_to_1:null, phase_1_to_2:null, phase_2_to_3:null, phase_3_to_4:null}}' \
@@ -169,8 +169,8 @@ mirror_scripts() {
   return 0
 }
 
-M_CTX="# BL-260-CONTEXT-STATE"
-M_VERB="# BL-260-PLUGIN-VERB"
+M_CTX="# BL-284-CONTEXT-STATE"
+M_VERB="# BL-284-PLUGIN-VERB"
 
 # ================================================================
 echo "=== A — arm 1: an adopted project's context reaches has_context() ==="
@@ -273,9 +273,9 @@ if [ -z "$REAL_CLAUDE" ]; then
   skip_ "L1 (live CLI anchor)" "no 'claude' on PATH — the shim's verb set is unanchored on this host"
 else
   live_help="$("$REAL_CLAUDE" plugin --help 2>&1 || true)"
-  live_err="$("$REAL_CLAUDE" plugin add bl260-no-such-plugin 2>&1 || true)"
+  live_err="$("$REAL_CLAUDE" plugin add bl284-no-such-plugin 2>&1 || true)"
   live_rc=0
-  "$REAL_CLAUDE" plugin add bl260-no-such-plugin >/dev/null 2>&1 || live_rc=$?
+  "$REAL_CLAUDE" plugin add bl284-no-such-plugin >/dev/null 2>&1 || live_rc=$?
   if printf '%s' "$live_help" | grep -qE '^[[:space:]]+install\|i[[:space:]]' \
      && [ "$live_rc" -ne 0 ] \
      && printf '%s' "$live_err" | grep -q "unknown command 'add'"; then
