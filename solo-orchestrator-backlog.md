@@ -16172,3 +16172,447 @@ clean on some arm64 runs; take six.
 **Related:** `## BL-225:` (found under it, not caused by it), `## BL-234:` (host-property
 dependence that is silent on this Mac), `## BL-181:` (the unit-lane membership surface this
 suite sits in).
+
+---
+
+## BL-261: the contributor hook's SAST arm is PERMANENTLY INERT in the framework repo — it `--config`s a path only `init.sh` creates, and the hook already knows it is not a scaffolded project
+
+**Status:** Open
+
+**Found:** 2026-09-14, on every commit of `## BL-225:`'s branch. Not new — `## BL-239:`
+already records it in its measured arm-by-arm table (*"SAST (semgrep) | **INERT** |
+… unable to find a config; path .semgrep/soif-dom-sinks.yml does not exist"*). This
+entry is the FIX, which that table did not propose.
+
+**What happens.** `soif_write_precommit_hook` in `scripts/lib/hook-templates.sh` emits,
+under `# BL-194-HOOK-SEMGREP-POLICY`:
+```
+semgrep scan --config=p/owasp-top-ten \
+  --config=r/javascript.browser.security.insecure-document-method \
+  --config=.semgrep/soif-dom-sinks.yml \
+  …
+```
+`.semgrep/` is laid down by `init.sh` for GENERATED projects (grep `soif-dom-sinks` in
+init.sh). It does not exist in the framework checkout and never will. semgrep therefore
+exits **7** — one config invalid, so nothing runs at all — and the hook prints, on every
+single commit:
+```
+[WARN] semgrep could not complete (exit 7) — the tool itself failed.
+  SAST NOT ENFORCED for this commit — the scanner did not run.
+  [ERROR] WARNING: unable to find a config; path `.semgrep/soif-dom-sinks.yml` does not exist
+  running 171 rules from 2 configs  (1 config error)
+```
+The receipt is honest — `# BL-112-SAST-NOTRUN` doing exactly its job, refusing to record a
+clean result it did not earn. The defect is that the condition is permanent and nothing
+acts on it, so the loudest line in every commit is one the operator is trained to ignore.
+
+**"There is nothing to scan here" is FALSE, and that was this entry's first draft.**
+Measured: the tracked tree holds **6** markup files the rule's
+`paths: include: *.vue, *.html, *.htm` scopes — **5** under `templates/uat/` plus
+`workflow.html` at the repo root. (A draft of this line said "6 under `templates/uat/`";
+the count was right for the repo and wrong for the directory.) The other two configs are
+live too — `p/owasp-top-ten` alone resolves and returns rc 0 here.
+
+**Be honest about how thin that is.** Running the ruleset over all six today yields
+`{"findings":0,"files":[]}` — see `## BL-262:`, where the two `innerHTML +=` lines in the
+UAT template are excluded by the rule's literal-RHS guard. So "the arm has real targets"
+means it has files in scope, not findings waiting. The argument for making it run is
+`# BL-182-NO-UNEARNED-RECEIPT`, not a pending discovery.
+
+**What the fix is NOT.** Not "skip the SAST arm in the framework repo" — that would trade
+a loud non-scan for a silent one, which is the wrong direction for this repo's doctrine.
+**And skipping is NOT the two-line change a draft of this entry claimed.** That draft
+pointed at `# BL-087-MOTHERSHIP-PASS` as existing framework detection; measured, that
+marker lives only in `bl006_terminal_enforce()` in `scripts/pre-commit-gate.sh` — a
+different script, at commit-msg time. The generated pre-commit hook that carries the SAST
+arm has NO framework detection of any kind:
+```
+BL-087-MOTHERSHIP-PASS in .git/hooks/pre-commit          -> 0
+'Solo Orchestrator — Project Initialization Script'       -> 0
+templates/generated                                       -> 0
+_gnif_dir_is_framework                                    -> 0
+```
+(same four, all 0, in `scripts/lib/hook-templates.sh`). The rejected option costs more
+than the draft said, which strengthens the recommendation rather than weakening it — but
+the reason it was rejected must be the doctrine, not a cost number that was wrong.
+
+**Fix shape.** Make the arm RUN here. Either point the framework repo's own hook at
+`templates/semgrep/soif-dom-sinks.yml` (the source of the file `init.sh` copies), or lay a
+`.semgrep/` into the framework checkout the way `install-contributor-hooks.sh` lays the
+hook. Prefer the first: one source of truth, and `## BL-175:` already tracks that this
+ruleset sits outside every mechanical scaffold-closure surface — a second copy would widen
+that. Whichever is chosen, the receipt must keep distinguishing "scanned clean" from "did
+not run"; do not let this become a green that means nothing.
+
+**A constraint on any fix.** `tests/test-bl147-ci-template-integrity.sh` derives "ONE
+unambiguous semgrep policy" from the `# BL-194-HOOK-SEMGREP-POLICY` anchor and enforces
+hook-to-CI-template parity. Changing the emitted `--config` path must preserve that, or
+the change lands as a red required check rather than as a fix.
+
+**Note on CI.** `.github/workflows/tests.yml` installs semgrep in every `unit-shard` leg,
+but to run the live SAST **test cases** (`# BL-190`), not to scan this repo's source.
+So this repo currently has no SAST of its own on any surface. Whether it needs one is a
+separate question from whether the arm should stop lying about having tried.
+
+**Related:** `## BL-239:` (measured the inertness, did not fix it), `## BL-131:` (ships the
+ruleset), `## BL-175:` (the ruleset is outside scaffold-closure tracking), `## BL-112:`
+(the no-unearned-receipt arm that is behaving correctly here), `## BL-262:` (a coverage
+gap in the same ruleset, found while measuring this one).
+
+---
+
+## BL-262: the shipped DOM-sink markup rule misses COMPOUND ASSIGNMENT (`innerHTML +=`), and there is a live instance in a shipped template
+
+**Status:** Open
+
+**Found:** 2026-09-14, while measuring `## BL-261:` — specifically while disproving the
+claim that the framework repo has nothing for the ruleset to scan.
+
+**The gap.** `templates/semgrep/soif-dom-sinks.yml`'s markup rule matches with:
+```
+- pattern-regex: '\.(inner|outer)HTML\s*=\s*[^"''\s]'
+```
+`\s*=\s*` requires the `=` to be the next non-space character. `innerHTML += x` puts a `+`
+there, so it does not match. Measured on a three-line fixture:
+```
+<script>
+  el.innerHTML = userInput;     <- line 2
+  el2.innerHTML += userInput;   <- line 3
+  el3.outerHTML += userInput;   <- line 4
+</script>
+```
+```
+a.html   {"findings":1,"lines":[2]}
+```
+Only the plain assignment is caught. Both compound assignments are missed, and
+`x.innerHTML += untrusted` is exactly as exploitable as `x.innerHTML = untrusted`.
+
+**Why the other ruleset does not cover it.** The js/ts registry pack DOES catch `+=` —
+on a two-line `.js` fixture (`innerHTML =` plus `innerHTML +=`) it returns 2. The
+THREE-line fixture above saved as `.js` returns 3, not 2 — an earlier draft quoted 2
+against the three-line fixture and the two numbers did not belong together. Saved as
+`.js` WITH its `<script>` tags it returns 0 findings and no errors, which is its own
+quiet trap. It cannot reach markup: `## BL-131:` records
+the empirical finding that semgrep's `vue`/`html` parsers do not expose embedded `<script>`
+JS as a matchable AST, which is why the markup rule is `generic` + regex in the first
+place. Confirmed here — the soif ruleset returns `{"findings":0}` on the `.js` fixture,
+deliberately, so the two packs do not overlap. **So markup files with compound assignment
+are covered by NEITHER pack.**
+
+**The pattern occurs in a file this repo ships:**
+```
+$ grep -nE 'innerHTML' templates/uat/test-session-template.html
+246:    container.innerHTML += '<div class="scenario" id="scenario-' + s.id + '">' +
+299:  document.getElementById('bugs-list').innerHTML +=
+```
+**AND THE WIDENED RULE FLAGS NEITHER OF THEM — stated plainly rather than left to imply
+otherwise.** Measured over all six of this repo's markup files:
+`{"findings":0,"files":[]}`. Both right-hand sides open with a STRING LITERAL
+(`'<div class="scenario" …'`), and the `[^"'\s]` guard excludes exactly that —
+deliberately, because without it the rule is unusable on template files. So the widening
+closes a real gap for code shaped `x.innerHTML += userInput`, and these two lines are
+evidence the PATTERN occurs in practice, not instances the rule now catches.
+
+**TRIAGED 2026-09-14. Verdict: NOT exploitable as shipped; a real CORRECTNESS bug; and an
+UNDOCUMENTED, UNENFORCED trust assumption.** Taken site by site, because they are not alike:
+
+- **`addBug` (the `bugs-list` sink, `# BL-264-APPEND-NOT-RESERIALIZE`) — inert to
+  INJECTION, and DEFECTIVE by
+  RE-SERIALIZATION. A first draft of this entry said "inert" full stop and was wrong.**
+  The injection half holds: everything concatenated is a string literal, `n` (an integer
+  from `bugCount++`), or `__FEATURE_OPTIONS__`, which the authoring agent substitutes at
+  GENERATION time and which the template's own comment declares is raw markup by design.
+  Tester input does not reach it either — `exportResults` reads the notes and bug fields
+  with `.value` and builds a MARKDOWN string, never HTML.
+  **But `innerHTML +=` re-serializes and re-parses the whole container, and a typed
+  `value` is not reflected into the attribute — so every field the tester has already
+  filled in is wiped the next time they click "+ Add Bug".** Measured in jsdom against
+  the template's exact `addBug` concatenation:
+  ```
+  after typing into bug 1   -> {"desc":"crash on export","steps":"1. open  2. click export"}
+  after a 2nd addBug()      -> {"desc":"","steps":""}
+  what exportResults emits  ->  Description: "" | Steps: ""
+  ```
+  Silent data loss in a template shipped to every generated project, at the exact site
+  this entry was clearing, caused by the exact construct this entry is about. Filed as
+  `## BL-264:` with the fix. **`renderScenarios` is NOT affected** — it is INVOKED exactly
+  once, at the bottom of the script block, before any field exists to type into. (A draft
+  cited `grep -n` hit counts and line numbers here; they went stale inside this same
+  branch, which is what CLAUDE.md § CITATION RULE forbids bare `file:line` for. Cite the
+  function and `# BL-264-APPEND-NOT-RESERIALIZE`.)
+- **`renderScenarios` (`# BL-263-ESCAPE-SCENARIO-TEXT`) — injects, from
+  generation-time-authored text.** `s.id`,
+  `s.title`, `s.steps` and `s.expected` are concatenated raw out of `__SCENARIOS_JSON__`,
+  and `s.steps.replace(/\n/g,'<br>')` treats steps as HTML deliberately. Nothing escapes:
+  the file's only two `textContent` uses are the progress counter and the `<h1>` read, and
+  `scripts/lint-uat-scenarios.sh` matches ZERO of `innerHTML|escap|<script|xss|sanit`.
+  Measured on the exact concatenation lifted out of the template:
+  ```
+  safe    | ordinary prose with a comparison        ("fails when a < b")
+  INJECTS | prose naming an HTML attribute          ("Repair has <button disabled>")
+  INJECTS | a script tag in steps
+  INJECTS | an image onerror in title
+  ```
+
+**Why that is not a vulnerability today.** `__SCENARIOS_JSON__` is written at generation
+time by the operator's own agent from the operator's own feature docs. There is no
+untrusted-input path in the shipped template, so this is not XSS — nobody who can set
+`s.title` needs an injection to run script in that page.
+
+**Why it is still a bug.** UAT scenario text routinely NAMES markup — the template's own
+shipped example says "Read the Repair button's `disabled` attribute". A title or steps
+field containing `<`, `&` or a quote silently renders as markup or breaks the page, and
+the tester sees a mangled scenario with no error. That is the first row above going wrong
+for a reason that has nothing to do with security.
+
+**And the assumption is load-bearing but unwritten.** Nothing states "scenario text must
+be HTML-safe", the quality linter does not check it, and no test pins it. The day a
+generator derives scenario text from anything external — a dependency name, a failing
+test's message, a filename, an issue title — this becomes a live injection with no guard
+in the way. That is a decision for `## BL-263:`, filed separately, because escaping the
+fields is not this entry's call to make. (An earlier draft of this sentence also said
+escaping "changes rendered output for every existing populated template". That is FALSE
+and was corrected in `## BL-263:` while being left standing here — measured on the
+template's own shipped example, escaping leaves the text identical, the HTML identical
+and the `<br>` count at 6/6. The correction now exists in both places.)
+
+**FIXED HERE (the rule itself).** The inner/outer arm now reads `\s*\+?=\s*`, and
+`tests/test-bl131-domsink-rules.sh` gained three cases: `+=` from a variable IS flagged in
+`.html`, `+=` of a string LITERAL is NOT (the `[^"'\s]` guard survives the widening, which
+is what keeps the rule usable on template files), and a MUTATION that narrows the regex
+back to a bare `=` on a mirror and asserts the compound sink then goes unflagged. The
+mutant asserts it LANDED by its own literal text — the first draft of that sed silently
+changed nothing and the postcondition caught it. Suite: 21/0.
+
+**Related:** `## BL-131:` (ships the rule and records the html-AST finding),
+`## BL-118:` (the registry pack that owns js/ts), `## BL-175:` (this ruleset is outside
+scaffold-closure tracking), `## BL-261:` (found under it).
+
+---
+
+## BL-263: the UAT template's trust assumption — "scenario text is HTML-safe" — is load-bearing, unwritten and unenforced
+
+**Status:** Open — fix built 2026-09-14 (`# BL-263-ESCAPE-SCENARIO-TEXT`), stays Open
+pending PR + merge. `lint-backlog-references.sh` requires a PR # or SHA on a Closed entry
+and is right to; close this in the ledger once the PR number exists.
+
+**BUILD NOTE (2026-09-14).** Karl chose option 1. `escapeHtml()` now wraps `s.title`, `s.steps` and
+`s.expected` in `renderScenarios`; `steps` keeps its `<br>` substitution, applied AFTER
+escaping so line breaks survive. Three things were deliberately NOT done, each because it
+is a change nobody asked for:
+- `s.id` is not escaped. It is a number per the scenario schema and it lands in an
+  `onclick="setResult(N,…)"` JS context, where HTML-escaping a quote would corrupt the
+  call rather than protect it.
+- `expected` did not gain a `<br>` substitution. It never had one, its newlines collapsed
+  to spaces before and they still do. That `steps` wraps and `expected` does not is a
+  pre-existing inconsistency, left alone.
+- `addBug`'s sink is untouched — that is `## BL-264:`, a different defect.
+
+**ONE UNDISCLOSED BEHAVIOUR CHANGE, NOW DISCLOSED.** `escapeHtml` starts with `String(t)`,
+so a scenario MISSING a field no longer throws where it used to. Measured, with `steps`
+absent:
+```
+PRE-FIX  (raw s.steps)      -> THREW: TypeError: Cannot read properties of undefined (reading 'replace')
+POST-FIX (escapeHtml first) -> no throw, renders: "<div>undefined</div>"
+```
+A loud abort became the silent text "undefined", which runs against CLAUDE.md § Code
+Standards ("No silent fallbacks"). It is kept, for one reason: `title` and `expected`
+ALREADY rendered "undefined" before this change — only `steps` threw, and only because
+`.replace` happened to be called on it. So the fix made three fields CONSISTENT rather
+than making a good behaviour bad. **The real defect is that a missing required field is
+silent in all three, and that predates this change**; the template's own AGENT
+INSTRUCTIONS forbid omitting a field and `scripts/lint-uat-scenarios.sh` does not check
+for it. Worth a visible `MISSING FIELD: steps` marker at some point — deliberately not
+built here, because widening this edit from "escape" to "validate" is the scope creep this
+entry twice caught itself in.
+
+Pinned by `tests/test-bl263-bl264-uat-template-dom.sh` — renamed when it took on
+`## BL-264:` as well — four sections and 36 checks, and
+the section split is the interesting part. `S` greps the template; `R` executes the real
+render body in jsdom. **`R` alone was not enough: the gating lane has no jsdom, so it
+skips there, which would have left the PR-blocking checks resting on greps — and a grep
+cannot tell `escapeHtml(s.title)` from a helper that returns its argument.** Measured: an
+identity-function mutant passed every static case. So `E` lifts `escapeHtml` out of the
+shipped template and asserts what it RETURNS, using node alone, which the runner has.
+Without jsdom the suite is 28/0 with 2 loud skips. And node absent is now a FAILURE, not
+a skip: `E` is the only section that can tell `escapeHtml(x)` from identity, so a green
+that never ran it would be an unearned receipt. `tests.yml`'s "Verify required tools are
+available" step asserts `node --version` alongside `jq` and `git`.
+
+Every arm is pinned separately because a helper that DELETES a character also "changes"
+the input: a mutant replacing the `"` arm's replacement with `''` passed an earlier draft
+at 14/14.
+
+**THE MUTANT TABLE, RE-DERIVED AT THIS TREE — and three drafts of it were stale, each
+describing a suite that had since grown.** Quote it only with a re-run; the suite is 40
+checks with jsdom and 30 without (28 run, 2 loud skips). Both columns matter because the
+gating lane is the one WITHOUT jsdom — no CI lane installs it:
+
+| mutation | jsdom | gating lane |
+|---|---|---|
+| pristine | 40/0 | 28/0, 2 skips |
+| the four `escapeHtml` `g` flags dropped | 34/6 | 24/4 |
+| the FIFTH `g` (the `<br>` substitution) dropped | 38/2 | 27/1 |
+| `String(t)` -> `t` | 32/2 | 27/1 |
+| the eight `escapeHtml(s.id)` reverted | 35/5 | 26/2 |
+| `escapeHtml` body commented out (identity) | 25/15 | 19/9 |
+| `addBug` reverted to `innerHTML +=` | 35/5 | 26/2 |
+
+Three of those — the fifth `g`, `String(t)`, and the `s.id` revert — were GREEN on the
+gating lane until a review found them, because their only pins lived behind jsdom. `S5`
+and `S6` are the static pins that now hold them, and `E8` is the one that catches
+`String(t)`: `_esc` passes argv, always a string, so no other `E` case can see it.
+
+**AND THEN THE GREP-PER-HOLE PATTERN WAS ABANDONED, because a review showed where it
+ends.** Three rounds each found a one-token regression green on the gating lane; three
+rounds each answered with one more literal-byte grep; and each grep closed exactly the
+token it named. `S6` is the proof — added in one commit to pin the `g` flag on the `<br>`
+substitution, it stopped one character short of the replacement string, so changing
+`,'<br>'` to `,''` kept `S6` matching and the lane at 28/0 while every multi-line `steps`
+rendered as run-together text. A further review then found five more of the same shape:
+inverting `if (!container) return`, `container.innerHTML +=` -> `=`, a typo in
+`'feature' + s.feature`, a typo in `'bugs-list'`, and dropping `bugCount++` — all green
+on the gating lane, three of them rendering ZERO scenarios.
+
+The fix is structural, not another grep: **`unit-shard` now installs jsdom**, which turns
+the twelve behavioural checks (`R1`-`R5`, `B0`-`B3`) from skips into gating checks and
+kills all six at once with no new assertions. Measured on the CI lane with jsdom present:
+the `<br>` replacement 38/2, `!container` 37/4, `innerHTML =` 37/3, the `'featur'` typo
+37/3, `'bugs-lists'` 36/1, `bugCount` 36/1. The install is `--no-save` and `|| true`: a
+registry blip degrades to the previous grep-only coverage, and the suite's jsdom arm skips
+with a banner rather than silently, so it cannot become a false green.
+
+**Residual (c): `exportResults`'s `.replace(/\n/g, ' ')` is unguarded, on both lanes.**
+Dropping that `g` leaves embedded newlines in a tester's notes and breaks the markdown
+table row. No case in the suite touches `exportResults` — `S4`'s comment scopes it out
+deliberately, because it builds markdown rather than HTML and is not a sink. Recorded
+rather than fixed: a different surface from the one this entry is about, and the review
+that found it rated it minor and out of scope.
+
+**Found:** 2026-09-14, triaging `## BL-262:`.
+
+**The assumption.** `templates/uat/test-session-template.html`'s `renderScenarios()`
+concatenates `s.title`, `s.steps` and `s.expected` straight into `innerHTML`, and
+`s.steps.replace(/\n/g,'<br>')` treats steps as markup on purpose. The template is
+therefore correct only if every scenario field is HTML-safe. Nothing says so: no comment
+in the template, no rule in `scripts/lint-uat-scenarios.sh` (which matches zero of
+`innerHTML|escap|<script|xss|sanit`), and no test.
+
+**Why it holds today, and exactly how far.** `__SCENARIOS_JSON__` is substituted at
+generation time by the operator's own agent from the operator's own feature docs, so there
+is no untrusted input — see `## BL-262:`'s triage, which measured that tester-typed input
+never reaches `innerHTML` either (`exportResults` reads `.value` and builds markdown).
+The assumption is about PROVENANCE, not about the text, and provenance is the kind of
+thing a later change alters without noticing.
+
+**The decision this entry exists for — DECIDED, option 1; kept for the reasoning.** Two
+options, and the trade was real:
+
+1. **Escape the three fields** (`textContent` where possible; an `escapeHtml` helper where
+   the `<br>` substitution is wanted). Makes the template correct for any input and closes
+   the assumption permanently. **Cost: much smaller than a draft of this entry claimed.**
+   That draft said it "changes rendered output for every populated template" and cited the
+   `<br>` line as proof of deliberate markup pass-through. Both halves are wrong. The
+   `<br>`s come from the template's OWN `.replace(/\n/g,'<br>')`, applied AFTER escaping,
+   so they survive untouched; and escaping is a no-op for any text without `<`, `&` or a
+   quote. Measured in jsdom on the template's own shipped example scenario:
+   ```
+   rendered TEXT identical?    true
+   element-node count raw/esc: 12 / 12
+   <br> count raw/esc:          6 / 6
+   ```
+   The real cost is confined to scenarios whose text genuinely contains markup characters —
+   which today render as broken markup anyway, so "different" there means "fixed".
+2. **Document and enforce the assumption instead** — state it in the template's authoring
+   comment and add a rule to `lint-uat-scenarios.sh` that rejects `<`, unescaped `&` and
+   raw quotes in the three fields. Keeps rendering identical and makes the constraint
+   checkable. **Cost:** it forbids scenario text that legitimately names markup, which the
+   template's OWN shipped example does ("Read the Repair button's `disabled` attribute" is
+   fine; "Repair has `<button disabled>`" would be rejected).
+
+Option 1 is the more capable fix, and with the cost re-measured above it is also the
+cheaper one; option 2 buys nothing that option 1 does not, and forbids input option 1
+handles. Do not do both halves
+badly — an escape that misses one field is worse than a documented assumption, because it
+reads as a guarantee.
+
+**Not a vulnerability.** Filing this as a correctness-and-hygiene item, not a security one.
+`## BL-262:` records the measurement that says so, including the four-case fixture showing
+which inputs inject and which do not.
+
+**Related:** `## BL-262:` (the triage that produced this), `## BL-131:` (the ruleset whose
+widened rule would flag the same pattern in a GENERATED project's code),
+`## BL-009:` (UAT-template guardrails).
+
+---
+
+## BL-264: `addBug()` in the shipped UAT template WIPES every field the tester has already filled in — `innerHTML +=` re-serializes the container
+
+**Status:** Open — fix built 2026-09-14 (`# BL-264-APPEND-NOT-RESERIALIZE`), stays Open
+pending PR + merge.
+
+**BUILD NOTE (2026-09-14).** `innerHTML +=` replaced with
+`insertAdjacentHTML('beforeend', …)`, which appends without touching the existing nodes.
+`renderScenarios` uses the same construct and is left alone deliberately — it runs exactly
+once, before any typing, so it was never affected.
+
+Pinned in `tests/test-bl263-bl264-uat-template-dom.sh`, section `B`, which lifts the real
+`addBug` out of the shipped template rather than copying it. Four behavioural cases and
+two static ones, and the split matters for the same reason it did on `## BL-263:`: **the
+gating lane has no jsdom**, so `B1`-`B3` skip there and `B4`/`B5` are what hold the line.
+Measured — reverting to `innerHTML +=` goes 25/5 with jsdom and still 18/2 without, on
+`B5` alone.
+
+The `<select>` case is the sharper one and is pinned separately: re-serialization does not
+blank a select, it reverts it to the `selected` ATTRIBUTE, so a tester who chose
+`SEV-1 (crash/data loss)` silently gets `SEV-3 (minor UX)` in the exported report. That is
+a different wrong answer from empty and a checklist that only looked for blanks would miss
+it. `B3` exists so a "fix" that preserved the old entry by never adding the new one cannot
+pass — it asserts the second entry really was added.
+
+The interaction `## BL-262:` flagged was checked rather than assumed: `insertAdjacentHTML`
+is itself a sink the shipped ruleset matches (`soif-insert-adjacent-html`), and the
+argument here is a literal-prefixed concatenation, so the rule's `[^"'\s]` guard excludes
+it — the widened ruleset returns 0 findings over this repo's markup, unchanged by this
+edit.
+
+**Found:** 2026-09-14, by the adversarial review of `## BL-262:`'s branch — in the site
+that entry's first triage draft had just cleared as "inert". It is inert to INJECTION; it
+is not inert.
+
+**What happens.** `addBug` in `templates/uat/test-session-template.html`, at the line the
+`# BL-264-APPEND-NOT-RESERIALIZE` marker now sits above:
+```
+document.getElementById('bugs-list').innerHTML +=
+  '<div class="bug-entry" id="bug-' + n + '">' + …
+```
+`innerHTML +=` reads the container's current markup, concatenates, and re-parses the whole
+thing. A value the tester TYPED into a `<textarea>` or `<input>` lives in the element's
+`value` property and is **not** reflected into the serialized attribute — so it does not
+survive the round trip. Every "+ Add Bug" click therefore blanks every bug already on the
+page. Measured in jsdom against the template's exact concatenation:
+```
+after typing into bug 1   -> {"desc":"crash on export","steps":"1. open  2. click export"}
+after a 2nd addBug()      -> {"desc":"","steps":""}
+what exportResults emits  ->  Description: "" | Steps: ""
+```
+The loss is SILENT in the worst way: `exportResults` reads those same ids with `.value`
+and emits empty `Description:` and `Steps:` lines into the session's markdown, so a tester
+who reported two bugs ships a report where the first one is blank. Severity is a function
+of how many bugs a session finds — one bug, no loss; five bugs, four blank reports.
+
+**Scope — the sibling site is NOT affected.** `renderScenarios` uses the same construct
+but is INVOKED exactly once, at the bottom of the script block, before any field exists to
+type into. (Cite the function, not a line: a draft's `grep -n` counts and line numbers
+went stale inside this same branch.)
+
+**Fix shape.** `document.getElementById('bugs-list').insertAdjacentHTML('beforeend', …)`
+— appends without touching existing nodes, so typed values survive. Note the interaction
+with `## BL-262:`: `insertAdjacentHTML` is itself a sink the shipped ruleset matches
+(`soif-insert-adjacent-html`), and the argument here is a literal-prefixed concatenation,
+so the rule's `[^"'\s]` guard excludes it — but confirm that rather than assume it, and
+add a regression case pinning that a second `addBug()` preserves the first bug's fields.
+A UAT template with no test that survives its own second click is how this got shipped.
+
+**Related:** `## BL-262:` (whose triage this corrects), `## BL-263:` (the escaping
+decision on the sibling site), `## BL-009:` (UAT-template guardrails).

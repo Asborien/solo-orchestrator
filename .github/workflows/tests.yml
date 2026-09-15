@@ -190,10 +190,38 @@ jobs:
           fetch-depth: 0
 
       - name: Verify required tools are available
-        # ubuntu-latest ships both, but fail loudly and early if a future
+        # ubuntu-latest ships all three, but fail loudly and early if a future
         # runner image ever drops one rather than mid-suite with a cryptic
         # error.
-        run: jq --version && git --version
+        #
+        # `node` joined them for `## BL-263:`. That suite's `E` section is the
+        # only thing that can tell `escapeHtml(x)` from a helper returning `x`
+        # — the static pins pass on an identity function — and it needs node.
+        # It now FAILS rather than skips when node is absent, so this line is
+        # what turns "the escape was never verified" into a loud early error
+        # instead of a late confusing one.
+        run: jq --version && git --version && node --version
+
+      - name: Install jsdom (BL-263/BL-264 behavioural cases)
+        # WHY THIS EARNS ITS PLACE, measured rather than assumed. Without jsdom
+        # the BL-263/BL-264 suite's twelve behavioural checks (`R1`-`R5`,
+        # `B0`-`B3`) SKIP, leaving the gating lane holding that template with
+        # literal-byte greps alone. Three separate reviews each found one-token
+        # regressions that were green on this lane and dead under jsdom — a
+        # dropped `g` flag, `String(t)` removed (which renders ZERO scenarios),
+        # and the eight `escapeHtml(s.id)` sites reverted. The response each
+        # time was one more grep, and each grep closed exactly the token it
+        # named: `# BL-263-S6` was added to pin one character and the character
+        # beside it was still free. Installing jsdom kills SIX such mutants at
+        # once and needs no new assertions, which is why it is here instead of
+        # a seventh grep.
+        #
+        # `--no-save` so no package.json/lock appears in a repo that has none;
+        # `|| true` because a registry blip must not redden the whole shard —
+        # the suite already fails loudly on a missing `node`, and its jsdom arm
+        # skips LOUDLY with a banner, so a failed install degrades to the
+        # previous coverage rather than to a false green.
+        run: npm install --no-save --no-fund --no-audit jsdom || true
 
       - name: Install semgrep (live SAST cases)
         # BL-118 follow-up (Karl's 2026-07-18 decision on the WP-A1 open
@@ -538,6 +566,7 @@ jobs:
             tests/test-bl255-sed-replacement-escape.sh
             tests/test-bl256-unearned-receipts.sh
             tests/test-bl259-tsv-empty-field-shift.sh
+            tests/test-bl263-bl264-uat-template-dom.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────
@@ -1073,8 +1102,11 @@ jobs:
         # init.sh / upgrade-project.sh run `git commit` while scaffolding a
         # project; a fresh CI runner has no git identity, so the commit fails
         # (rc=128, "empty ident name not allowed"). Configure one.
+        # `node` alongside them for the same reason as `unit-shard`: `## BL-263:`'s
+        # `E` section FAILS rather than skips without it, and a lane that cannot
+        # run it should say so loudly and early rather than mid-suite.
         run: |
-          jq --version && git --version
+          jq --version && git --version && node --version
           git config --global user.name "solo-orchestrator-ci"
           git config --global user.email "ci@solo-orchestrator.invalid"
 

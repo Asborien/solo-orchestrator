@@ -244,6 +244,74 @@ if [ "$HAVE_SEMGREP" -eq 1 ] && [ -f "$RULESET_SRC" ]; then
   else
     fail_ "T-rule-benign" "the benign control was flagged (semgrep rc=$rcb, want 0) — over-blocking"
   fi
+
+  # ── `## BL-262:` — COMPOUND ASSIGNMENT IN MARKUP ─────────────────────────────
+  # `x.innerHTML += u` is the same sink as `x.innerHTML = u`, and the markup rule
+  # missed it for as long as the regex read `\s*=\s*`: `+` is the next non-space
+  # character, so the `=` never matched. Every case ABOVE uses a plain `=`, which
+  # is why the gap survived the original suite. The js/ts registry pack catches
+  # `+=` but cannot reach markup (semgrep's html/vue parsers do not expose
+  # embedded <script> JS as an AST — that is why this rule is regex), so markup
+  # plus `+=` was covered by NEITHER pack.
+  #
+  # Two directions, because widening a security regex is exactly where
+  # over-blocking gets introduced: `+=` from a VARIABLE must fire, and `+=` of a
+  # STRING LITERAL must not — the `[^"'\s]` guard is what keeps this rule usable
+  # on template files, and it must survive the widening.
+  printf '<script>\n  a.innerHTML += userInput;\n  b.outerHTML += userInput;\n</script>\n' \
+    > "$FX/sink_compound.html"
+  printf '<script>\n  a.innerHTML = "static";\n  b.innerHTML += "static";\n</script>\n' \
+    > "$FX/benign_compound.html"
+
+  echo "=== T-rule-compound-assign ==="
+  rcc="$(scan_one "$RULESET_SRC" "$FX/sink_compound.html")"
+  if [ "$rcc" -eq 1 ]; then
+    pass "T-rule-compound-assign: innerHTML/outerHTML += <variable> IS flagged in markup"
+  else
+    fail_ "T-rule-compound-assign" "the ruleset did NOT flag 'innerHTML += userInput' in a .html (semgrep rc=$rcc, want 1) — the BL-262 gap is back"
+  fi
+
+  echo "=== T-rule-compound-literal ==="
+  rccl="$(scan_one "$RULESET_SRC" "$FX/benign_compound.html")"
+  if [ "$rccl" -eq 0 ]; then
+    pass "T-rule-compound-literal: += of a STRING LITERAL is NOT flagged (the widening did not over-block)"
+  else
+    fail_ "T-rule-compound-literal" "literal-only assignment was flagged (semgrep rc=$rccl, want 0) — the widening lost the [^\"'\\s] guard"
+  fi
+
+  # MUTATION — narrow the regex back to a bare `=` on a MIRROR of the ruleset and
+  # prove T-rule-compound-assign is what stops it. Asserts the edit LANDED by its
+  # own literal text, not by a line count: a sed that reports success while
+  # changing nothing has bitten this repo three times.
+  echo "=== T-rule-compound-MUTATION ==="
+  MUT="$FX/mutant-soif-dom-sinks.yml"
+  # The file holds the four characters `\`, `+`, `?`, `=`. In a BRE, a literal
+  # backslash is `\\`; `+` and `?` are ordinary. So this matches `\+?=` and
+  # leaves `\s*=\s*` behind. Written single-quoted so the shell passes it through.
+  sed 's/\\+?=/=/' "$RULESET_SRC" > "$MUT" 2>/dev/null || :
+  if ! grep -q "inner|outer)HTML" "$MUT" 2>/dev/null; then
+    fail_ "T-rule-compound-MUTATION" "the mutant is not a readable ruleset — the mutation did not apply"
+  elif grep -qF '\+?=' "$MUT"; then
+    fail_ "T-rule-compound-MUTATION" "the mutation did NOT land: the mutant still carries the widened '\+?=' — this proof is vacuous"
+  elif ! semgrep --validate --config="$MUT" >/dev/null 2>&1; then
+    fail_ "T-rule-compound-MUTATION" "the mutant is not a valid semgrep config — the mutation broke the file instead of narrowing the rule"
+  else
+    # THE CONTROL IS THE POINT. Without it, a mutant that kills the inner/outer
+    # arm OUTRIGHT satisfies all three landed-guards and scores as a pass — the
+    # compound sink goes unflagged for the wrong reason, and the proof degrades
+    # into "some edit broke something". A TRUE narrowing still flags a plain
+    # `=`; a dead arm flags neither. Assert both halves.
+    printf '<script>\n  a.innerHTML = userInput;\n</script>\n' > "$FX/sink_plain.html"
+    rcm="$(scan_one "$MUT" "$FX/sink_compound.html")"
+    rcp="$(scan_one "$MUT" "$FX/sink_plain.html")"
+    if [ "$rcm" -ne 0 ]; then
+      fail_ "T-rule-compound-MUTATION" "the narrowed mutant still flagged the compound sink (rc=$rcm, want 0) — T-rule-compound-assign proves nothing"
+    elif [ "$rcp" -ne 1 ]; then
+      fail_ "T-rule-compound-MUTATION" "the mutant no longer flags a PLAIN '=' either (rc=$rcp, want 1) — the arm is dead, not narrowed, so the unflagged compound sink proves nothing"
+    else
+      pass "T-rule-compound-MUTATION: narrowed back to a bare '=' the compound sink goes UNFLAGGED while a plain '=' still fires — a true narrowing, and T-rule-compound-assign is what kills it"
+    fi
+  fi
 else
   skip_ "T-rule-content" "semgrep absent or ruleset missing"
 fi
