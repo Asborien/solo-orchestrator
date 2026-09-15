@@ -1737,7 +1737,7 @@ validate_approval_fields() {
         echo "  Orchestrator is. Confirm by hand which case this is."
         echo "  If this project has one technical authority, the blocking pre-condition is"
         echo "  docs/governance-framework.md §XIV item 5 (a second technologist with repository and"
-        echo "  hosting access), and this gate is the symptom rather than the cause. See ## BL-274:."
+        echo "  hosting access), and this gate is the symptom rather than the cause. See ## BL-275:."
         issues=$((issues + 1))
       elif [ -n "$git_user_norm" ] && [ "$git_user_norm" = "$approver_norm" ] \
            && [ -n "$commit_author_norm" ] && [ "$commit_author_norm" != "$approver_norm" ]; then

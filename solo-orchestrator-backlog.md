@@ -19293,7 +19293,7 @@ the operator how to make the gate PASS does need the ruling, because control 1 a
 prescribe opposite actions. Half one is shipped; half two is deliberately not attempted.
 
 **Logged:** 2026-09-13, while establishing why a single-authority organisation can never pass the
-Phase 1→2 gate (`## BL-274:`). The taxonomy question there is real; this is the defect underneath it,
+Phase 1→2 gate (`## BL-274:` (never filed — see PR #401; the gate message now points at this entry instead)). The taxonomy question there is real; this is the defect underneath it,
 and it affects every organizational deployment, not just single-authority ones.
 
 **THREE SOURCES, TWO ANSWERS, AND THE CODE IS THE ODD ONE OUT.**
