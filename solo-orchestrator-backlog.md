@@ -18510,8 +18510,8 @@ provenance, which is exactly what re-running the writer could not do.
 bash scripts/upgrade-project.sh --backfill-only
 ```
 
-**Numbering.** BL-260 and BL-261 are reserved, not free, and this was checked rather than assumed:
-BL-260-CONTEXT-STATE and BL-260-PLUGIN-VERB in `scripts/verify-install.sh`, and
+**Numbering.** BL-284 and BL-261 are reserved, not free, and this was checked rather than assumed:
+BL-284-CONTEXT-STATE and BL-284-PLUGIN-VERB in `scripts/verify-install.sh`, and
 BL-261-INTEGRATION-BRANCH in `scripts/pre-commit-gate.sh`, all three in committed code in a DOWNSTREAM
 project, plus two committed audit rows naming BL-261. <!-- lint-bl-markers: allow the three tokens are deliberately written bare; they are markers in a downstream project, not in this code surface, and backticking them would assert they resolve here --> 262-268 are taken by this batch and 269
 is held for the `scripts/validate.sh` phase-inference defect, so this is 270.
