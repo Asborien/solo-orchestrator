@@ -464,13 +464,19 @@ _s9_render() {  # <file> <lineno>
   printf '%s' "$out"
 }
 
+# LOCATE EACH REMEDY BY CONTENT, NOT LINE NUMBER. A first cut hardcoded
+# `adopt-tools.sh:508` and the other three; an unrelated change above the
+# remedy (BL-225's fingerprint block) moved it to 526, `sed -n 508p` rendered a
+# different line, and this case reported "(no-remedy)" on correct code. That is
+# the `file:line` trap CLAUDE.md § CITATION RULE forbids, one level down.
+# Find the ONE executable line per file that prints the remedy — the arm that
+# starts with adopt_note/scout_ and carries `set-branches` — and render that.
 s9_bad=""; s9_seen=0
-for _s9 in "scripts/lib/adopt/adopt-stubs.sh:136" \
-           "scripts/lib/adopt/adopt-tools.sh:508" \
-           "scripts/lib/scout/scout-secrets.sh:380" \
-           "scripts/lib/scout/scout-report.sh:515"; do
-  _s9f="${_s9%%:*}"; _s9l="${_s9##*:}"
+for _s9f in scripts/lib/adopt/adopt-stubs.sh scripts/lib/adopt/adopt-tools.sh \
+            scripts/lib/scout/scout-secrets.sh scripts/lib/scout/scout-report.sh; do
   [ -f "$REPO_ROOT/$_s9f" ] || { s9_bad="$s9_bad $_s9f(missing)"; continue; }
+  _s9l="$(grep -n 'set-branches' "$REPO_ROOT/$_s9f" | grep -vE '^[0-9]+:[[:space:]]*#' | head -1 | cut -d: -f1)"
+  [ -n "$_s9l" ] || { s9_bad="$s9_bad $_s9f(no-remedy-line)"; continue; }
   _s9out="$(cd "$REPO_ROOT" && _s9_render "$_s9f" "$_s9l")"
   case "$_s9out" in
     *"set-branches origin '*'"*) s9_seen=$((s9_seen + 1)) ;;
