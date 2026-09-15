@@ -16697,7 +16697,7 @@ is a refactor; this entry reports the hazard and its evidence and stops there.
 
 **Logged:** 2026-09-13, after FOUR separate instructions to "reuse the framework's own helper" were each
 measured and each found the helper unreachable. Extended 2026-09-13 with the fourth, which is the
-sharpest: `## BL-263:`'s release half, where the helper IS reachable and the question still cannot be
+sharpest: `## BL-285:`'s release half, where the helper IS reachable and the question still cannot be
 answered.
 
 **The defect.** The remote-URL-to-host inference — the four-arm `case` that maps an `origin` URL to
@@ -16739,7 +16739,7 @@ distinct mechanisms**, the third of which is not a reachability problem at all:
    `scripts/lib/` — exactly the 24 top-level ones**. `scripts/lib` holds 41 `.sh` files recursively;
    the 9 under `scout/` and the 8 under `adopt/` ship in NONE of them. So `_scout_pkg_managers` is
    reachable only from `init.sh`, which is itself not in the shipped set.
-3. **Reachable, shipped, sourceable — and nothing to detect at the moment it runs.** `## BL-263:`'s
+3. **Reachable, shipped, sourceable — and nothing to detect at the moment it runs.** `## BL-285:`'s
    RELEASE half asks the same detector the same question from `init.sh`, the ONE consumer where Scout
    is reachable. It still cannot be answered. `generate_release` calls `get_release_vars` at
    `init.sh:3284`, and `grep -n "package\.json\|package-lock\|pnpm-lock\|yarn\.lock" init.sh` exits 1
@@ -16801,8 +16801,8 @@ recorded rather than attempted.
 
 **Related:** `## BL-095:` (`# BL-095-STATE-READERS`, the fence that is the model for the repair, and
 whose own header already names deliberately-unmigrated siblings), `## BL-209:` (the `_bl145_*`
-instance of the unsourceable half), `## BL-262:` (the `_detect_pipeline_host` instance, and the fix
-this hazard currently blocks), `## BL-263:` (BOTH remaining instances — the not-shipped half and the
-nothing-to-detect half — and, like `## BL-262:`, a fix withdrawn because of this hazard),
+instance of the unsourceable half), `## BL-287:` (the `_detect_pipeline_host` instance, and the fix
+this hazard currently blocks), `## BL-285:` (BOTH remaining instances — the not-shipped half and the
+nothing-to-detect half — and, like `## BL-287:`, a fix withdrawn because of this hazard),
 `## BL-084:` (`# BL-084-TIER-KEY`, the repo's own sync-siblings marker convention for the cases where
 a hoist is not taken).
