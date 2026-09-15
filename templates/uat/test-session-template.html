@@ -263,9 +263,19 @@ const scenarios = __SCENARIOS_JSON__;
 // do. Adding it would be a rendering change nobody asked for, and this edit is
 // scoped to escaping. That `steps` wraps and `expected` does not is a
 // pre-existing inconsistency, left alone deliberately.
-// `s.id` is deliberately NOT passed through this: it is a number per the
-// scenario schema and it lands in an `onclick="setResult(N,…)"` JS context,
-// where HTML-escaping a quote would corrupt the call rather than protect it.
+// `s.id` IS passed through it too, and a draft of this comment said the
+// opposite for a reason that measurement refutes. That draft claimed escaping
+// `s.id` "would corrupt the call rather than protect it" because it lands in an
+// `onclick="setResult(N,…)"` JS context. Measured both ways:
+//   numeric id (what the schema permits): HTML byte-identical, onclick
+//     identical — escaping is a NO-OP.
+//   string id carrying markup: raw yields 4 live injected elements; escaped
+//     yields 0, and the onclick degrades to a JS syntax error, which is a
+//     broken button rather than an execution.
+// So the claimed corruption does not exist and the claimed protection failure
+// is backwards. The "it is a number per the schema" half was also load-bearing
+// and unenforced: `scripts/lint-uat-scenarios.sh` checks duplicate ids, field
+// lengths and banned phrases, but never the TYPE of `id`.
 function escapeHtml(t) {
   return String(t)
     .replace(/&/g, '&amp;')
@@ -278,23 +288,23 @@ function renderScenarios() {
   scenarios.forEach(s => {
     const container = document.getElementById('feature' + s.feature);
     if (!container) return;
-    container.innerHTML += '<div class="scenario" id="scenario-' + s.id + '">' +
+    container.innerHTML += '<div class="scenario" id="scenario-' + escapeHtml(s.id) + '">' +
       '<div class="scenario-header">' +
-        '<span class="scenario-num">' + s.id + '</span>' +
+        '<span class="scenario-num">' + escapeHtml(s.id) + '</span>' +
         '<span class="scenario-title">' + escapeHtml(s.title) + '</span>' +
-        '<button class="toggle-details" onclick="toggleDetails(' + s.id + ')">details</button>' +
+        '<button class="toggle-details" onclick="toggleDetails(' + escapeHtml(s.id) + ')">details</button>' +
         '<div class="btn-group">' +
-          '<button class="btn pass-btn" onclick="setResult(' + s.id + ',\'pass\',this)">Pass</button>' +
-          '<button class="btn fail-btn" onclick="setResult(' + s.id + ',\'fail\',this)">Fail</button>' +
-          '<button class="btn skip-btn" onclick="setResult(' + s.id + ',\'skip\',this)">Skip</button>' +
+          '<button class="btn pass-btn" onclick="setResult(' + escapeHtml(s.id) + ',\'pass\',this)">Pass</button>' +
+          '<button class="btn fail-btn" onclick="setResult(' + escapeHtml(s.id) + ',\'fail\',this)">Fail</button>' +
+          '<button class="btn skip-btn" onclick="setResult(' + escapeHtml(s.id) + ',\'skip\',this)">Skip</button>' +
         '</div>' +
       '</div>' +
-      '<div class="scenario-details" id="details-' + s.id + '">' +
+      '<div class="scenario-details" id="details-' + escapeHtml(s.id) + '">' +
         '<div class="steps"><strong>Steps:</strong><br>' + escapeHtml(s.steps).replace(/\n/g,'<br>') + '</div>' +
         '<div class="steps"><strong>Expected:</strong><br>' + escapeHtml(s.expected) + '</div>' +
       '</div>' +
       '<div class="scenario-notes">' +
-        '<textarea class="notes-input" id="notes-' + s.id + '" placeholder="Notes — observations, issues, anything worth recording"></textarea>' +
+        '<textarea class="notes-input" id="notes-' + escapeHtml(s.id) + '" placeholder="Notes — observations, issues, anything worth recording"></textarea>' +
       '</div>' +
     '</div>';
   });

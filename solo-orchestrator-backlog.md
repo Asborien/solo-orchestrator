@@ -16334,9 +16334,11 @@ UNDOCUMENTED, UNENFORCED trust assumption.** Taken site by site, because they ar
   ```
   Silent data loss in a template shipped to every generated project, at the exact site
   this entry was clearing, caused by the exact construct this entry is about. Filed as
-  `## BL-264:` with the fix. **`renderScenarios` is NOT affected** — `grep -n
-  renderScenarios` gives three hits and only line 377 is an invocation (144 is a comment,
-  242 the definition), so it runs once, before any typing.
+  `## BL-264:` with the fix. **`renderScenarios` is NOT affected** — it is INVOKED exactly
+  once, at the bottom of the script block, before any field exists to type into. (A draft
+  cited `grep -n` hit counts and line numbers here; they went stale inside this same
+  branch, which is what CLAUDE.md § CITATION RULE forbids bare `file:line` for. Cite the
+  function and `# BL-264-APPEND-NOT-RESERIALIZE`.)
 - **`:246` (`renderScenarios`) — injects, from generation-time-authored text.** `s.id`,
   `s.title`, `s.steps` and `s.expected` are concatenated raw out of `__SCENARIOS_JSON__`,
   and `s.steps.replace(/\n/g,'<br>')` treats steps as HTML deliberately. Nothing escapes:
@@ -16366,8 +16368,11 @@ be HTML-safe", the quality linter does not check it, and no test pins it. The da
 generator derives scenario text from anything external — a dependency name, a failing
 test's message, a filename, an issue title — this becomes a live injection with no guard
 in the way. That is a decision for `## BL-263:`, filed separately, because escaping the
-fields changes rendered output for every existing populated template and is not this
-entry's call to make.
+fields is not this entry's call to make. (An earlier draft of this sentence also said
+escaping "changes rendered output for every existing populated template". That is FALSE
+and was corrected in `## BL-263:` while being left standing here — measured on the
+template's own shipped example, escaping leaves the text identical, the HTML identical
+and the `<br>` count at 6/6. The correction now exists in both places.)
 
 **FIXED HERE (the rule itself).** The inner/outer arm now reads `\s*\+?=\s*`, and
 `tests/test-bl131-domsink-rules.sh` gained three cases: `+=` from a variable IS flagged in
@@ -16401,15 +16406,36 @@ is a change nobody asked for:
   pre-existing inconsistency, left alone.
 - `addBug`'s sink is untouched — that is `## BL-264:`, a different defect.
 
-Pinned by `tests/test-bl263-uat-scenario-escaping.sh`, three sections and 21 checks, and
+**ONE UNDISCLOSED BEHAVIOUR CHANGE, NOW DISCLOSED.** `escapeHtml` starts with `String(t)`,
+so a scenario MISSING a field no longer throws where it used to. Measured, with `steps`
+absent:
+```
+PRE-FIX  (raw s.steps)      -> THREW: TypeError: Cannot read properties of undefined (reading 'replace')
+POST-FIX (escapeHtml first) -> no throw, renders: "<div>undefined</div>"
+```
+A loud abort became the silent text "undefined", which runs against CLAUDE.md § Code
+Standards ("No silent fallbacks"). It is kept, for one reason: `title` and `expected`
+ALREADY rendered "undefined" before this change — only `steps` threw, and only because
+`.replace` happened to be called on it. So the fix made three fields CONSISTENT rather
+than making a good behaviour bad. **The real defect is that a missing required field is
+silent in all three, and that predates this change**; the template's own AGENT
+INSTRUCTIONS forbid omitting a field and `scripts/lint-uat-scenarios.sh` does not check
+for it. Worth a visible `MISSING FIELD: steps` marker at some point — deliberately not
+built here, because widening this edit from "escape" to "validate" is the scope creep this
+entry twice caught itself in.
+
+Pinned by `tests/test-bl263-bl264-uat-template-dom.sh` — renamed when it took on
+`## BL-264:` as well — four sections and 36 checks, and
 the section split is the interesting part. `S` greps the template; `R` executes the real
 render body in jsdom. **`R` alone was not enough: the gating lane has no jsdom, so it
 skips there, which would have left the PR-blocking checks resting on greps — and a grep
 cannot tell `escapeHtml(s.title)` from a helper that returns its argument.** Measured: an
 identity-function mutant passed every static case. So `E` lifts `escapeHtml` out of the
 shipped template and asserts what it RETURNS, using node alone, which the runner has.
-Without jsdom the suite is 16/0 with 1 loud skip, and the identity mutant takes it to
-11/5.
+Without jsdom the suite is 22/0 with 2 loud skips. And node absent is now a FAILURE, not
+a skip: `E` is the only section that can tell `escapeHtml(x)` from identity, so a green
+that never ran it would be an unearned receipt. `tests.yml`'s "Verify required tools are
+available" step asserts `node --version` alongside `jq` and `git`.
 
 Every arm is pinned separately because a helper that DELETES a character also "changes"
 the input: a mutant replacing the `"` arm's replacement with `''` passed an earlier draft
@@ -16529,8 +16555,9 @@ who reported two bugs ships a report where the first one is blank. Severity is a
 of how many bugs a session finds — one bug, no loss; five bugs, four blank reports.
 
 **Scope — the sibling site is NOT affected.** `renderScenarios` uses the same construct
-but runs exactly once, before any typing: `grep -n renderScenarios` gives three hits and
-only line 377 is an invocation (144 is a comment, 242 the definition).
+but is INVOKED exactly once, at the bottom of the script block, before any field exists to
+type into. (Cite the function, not a line: a draft's `grep -n` counts and line numbers
+went stale inside this same branch.)
 
 **Fix shape.** `document.getElementById('bugs-list').insertAdjacentHTML('beforeend', …)`
 — appends without touching existing nodes, so typed values survive. Note the interaction

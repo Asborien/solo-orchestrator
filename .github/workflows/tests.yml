@@ -190,10 +190,17 @@ jobs:
           fetch-depth: 0
 
       - name: Verify required tools are available
-        # ubuntu-latest ships both, but fail loudly and early if a future
+        # ubuntu-latest ships all three, but fail loudly and early if a future
         # runner image ever drops one rather than mid-suite with a cryptic
         # error.
-        run: jq --version && git --version
+        #
+        # `node` joined them for `## BL-263:`. That suite's `E` section is the
+        # only thing that can tell `escapeHtml(x)` from a helper returning `x`
+        # — the static pins pass on an identity function — and it needs node.
+        # It now FAILS rather than skips when node is absent, so this line is
+        # what turns "the escape was never verified" into a loud early error
+        # instead of a late confusing one.
+        run: jq --version && git --version && node --version
 
       - name: Install semgrep (live SAST cases)
         # BL-118 follow-up (Karl's 2026-07-18 decision on the WP-A1 open

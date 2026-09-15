@@ -94,11 +94,26 @@ if command -v node >/dev/null 2>&1; then
   # Ordering: `&` must be escaped FIRST or the ampersands it introduces get
   # double-escaped. `<` -> `&lt;` and a later `&` pass would give `&amp;lt;`.
   chk "E5: '<' does not double-escape (the & arm runs first)" "$(_esc '<')" '&lt;'
+  # EVERY OCCURRENCE, NOT THE FIRST. Dropping the four `g` flags is a
+  # one-character regression that reverts this fix to a live injection, and
+  # single-character inputs cannot see it: measured, the g-less mutant returns
+  # `&lt;a<b` for `<a<b` and the suite stayed at 30/0. One case per arm, each
+  # with the character twice.
+  chk "E7: every '<' is escaped, not just the first"  "$(_esc '<a<b')"  '&lt;a&lt;b'
+  chk "E7: every '>' is escaped, not just the first"  "$(_esc '>a>b')"  '&gt;a&gt;b'
+  chk "E7: every '&' is escaped, not just the first"  "$(_esc '&a&b')"  '&amp;a&amp;b'
+  chk 'E7: every double-quote is escaped, not just the first' "$(_esc '"a"b')" '&quot;a&quot;b'
   # And ordinary text is untouched, or the fix would mangle every scenario.
   chk "E6: text with nothing to escape is returned verbatim" \
     "$(_esc 'fails when a plus b')" 'fails when a plus b'
 else
-  skip_ "E0-E6 — node unavailable"
+  # NOT A SKIP. A skip never fails, and `E` is the only section that can tell
+  # `escapeHtml(s.title)` from a helper that returns its argument — the static
+  # cases pass on an identity function. If node is missing, this suite cannot
+  # do its job, and saying so is `# BL-182-NO-UNEARNED-RECEIPT`: a green that
+  # measured nothing is worse than a red. `ubuntu-latest` ships node, and
+  # tests.yml's "Verify required tools are available" step now asserts it.
+  bad "E0-E7 — node unavailable, so the escape was NOT verified; the static pins cannot distinguish escapeHtml(x) from identity"
 fi
 
 echo "=== R — the template's OWN render body, executed in a DOM ==="
@@ -130,15 +145,23 @@ const { JSDOM } = require('jsdom');
 const fs = require('fs');
 const dom = new JSDOM('<!doctype html><body><div id="feature7"></div></body>');
 global.document = dom.window.document;
+// A SECOND scenario with an out-of-schema string id, so R5 has something to
+// read. It is separate from scenario 1 rather than replacing it, because the
+// numeric case is the one that must stay byte-identical.
 const scenarios = [{
   id: 1, feature: 7,
   // Every character escapeHtml touches — < > & " — plus prose around them, so
   // an arm that DELETES instead of escaping is caught. A first draft used only
   // angle brackets, and a mutant that replaced the `"` arm's substitution with
   // '' passed 14/14.
-  title: 'Repair has <button disabled> set & "quoted" > done',
+  // Each character TWICE, so a g-less escape leaves a live element behind:
+  // with one `<` the first-match escape covers it and R1-R3 pass on a broken fix.
+  title: 'Repair has <button disabled> set & "quoted" > done <img src=x onerror=BOOM> & "again"',
   steps: "1. open\n2. <script>alert(1)<\/script>",
   expected: "an <img src=x onerror=alert(1)> must not appear"
+}, {
+  id: '1"><img src=q onerror=PWN>', feature: 7,
+  title: "out-of-schema string id", steps: "x", expected: "y"
 }];
 eval(fs.readFileSync(process.argv[2], 'utf8'));
 renderScenarios();
@@ -148,6 +171,8 @@ const out = {
   injected_script: c.querySelectorAll('script').length,
   injected_img:    c.querySelectorAll('img').length,
   title_text:      (c.querySelector('.scenario-title') || {}).textContent,
+  id_imgs:         c.querySelectorAll('img').length,
+  id_num_text:     (c.querySelectorAll('.scenario-num')[1] || {}).textContent,
   br_in_steps:     (c.querySelectorAll('.steps')[0] || {querySelectorAll:()=>[]}).querySelectorAll('br').length,
 };
 console.log(JSON.stringify(out));
@@ -164,7 +189,7 @@ JSEOF
     # The escape must not EAT the text — a helper that returns '' would pass
     # R1-R3 and destroy the scenario. Assert the words survive, as TEXT.
     chk "R4: and the title still READS as written, as text" \
-      "$(_f title_text)" 'Repair has <button disabled> set & "quoted" > done'
+      "$(_f title_text)" 'Repair has <button disabled> set & "quoted" > done <img src=x onerror=BOOM> & "again"'
     # Escaping happens BEFORE the <br> substitution, so line breaks survive.
     # TWO, not one: the div opens with a literal `<strong>Steps:</strong><br>`
     # and the single \n in the fixture adds the second. A first draft of this
@@ -172,12 +197,20 @@ JSEOF
     # rendered div, not of the substitution.
     chk "R4: the steps line break still renders as a <br> (1 literal + 1 from \n)" \
       "$(_f br_in_steps)" "2"
+    # `s.id` goes through escapeHtml too. A draft left it raw on the stated
+    # grounds that escaping would "corrupt" the onclick — measured false: for a
+    # numeric id the HTML is byte-identical, and for a string id carrying markup
+    # the raw form yields 4 live injected elements while the escaped form yields
+    # 0 and a merely-broken button. The scenario schema says `id` is a number;
+    # `lint-uat-scenarios.sh` never checks that, so this is the guard.
+    chk "R5: a string id carrying markup injects NOTHING"     "$(_f id_imgs)" "0"
+    chk "R5: and the scenario num still reads as written"     "$(_f id_num_text)" '1"><img src=q onerror=PWN>'
   fi
 else
   skip_ "R1-R4 — node + jsdom unavailable"
 fi
 
-echo "=== B — `## BL-264:` a second addBug() must not erase the first ==="
+echo '=== B — `## BL-264:` a second addBug() must not erase the first ==='   # single-quoted: backticks in "..." are command substitution
 
 if [ "$HAVE_JSDOM" -eq 1 ]; then
   # Lift the REAL addBug out of the shipped template, same as above — a
