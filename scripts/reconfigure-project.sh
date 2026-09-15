@@ -364,7 +364,7 @@ reconfigure() {
         swift)                 ci_template="swift.yml" ;;
         *)                     ci_template="other.yml" ;;
       esac
-      # BL-262-RECONFIG-CI-HOST: the CI templates live under a PER-HOST
+      # BL-287-RECONFIG-CI-HOST: the CI templates live under a PER-HOST
       # directory (templates/pipelines/ci/<host>/<lang>.yml) and land at a
       # per-host destination. This block had neither. It built
       # `ci/<lang>.yml` — a path no host uses — so the `[ -f ]` guard always
@@ -376,10 +376,10 @@ reconfigure() {
       # the mapping — host.sh's own sync-sibling note names this file as one
       # of the HOST_CI_PATH copies BL-229 left unconverted. An UNRECOGNISED
       # host is refused rather than normalised; see
-      # `# BL-262-RECONFIG-CI-FAIL-CLOSED` below for why this diverges from
+      # `# BL-287-RECONFIG-CI-FAIL-CLOSED` below for why this diverges from
       # init.sh's generate_ci.
       #
-      # BL-262-RECONFIG-CI-HOST-READ: the host is read through host.sh's OWN
+      # BL-287-RECONFIG-CI-HOST-READ: the host is read through host.sh's OWN
       # reader, not a local jq. A first cut of this arm did
       # `local ci_host="github"` plus `jq -r '.host // "github"'` plus a third
       # `|| echo "github"`, and that contradicted the refusal below: it refused
@@ -430,7 +430,7 @@ reconfigure() {
       if [ "$ci_host" = "other" ]; then
         print_info "Host 'other' — no CI template laid down. Supply your own CI config."
       else
-        # BL-262-RECONFIG-CI-FAIL-CLOSED: an unrecognised host is REFUSED, not
+        # BL-287-RECONFIG-CI-FAIL-CLOSED: an unrecognised host is REFUSED, not
         # normalised to GitHub.
         #
         # `host_pipeline_resolve` fails closed at rc 4 by explicit design, and

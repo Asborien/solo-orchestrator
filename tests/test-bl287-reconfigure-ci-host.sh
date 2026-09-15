@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# tests/test-bl262-reconfigure-ci-host.sh
+# tests/test-bl287-reconfigure-ci-host.sh
 #
-# `## BL-262:` — `reconfigure-project.sh` REGENERATES THE CI PIPELINE AT A PATH
+# `## BL-287:` — `reconfigure-project.sh` REGENERATES THE CI PIPELINE AT A PATH
 # THAT CANNOT EXIST, AND REPORTS SUCCESS.
 #
 # The `language` arm of scripts/reconfigure-project.sh built its template path
@@ -204,7 +204,7 @@ fi
 # ── T5: unknown host — REFUSED, at non-zero rc, writing nothing ─────────────
 # This case was written the other way first — asserting a warned fallback to
 # GitHub, following init.sh's generate_ci. It is inverted deliberately; the
-# reasoning is on `# BL-262-RECONFIG-CI-FAIL-CLOSED` in the script. In short:
+# reasoning is on `# BL-287-RECONFIG-CI-FAIL-CLOSED` in the script. In short:
 # the resolver this fix asks (`host_pipeline_resolve`) fails closed at rc 4 BY
 # DESIGN, and its comment names the failure it exists to prevent — a
 # mis-recorded host silently producing a GitHub-shaped answer. A fallback here
@@ -430,7 +430,7 @@ if [ -n "$MM2" ]; then
 fi
 
 # ── M3: fall back to GitHub instead of refusing an unrecognised host ────────
-# This is the decision `# BL-262-RECONFIG-CI-FAIL-CLOSED` records, expressed as
+# This is the decision `# BL-287-RECONFIG-CI-FAIL-CLOSED` records, expressed as
 # a mutant so the decision is enforced rather than merely written down. It is
 # the shape the fix ALMOST shipped with, following init.sh's generate_ci.
 echo "M3: an unrecognised host normalised to GitHub instead of refused"

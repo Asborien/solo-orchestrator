@@ -19431,24 +19431,27 @@ script's documented CLI surface and its implemented CLI surface disagreed).
 
 ---
 
-## BL-262: `reconfigure-project.sh` regenerates the CI pipeline from a path that cannot exist on any host, warns, and reports success anyway
+## BL-287: `reconfigure-project.sh` regenerates the CI pipeline from a path that cannot exist on any host, warns, and reports success anyway
+
+**Renumbered BL-262 → BL-287 on merge (2026-09-15):** BL-262 was taken on `main` before this landed;
+the markers, the test file and both registrations were renamed to match.
 
 **Status:** Open — reproduction + fix BUILT on branch `fix/reconfigure-ci-host`, NOT yet submitted.
-`# BL-262-RECONFIG-CI-HOST`: the `language` arm resolves the recorded host from the project manifest,
+`# BL-287-RECONFIG-CI-HOST`: the `language` arm resolves the recorded host from the project manifest,
 reads the template from `templates/pipelines/ci/<host>/<lang>.yml`, and takes the destination from the
 shared resolver (`# BL-229-HOST-PIPELINE-PATHS`) rather than minting a fourth copy of the mapping. An
-unrecognised host is REFUSED rather than normalised (`# BL-262-RECONFIG-CI-FAIL-CLOSED`; the reasoning
-is below, and it reverses this branch's first cut). Suite `tests/test-bl262-reconfigure-ci-host.sh`
+unrecognised host is REFUSED rather than normalised (`# BL-287-RECONFIG-CI-FAIL-CLOSED`; the reasoning
+is below, and it reverses this branch's first cut). Suite `tests/test-bl287-reconfigure-ci-host.sh`
 **12 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in `ubuntu:24.04` as a non-root user, against RED
 **1 / 11**; three mutants, EMBEDDED in the suite, each killing a different case set. shellcheck 0.11.0
 clean.
 
-**Numbering.** Filed as BL-262, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
+**Numbering.** Filed as BL-287, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
 the next free number here, and two carried fixes in a DOWNSTREAM project already hold BL-260 and
 BL-261 in committed code and in a committed audit trail — three marker tokens across
 `scripts/verify-install.sh` and `scripts/pre-commit-gate.sh` in that project, none of them filed in
 this backlog yet. <!-- lint-bl-markers: allow the three tokens are deliberately written bare; they are markers in a downstream project, not in this code surface, and backticking them would assert they resolve here -->
-So **BL-260 and BL-261 are reserved, not free.** See `## BL-263:` and `## BL-264:` for the other two
+So **BL-260 and BL-261 are reserved, not free.** See `## BL-285:` and `## BL-288:` for the other two
 of the three, and read all three numbers as provisional until those downstream carries are filed:
 nothing in this repository holds a number until an entry header claims it.
 
@@ -19549,7 +19552,7 @@ own cases (it also re-templates through `sed`, and line 375's destination is har
 **Not measured end to end**, unlike the CI half: the grep and the directory listing above are the whole
 evidence, and the `platform` arm was never driven against a fixture.
 
-**The suite.** `tests/test-bl262-reconfigure-ci-host.sh` drives the REAL script against a hermetic
+**The suite.** `tests/test-bl287-reconfigure-ci-host.sh` drives the REAL script against a hermetic
 fixture project — a SYNTHETIC orchestrator source carrying only the three per-host CI template dirs, so
 it does not depend on the shipped `templates/` tree, and a project dir with `scripts/` mirrored in the
 way a generated project carries them, deliberately lacking `init.sh` and `templates/generated` so the
@@ -19655,7 +19658,7 @@ and the arm now adopts the first rather than minting a third:
 - `scripts/verify-install.sh`'s `_detect_pipeline_host` — infer from the git remote, yield `other`
   when it cannot tell. Never a bare "github".
 
-`# BL-262-RECONFIG-CI-HOST-READ` drops the local jq and both cuts of the default. The two absent
+`# BL-287-RECONFIG-CI-HOST-READ` drops the local jq and both cuts of the default. The two absent
 shapes are now separate cases because `host.sh` distinguishes them and the operator's next move
 differs: **T7** (no manifest at all, rc 1) and **T7b** (a manifest with no `.host`, rc 2, asserting
 host.sh's `--backfill-host` remedy reaches the operator rather than being swallowed). **M4** is T7's
