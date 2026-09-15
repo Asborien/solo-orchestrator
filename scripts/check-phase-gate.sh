@@ -1718,8 +1718,26 @@ validate_approval_fields() {
 
       if [ -n "$commit_author_norm" ] && [ "$commit_author_norm" = "$approver_norm" ]; then
         echo -e "${RED}[FAIL]${NC} $gate_label: Approver '$approver_name' matches APPROVAL_LOG.md commit author '$commit_author' — self-approval detected for organizational deployment"
-        echo "  Governance requires a different individual to approve phase gates for organizational projects."
-        echo "  Have the approver commit the APPROVAL_LOG.md entry themselves, or use --force with documented justification."
+        # BL-275-REMEDY: this advice was wrong in both halves and sent the
+        # operator in a circle. "Have the approver commit the entry themselves"
+        # IS the failing condition — the check fires when the Approver cell
+        # matches that row's git author — and `--force` was never implemented
+        # (the parser exits 2 on it). The first sentence was written from
+        # docs/governance-framework.md §V control 1, which requires the approver
+        # to commit their own row; this check requires the opposite.
+        #
+        # The replacement asserts NEITHER rule. It states what was compared and
+        # names the distinction the check cannot make, because resolving that
+        # contradiction is a governance decision rather than a wording one — the
+        # options are recorded on `## BL-275:`. There is deliberately no "do X
+        # and this will pass" sentence: any such sentence has to pick a side.
+        echo "  This gate compared the Approver cell against the git author of that row, and they match."
+        echo "  It cannot tell an independent approver who signed their own row from an Orchestrator"
+        echo "  approving themselves — it compares only the two names, and never establishes who the"
+        echo "  Orchestrator is. Confirm by hand which case this is."
+        echo "  If this project has one technical authority, the blocking pre-condition is"
+        echo "  docs/governance-framework.md §XIV item 5 (a second technologist with repository and"
+        echo "  hosting access), and this gate is the symptom rather than the cause. See ## BL-275:."
         issues=$((issues + 1))
       elif [ -n "$git_user_norm" ] && [ "$git_user_norm" = "$approver_norm" ] \
            && [ -n "$commit_author_norm" ] && [ "$commit_author_norm" != "$approver_norm" ]; then

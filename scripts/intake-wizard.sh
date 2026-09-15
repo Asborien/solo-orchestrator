@@ -111,18 +111,34 @@ prompt_input() {
   local prompt="$1"
   local default="${2:-}"
   local result
-  if [ -n "$default" ]; then
-    read -rp "$(echo -e "  ${BOLD}$prompt${NC} [$default]: ")" result # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's centralized prompt helper
-    result="${result:-$default}"
-  else
-    read -rp "$(echo -e "  ${BOLD}$prompt${NC}: ")" result # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's centralized prompt helper
-  fi
-  if [ "$result" = "pause" ] || [ "$result" = "PAUSE" ] || [ "$result" = "Pause" ]; then
-    _request_pause
-    echo ""
+  # BL-267-BARE-QUESTION-MARK — the `while true` is the point of the loop, not
+  # decoration. `?` is the wizard's own help key: the banner says "Type '?' at
+  # prompts marked with [? for suggestions]", and the sibling
+  # prompt_with_suggestions honours it with exactly this shape — read, test,
+  # `continue`. This helper, behind 81 of the wizard's prompts, had no handling
+  # at all, so a `?` fell through to `echo "$result"` and the `save_answer` on
+  # the caller's next line RECORDED IT AS THE ANSWER. Observed on
+  # one_time_budget and users_12mo, both stored as the literal string "?" and
+  # carried into PROJECT_INTAKE.md.
+  while true; do
+    if [ -n "$default" ]; then
+      read -rp "$(echo -e "  ${BOLD}$prompt${NC} [$default]: ")" result # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's centralized prompt helper
+      result="${result:-$default}"
+    else
+      read -rp "$(echo -e "  ${BOLD}$prompt${NC}: ")" result # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's centralized prompt helper
+    fi
+    if [ "$result" = "pause" ] || [ "$result" = "PAUSE" ] || [ "$result" = "Pause" ]; then
+      _request_pause
+      echo ""
+      return
+    fi
+    if [ "$result" = "?" ]; then
+      echo "  No suggestions available for this field — answer it directly, or type N/A." >&2
+      continue
+    fi
+    echo "$result"
     return
-  fi
-  echo "$result"
+  done
 }
 
 # ================================================================
@@ -351,6 +367,28 @@ with open(sys.argv[8], 'w') as f:
 # ================================================================
 save_section() {
   local section_num="$1"
+  # BL-266-PAUSE-INCOMPLETE — a PAUSED section is not a COMPLETED section.
+  # Every run_section_N ends in an unconditional `save_section N`. Once the
+  # pause sentinel is set the prompt helpers return empty and the collection
+  # loops break, so that call still fires and files the section under
+  # completed_sections with nothing in it; is_section_complete then makes
+  # --resume skip it for good. Render what was answered before the pause, say
+  # the section was not finished, and do NOT claim it was.
+  #
+  # THIS WRITES NOTHING. `last_section` already holds the PREVIOUS section's
+  # number — the last `save_section` to complete set it — which is exactly the
+  # resume point, so there is nothing to record. An earlier cut computed and
+  # wrote one, which forced this function to know the runner's ORDER (that the
+  # predecessor of `115` is `11`, because `115 - 1` is not a section). That made
+  # `save_section` a THIRD home for an ordering that belongs to
+  # `run_script_mode`, which owns the `local sections=(…)` list and the dispatch.
+  # On `ceb450e` the literal `115` appears in exactly two places, both entitled
+  # to it; a third was this branch's own addition and it is gone.
+  if [ -f "${_PAUSE_FILE:-/dev/null/sentinel-cannot-exist}" ]; then
+    print_info "Section $section_num paused before it was finished — it will be asked again on resume."
+    render_intake_file || true
+    return 0
+  fi
   if command -v python3 &>/dev/null; then
     python3 -c "
 import json, sys
@@ -410,7 +448,10 @@ render_intake_file() {
     printf '### Project Context\n\n'
     printf '| Field | Value |\n|---|---|\n'
     jq -r '
-      def row(label; val): "| " + label + " | " + ((val // "") | tostring) + " |";
+      # `label` is a jq KEYWORD (`label $out | break $out`), so it cannot name a
+      # function parameter. Every jq that has label/break — 1.5 (2015) onward —
+      # refuses to compile the whole program, so this table rendered EMPTY.
+      def row(lbl; val): "| " + lbl + " | " + ((val // "") | tostring) + " |";  # BL-265-JQ-RESERVED
       row("Project name"; .project_name),
       row("Description"; .description),
       row("Platform"; .platform),
@@ -1789,12 +1830,58 @@ PYEOF
 }
 
 # ================================================================
+# SECTION ORDER: the runner's list, defined ONCE
+# ================================================================
+# BL-281-SECTION-ORDER — section ids in the order the wizard runs them.
+# 1..11, then 115 (Section 11.5, Testing & Bug Tracking), then 12, 13.
+# The 115 id encodes "between 11 and 12" while staying an integer for
+# save_section / is_section_complete, which means the list is NOT
+# monotonic: 115 comes before 12. Anything that reasons about "the
+# next section" must walk this list by POSITION, never by arithmetic
+# on the id — `115 + 1` is 116, which is not a section, and a numeric
+# `-lt` skip against 116 drops every id in the list.
+INTAKE_SECTION_ORDER=(1 2 3 4 5 6 7 8 9 10 11 115 12 13)
+
+# next_section_after <last_completed_id> — the id of the element AFTER
+# the given one in INTAKE_SECTION_ORDER. 0 (nothing completed) yields
+# the first element; the last element yields the empty string (nothing
+# left to run). An id that is not in the list also yields the first
+# element: the runner re-skips whatever is_section_complete already
+# knows about, so starting from the top is safe and loses nothing.
+next_section_after() {
+  local last="$1" i n
+  n=${#INTAKE_SECTION_ORDER[@]}
+  if [ "$last" = "0" ]; then
+    echo "${INTAKE_SECTION_ORDER[0]}"
+    return 0
+  fi
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ "${INTAKE_SECTION_ORDER[$i]}" = "$last" ]; then
+      # BL-281-NEXT-SECTION — the successor by position, not by value.
+      if [ $((i + 1)) -lt "$n" ]; then
+        echo "${INTAKE_SECTION_ORDER[$((i + 1))]}"
+      else
+        echo ""
+      fi
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  echo "${INTAKE_SECTION_ORDER[0]}"
+}
+
+# ================================================================
 # MODE: Run all sections in order (script path)
 # ================================================================
+# run_script_mode [start_id] — run every section from start_id to the
+# end of INTAKE_SECTION_ORDER, skipping any the progress file already
+# records as complete. start_id is a section id (the caller gets it
+# from next_section_after); an empty start_id means nothing is left.
 run_script_mode() {
-  local start_section="${1:-1}"
+  local start_section="${1:-${INTAKE_SECTION_ORDER[0]}}"
 
-  if [ "$start_section" -gt 1 ]; then
+  if [ -n "$start_section" ] && [ "$start_section" != "${INTAKE_SECTION_ORDER[0]}" ]; then
     print_info "Resuming from Section $start_section"
   fi
 
@@ -1803,20 +1890,27 @@ run_script_mode() {
   print_info "Type '?' at prompts marked with [? for suggestions] to see options."
   echo ""
 
-  # Section IDs: 1..11, 115 (Testing & Bug Tracking), 12, 13.
-  # The 115 ID encodes "between 11 and 12" while keeping the value an
-  # integer for save_section / is_section_complete; the runner maps it
-  # back to function name run_section_11_5 below.
+  # The order lives in INTAKE_SECTION_ORDER (# BL-281-SECTION-ORDER);
+  # the runner maps 115 back to run_section_11_5 below.
   #
   # Audit code-intake-wizard-3: §12 (Tooling Configuration, auto-
   # populated) and §13 (Agent Initialization Prompt, auto-generated)
   # are now distinct wizard steps that mirror the template's
   # numbering, instead of the old single "Section 12" that ran §13's
   # content.
-  local sections=(1 2 3 4 5 6 7 8 9 10 11 115 12 13)
-  for section in "${sections[@]}"; do
-    if [ "$section" -lt "$start_section" ]; then
-      continue
+  #
+  # BL-281-POSITION-SKIP — skip by POSITION, not by value. This used to
+  # be `[ "$section" -lt "$start_section" ]` with start_section set to
+  # `LAST_SECTION + 1`. After a clean finish of Section 11.5 that is 116,
+  # every id in the list is below it, and --resume ran nothing and
+  # printed "Intake Complete!" with Sections 12 and 13 never run.
+  local reached=0
+  for section in "${INTAKE_SECTION_ORDER[@]}"; do
+    if [ "$reached" -eq 0 ]; then
+      if [ "$section" != "$start_section" ]; then
+        continue
+      fi
+      reached=1
     fi
 
     if is_section_complete "$section" 2>/dev/null; then
@@ -2222,7 +2316,11 @@ main() {
       if ! load_progress; then
         exit 1
       fi
-      local next_section=$((LAST_SECTION + 1))
+      # BL-281-RESUME-POINT — the element after the last completed one,
+      # by position in the runner's list; `LAST_SECTION + 1` is not a
+      # section id once LAST_SECTION is 115.
+      local next_section
+      next_section="$(next_section_after "$LAST_SECTION")"
       echo ""
       print_info "Sections completed: ${COMPLETED_SECTIONS:-none}"
       run_script_mode "$next_section"
@@ -2333,12 +2431,18 @@ main() {
         load_progress
         if [ "$LAST_SECTION" -gt 0 ]; then
           print_info "Found existing progress (through Section $LAST_SECTION)."
-          local resume_choice
+          local resume_choice next_section resume_label
+          next_section="$(next_section_after "$LAST_SECTION")"
+          if [ -n "$next_section" ]; then
+            resume_label="Resume from Section $next_section"
+          else
+            resume_label="Resume (every section is already complete — re-print the summary)"
+          fi
           resume_choice=$(prompt_choice "Resume or start over?" \
-            "Resume from Section $((LAST_SECTION + 1))" \
+            "$resume_label" \
             "Start over (previous progress will be overwritten)")
           if [[ "$resume_choice" == "Resume"* ]]; then
-            run_script_mode "$((LAST_SECTION + 1))"
+            run_script_mode "$next_section"
             exit 0
           fi
         fi

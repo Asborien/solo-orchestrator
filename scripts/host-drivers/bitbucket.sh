@@ -331,6 +331,12 @@ host_configure_protection() {
 
 host_verify_protection() {
   local branch="${1:?}"; local mode="${2:?}"
+  # BL-268-MODE-VOCABULARY: same gate, same silence as the github driver —
+  # the org-only block below keys on the literal "org".
+  case "$mode" in
+    personal|org) ;;
+    *) echo "host_verify_protection: mode must be personal|org, got '$mode'" >&2; return 1 ;;
+  esac
   local workspace_repo
   workspace_repo=$(_bb_parse_origin) || return 1
 

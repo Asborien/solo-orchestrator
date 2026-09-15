@@ -867,6 +867,78 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
 run_child_suite "tests/test-bl263-bl264-uat-template-dom.sh" \
   "BL-263/BL-264: UAT scenario text is escaped, and addBug appends without erasing" \
   "BL-263 scenario-escaping tests FAILED (run tests/test-bl263-bl264-uat-template-dom.sh for details)"
+# BL-284: two verify-install.sh auto-fixers that could never run — has_context()
+# was unsatisfiable on an adopted project, and fix_superpowers ran a CLI verb
+# that does not exist.
+run_child_suite "tests/test-bl284-verify-install-context.sh" \
+  "BL-284: an adopted project's recorded context reaches has_context(); fix_superpowers uses a real CLI verb" \
+  "BL-284 verify-install context/plugin-verb tests FAILED (run tests/test-bl284-verify-install-context.sh for details)"
+# BL-265: `label` is a jq keyword, so `def row(label; val)` refused to compile
+# and render_intake_file() wrote a Project Context table with no rows.
+run_child_suite "tests/test-bl265-jq-reserved-label.sh" \
+  "BL-265: the intake appendix's Project Context table renders (no jq reserved word)" \
+  "BL-265 jq-reserved-label tests FAILED (run tests/test-bl265-jq-reserved-label.sh for details)"
+# BL-266: typing `pause` filed the unfinished section under
+# completed_sections, so --resume skipped it permanently.
+run_child_suite "tests/test-bl266-paused-section-marked-complete.sh" \
+  "BL-266: a paused intake section is not recorded as complete, and the resume point survives section 115" \
+  "BL-266 paused-section tests FAILED (run tests/test-bl266-paused-section-marked-complete.sh for details)"
+# BL-267: prompt_input had no handling for the wizard's own `?` help key, so
+# a bare question mark was returned and saved as the answer.
+run_child_suite "tests/test-bl267-bare-question-mark.sh" \
+  "BL-267: a bare \`?\` re-asks instead of being saved as the answer, and the notice stays off stdout" \
+  "BL-267 bare-question-mark tests FAILED (run tests/test-bl267-bare-question-mark.sh for details)"
+# BL-270: a project adopted before BL-268 carries a `mode` outside the mode
+# vocabulary, and nothing repaired it. The migration entry lives in
+# _run_idempotent_backfill, reached by upgrade-project.sh --backfill-only.
+run_child_suite "tests/test-bl270-mode-vocabulary-backfill.sh" \
+  "BL-270: the backfill repairs a present-and-invalid manifest mode, and the org rules then run" \
+  "BL-270 mode-vocabulary-backfill tests FAILED (run tests/test-bl270-mode-vocabulary-backfill.sh for details)"
+# BL-268: adoption wrote the `deployment` vocabulary into the `mode` field, and
+# host_verify_protection — which validated nothing — then skipped its org-tier
+# rules on an adopted organizational project. Covers both manifest write
+# branches and all three host drivers.
+run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
+  "BL-268: adoption writes mode=org and every host driver refuses the deployment vocabulary" \
+  "BL-268 mode-vocabulary tests FAILED (run tests/test-bl268-mode-vocabulary.sh for details)"
+run_child_suite "tests/test-bl281-resume-after-115.sh" \
+  "BL-281: --resume after a clean Section 11.5 must run Sections 12 and 13" \
+  "BL-281 resume-after-115 tests FAILED (run tests/test-bl281-resume-after-115.sh for details)"
+# BL-286: the TDD gate's branch axis resolves its base from the project's
+# recorded integration branch, so it stops exempting every commit on a
+# non-`main` trunk — and an absent key still behaves byte-identically.
+run_child_suite "tests/test-bl286-integration-branch.sh" \
+  "BL-286: the TDD branch axis must resolve the project's own integration branch" \
+  "BL-286 integration-branch tests FAILED (run tests/test-bl286-integration-branch.sh for details)"
+# BL-209: install-filesystem-gates.sh wrote and probed a `.git/hooks` literal.
+# That is false in a linked worktree (`.git` is a FILE), dies when the hooks
+# directory is absent, and is the wrong place entirely when core.hooksPath is
+# configured — in every case leaving the BL-030 gate absent or unreachable while
+# the install reported success.
+run_child_suite "tests/test-bl209-hooksdir-resolution.sh" \
+  "BL-209: the hooks directory is resolved through git, not a .git/hooks literal" \
+  "BL-209 hooksdir-resolution tests FAILED (run tests/test-bl209-hooksdir-resolution.sh for details)"
+run_child_suite "tests/test-bl275-selfapproval-remedy.sh" \
+  "BL-275: the self-approval remedy names no non-existent flag and does not advise the failing action" \
+  "BL-275 self-approval remedy tests FAILED (run tests/test-bl275-selfapproval-remedy.sh for details)"
+# BL-287: reconfigure-project.sh's CI regeneration had no host awareness — a
+# template path missing the per-host directory (so it never resolved, and the
+# warn arm ran under an [OK] banner at rc 0) and a hardcoded GitHub
+# destination. Cases pin template CONTENT per host, not existence.
+run_child_suite "tests/test-bl287-reconfigure-ci-host.sh" \
+  "BL-287: reconfigure regenerates CI from the per-host template to the per-host destination" \
+  "BL-287 reconfigure-ci-host tests FAILED (run tests/test-bl287-reconfigure-ci-host.sh for details)"
+run_child_suite "tests/test-bl288-scout-shallow-history-claim.sh" \
+  "BL-288: a shallow clone must not be reported as a full-history secrets scan" \
+  "BL-288 shallow-history-claim tests FAILED (run tests/test-bl288-scout-shallow-history-claim.sh for details)"
+# BL-278: the pending-approval sentinel is read from the repo the commit
+# targets, not only from the session's project directory.
+run_child_suite "tests/test-bl278-sentinel-root.sh" \
+  "BL-278: a repo's own pending-approval sentinel gates its own commits" \
+  "BL-278 sentinel-root tests FAILED (run tests/test-bl278-sentinel-root.sh for details)"
+run_child_suite "tests/test-bl280-bug-gate-unmeasured-source.sh" \
+  "BL-280: the Phase 2→3 bug gate must not read an unmeasured source as zero bugs" \
+  "BL-280 bug-gate tests FAILED (run tests/test-bl280-bug-gate-unmeasured-source.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
@@ -878,6 +950,12 @@ run_child_suite "tests/test-bl263-bl264-uat-template-dom.sh" \
 section "Intake wizard + reconfigure field handlers (PRs #83, #84)"
 run_child_suite "tests/test-intake-wizard-fixes.sh" "tests/test-intake-wizard-fixes.sh"
 run_child_suite "tests/test-bl202-session-intake-check.sh" "tests/test-bl202-session-intake-check.sh"
+# BL-276: four child suites of THIS aggregator ran in ~1s against /dev/null and
+# blocked forever when the caller left stdin open — they invoked a stdin-reading
+# hook, stub or script inside $( ) with no redirect. CONTRIBUTING.md names this
+# aggregator as the way to validate a checkout, so the hang landed on exactly
+# the audience it addresses. This suite holds the redirects in place.
+run_child_suite "tests/test-bl276-stdin-hang.sh" "tests/test-bl276-stdin-hang.sh"
 # BL-202 residual 2: README § Quick Start carried the last hand-maintained
 # verbatim copy of the kickoff paste block. It now points at the one generator;
 # this suite pins that it stays pointed there, stays honest that resume.sh is

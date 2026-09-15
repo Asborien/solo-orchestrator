@@ -190,13 +190,19 @@ if [ -n "$RECONF_LEVEL" ]; then
   else
     INSTALLER="$SCRIPT_DIR/install-filesystem-gates.sh"
   fi
+  # BL-209-INSTALLER-STDERR — stdout suppressed, stderr NOT. A non-zero here
+  # rolls back the whole enforcement-level transition, and with `2>&1` the
+  # operator was told only "filesystem-gate install failed" while the
+  # installer's own account of WHY (a configured core.hooksPath, an uncreatable
+  # hooks dir, a non-repo) went to /dev/null. A rollback whose cause is
+  # unstated is the opaque failure BL-209 exists to end.
   if [ "$RECONF_LEVEL" = "strict" ]; then
-    if ! bash "$INSTALLER" --install "$PROJECT_ROOT" >/dev/null 2>&1; then
-      rollback_reconfigure "filesystem-gate install failed (installer: $INSTALLER)"
+    if ! bash "$INSTALLER" --install "$PROJECT_ROOT" >/dev/null; then
+      rollback_reconfigure "filesystem-gate install failed (installer: $INSTALLER; its reason is above)"
     fi
   else
-    if ! bash "$INSTALLER" --uninstall "$PROJECT_ROOT" >/dev/null 2>&1; then
-      rollback_reconfigure "filesystem-gate uninstall failed (installer: $INSTALLER)"
+    if ! bash "$INSTALLER" --uninstall "$PROJECT_ROOT" >/dev/null; then
+      rollback_reconfigure "filesystem-gate uninstall failed (installer: $INSTALLER; its reason is above)"
     fi
   fi
 
@@ -358,13 +364,125 @@ reconfigure() {
         swift)                 ci_template="swift.yml" ;;
         *)                     ci_template="other.yml" ;;
       esac
-      local template_path="$ORCHESTRATOR_SOURCE/templates/pipelines/ci/$ci_template"
-      if [ -f "$template_path" ]; then
-        mkdir -p .github/workflows
-        cp "$template_path" .github/workflows/ci.yml
-        print_ok "CI pipeline regenerated for $NEW_VALUE"
+      # BL-287-RECONFIG-CI-HOST: the CI templates live under a PER-HOST
+      # directory (templates/pipelines/ci/<host>/<lang>.yml) and land at a
+      # per-host destination. This block had neither. It built
+      # `ci/<lang>.yml` — a path no host uses — so the `[ -f ]` guard always
+      # fell to the warn arm while the script went on to report success at
+      # rc 0; and it hardcoded `.github/workflows/ci.yml`, which would have
+      # put a GitHub-shaped file in a GitLab project had the source ever
+      # resolved. The destination comes from the shared resolver
+      # (`# BL-229-HOST-PIPELINE-PATHS`) rather than a fourth local copy of
+      # the mapping — host.sh's own sync-sibling note names this file as one
+      # of the HOST_CI_PATH copies BL-229 left unconverted. An UNRECOGNISED
+      # host is refused rather than normalised; see
+      # `# BL-287-RECONFIG-CI-FAIL-CLOSED` below for why this diverges from
+      # init.sh's generate_ci.
+      #
+      # BL-287-RECONFIG-CI-HOST-READ: the host is read through host.sh's OWN
+      # reader, not a local jq. A first cut of this arm did
+      # `local ci_host="github"` plus `jq -r '.host // "github"'` plus a third
+      # `|| echo "github"`, and that contradicted the refusal below: it refused
+      # an UNRECOGNISED host on the stated grounds that guessing GitHub is how a
+      # mis-recorded host silently produces a GitHub-shaped answer, while
+      # defaulting an ABSENT one to exactly that.
+      #
+      # Nothing in the framework defaults a missing host to github. There are
+      # two established behaviours and this arm now adopts the first rather than
+      # inventing a third:
+      #   * host.sh's `host_read_from_manifest` — refuse at rc 2, naming the
+      #     remedy (`scripts/check-gate.sh --backfill-host`). This is the reader
+      #     `host_pipeline_resolve` itself uses when called with no argument, so
+      #     passing its value back in is the same read the three existing
+      #     consumers get bare (scripts/validate.sh, scripts/check-phase-gate.sh,
+      #     scripts/cut-release.sh).
+      #   * verify-install.sh's `_detect_pipeline_host` — infer from the git
+      #     remote and yield `other` when it cannot tell. Never a bare "github".
+      #
+      # WHICH of those two reconfigure should use is a policy question for the
+      # maintainer, not one this entry settles: refusing is consistent with the
+      # resolver it delegates to, while init.sh's `generate_ci` warns and falls
+      # back. It is raised in the PR description rather than decided here.
+      if [ -f "$SCRIPT_DIR/lib/host.sh" ]; then
+        # shellcheck disable=SC1090
+        . "$SCRIPT_DIR/lib/host.sh"
+      fi
+      if ! command -v host_read_from_manifest >/dev/null 2>&1 \
+         || ! command -v host_pipeline_resolve >/dev/null 2>&1; then
+        # Distinct from the host refusals below, and deliberately so: this is
+        # the library being ABSENT, not the host being wrong or missing, and
+        # `## BL-231:` is the family that exists because those get collapsed.
+        # The operator's repair is different in each case.
+        print_fail "scripts/lib/host.sh is not available, so the CI destination cannot be resolved."
+        echo "       The language in .claude/tool-preferences.json HAS been updated to '$NEW_VALUE';" >&2
+        echo "       the CI pipeline was NOT regenerated, so the two now disagree." >&2
+        echo "       Re-run after restoring scripts/lib/host.sh from the framework source." >&2
+        exit 1
+      fi
+      local ci_host=""
+      if ! ci_host="$(host_read_from_manifest)"; then
+        # host.sh has already named the value and the remedy on stderr.
+        print_fail "Cannot determine the git host, so the CI destination cannot be resolved."
+        echo "       The language in .claude/tool-preferences.json HAS been updated to '$NEW_VALUE';" >&2
+        echo "       the CI pipeline was NOT regenerated, so the two now disagree." >&2
+        exit 1
+      fi
+      if [ "$ci_host" = "other" ]; then
+        print_info "Host 'other' — no CI template laid down. Supply your own CI config."
       else
-        print_warn "CI template not found: $template_path"
+        # BL-287-RECONFIG-CI-FAIL-CLOSED: an unrecognised host is REFUSED, not
+        # normalised to GitHub.
+        #
+        # `host_pipeline_resolve` fails closed at rc 4 by explicit design, and
+        # its own comment records why: defaulting an unknown host to the GitHub
+        # paths "is how a mis-recorded host silently produced a GitHub-shaped
+        # answer everywhere". `init.sh`'s `generate_ci` does the opposite — it
+        # warns and falls back — but that arm is the UNCONVERTED half of
+        # `## BL-229:` in a file whose `generate_release` WAS converted
+        # (`# BL-229-INIT-RELEASE-PATH`), so it is a remnant rather than a
+        # considered counter-policy, and following it here would re-mint the
+        # mapping BL-229 exists to collapse.
+        #
+        # The two callers are not alike, which is what decides it. `init.sh`
+        # runs at CREATION, where the host arrives in the same run from
+        # `--git-host` or the wizard and there is no recorded value to be wrong.
+        # This script runs against an EXISTING project and reads the host the
+        # manifest already records, so an unrecognised value means the manifest
+        # is wrong — the precise case BL-229 names.
+        #
+        # And the fallback does not fail safe here. It would write a
+        # GitHub-shaped ci.yml into `.github/workflows/` of a project that is
+        # not on GitHub, under an `[OK] CI pipeline regenerated` line: the
+        # silent no-op this entry fixes, traded for a silent WRONG write. The
+        # only thing separating them is a `[WARN]` sitting between two `[OK]`s,
+        # which is exactly the reading this entry argues the operator does not
+        # do. A refusal at non-zero rc is visible to the operator, to the intake
+        # wizard that invokes this script, and to any gate reading its status.
+        # CALLED DIRECTLY, not through `$(...)`: host_pipeline_resolve reports
+        # through the HOST_CI_PATH variable, and a command substitution runs it
+        # in a subshell where that assignment is discarded. Its own stderr
+        # diagnostic is deliberately left unredirected so the operator sees the
+        # resolver's account of the value before this arm's.
+        local ci_target=""
+        if host_pipeline_resolve "$ci_host" >/dev/null; then
+          ci_target="$HOST_CI_PATH"
+        fi
+        if [ -z "$ci_target" ]; then
+          print_fail "Unrecognised git host '$ci_host' recorded in .claude/manifest.json — refusing to guess a CI destination."
+          echo "       Valid hosts: github, gitlab, bitbucket, other." >&2
+          echo "       The language in .claude/tool-preferences.json HAS been updated to '$NEW_VALUE';" >&2
+          echo "       the CI pipeline was NOT regenerated, so the two now disagree." >&2
+          echo "       Correct the recorded host, then re-run:  scripts/check-gate.sh --backfill-host" >&2
+          exit 1
+        fi
+        local template_path="$ORCHESTRATOR_SOURCE/templates/pipelines/ci/$ci_host/$ci_template"
+        if [ -f "$template_path" ]; then
+          mkdir -p "$(dirname "$ci_target")"
+          cp "$template_path" "$ci_target"
+          print_ok "CI pipeline regenerated for $NEW_VALUE at $ci_target (host: $ci_host)"
+        else
+          print_warn "CI template not found: $template_path"
+        fi
       fi
 
       # Regenerate release pipeline if one exists (language affects build vars)

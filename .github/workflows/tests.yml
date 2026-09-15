@@ -480,6 +480,7 @@ jobs:
             tests/test-bl202-readme-kickoff-consolidation.sh
             tests/test-bl202-session-intake-check.sh
             tests/test-bl214-gate-snapshot-staleness.sh
+            tests/test-bl276-stdin-hang.sh
             tests/test-intake-wizard-fixes.sh
             tests/test-lint-backlog-references.sh
             tests/test-lint-bl-markers.sh
@@ -557,6 +558,11 @@ jobs:
             tests/test-bl229-host-pipeline-paths.sh
             tests/test-bl221-tier-fail-closed.sh
             tests/test-bl235-tool-matrix-probes.sh
+            tests/test-bl265-jq-reserved-label.sh
+            tests/test-bl266-paused-section-marked-complete.sh
+            tests/test-bl267-bare-question-mark.sh
+            tests/test-bl270-mode-vocabulary-backfill.sh
+            tests/test-bl268-mode-vocabulary.sh
             tests/test-bl239-contributor-hooks.sh
             tests/test-bl230-workflow-html-lint-surface.sh
             tests/host-drivers/error-translate.test.sh
@@ -567,6 +573,15 @@ jobs:
             tests/test-bl256-unearned-receipts.sh
             tests/test-bl259-tsv-empty-field-shift.sh
             tests/test-bl263-bl264-uat-template-dom.sh
+            tests/test-bl284-verify-install-context.sh
+            tests/test-bl281-resume-after-115.sh
+            tests/test-bl286-integration-branch.sh
+            tests/test-bl209-hooksdir-resolution.sh
+            tests/test-bl275-selfapproval-remedy.sh
+            tests/test-bl287-reconfigure-ci-host.sh
+            tests/test-bl288-scout-shallow-history-claim.sh
+            tests/test-bl278-sentinel-root.sh
+            tests/test-bl280-bug-gate-unmeasured-source.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────
@@ -863,6 +878,7 @@ jobs:
             # doctrine above the timeout-minutes line, approaching the cap is the RE-PIN
             # signal — not a raise. semgrep is installed in EVERY shard (BL-190), so the
             # suite loses nothing by living in `rest` (~3m typical there).
+            tests/test-bl288-scout-shallow-history-claim.sh # 12s on PR #412 — three gitleaks git scans; belongs with the scanner leg
           )
           pin_slow_misc=(
             tests/test-pre-commit-gate-lints.sh        # 122s — runs 4 lint copies inside fixture projects
@@ -911,6 +927,8 @@ jobs:
             #    work package of headroom.
             tests/test-brownfield-wp5b-test-debt.sh          #  ~45s in CI (30s local)
             tests/test-brownfield-wp6-collision-archive.sh   #  ~61s in CI (36s local)
+            tests/test-bl276-stdin-hang.sh               # 53s on PR #412 — the complement's new longest pole; bounds four stdin-hang cases with timeouts by design
+            tests/test-bl233-wpb-accumulation.sh         # 43s on PR #412 — moved WITH bl276 so the complement lands near 85% of the cap, not 99%: run 35028774242 hit 748s against 720s with 0 failures
           )
 
           # The ONLY thing that maps a roster name to a pin array. Both the

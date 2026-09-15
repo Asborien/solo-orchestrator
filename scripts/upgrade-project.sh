@@ -581,7 +581,10 @@ _run_idempotent_backfill() {
       git rev-parse HEAD 2>/dev/null > .claude/last-checked-commit.txt || true
     fi
     if [ -x "scripts/install-filesystem-gates.sh" ]; then
-      bash scripts/install-filesystem-gates.sh --install "$(pwd)" >/dev/null 2>&1 || true
+      # BL-209-INSTALLER-STDERR — stdout suppressed, stderr NOT. Best-effort
+      # (|| true), but the installer's reason for refusing must still reach the
+      # operator; `2>&1` sent it to /dev/null with the rest.
+      bash scripts/install-filesystem-gates.sh --install "$(pwd)" >/dev/null || true
     fi
     [ -f .claude/bypass-audit.json ] || echo "[]" > .claude/bypass-audit.json
     bf_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -599,6 +602,106 @@ _run_idempotent_backfill() {
     print_ok "BL-030 fields backfilled: deployment=$mig_deployment poc_mode=${mig_poc:-null} enforcement_level=strict"
     print_info "To choose a less strict level (personal/choosable projects only):"
     print_info "  scripts/reconfigure-project.sh --enforcement-level <light|no> --confirm-pitfalls"
+  fi
+
+  # --- BL-270: mode vocabulary repair -------------------------------------
+  # BL-270-MODE-VOCABULARY-BACKFILL. `mode` and `deployment` are separate
+  # manifest fields with separate vocabularies — mode is personal|org,
+  # deployment is personal|organizational. Adoption's manifest writer fed ONE
+  # value to both, so every project adopted before that fix carries
+  # `mode: "organizational"`, a word no reader of `mode` knows.
+  # `host_verify_protection` gates its org-only branch-protection rules on the
+  # literal "org", so those projects had the required-approving-review and
+  # required-status-check assertions skipped and were told they passed.
+  #
+  # THE PREDICATE DIFFERS FROM THE TWO MANIFEST-FIELD BLOCKS ABOVE, AND IT IS
+  # SAID OUT LOUD RATHER THAN LEFT TO BE DISCOVERED. The host block and the
+  # BL-030 block both guard on the field being ABSENT; this one guards on it
+  # being PRESENT AND INVALID — a value outside the mode vocabulary — because
+  # the defect WROTE a value rather than omitting one. That is not a departure
+  # from this function's contract: of its five blocks only those two key on
+  # absence, while the BL-174 gitignore, vendored-skills and BL-088 blocks all
+  # rewrite content that already exists. The shared contract is "migrate a
+  # pre-existing project to the current schema without making the operator pick
+  # a tier transition", which is this block's job exactly.
+  #
+  # Idempotent by the same standard as its neighbours: an absent or
+  # already-valid `mode` is left untouched, so a second run is a no-op.
+  #
+  # ORDERING. It sits after the BL-030 block, but NOT because of a dependency —
+  # an earlier cut of this comment claimed BL-030 "guarantees `deployment` is
+  # present" and that was wrong twice over. This block reads `phase-state.json`
+  # itself and falls back to it, so moving it above BL-030 produces identical
+  # results; and BL-030 only runs when `enforcement_level` is absent-or-empty,
+  # so it guarantees nothing in the general case. The order is conventional,
+  # matching the manifest-field blocks above, and nothing here depends on it.
+  #
+  # What the order DOES create is the hazard the guard below closes: when
+  # `phase-state.json` carries no `.deployment`, BL-030 prints "assuming
+  # 'personal' for backfill" and WRITES that guess into the manifest. Reading it
+  # back as fact would let this block print `[OK] mode repaired: organizational
+  # -> personal` and silently demote an organizational project — the same class
+  # of outcome this block exists to prevent. It refuses to derive from a
+  # DISAGREEMENT, so it must not derive from an INVENTION either.
+  #
+  # Dependencies: `jq` only, as its neighbours. python3 is already a hard
+  # dependency of this script and is recorded as followup F-012; this block
+  # adds nothing to that.
+  if [ -f .claude/manifest.json ]; then
+    bl270_mode="$(jq -r '.mode // ""' .claude/manifest.json 2>/dev/null)"
+    case "$bl270_mode" in
+      ''|personal|org) ;;   # absent, or already the mode vocabulary
+      *)
+        # Through the shared reader, not an inline jq — `## BL-095:` retired every
+        # inline `.deployment` parse behind `soif_read_deployment`, and its suite
+        # (T-no-inline-parse-left) refuses a new one. Same normalisation as the
+        # phase-state read below: the helper answers "null" for an absent key.
+        bl270_dep="$(soif_read_deployment .claude/manifest.json)"
+        [ "$bl270_dep" = "null" ] && bl270_dep=""
+        bl270_ps=""
+        if [ -f .claude/phase-state.json ]; then
+          # BL-095: through the # BL-095-STATE-READERS fence, as the BL-030
+          # sibling does — not a second raw parse of the same key.
+          bl270_ps="$(soif_read_deployment .claude/phase-state.json)"
+          [ "$bl270_ps" = "null" ] && bl270_ps=""
+        fi
+        [ -z "$bl270_dep" ] && bl270_dep="$bl270_ps"
+        if [ -z "$bl270_ps" ]; then
+          # PHASE-STATE IS THE AUTHORITY, and without it the manifest's
+          # `deployment` cannot be trusted: on exactly this input the BL-030
+          # block above writes a WARNED GUESS of "personal". Deriving `mode`
+          # from a guess and announcing it as a repair is the failure this
+          # block exists to prevent, so refuse and carry BL-030's own remedy.
+          print_warn "phase-state.json records no 'deployment' — mode left as '$bl270_mode'."
+          print_warn "  The manifest's deployment may be the BL-030 backfill's assumed default."
+          print_warn "  Set it for real, then re-run:  scripts/upgrade-project.sh --deployment organizational"
+        elif [ -n "$bl270_ps" ] && [ -n "$bl270_dep" ] && [ "$bl270_ps" != "$bl270_dep" ]; then
+          # REFUSE on a disagreement. With the two records in conflict there is
+          # no correct mode to derive, and guessing writes a value that matches
+          # one record while contradicting the other — which is the shape of the
+          # defect being repaired. Warn and leave it: a backfill never aborts the
+          # upgrade, which is the posture of every block in this function.
+          print_warn "manifest.json and phase-state.json disagree about deployment — mode left as '$bl270_mode'."
+          print_warn "  manifest.json:    deployment = $bl270_dep"
+          print_warn "  phase-state.json: deployment = $bl270_ps"
+        else
+          # The SAME derivation adoption now uses, not a second one.
+          bl270_want="$bl270_dep"
+          [ "$bl270_want" = "organizational" ] && bl270_want="org"
+          case "$bl270_want" in
+            personal|org)
+              print_step "Repairing manifest.json 'mode' (BL-270 vocabulary)"
+              jq --arg m "$bl270_want" '.mode = $m' .claude/manifest.json > .claude/manifest.json.tmp \
+                && mv .claude/manifest.json.tmp .claude/manifest.json
+              print_ok "mode repaired: $bl270_mode -> $bl270_want (derived from deployment=$bl270_dep)"
+              ;;
+            *)
+              print_warn "cannot derive 'mode': deployment is '${bl270_dep:-<absent>}' (expected personal|organizational) — mode left as '$bl270_mode'."
+              ;;
+          esac
+        fi
+        ;;
+    esac
   fi
 
   # --- BL-174: gitignore sidecar ignore-line backfill ---------------------

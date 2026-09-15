@@ -3615,6 +3615,8 @@ Verifier-reproduced: with a project-local `lint-backlog-references.sh` and a bac
 
 **Related:** BL-119 (PR #200, the defect class + fix); BL-010 (the commit-msg surface's contract); `scripts/lint-backlog-references.sh` (`--pre-commit-mode`).
 
+---
+
 ## BL-144: self-approval scan is fully silent for malformed-header + past-cap and for past-cap placeholder Approver cells
 
 **Logged:** 2026-07-19 (Dogfood-3 SHOULD-fix wave consolidated verifier, S1+S2)
@@ -3895,6 +3897,9 @@ Scaffolding with `--no-remote-creation` and wiring `origin` by hand (the exact-c
 
 
 **Verifier record (fable, 2026-07-24, SHIP-WITH-FIXES — applied on the branch):** HIGH must-fix caught: the reconciler recorded `pushed_initial` on branch-NAME existence only (`grep refs/heads/<name>`), so a remote carrying a same-named but UNPUSHED `main` (GitHub's 'Initialize with README' default, disjoint history) earned the full BL-123 attestation AND the BL-116 push-gate exemption with zero project code on the host — a regression vs pre-fix, where an actual `git push` had to succeed. Also: the branch name was interpolated unescaped into a grep BRE (a `rel/1.x` local laundered a `rel/1yx` remote). FIX: exact awk field compare (`$2 == "refs/heads/<cand>"`) + require the matched head sha to be a commit the local repo holds (`git cat-file -e <sha>^{commit}`) — a genuine push guarantees the shared commit, an unrelated auto-init does not. Three fixtures added (T-unrelated-history-refused = the HIGH, T-lookalike-branch-refused = metachar/substring, T-dead-origin-not-recorded); the first two are watched-RED against the name-only version (attestation laundered onto an unpushed project) and GREEN with the fix. The existing unconditional mutant was updated to fabricate the real local HEAD sha (isolating the ls-remote-genuineness guard now that cat-file is defense-in-depth). Suite 10/10; attestation blast radius green (bl123 11, check-gate 5, bl130 4, bl032 8); run-lints 11/11. builders-guide 'carries the pushed branch' overstatement corrected.
+
+---
+
 ## BL-158: `check-phase-gate.sh --gate <name>` prints the forced target phase as "Current phase" (cosmetic)
 
 **Logged:** 2026-07-22 (Dogfood-4 S0, finding F-DF4-004)
@@ -8367,7 +8372,210 @@ init.sh's arm is the lowest-risk (a fresh scaffold has no worktrees or dotfiles 
 upgrade-project's sync arms are the ones that touch EXISTING projects and deserve the guard
 first — the same argument BL-145's entry made for --auto-fix.
 
-**Status:** Open
+**Status:** Open — and it STAYS open on this branch, which converts **4 of the 36 census lines**:
+`scripts/install-filesystem-gates.sh` only. The other eight files are untouched. Suite
+`tests/test-bl209-hooksdir-resolution.sh` **16 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in
+`ubuntu:24.04` as a non-root user, against RED **3 / 8**; five mutants, each killing a
+different case set. Closing the entry needs the remaining 32 lines.
+
+---
+
+### The install-surface conversion (2026-09-12, branch `fix/bl209-hooksdir`) — 4 of 36 lines
+
+**Why this file first, against the entry's own advice.** The entry above nominates
+`upgrade-project.sh`'s sync arms as deserving the guard first, because they touch EXISTING
+projects. That ordering still holds for the *upgrade* surface. This file is taken first for a
+different reason: it is the only one of the nine whose failure leaves the **BL-030 gate itself**
+absent, and it fails silently by construction — `prepare_initial_state_for_commit()` in `init.sh`
+invokes it with `>/dev/null 2>&1`, so the operator sees "enforcement degraded" and no cause.
+
+**Three shapes broke the `.git/hooks` literal, and all three end the same way.** Measured on
+unmodified `main` at `ceb450e`, each against a hermetic fixture:
+
+```
+A  plain repo, .git/hooks present     -> rc 0, hook written        (the only case that worked)
+B  linked worktree                    -> [FAIL] not a git repo: <wt>   rc 1
+C  .git/hooks absent                  -> the first `cat >` dies        rc 1
+D  core.hooksPath set to myhooks/     -> rc 0, wrote into .git/hooks/, myhooks/ EMPTY
+```
+
+Arm **D** is the one worth reading twice. It is the only one that reports success, and what it
+produces is a gate installed where git will never look for it: `ls myhooks/` is empty after a
+run that exited 0. Arms B and C at least fail loudly — except that the caller discards both
+streams, so in practice all four are silent.
+
+The emitted hook carries the same literal a second time. On `main` it reads:
+
+```
+if [ -f "$(git rev-parse --show-toplevel)/.git/hooks/framework-gate.sh" ]; then
+```
+
+`--show-toplevel` is the WORKTREE root, where `.git` is a FILE, so in exactly the case arm B
+covers this test is false and the block falls through — strict mode, no gate, no output.
+
+**The fix — four marked arms.** `# BL-209-HOOKSDIR` resolves the directory from
+`git rev-parse --git-common-dir`; `# BL-209-FALLBACK-RC` takes that call's exit status explicitly,
+because `set -euo pipefail` is on and a failing rev-parse would otherwise kill the script on the
+assignment before the literal fallback beside it could run; `# BL-209-HOOKSPATH-REFUSE` declines
+to write into a configured hooks path, keyed on git's EXIT STATUS rather than the value;
+`# BL-209-GATE-PATH` applies the same resolution inside the hook that is emitted.
+
+**`--git-common-dir`, NOT `--git-path hooks`, and the difference is the uninstall arm.** The two
+agree in a normal checkout and in a linked worktree — hooks are per-REPOSITORY, so a worktree
+shares the common gitdir's `hooks/`. They diverge the moment a hooks path is configured, because
+`--git-path` HONOURS it. Since `--install` refuses a configured hooks path outright, the only
+directory this script ever writes to is the common one, and `--uninstall` must look THERE.
+Resolved through `--git-path`, uninstall reads a directory install never used, finds no hook, and
+silently removes nothing — leaving the marker block and `framework-gate.sh` behind to revive if
+the hooks path is later unset. A silent no-op in the enforcement lane. This is case R7, and
+mutant MU3 is that exact wrong resolution.
+
+**The suite, and the vacuous red it was rebuilt to remove.** A first cut reported **0 passed / 6
+failed** on `main` and every line of it looked like the defect. Four of the six were the FIXTURE.
+`git init` does not always produce a `.git/hooks` directory — git copies the template dir, and
+`init.templateDir` pointing at a template with no `hooks/` yields a repo with none. That is real
+(it is arm C), it was the state of the machine the suite was written on, and it meant R3..R6 were
+all failing on the missing-directory arm while their diagnostics claimed hooksPath, uninstall
+symmetry and the emitted hook. `setup_repo` now creates the directory explicitly, `G0` asserts
+it, and R2 — the case that is ABOUT the absent directory — removes it deliberately and asserts
+the removal first.
+
+A second vacuity was in the mutants and is worth recording because it is the sharper one: the
+mutant arms re-run cases that have already run once, `setup_repo` is called through command
+substitution and therefore in a SUBSHELL, and the fixture counter it incremented could not reach
+its caller. Every case re-used one path, `git init` silently re-initialised it, `git commit`
+found nothing to commit, and **four mutant kills were all `fixture could not be created`** — four
+vacuous kills on the very mutants whose job is to prove the cases are not vacuous. Fixtures are
+now minted with `mktemp -d` per call.
+
+RED **2 / 6** at `ceb450e`. The two passes are honest-outcome controls, not near-misses: `G0`
+(a stock repo installs cleanly — the floor that stops a dud fixture certifying the rest) and
+`R7` (uninstall reads the directory install wrote — true at base, because with no worktree and
+no configured hooks path the literal and the common dir are the same directory). R1, R2, R3, R4
+and R6 are the discriminators. **R5 is CONSEQUENTIAL, labelled as such in the file**: it cannot
+pass while R1 fails, so its discriminating power comes from MU1 rather than from the base red.
+
+GREEN **13 / 0**, five mutants. The count is five rather than the customary three because the fix
+is four independent arms and a mutant whose kill set overlaps another's proves less than it
+appears to — **a first cut claimed MU1 killed all four worktree-adjacent cases; measured, it kills
+two.** Each mutant asserts the mutation landed (`bash -n`, changed-line count) before the verdict
+is read, and each asserts which cases must SURVIVE it as well as which must die:
+
+| Mutant | What it restores or removes | Dies at | Survives, and must |
+|---|---|---|---|
+| MU1 | the `.git/hooks` literal + the `-d` guard | R1, R5 | R2, R6 — different arms |
+| MU2 | refusal keyed on the hooks-path VALUE, not the exit status | R4 | R3 — a non-empty value is still caught |
+| MU3 | uninstall resolved via `--git-path hooks` | R7 | — |
+| MU4 | the `mkdir -p "$HOOKS_DIR"` deleted | R2 | G0 — a stock repo already has the directory |
+| MU5 | the EMITTED hook back to the `.git/hooks` literal | R6 | R1 — the install path is untouched |
+
+MU2 and MU5 are the two that pay for themselves. MU2 separates a set-but-EMPTY hooks path from a
+set one: `git config <key>` with an empty value exits **0 with no output**, so a check reading the
+value passes it while git still runs no hook from `.git/hooks`. MU5 is the half-fix that looks
+installed on disk — the gate correctly placed in the common gitdir, and a hook that never calls
+it.
+
+**Not covered, deliberately.** The symlinked-hook clobber (BL-145's arm) is the third member of
+this class and is NOT addressed here; `--install` still writes through a symlinked `pre-commit`.
+It needs the refuse-not-write posture BL-145 built on the verify surface, and it is a separate
+change with its own cases.
+
+**Registered** in `tests/full-project-test-suite.sh` and in the canonical `tests=( )` array of
+`.github/workflows/tests.yml` — the canonical array only, never a `pin_*` array, per the BL-190
+note above the pins. `scripts/lint-tests-registered.sh`: `OK: every test file is registered with
+an aggregator (or EXEMPT)`.
+
+**REWORK (2026-09-12, same branch) — three findings, all upheld.** Suite now **15 / 0** on macOS
+`/bin/bash` 3.2.57 and on bash 5.2.21 in `ubuntu:24.04`, against RED **2 / 8** (G0 and R7 are the
+controls that pass at base).
+
+1. **The refusal was a THIRD copy of a predicate this entry's own Related line says to reuse.**
+   It now carries a `SYNC SIBLINGS` marker of the `# BL-084-TIER-KEY` kind, naming
+   `_bl145_hookspath_is_set` (`scripts/verify-install.sh:540`) and `_bl145_configured_hookspath`
+   (`:549`) as the other two. They are NOT shared, and the reason is a signature difference rather
+   than neglect: the `_bl145_*` pair read the CURRENT DIRECTORY's config with a bare `git config`,
+   while this installer is routinely invoked from another cwd and must read
+   `git -C "$PROJECT_ROOT"`. Sharing them means adding a repo parameter and updating six
+   verify-install.sh call sites — a signature change across a governance script, not a move. The
+   durable repair is to hoist them into `scripts/lib/helpers-core.sh` behind a fence exactly as
+   `# BL-095-STATE-READERS-BEGIN` (`:983`-`:1038`) did for the state readers, because
+   verify-install.sh is not sourceable (`guard_not_in_framework` at `:20`). **That hoist is a
+   refactor and is left to the entry that closes the remaining 32 lines.**
+
+2. **The refusal's diagnostic could not reach anyone.** Both callers ran the installer with
+   `>/dev/null 2>&1` — `init.sh:4979` and `scripts/reconfigure-project.sh:194` — so the named cause
+   and repair went to `/dev/null`, and in reconfigure's case a non-zero rolled back the whole
+   enforcement-level transition while telling the operator only "filesystem-gate install failed".
+   That is the same opaque failure this arm exists to end, one layer up.
+   `# BL-209-INSTALLER-STDERR` suppresses stdout only at both sites. Two new cases: **R8**
+   (behavioural — the refusal is on STDERR, not stdout, which is what makes suppressing stdout
+   safe) and **R9** (source-level, and labelled as such — neither caller redirects the installer's
+   stderr). R9 cannot be driven end to end here: `init.sh` is not invocable hermetically in this
+   suite. Its anti-vacuity measure is that each call line must be FOUND first — and that guard
+   earned itself immediately, catching a first pattern that matched init.sh's literal path but not
+   reconfigure's `"$INSTALLER"` variable, reporting the miss instead of passing by absence.
+   Verified non-vacuous by reinstating `2>&1` on a mirror: `R9 — 1 call site(s) still redirect the
+   installer's stderr to /dev/null`.
+
+3. **The refuse block sat at 2-space indent inside a `case` arm that uses 4.** Re-indented — and
+   that alone broke **MU2**, whose `sed` anchored on the old indent and silently stopped applying.
+   `mutate_and_check` caught it at 0 changed lines rather than reporting a pass, which is the
+   behaviour that makes an embedded mutant worth having.
+
+**SECOND REWORK (2026-09-13) — a blocking regression THIS BRANCH introduced, plus two test
+weaknesses.** Suite now **16 / 0** on macOS `/bin/bash` 3.2.57, macOS bash 5.3 and bash 5.2.21 in
+`ubuntu:24.04`, against RED **3 / 8**.
+
+1. **THE BRANCH BROKE `tests/test-bl112-commit-enforcement.sh`, 13/0 → 11/2, AND NO PR CHECK COULD
+   SEE IT.** That suite is registered in the aggregator only (`grep -c 'test-bl112'`: tests.yml **0**,
+   full-project-test-suite.sh **1**), so it runs in the manual three-hour lane while every
+   PR-blocking check stayed green. `install-filesystem-gates.sh:13` names that suite as its pin, and
+   the suite pinned the emitted hook with a `grep -qF` on the literal
+   `bash "$(git rev-parse --show-toplevel)/.git/hooks/framework-gate.sh"`. `# BL-209-GATE-PATH`
+   changed that emission, so the literal stopped matching — and the SAME literal is re-used at :707
+   as a PRE-MUTANT GUARD, so BL-112's strict-gate mutation proof stopped executing: the guard that
+   exists to reject a mis-targeted mutant was firing on a correct one, leaving the RED/GREEN pair
+   behind `# BL-112-STRICT-GATE` unproven on this branch. Fixed by pinning the BEHAVIOUR rather than
+   the bytes — `_bl112_gate_invoked` asserts the hook RESOLVES a gate path and INVOKES it, is
+   indifferent to the expression between, and is used at both sites with a `# BL-209-GATE-PATH`
+   reference so the coupling is greppable from both ends. Back to **13 / 0**.
+
+2. **THE REPO GUARD HAD BEEN WIDENED, AND THE WIDER CASE WRITES INTO THE WRONG REPOSITORY.** `main`
+   refused with `[ -d "$PROJECT_ROOT/.git" ]`; this branch asked
+   `rev-parse --is-inside-work-tree`, which answers "is it somewhere INSIDE a repo" and returns rc 0
+   for a plain directory NESTED in one. `--git-common-dir` then resolves to the ENCLOSING repo, so the
+   BL-030 gate would be installed into a repository the caller never named — reachable through
+   reconfigure-project.sh on a project whose `.git` was removed inside a monorepo or a tracked
+   `~/code`. It also admits a bare repo and a `.git` directory, both rc 0 while PRINTING "false" — the
+   same read-the-status-not-the-value trap `# BL-209-HOOKSPATH-REFUSE` lectures about, inverted.
+   Now resolves `--show-toplevel` and refuses unless its PHYSICAL path equals PROJECT_ROOT's, which
+   preserves every worktree win because a linked worktree's toplevel IS the worktree root.
+   **Case R10** covers the refusal arm, which had NO coverage at all — G0 through R9 never exercised a
+   non-repo. It asserts both halves: refused, AND the parent's hooks directory untouched, because a
+   refusal that still wrote would pass an rc-only check. **R10 PASSES AT BASE** — `main`'s `-d` guard
+   refuses that input correctly — so it is a control there and a discriminator against the widened
+   guard, proven by restoring `--is-inside-work-tree` on a mirror:
+   `[FAIL] R10 — accepted a non-repo nested inside a repo at rc=0`, with G0 surviving.
+
+3. **R9 did not test the property it names.** Titled "neither caller swallows the installer's stderr",
+   its predicate matched the single spelling `2>&1`; the reviewer reinstated the swallow as
+   `>/dev/null 2>/dev/null` and R9 still PASSED. It now joins `\`-continuations before matching and
+   tests for ANY `2>` redirection. Verified against that exact spelling —
+   `[FAIL] R9 — 1 call site(s) still redirect the installer's stderr to /dev/null`. A first attempt to
+   prove this was itself inconclusive: the `perl` anchored on `>/dev/null$` while the real line ends
+   `>/dev/null || \`, so the mutation never landed and the PASS meant nothing. Re-run with a
+   landing assertion on the target line.
+
+4. **A comment contradicted its own code.** The note above the anchoring case explained `--git-path`
+   while the code uses `--git-common-dir` — the option the twenty lines above it argue is wrong and
+   which mutant MU3 exists to reject. A reader following the comment reached the opposite conclusion
+   from the code. Corrected, and the correction says what it was.
+
+**Also fixed while in there, not in the review.** The inline value read was
+`_hp="$(git … --path …)"` with no `|| _hp=""`. Under this script's `set -euo pipefail` a git build
+that rejects `--path` would abort the installer on that assignment with NO diagnostic — the exact
+silent mode `# BL-209-FALLBACK-RC` was added two arms earlier to end, reintroduced in the arm that
+ends it. `_bl145_configured_hookspath` guards the identical call the same way; this now does too.
 
 **Related:** BL-145 (the verify-surface fix and its `_bl145_*` helpers — reuse them), BL-176
 (the sentinel-surface fix; `# BL-176-GITPATH` is the resolution primitive), BL-088 (managed
@@ -13050,6 +13258,8 @@ CI runner). Every suite is one denied syscall away from it.
 **Not claimed:** that any suite other than the one measured has ever fired. The
 scope above is the exposure, not an incident count.
 
+---
+
 ## BL-243: The push-time adversarial review gate — mandatory before push, and three rounds of it being switched off
 
  **Status:** Open
@@ -13379,6 +13589,9 @@ read stdin and does not exit before it.
     derivation recipe beside it held; the ones that shipped as bare prose are
     the ones that failed.** Residual 12 models the fix — it carries its own
     `grep -c`.
+
+---
+
 ## BL-242: Brownfield adoption is HALF BUILT and has never had a backlog entry — seven capabilities unbuilt, and the feature's shape is now decided (D1-D8)
 
 **Status:** Open
@@ -14419,6 +14632,8 @@ written); v1.2 corrected it to WP0–WP3; v1.2.1 corrected it to WP0–WP4 with
 overstated the gap for thirteen days. v1.2.2 restates the not-built set as the
 seven runtime stubs above — a list the code can be asked for rather than one a
 human maintains.
+
+---
 
 ## BL-248: `adopt_evidence_deploy_lane` reads rung 4's evidence without consulting `.satisfied`, so a project with NO deploy lane is told "Points to: built out"
 
@@ -15768,6 +15983,8 @@ the `tests.yml` unit lane (`lint-tests-registered.sh --list`: `registered`).
 `## BL-185:` (the other unrecorded escape), `## BL-070:` (the atomic attestation write this file
 already does for Phase-3 attestations — the shape (b) now follows), `## BL-257:` (the other 23 writes).
 
+---
+
 ## BL-257: `process-checklist.sh` — 23 state writes announce success without checking that the write landed
 
 **Status:** Open
@@ -15796,6 +16013,8 @@ return 0 once the helper is in). Lint or test, not prose — a "use the helper" 
 what the 23 sites already ignored.
 
 **Related:** `## BL-256:`, `## BL-233:` (`# BL-233-ATTEST-REFUSE`), `## BL-182:`.
+
+---
 
 ## BL-258: the adversarial codebase review's ranked findings #5-#10 were never filed — six leads recorded here before they are lost
 
@@ -15916,6 +16135,176 @@ caught by review, not by the lint.
 **Related:** `## BL-253:`, `## BL-254:`, `## BL-255:`, `## BL-256:` (the four that shipped),
 `## BL-257:` (filed out of BL-256's review, same wave), `## BL-231:` (#6's family),
 `## BL-181:` (#10's full-lane blind spot).
+
+---
+
+## BL-285: every CI template hardcodes `npm`, so each pnpm and yarn project is scaffolded with a pipeline that cannot run
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** A fix WAS built on branch
+`fix/ci-template-package-manager` and is **withdrawn**; the reasoning that withdrew it is the substance
+of this entry and is recorded below. The branch now carries this entry and nothing else.
+
+**Renumbered BL-263 → BL-285 on merge (2026-09-15).** BL-263 was taken on `main` by the time this
+landed; the paragraph below is the original reasoning, kept as written.
+
+**Numbering (as filed).** Filed as BL-263, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
+the next free number here, and two carried fixes in a DOWNSTREAM project already hold BL-260 and
+BL-261 in committed code and in a committed audit trail, unfiled in this backlog. <!-- lint-bl-markers: allow the downstream marker tokens are deliberately not backticked; they are markers in another project, not in this code surface -->
+So **BL-260 and BL-261 are reserved, not free.** The other two of the three are `## BL-287:` and
+`## BL-288:`; read all three numbers as provisional until those downstream carries are filed, since
+nothing here holds a number until an entry header claims it.
+
+**Logged:** 2026-09-12, from a read of `templates/pipelines/ci/github/typescript.yml` against the release
+writer sitting forty lines below it in the same file. **The lead reproduces.**
+
+**The defect.** All three TypeScript CI templates —
+`templates/pipelines/ci/{github,gitlab,bitbucket}/typescript.yml` — spell the package manager `npm` in
+every step. `init.sh::generate_ci` installs the chosen one with a BARE `cp "$template_path"
+"$target_path"`, and `scripts/reconfigure-project.sh` does the same. No substitution. Forty lines further
+down the SAME function's sibling, `generate_release`, renders `__INSTALL_COMMAND__` and
+`__BUILD_COMMAND__` out of a language table through `sed` — the pattern existed, beside the defect, and
+was not applied to it.
+
+**The framework already knows the answer and throws it away.** `_scout_pkg_managers` in
+`scripts/lib/scout/scout-stack.sh` is the detector of record: a 31-row table mapping `pnpm-lock.yaml` ->
+pnpm, `yarn.lock` -> yarn, `package-lock.json` -> npm. `scripts/lib/scout/scout-prefill.sh` reads it at
+section 12 and records it into the intake as `stack.packageManagers`. Nothing carries it to the
+generator. **The count matters:** the lead that opened this named seven modules as detectors. Measured,
+only ONE detects. `grep -rln pnpm scripts/` returns seven files, but `scripts/lib/accumulation.sh`
+(exempt-path regex), `scripts/process-checklist.sh` (a lockfile-presence list), `scout-reality.sh`,
+`scout-collisions.sh`, `scout-testsbaseline.sh` and `adopt-archive.sh` merely enumerate lockfile
+spellings for unrelated purposes. A grep for a string is not a census of behaviour.
+
+**Two failures, and the first one is not the one you would predict.** `npm ci` on a project with no
+`package-lock.json` is the obvious break. It is not the FIRST break: on GitHub, `cache: 'npm'` in
+`actions/setup-node` hashes the npm lockfile to build its cache key, and a missing one is a hard error
+from the action — "Some specified paths were not resolved" — which fires in the setup step, BEFORE any
+script runs. Confirmed against setup-node's own `docs/advanced-usage.md`, which documents
+`package-manager-cache: false` as the escape hatch for exactly this. So the operator's first red is in a
+step they did not write, naming a file they deliberately do not have.
+
+**Blast radius — measured, not estimated.**
+```
+grep -rn "npm\|pnpm\|yarn" templates/pipelines/ci/    ->  22 hits, all npm, across 3 files
+grep -rn "pnpm\|yarn" templates/pipelines/            ->  exit 1 (no match)
+find templates/pipelines -name "*pnpm*" -o -name "*yarn*"  ->  nothing
+```
+There is no pnpm or yarn variant anywhere under `templates/pipelines/`, so there was no path by which a
+non-npm project could ever have received a working pipeline. Every TypeScript or JavaScript project on
+pnpm or yarn, on all three hosts, at every track — the CI template is language-keyed, not track-keyed.
+
+**A second surface, and it is not the same code.** The RELEASE writer hardcodes the manager too:
+`init.sh::get_release_vars` sets `RELEASE_INSTALL_COMMAND="npm ci"` at `init.sh:3120` for the
+`typescript|javascript` arm. That is the same product defect one file over, and it has its own blocker,
+which is the sharper of the two. Both halves are covered here; neither is fixed.
+
+---
+
+### WHY NO FIX IS PROPOSED
+
+A fix was built, tested RED/GREEN with mutants, and then measured against the criterion that the
+detector it depends on must be REACHABLE from the places that need it. It is not. The measurement is
+below and it is the reason this entry ships alone.
+
+**Scout does not ship into a scaffolded project — mechanically derived, not asserted.** The framework
+holds its own answer to "what does `init.sh` copy into a project": `scripts/lib/scaffold-shipped-set.sh`,
+which parses init.sh's `cp` lines so the list "can never drift from the real copy list". Run against
+pristine `ceb450e`:
+```
+. scripts/lib/scaffold-shipped-set.sh
+soif_parse_shipped_scripts init.sh scripts   ->  70 paths
+grep -c scout    <that list>                 ->  0
+grep lib/host.sh <that list>                 ->  scripts/lib/host.sh
+```
+**Zero of the 70 shipped scripts is a Scout file.** The only detector of record is framework-side only.
+
+**CI half — four consumers of the CI template in shipped code, three of them project-side.**
+| | site on `ceb450e` | side | what it does |
+|---|---|---|---|
+| 1 | `init.sh:3215` (`generate_ci`) | framework | bare `cp` of the template |
+| 2 | `scripts/reconfigure-project.sh:361` | **project** | bare `cp` on a language change |
+| 3 | `scripts/verify-install.sh:1348` (`fix_ci_pipeline`) | **project** | bare `cp`, three host arms |
+| 4 | `scripts/check-updates.sh:172` | **project** | `diff -q` of the project's `ci.yml` against the raw template |
+All three project-side consumers ARE in the shipped set. `init.sh` is not, and the grep that would
+"show" that is vacuous — the parser only ever emits `scripts/` paths, so `init.sh` could not appear in
+its output whatever the truth was. The real argument is structural: `init.sh` is the framework entry
+point, run from the clone, and it is what DOES the copying. So a fix that resolves the
+manager through Scout works in exactly one of the four and is unreachable in the other three, and
+consumer 4 additionally breaks by construction: a RENDERED pipeline can never `diff -q` clean against an
+unrendered template, so every upgraded project would start reading "differs from upstream template".
+`scripts/upgrade-project.sh:494` also names the path but is excluded from the four deliberately — it
+migrates the pre-BL-008 flat layout and never reads the template's content.
+
+**Release half — two consumers, one project-side, and a blocker that is not about reachability at all.**
+`get_release_vars` is defined at `init.sh:3114` and **duplicated verbatim** at
+`scripts/reconfigure-project.sh:249`, under a comment that says so: *"Mirrors the logic in init.sh
+get_release_vars()"*, carrying its own `RELEASE_INSTALL_COMMAND="npm ci"` at `:256`. The reconfigure copy
+ships; the init.sh copy does not. That is the same reachability problem as the CI half. **The sharper
+blocker is the other one:** at the only moment the framework-side consumer runs, there is nothing to
+detect.
+```
+grep -n "package\.json\|package-lock\|pnpm-lock\|yarn\.lock" init.sh   ->  no match, exit 1
+grep -n "npm install\|npm ci\|pnpm install\|yarn install\|corepack" init.sh
+    1724:      "Bash(npm install *)",        <- a permissions allowlist entry
+    1725:      "Bash(npm ci)",               <- a permissions allowlist entry
+    3120:      RELEASE_INSTALL_COMMAND="npm ci"   <- the defect itself
+```
+`init.sh` never writes a `package.json` and never writes a lockfile, at any point, for any language.
+`generate_release` calls `get_release_vars` at `init.sh:3284`. At that instant the scaffolded project
+has no package manifest of any kind. **This is not a resolution problem — the information does not
+exist at that point in time.** No detector placed anywhere could answer the question, because the
+question has no answer yet.
+
+**So the defect is real and the fix is above a fix.** Every route out requires either a NEW CLI input,
+a NEW shipped-library surface, or MOVING when the pipeline is rendered. The Orchestrator's standing rule
+on this work is fixes only, and all three clear that bar.
+
+**Three routes, with their costs. No recommendation is offered; this is the maintainer's call.**
+1. **Make it an input.** A new `init.sh` flag (`--package-manager`), threaded through the
+   non-interactive schema, the interactive prompt, `PROJECT_INTAKE.md`, and `phase-state.json` so the
+   three project-side consumers can read it back without Scout. *Cost:* a public CLI and on-disk schema
+   change, therefore a compatibility surface for every existing project that has no such field; the
+   operator now answers a question the framework could have observed; and `reconfigure-project.sh`,
+   `verify-install.sh` and `check-updates.sh` each need the read added.
+2. **Render later.** Move release-pipeline rendering (and CI rendering with it) out of `init.sh`'s
+   scaffold pass to a point after the project has dependencies installed — a Phase 2 initialization
+   step, or a `verify-install.sh --fix` arm that regenerates once a lockfile exists. *Cost:* changes
+   WHEN a governed artefact is produced, which moves a phase-gate boundary; a project is then scaffolded
+   without a working pipeline and acquires one later, so anything that checks for the pipeline at
+   scaffold time has to learn the new timing.
+3. **Default honestly, and fix only the later path.** Leave `init.sh` on npm — defensible, since it
+   genuinely cannot know — but make it SAY so in the generated pipeline and in its own output, and fix
+   the three project-side consumers to re-resolve once a lockfile exists. *Cost:* needs a detector those
+   three can reach, which is a new shipped-library surface (route 1's problem in a different place); and
+   it accepts that a fresh pnpm project's first CI run is red by design until the later path runs.
+
+**`SOIF_CI_PACKAGE_MANAGER` IS NOT AN EXISTING MECHANISM.** It was the withdrawn implementation's own
+invention and nothing else in the framework has ever used it. Measured: **2 occurrences on the branch
+before withdrawal** (`init.sh:3249` in a `print_info`, and `scripts/lib/pkgmgr.sh:161` where it was set),
+and `git grep -c SOIF_CI_PACKAGE_MANAGER ceb450e` exits 1 — **0 on main**. Anyone reading a later
+proposal that names it should treat it as a proposal, not as a variable that exists.
+
+**What was withdrawn.** `scripts/lib/pkgmgr.sh` (new lib, `soif_pkgmgr_detect` / `soif_pkgmgr_vars` /
+`soif_render_ci_template` / `soif_pkgmgr_is_yarn_berry`); the `generate_ci` rewrite in `init.sh`; 13
+distinct `__PM_*__` placeholders plus the `__PM_ONLY_PNPM__` block marker across the three TypeScript
+templates; `tests/test-bl263-ci-template-package-manager.sh`; and its registrations in
+`tests/full-project-test-suite.sh` and `.github/workflows/tests.yml`. The suite ran 12/0 GREEN against
+3/9 RED with three mutants — it worked. It is withdrawn because working in the one consumer that cannot
+reach the operator is not the same as fixing the defect.
+
+**The reconfigure host-path arm is `## BL-287:`'s, not this entry's.** This build independently found
+the same `scripts/reconfigure-project.sh` host-path defect that `## BL-287:` was opened for: the missing
+`$host/` segment, the hardcoded GitHub destination, the `other` arm. **Read `## BL-287:` for that
+defect; it is not restated here.** Two independent reproductions of one defect is one defect.
+
+**Related:** `## BL-287:` (the same file, the host-path defect, and itself held on the same class of
+blocker), `## BL-273:` (the systemic finding this is the fourth instance of — reusable logic that is not
+reachable from the places that need it), `## BL-229:` (the `_extract_fn` idiom the withdrawn suite used),
+`## BL-113:` (the `__SOLO_TEMPLATE_ONLY__` marker idiom the withdrawn block marker was modelled on),
+`## BL-256:` (a green step the operator reads as a check that never ran), `## BL-147:` (a check that
+cannot run must not pass).
+
+---
 
 ## BL-259: `resolve-tools.sh` loses the install instructions for every tool that declares no `version_command` — an empty `@tsv` field collapses and shifts the row
 
@@ -16616,3 +17005,3419 @@ A UAT template with no test that survives its own second click is how this got s
 
 **Related:** `## BL-262:` (whose triage this corrects), `## BL-263:` (the escaping
 decision on the sibling site), `## BL-009:` (UAT-template guardrails).
+
+---
+
+## BL-271: `upgrade-project.sh --deployment organizational` never writes `.mode`, so a SCAFFOLDED project upgraded to organizational is verified against the personal branch-protection bar for ever
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** Filed for the maintainer to
+decide, because the write site is not one this batch touches and bundling it into a neighbouring fix
+would be the wrong shape.
+
+**Logged:** 2026-09-12, found while reviewing the mode-vocabulary batch — it is the defect that
+survives BOTH of those fixes.
+
+**The defect.** The manifest carries `mode` (personal|org) and `deployment`
+(personal|organizational) as separate fields. A tier upgrade writes one of them and not the other.
+Every manifest write on the upgrade path, read off `main`:
+
+```
+:571   '. + {deployment: $dep, poc_mode: $pm, enforcement_level: "strict"}'   BL-030 backfill
+:576   '. + {deployment: $dep, poc_mode: null, enforcement_level: "strict"}'  BL-030 backfill
+:2506  '. + {deployment: $dep, poc_mode: $pm}'                               the TIER CHANGE
+```
+
+None of the three touches `.mode`. (`grep -n '\.mode'` over the file returns only `poc_mode` and
+prose.) So a project SCAFFOLDED as personal and later upgraded with
+`scripts/upgrade-project.sh --deployment organizational` ends up carrying `deployment:
+"organizational"` and `mode: "personal"`, permanently, and every reader of `mode` — all of which hand
+it to `host_verify_protection` — measures it against the PERSONAL bar. The required approving review
+and the required status check are never asserted, and the gate returns 0.
+
+**IT IS INVISIBLE TO BOTH MODE FIXES, AND THAT IS THE POINT.** `## BL-268:` makes the drivers refuse a
+mode they do not know; `personal` is a word they know, so nothing refuses. `## BL-270:` repairs a
+`mode` that is present-and-invalid; its guard is `case "$bl270_mode" in ''|personal|org) ;;`, so a
+stale `personal` matches the leave-alone arm by design. A stale-but-valid value is a third state
+neither was built for.
+
+**Same class as `## BL-268:`, different birth path.** BL-268 is the mode/deployment desync on the
+ADOPTED path, where the wrong value is a word no reader knows and therefore eventually loud. Here the
+wrong value is a word every reader accepts, so it is silent for ever — which makes this the quieter
+and arguably worse of the two.
+
+**Not measured beyond the source read.** The write sites and the two guards above were read directly
+on `main` and on `fix/bl270`. No end-to-end upgrade was driven and no test was written, because no fix
+is proposed here; a reproduction belongs with whatever fix the maintainer chooses.
+
+**Why no fix is offered.** The natural home is the tier-change write at `:2506`, which is a different
+write site from BL-270's migration entry, with its own blast radius — it runs on every deployment
+upgrade rather than only on a damaged manifest. Deciding whether the tier change should also write
+`mode`, or whether BL-270's backfill should widen to cover stale-but-valid values, is a call about
+which of two existing mechanisms owns the field. That is the maintainer's, not ours.
+
+**Related:** `## BL-268:` (the same desync on the adopted path, and the refusal that cannot catch
+this), `## BL-270:` (the repair whose leave-alone arm this slips through), `## BL-221:` (the same
+"two birth paths must produce the same manifest shape" argument, one field further on).
+
+---
+
+## BL-273: `scripts/lib/host.sh` is the shared host library and carries no host inference, while four shipped scripts each carry their own copy of the same four-arm case
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** The repair is a hoist, which
+is a refactor; this entry reports the hazard and its evidence and stops there.
+
+**Logged:** 2026-09-13, after FOUR separate instructions to "reuse the framework's own helper" were each
+measured and each found the helper unreachable. Extended 2026-09-13 with the fourth, which is the
+sharpest: `## BL-285:`'s release half, where the helper IS reachable and the question still cannot be
+answered.
+
+**The defect.** The remote-URL-to-host inference — the four-arm `case` that maps an `origin` URL to
+`github` / `gitlab` / `bitbucket` / `other` — exists at FOUR sites, all of which ship into every
+generated project:
+
+```
+git grep -n 'github\.com\*)' main -- 'scripts/*.sh'
+  scripts/check-gate.sh:159        cmd_backfill_host
+  scripts/upgrade-project.sh:511   the host backfill in _run_idempotent_backfill
+  scripts/verify-install.sh:242    an inline manifest-then-remote fallback
+  scripts/verify-install.sh:1328   _detect_pipeline_host
+```
+
+`scripts/verify-install.sh` carries it TWICE, ~1,080 lines apart. And `scripts/lib/host.sh` — the
+shared host library, the file that owns `host_read_from_manifest`, `host_pipeline_resolve` and the
+driver dispatch, the obvious and only sensible home — carries **zero**:
+
+```
+git show main:scripts/lib/host.sh | grep -c 'github\.com\*)'   ->  0
+```
+
+Four copies, kept in sync by nobody, with an empty owner sitting beside them.
+
+**WHY THIS IS MORE THAN A DRY COMPLAINT: THE HELPERS ARE UNREACHABLE, AND THAT IS WHY THE COPIES KEEP
+BEING MADE.** **FOUR** instructions in one batch told a fix to reuse an existing helper rather than
+duplicate it. **All four were measured, and all four found the helper unreachable** — across **three
+distinct mechanisms**, the third of which is not a reachability problem at all:
+
+1. **Not sourceable.** `scripts/verify-install.sh` carries `set -euo pipefail` at `:2` and
+   `guard_not_in_framework || exit 1` at `:20`, both at TOP LEVEL with no sourced-detection guard.
+   Sourcing it does not import a function; it runs the verification script, and inside the framework
+   repo it exits the caller. This blocks `_detect_pipeline_host` (`:1319`) and the `_bl145_*` hook
+   helpers (`:522`-`:644`) equally. Any caller that wants one of them can only copy it.
+2. **Sourceable but not shipped.** `scripts/lib/scout/scout-stack.sh` has no top-level guards at all
+   and would source cleanly — but Scout is absent from generated projects. Measured mechanically, not
+   observed: `scripts/lib/scaffold-shipped-set.sh` derives the copy list from init.sh's own `cp` lines,
+   and `soif_parse_shipped_scripts init.sh scripts` on `ceb450e` returns **70 paths, of which 24 are
+   `scripts/lib/` — exactly the 24 top-level ones**. `scripts/lib` holds 41 `.sh` files recursively;
+   the 9 under `scout/` and the 8 under `adopt/` ship in NONE of them. So `_scout_pkg_managers` is
+   reachable only from `init.sh`, which is itself not in the shipped set.
+3. **Reachable, shipped, sourceable — and nothing to detect at the moment it runs.** `## BL-285:`'s
+   RELEASE half asks the same detector the same question from `init.sh`, the ONE consumer where Scout
+   is reachable. It still cannot be answered. `generate_release` calls `get_release_vars` at
+   `init.sh:3284`, and `grep -n "package\.json\|package-lock\|pnpm-lock\|yarn\.lock" init.sh` exits 1
+   — init.sh never writes a manifest or a lockfile, for any language, at any point. **The information
+   does not exist yet.** No placement of the helper could fix this; only moving WHEN the pipeline is
+   rendered could.
+
+**THE ROLL-CALL, BECAUSE FOUR FOR FOUR IS THE ARGUMENT.** Each row is an instruction to reuse
+something, and the measurement that followed it. Not one of the four was a case of the fix author
+preferring to duplicate.
+
+| instructed to reuse | from | outcome | mechanism |
+|---|---|---|---|
+| `_bl145_*` hook helpers | `scripts/verify-install.sh:522`-`:644` | unreachable | 1 — not sourceable |
+| `_detect_pipeline_host` | `scripts/verify-install.sh:1319` | unreachable | 1 — not sourceable |
+| `_scout_pkg_managers` (CI half) | `scripts/lib/scout/scout-stack.sh:168` | unreachable | 2 — not shipped |
+| `_scout_pkg_managers` (release half) | same, called from `init.sh` | unanswerable | 3 — nothing to detect yet |
+
+**A NOTE ON THE COUNT, because the batch lead put it as "four different local reasons" and that is one
+more than the measurement supports.** Rows 1 and 2 share a mechanism exactly — same file, same two
+top-level lines, different helper about 1,080 lines apart. Four INSTANCES, three MECHANISMS. The
+weaker claim is the one that holds, and it is still the point: **this is not one broken helper.** Four
+independent attempts to do the right thing, against three different helpers in two different files,
+each blocked for a reason local to that helper. The codebase's actual working pattern for shared logic
+is duplication with a sync comment, and `# BL-084-TIER-KEY` exists because someone already knew that.
+
+**THE TWO COUNTEREXAMPLES, and they are the whole case for the repair.** Neither reviewer on this
+batch has found a third.
+- **`scripts/lib/host.sh` itself.** It ships (it is in the 24), it carries no top-level guards so it
+  sources cleanly, and **six shipped scripts do source it** — `validate.sh`, `check-gate.sh`,
+  `verify-install.sh`, `cut-release.sh`, `check-phase-gate.sh`, `process-checklist.sh`. The shared-
+  library pattern is not aspirational here; it is load-bearing and working in this exact file. The
+  host inference simply never moved into it.
+- **The `# BL-095-STATE-READERS` fence** in `helpers-core.sh:983`-`:1038`, which is the same move
+  already executed once, with its deliberately-unmigrated siblings named and reasoned in place.
+The repair is therefore not a new idea that needs designing. It is the file's own pattern, applied to
+the one thing that was left out of it.
+
+**A claim worth narrowing, because a first draft of this entry overstated it.** It is NOT true that
+this codebase has no shared-library surface: `scripts/lib/` carries 41 `.sh` files, and
+`# BL-095-STATE-READERS` in `helpers-core.sh` is a worked example of doing exactly the right thing —
+a fenced set of readers, with three deliberately-unmigrated siblings named and reasoned at
+`:996`-`:1009`. The accurate statement is narrower and worse: **the surface exists, and these
+particular helpers are outside it**, living in executable scripts that either cannot be sourced or do
+not ship. The pattern that results is duplication with a sync comment, and four sites is where the
+host inference has landed.
+
+**Blast radius.** Every one of the four copies runs in a generated project, and they do not agree
+about their own contract: two are inline fallbacks that silently yield `other`, one prompts the
+operator to confirm before writing, and one is a pure function. A spelling added to one — a new
+forge, a self-hosted GitLab domain — reaches the other three only if someone remembers. There is no
+test asserting the four agree, and no marker linking them.
+
+**Not measured beyond the above.** No hoist was prototyped and no consumer was converted. The obvious
+repair is to move the inference into `scripts/lib/host.sh` behind a fence, exactly as
+`# BL-095-STATE-READERS` did for the state readers, and convert the four call sites — but that is a
+refactor across four shipped scripts, and the standing instruction on this batch is fixes only. It is
+recorded rather than attempted.
+
+**Related:** `## BL-095:` (`# BL-095-STATE-READERS`, the fence that is the model for the repair, and
+whose own header already names deliberately-unmigrated siblings), `## BL-209:` (the `_bl145_*`
+instance of the unsourceable half), `## BL-287:` (the `_detect_pipeline_host` instance, and the fix
+this hazard currently blocks), `## BL-285:` (BOTH remaining instances — the not-shipped half and the
+nothing-to-detect half — and, like `## BL-287:`, a fix withdrawn because of this hazard),
+`## BL-084:` (`# BL-084-TIER-KEY`, the repo's own sync-siblings marker convention for the cases where
+a hoist is not taken).
+
+---
+
+## BL-277: the bypass detector's PostToolUse arm scans text whose authorship it has not established, records it as `actor: "claude"`, and raises a BLOCKING sentinel on it — so reading the framework's own rules reports the agent for proposing a bypass
+
+**Status:** Open — **ENTRY-ONLY BY DECISION (2026-09-13), not by omission.** Three options are set out
+below with a recommendation, and none of them is built. Choosing among them is a judgement about this
+framework's risk appetite rather than about correct code: every candidate narrows a security control
+the maintainer owns, option 3 additionally changes an audit-row schema and needs a sweep of every
+reader of `actor`, and output-scanning is a TESTED CONTRACT (`tests/test-bypass-detector.sh` T1), so
+narrowing the scan surface breaks it deliberately. Picking one here would be deciding how much
+false-negative risk the maintainer's enforcement surface should absorb. The contribution is the
+reproduction, the measurement, and the three options with reasoning; the decision is his. Same posture
+as `## BL-285:` (was BL-263) and as `## BL-275:`'s second half — **both of which are SIBLING BRANCHES not yet
+merged, so those two citations resolve only once `fix/ci-template-package-manager` and `fix/bl275`
+land** — so it is consistent rather than a retreat. The
+operational cost is recorded below in full so it can be weighed: **five blocking sentinels declined by
+hand in one day, each halting every agent in every repository touched from that session.**
+
+**Logged:** 2026-09-13, found while working the `## BL-284:` branch (was BL-260) — which is a SIBLING BRANCH not yet
+merged, so that citation resolves only once `fix/bl260` lands; it is named for provenance, and nothing
+in this entry depends on it. A commit in the CONTRIBUTOR CLONE was refused because a sentinel existed
+in a DIFFERENT repository, raised by a `head -70` of the framework's own `commit-msg` hook. Reproduced
+from scratch against `origin/main` before filing.
+
+**Lead on provenance, not on pattern-matching.** The matcher's comment-blindness is real and is the
+lesser half: a comment-aware matcher would lower the rate and would not touch the class, because a
+`cat` of any file containing the vocabulary still trips it. The class is that
+`scripts/hooks/bypass-detector.sh:59` reads
+
+    TEXT=$(echo "$INPUT" | jq -r '.tool_response.stdout // .tool_response.stderr // .tool_response.output // .tool_response.content // ""')
+
+— the tool's OUTPUT, i.e. what a program printed or what a file contains — and every row it writes is
+stamped `actor: "claude"` at `:149`. Nothing establishes that the model authored the text. The Stop
+arm at `:65` reads `.last_assistant_message`, where authorship IS established; that arm is correct and
+this entry does not touch it. The framework's own doctrine is about authored output — CLAUDE.md's
+"Bypass-shaped suggestions in your output are auto-recorded … your suggestion is the audit event" — and
+the Stop arm already implements exactly that.
+
+**Measured, against `origin/main`, driving the real hook with a fixture project.** Every run below
+feeds text as `tool_response.stdout` with `tool_input.command` set to an innocuous read:
+
+    R1  the SHIPPED template's own line 129, read as tool output
+        source: templates/generated/claude-md.tmpl:129
+        rows=3  patterns=[fake_loop, manual_step_complete, no_verify]
+                severity=[normal, refuse_to_recommend]  actor=[claude]  sentinel=RAISED
+
+    R2  CONTROL: benign tool output ("file1 / file2 / total 2")
+        rows=0  sentinel=none
+
+    R3  the ledger feeding itself: a PRIOR ROW read back as tool output
+        rows=1  patterns=[no_verify]  actor=[claude]  sentinel=RAISED
+        nested excerpt now on record: {"timestamp":"…","type":"claude_bypass_proposal","actor":"claude",…
+
+    R4  the sentinel's own remedy sentence, read as tool output
+        rows=0  sentinel=none
+
+    R5  the other side: an authored skip-the-hooks commit in tool_input, clean output
+        rows=0  sentinel=none
+
+**R1 is the headline, and the line number is not a coincidence.** That is line 129 of
+`templates/generated/claude-md.tmpl` — the file `init.sh` renders into every generated project's
+`CLAUDE.md`. It is the **"Refuse-to-recommend"** paragraph: the rule that says *do NOT propose*
+synthetic Build Loop step completions, hook-skipping commit workarounds, or force-pushes. Reading the
+prohibition trips all three patterns at once, one of them at `refuse_to_recommend` severity, and raises
+a blocking sentinel. The rule against proposing bypasses is detected as proposing three.
+
+**R4 corrects a plausible-sounding claim that does not hold.** The sentinel's remedy text — "Review
+`.claude/bypass-audit.json` before deciding" — does NOT itself match anything. Following the remedy is
+a trigger only because the remedy tells the operator to READ THE LEDGER, and R3 is what reading the
+ledger does. State it that way; the shorter version is wrong.
+
+**R5 is a ledger-completeness gap and NOT a security hole, and the difference matters.** The arm never
+reads `tool_input`, so the one field the model actually authored is the one field it does not scan. But
+`scripts/pre-commit-gate.sh:845` independently DENIES an authored hook-skipping commit at PreToolUse
+with its own reason string, and the Stop arm catches a proposal made in prose. So the authored-bypass
+path is covered by other gates; what is missing here is only the ledger row. Do not file this as "a
+bypass the model wrote is invisible to the framework" — it is not.
+
+**Blast radius — measured, one whole-file read each, with two negative controls:**
+
+    BLOCKS rows=3  [fake_loop,manual_step_complete,no_verify]  templates/generated/claude-md.tmpl
+    ok     rows=0  []                                          CONTRIBUTING.md
+    BLOCKS rows=1  [no_verify]                                 CLAUDE.md
+    BLOCKS rows=1  [no_verify]                                 scripts/hooks/bypass-detector.sh
+    BLOCKS rows=3  [fake_loop,no_verify,soif_force_step]       scripts/lib/bypass-patterns.sh
+    ok     rows=0  []                                          (a file with no bypass vocabulary)
+
+Four of six reads raise a blocking sentinel. **Reading the detector reports you. Reading its pattern
+library reports you three times. Reading the operating rules every agent is required to read end to end
+reports you.** `CONTRIBUTING.md` and the clean file stay quiet, so the measurement discriminates.
+
+**And writing THIS ENTRY reproduced it a seventh time.** The first attempt to append this text was
+refused outright — not by the detector but by `pre-commit-gate.sh:845`, whose `_is_git_commit` arm
+matched the vocabulary quoted inside the entry's own prose and denied the shell call. Describing the
+defect is indistinguishable from committing it, to two independent gates, for the same reason: neither
+asks who wrote the text or why. The entry had to be routed through a file write to land at all, and
+the prose above still had to be written around the literal flag in places. **A defect whose author
+must obfuscate in order to describe it is a defect that suppresses its own bug reports.**
+
+**THE DEFECT OBSTRUCTS ITS OWN REMEDIATION, and that is the part that makes it self-sustaining rather
+than merely noisy.** Every activity required to fix it generates the false rows, and each one raises a
+blocking sentinel. Observed on one adopting project's ledger during a single day's work on this entry:
+
+- **The framework's OWN COMMITTED TEST SUITE trips it when read.** `tests/test-bypass-detector.sh`
+  (tracked on `origin/main`) produced two rows: line **28**, the comment
+  `# T1: PostToolUse output containing --no-verify writes a row.`, and line **57**, T3's fixture
+  `{"hook_event_name":"Stop","last_assistant_message":"Maybe set SOIF_FORCE_STEP=build_loop:tests_written",…}`
+  — matching `no_verify` and `soif_force_step` respectively.
+- **The bug report itself trips it.** A message describing this defect to the Orchestrator raised a
+  `no_verify` row.
+- **Reproducing it trips it.** The probe script written for the R-series above, and a `grep` for the
+  gate that handles the flag, each raised a row.
+
+**The test-suite rows are the structural half, and they generalise.** A correct suite for this defect
+CANNOT avoid containing the trigger strings: asserting "the detector fires on a genuine proposal"
+requires a genuine-looking proposal in a fixture, and a suite that avoided the vocabulary would be
+testing something else. So the fixture a correct test must contain is itself a trigger, the sentinel it
+raises then blocks the agent writing the fix, and — per the sentinel-scope defect noted below — it
+blocks them in every repository touched from that session, not just this one. That is a closed loop, and
+it is a stronger argument than the ledger's growth rate on its own.
+
+**Severity follows from that, and it is not "noisy log".** Each false row raises a BLOCKING sentinel.
+**Five were declined by hand in one day**, none of them corresponding to anything any agent proposed,
+each having silently halted in-flight work. This is `## BL-256:`'s unearned-receipt class running in
+the opposite direction: an unearned REFUSAL.
+
+**Rate on a live ledger, for scale.** On an adopting project's ledger, of **61** `claude_bypass_proposal`
+rows, **6 are provably echoed tool output** — 4 open with a `path/file.ext:NNN:` grep prefix and 2 with
+a `#` comment marker, neither of which any authored sentence begins with. A further 26 open with a
+markdown table pipe, bullet or backtick, consistent with echoed document content but not proof. The
+count went **61 → 64 during a few minutes spent verifying this entry**, from reads alone: the number
+tracks how much documentation has been read, not how many bypasses were proposed. Six rows carry a
+nested `"excerpt":` field — the detector quoting its own quotation — and one is doubly nested.
+
+**The existing mitigation is aimed at this class and cannot reach this case, by construction.**
+`:83`-`:94` already strips fenced code blocks, added as "BL-029.1 fix S3" because "documentation /
+CHANGELOG / docstring text wrapping a bypass pattern in a fence is descriptive, not advisory". That is
+the right diagnosis with a formatting-shaped remedy. The same comment states that inline backticks are
+deliberately PRESERVED "because Claude typesets active proposals with inline backticks too" — and the
+template's line 129 is prose with inline backticks. So the one mitigation that exists is disabled
+exactly where the worst case lives, on purpose, for a reason that is itself sound. Formatting cannot
+separate description from advocacy; authorship can.
+
+**Output-scanning is a TESTED CONTRACT, not an oversight.** `tests/test-bypass-detector.sh` T1 —
+"PostToolUse with the skip-hooks flag writes claude_bypass_proposal" — feeds the pattern through
+`tool_response.output` while `tool_input.command` is `echo x`, and asserts a row is written. Any fix
+that narrows the scan surface breaks T1 deliberately. That is why this entry does not pick one.
+
+**Operational consequence, which is what makes this more than noise.** Each match raises
+`.claude/pending-approval.json`, and `pre-commit-gate.sh`'s `pa_check` refuses commits and PR creation
+while it exists. Measured on 2026-09-13: that sentinel is read from the SESSION's project directory, so
+it blocks commits in every other repository touched from the same session and never blocks the
+repository it lives in — a throwaway repo carrying its own sentinel committed cleanly, while the session
+project's sentinel refused a commit in an unrelated clone. **That sentinel-scope defect is a separate
+finding in `pre-commit-gate.sh` and is NOT filed yet; it needs its own number.** Four of these were
+declined by hand in a single day's work, each one having silently stopped mid-flight work in unrelated
+trees.
+
+**Options, NOT decided here.**
+1. **Scan `tool_input` instead of `tool_response`.** Rejected as primary: it breaks T1's contract,
+   removes a capability someone chose deliberately, and trades one false-positive class for another —
+   a `grep -rn` for the vocabulary puts the vocabulary in the command.
+2. **Keep scanning output; let only Stop-event matches raise the sentinel.** Detection breadth and the
+   audit trail are both untouched; only the unearned REFUSAL goes. Strictly conservative — nothing
+   stops being detected.
+3. **(2) plus honest provenance: rows from PostToolUse carry an actor other than `claude`, and the
+   sentinel is gated on authorship.** RECOMMENDED. It fixes the refusal and the ledger's integrity
+   together, and the ledger is the governance record a successor or auditor is meant to reconstruct
+   from — rows attributing another program's output to the model are not a cosmetic problem there.
+   Cost: it changes an audit-row schema, so readers of `actor` must be swept first.
+
+**Why no regression suite lands with this entry, stated rather than quietly omitted — and the reason is
+NOT the one it looks like.** A suite here is perfectly writable. Its assertions are outcome-shaped and
+fix-agnostic — "reading the audit ledger does not append to it", "reading the shipped CLAUDE.md
+template does not raise a blocking sentinel" — and all three options satisfy both, so the suite would
+survive whichever is chosen. That is its spec, and it should be written.
+
+The blocker is redness, not authorship. **The defect is unfixed, so the suite is RED today**, and a red
+suite must be either registered — which turns CI red for everyone — or marked
+`LINT_TEST_REGISTRATION_EXEMPT`, which parks a known-red suite behind a marker and is precisely the
+unearned-receipt move this repo exists to refuse. So it lands WITH the chosen fix.
+
+Note the distinction from the self-obstruction above, because the two are easy to merge and only one is
+a blocker: that a correct suite must CONTAIN the trigger strings is evidence about the defect's
+severity and its closed loop. It is not what stops the suite shipping, and it would not stop it even
+after the fix. The reproduction in this entry is repeatable in the meantime.
+
+**Related:** `## BL-029:` (the detector, and the only backlog family that has ever touched this file —
+swept by file across full history: `scripts/hooks/bypass-detector.sh` and `scripts/lib/bypass-patterns.sh`
+carry 10 commits between them, all BL-029/BL-029.1), `## BL-161:` (the ledger is tracked and every row
+dirties the tree — the same file, a different defect), `## BL-256:` (the unearned-receipt family, of
+which an unearned REFUSAL is the mirror image), `## BL-250:` (a disclosure that exists but not where the
+operator reads it).
+
+---
+
+## BL-279: 34 of 71 `[WARN]` lines in `check-phase-gate.sh` block the gate and 37 do not, and the output gives the operator no way to tell which is which
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** The convention this drifts from
+is already the repo's own, documented by `## BL-104:`; what is missing is any way for a reader of the
+gate's output to apply it.
+
+**Logged:** 2026-09-13, from the other side: while building `## BL-274:` (cited but never filed on any branch — see PR #401)'s A13 case, which needed a
+project the Phase 0→1 gate clears cleanly so that an exit code could be attributed to one control.
+
+**THE FRAMEWORK ALREADY KNOWS, AND THAT IS THE POINT.** This is not an undiscovered trap.
+`## BL-104:` closed two scoring inversions in this script and recorded the rule in its third item:
+
+> *"The trap is documented in `CLAUDE.md` § ENFORCEMENT: `[WARN]`/`[FAIL]` text is cosmetic; the exit
+> predicate is `if [ $issues -eq 0 ]`, so any WARN that runs `issues=$((issues + 1))` BLOCKS, and a
+> true WARN must omit it."*
+
+`CLAUDE.md:308` still carries it. `## BL-166:`'s status update calls the same surface *"the BL-104
+[WARN]-trap surface"* by name. So the convention exists, is written down, and is cited by later work.
+
+**What is measured is that it is followed about half the time.**
+```
+grep -c '\[WARN\]' scripts/check-phase-gate.sh                      ->  71 emit sites
+grep -A1 '\[WARN\]' … | grep -c 'issues=$((issues + 1))'            ->  34 followed by an increment
+```
+**34 of 71 `[WARN]` lines block the gate. 37 do not.** Both kinds print the identical four-character
+label. Nothing in the transcript, the exit code, or the closing banner distinguishes them.
+
+**The two-line demonstration.** A fixture with a valid dated approval row, an independent approver, all
+eight `PRODUCT_MANIFESTO.md` sections and the three `docs/phase-0/` artefacts — **zero `[FAIL]` lines**:
+```
+[WARN] Pre-Phase 0: Organizational deployment — no pre-conditions section found in APPROVAL_LOG.md
+[WARN] Competency Matrix (Appendix B) not found in PRODUCT_MANIFESTO.md — the guide calls it 'not advisory'. WARN-first, not blocking.
+1 inconsistency(ies) found — blocking.
+exit = 1
+```
+The first WARN (`:2014`) increments; the second (`:3514`) does not. **The second one is honest — its
+text says "WARN-first, not blocking" and it genuinely does not block.** The first says nothing about
+its own weight and is the entire reason the project is refused. An operator reading this transcript
+sees two identical-looking advisories, one blocking verdict, and no mapping between them.
+
+**Why this is worth an entry rather than a shrug.** It makes the exit code a poor signal for exactly
+the kind of test the framework asks people to write. `## BL-274:`'s A13 has to assert that the gate
+exits 0 under an attestation; to make that assertion mean anything, the fixture must be clean of
+everything ELSE that counts — which required discovering, by trial, that a missing pre-conditions
+section counts while a missing Competency Matrix does not. **That is not discoverable from the
+output.** Anyone writing a gate test has to read the source and diff the increment sites, and any such
+fixture silently rots the next time a WARN changes weight.
+
+`## BL-256:`'s principle cuts both ways. That entry is about gates handing out receipts they did not
+earn; this is the mirror — a gate refusing on evidence it presented as advisory. A check that cannot
+fail must not pass, and a finding presented as a warning must not block.
+
+**Not a duplicate, and the distinction matters.** `## BL-104:` FIXED two specific inversions and chose
+to DOCUMENT the trap rather than remove it, which was a reasonable call at the time — the arms it
+touched were ones where blocking was correct and the label was wrong. This entry is about the
+population: the convention has no enforcement, so the ratio drifts with every new arm, and the
+label/verdict mismatch is now a property of the tool rather than of three known sites.
+
+**Shapes a fix could take, none proposed and none costed:**
+1. **Make the label carry the weight.** A blocking finding prints `[FAIL]`, or `[WARN]` gains a visible
+   marker when it counts. Largest diff, clearest output, and it touches 34 message sites.
+2. **Separate the counters.** `issues` for blocking and a distinct advisory count, with the banner
+   reporting both. Smaller surface; the exit predicate stays `-eq 0` on the blocking counter only.
+3. **Lint the convention instead of the output.** A check that every `[WARN]` emit site either
+   increments or does not, according to a declared list — turning a documented convention into an
+   enforced one without changing operator-visible behaviour at all.
+
+**Not measured beyond the above.** No fix was prototyped and no arm was reclassified. The 34/71 split
+is a mechanical count of emit sites against the line that follows each; a site whose increment sits
+more than one line away would not be counted, so **34 is a floor, not an exact figure**.
+
+**Related:** `## BL-104:` (fixed two inversions here and documented the trap this entry says is now
+unevenly applied), `## BL-166:` (names the same surface as "the BL-104 [WARN]-trap surface"; its own
+root cause was 3→4 readiness arms incrementing under a 2→3 scope), `## BL-256:` (the mirror principle —
+a gate must not claim what it did not check), `## BL-274:` (the A13 fixture whose construction exposed
+this), `## BL-149:` (a gate people cannot reason about is a gate they learn to ignore).
+
+---
+
+## BL-272: a plain `--single-branch` clone is not shallow, so Scout's shallow detection never fires — and the blind spot is identical
+
+**Status:** Open — **ENTRY ONLY. No fix is proposed and none is built.** Filed separately at both
+reviewers' recommendation rather than bundled into `## BL-288:`.
+
+**Logged:** 2026-09-13, while fixing BL-264's remediation advice. It is the same blind spot reached by
+a different clone flag.
+
+**The defect.** `## BL-288:` makes Scout stop calling a shallow clone `full-history`. Its detection
+keys on SHALLOWNESS — `git rev-parse --is-shallow-repository`. A clone made with `--single-branch`
+and no `--depth` is **not shallow**: full history, every commit of the cloned branch present,
+`--is-shallow-repository` returns `false`. So the new detection does not fire, the report says
+`scope: full-history`, `status: scanned`, and a credential committed on any OTHER branch is as
+invisible as it was before BL-264.
+
+**Why the two are the same defect.** `--depth` implies `--single-branch` (git 2.54.0,
+`git clone --help`:251), and the narrowed refspec is what persists — ":267: Further fetches into the
+resulting repository will only update the remote-tracking branch for the branch this option was used
+for the initial cloning." BL-264's case is the narrowed refspec arriving as a SIDE EFFECT of depth.
+This entry is the narrowed refspec arriving on its own, without depth, where nothing in the report
+records it. The unread region is the same region; only the flag that created it differs.
+
+**Why it is not bundled.** BL-264 detects shallowness, which git exposes as a single boolean. Refspec
+narrowness has no equivalent one-shot predicate — it is a property of `remote.origin.fetch` and of
+which remote-tracking refs exist, and deciding what Scout should say about it (a fifth status word? a
+scope value? a separate field?) is a schema question on a `schemaVersion` that BL-264 has just moved
+from 1 to 2. Both reviewers said file it rather than widen that change, and this entry agrees.
+
+**Not measured beyond the reasoning above.** No fixture was built and no detection was prototyped,
+because no fix is proposed; a reproduction belongs with whatever shape the maintainer chooses.
+
+**Related:** `## BL-288:` (the shallow half, fixed; this is the same blind spot by another route),
+`## BL-147:` (a check that cannot run must not pass), `## BL-256:` (gates handing out receipts they
+did not earn).
+
+---
+
+## BL-282: the wizard offers no route to correct a recorded answer once its section is complete — `--resume` skips the section, and `reconfigure-project.sh --field` covers seven fields of the 122 the wizard records
+
+**Status:** Open — **ENTRY ONLY BY DECISION (2026-09-14), not by omission.** Four options are set out
+below with their trade-offs and none is built. Every one of them adds or documents a CLI surface the
+maintainer will own — a flag on the wizard, an arm in `reconfigure-project.sh`, or a written promise
+that a JSON file is hand-editable — and a surface, once documented, is the hard-to-reverse kind. The
+contribution is the measurement and the options; the choice is his.
+
+**Logged:** 2026-09-14, from a downstream adoption's `intake-progress.json`, where `monthly_budget`
+is the literal string `"3"`. The operator typed `?` at the budget prompt, was shown a numbered list,
+and typed the number of the one they meant. Nothing turned it back into a budget, and nothing since
+has offered to ask again.
+
+**Numbering:** BL-280 is the highest number on any ref — 56 refs under `refs/heads` and
+`refs/remotes` swept with `git grep -q -w`, zero hits for BL-281/282/283, positive control BL-280 hit
+on `heads/fix/bl280` and `remotes/fork/fix/bl280`. BL-281 and BL-283 are the same batch.
+
+**How the answer gets recorded that way — the trigger, measured.** `prompt_with_suggestions` in
+`scripts/intake-wizard.sh` prints the suggestions as a numbered list via `show_suggestions` /
+`parse_suggestions` (`"    {i}. {item['name']}{rank_label}"`) and then reads FREE TEXT: `?` re-shows
+the list, empty takes the default, anything else is returned verbatim. There is no numbered-selection
+arm — that lives in `prompt_choice`, a different helper, which validates `1..N` and returns the
+option's text. So the two prompts LOOK the same to the operator and behave differently. Driven with
+canned stdin (`SOIF_NONINTERACTIVE=1`, `--resume` from a record with sections 1-2 done) and `?` then
+`3` at the budget prompt:
+
+    [INFO] 3.2 Budget
+      Suggestions:
+        1. $0-50/month (recommended)
+        2. $50-500/month
+        3. $500+/month
+      [OK] Section 3 saved.
+    monthly_budget = '3'
+    last_section = 4  completed_sections = [1, 2, 3, 4]
+
+(`mvp_date = 'Q4 2026'`, `geo_distribution = 'UK'` and the rest of the section landed correctly, so
+the canned stream lined up; `3` is what the operator typed and `3` is what was kept.)
+
+**Why it cannot be corrected — three doors, all closed.**
+
+1. **`--resume` will not ask again.** `is_section_complete` is a membership test on
+   `completed_sections`, and section 3 is in it. The next `--resume` on the same record:
+
+       [INFO] Resuming from Section 5
+       (lines mentioning Section 3 in the transcript: 0)
+
+   The question is never re-asked, and — as `## BL-266:` records for the pause path — nothing says so.
+
+2. **`reconfigure-project.sh --field` does not know the key.** Its `--help` lists `test_interval`,
+   `language`, `platform`, `name`, `data_classification`, `zdr_attested`, `zdr_attestation_reason`.
+   Of those, only the last three are intake answers at all; `test_interval` writes the ENFORCED field
+   in `build-progress.json` (`## BL-203:`), and the rest reconfigure the project, not the intake.
+
+       $ bash scripts/reconfigure-project.sh --field monthly_budget --old 3 --new '$50-500/month'
+       [STEP] Reconfiguring project: monthly_budget (3 → $50-500/month)
+       [FAIL] Unknown field: monthly_budget
+       Supported: language, platform, track, name, deployment,
+                  data_classification, zdr_attested, zdr_attestation_reason
+       exit=1
+
+   (An aside, not this entry's subject: that refusal lists `track` and `deployment` as Supported while
+   the same script's `--help` says, in as many words, *"Track and deployment changes are NOT supported
+   here."* One of the two is wrong.)
+
+3. **The wizard's own flag surface has no generic write.** `--help` offers `--resume`, the five
+   `--upgrade-*` / `--to-*-poc` transitions, and — this is the precedent that matters — THREE
+   targeted non-interactive setters: `--data-classification VALUE`, `--zdr-attested`,
+   `--zdr-attestation-reason "<text>"` (tier-crosscheck-6). So the pattern "set one recorded answer
+   from the command line, re-persist where the gate reads it" already exists in this script, for the
+   three keys a phase gate consumes. The other 119 `save_answer` keys (`grep -c 'save_answer "'` on
+   `ceb450e` → 122 call sites) have nothing.
+
+The remaining door is opening `.claude/intake-progress.json` in an editor. That works — `--resume`
+and `render_intake_file` read it back — but the wizard's own comment at `persist_phase1_artifacts`
+calls the `answers/` copy *"for resume/audit only"*, and no document tells an operator that editing
+it is supported, what else must be re-run afterwards (`render_intake_file` regenerates the
+`PROJECT_INTAKE.md` appendix on the NEXT `save_section`, not on edit), or that some keys have a
+SECOND home the edit will not reach (the ZDR trio in `process-state.json`; `testing_interval` in
+`build-progress.json`). That second-home trap is `## BL-203:` in one sentence.
+
+**What it costs.** `monthly_budget` feeds nothing enforced today, so a `"3"` is a wrong number in a
+document. The same door is closed for every key — including the ones that DO feed something: an
+operator who mistypes `sev_critical_sla` or `bug_tracking_tool` in Section 11.5 has the same three
+refusals in front of them, and the intake is what the Project Bible and the Phase 1 artefacts are
+synthesised from.
+
+**Options, NOT decided here. Trade-offs as measured or read, not as preferred.**
+
+1. **`--reask N` on the wizard** — remove `N` from `completed_sections`, set `last_section` to the
+   runner-order predecessor, run that one section, stop. Uses the runner, the prompts and
+   `save_section` as they are; re-asks EVERY question in the section (Section 3 is twelve prompts),
+   which is also its virtue — the operator is shown the suggestions again and the fix is made through
+   the same prompt that took the wrong answer. Touches the `115` ordering: the predecessor must come
+   from the runner's list, not from `N - 1` (BL-281, same batch, puts that list in one place). Smallest
+   new surface: one flag, one section id.
+2. **`--set KEY VALUE` on the wizard** — a generic writer into `answers/`, then `render_intake_file`.
+   Precise and scriptable; the shape the three tier-crosscheck-6 flags already have, generalised. Its
+   cost is validation: the wizard does not enumerate its keys anywhere a flag could check against, so
+   either it accepts any key (a typo becomes a new key, silently) or a registry of the 122 keys must
+   be built and kept in step with the prompts. And the second-home keys need the flag to know which
+   home — exactly the per-key logic that made the three existing flags three separate arms.
+3. **Extend `reconfigure-project.sh --field`.** It already carries the APPROVAL_LOG audit row and the
+   `process-state.json` mirror for the ZDR trio, and `--old`/`--new` gives the change a before and
+   after. But every `--field` arm there is a heavy per-field handler (`language` regenerates CI;
+   `platform` copies a module), and a generic `answers/` arm would be a different animal living in the
+   same `case`. Also the operator's mental model: "reconfigure the project" versus "fix an intake
+   answer" are not the same act, and the ZDR trio is the only overlap.
+4. **Document hand-editing `intake-progress.json` as the supported route** (plus "then run any
+   section, or `--resume`, to re-render"). Cheapest by far; adds no code. It documents the two traps
+   above rather than closing them, and it makes a JSON file's key names a public contract.
+
+A **narrower fifth** change removes this TRIGGER without touching the class: let
+`prompt_with_suggestions` accept a bare number when suggestions were just shown, returning that
+item's text (what `prompt_choice` already does). Worth doing alongside whichever route is chosen; on
+its own it leaves every other wrong answer uncorrectable.
+
+**What this entry recommends, and why it stops short of choosing.** Option 1 is the smallest
+surface with the most reuse and no validation problem, and it composes with the fifth. But it is a
+new flag on a script whose flag surface the maintainer curates (the `--help` text lists each one by
+hand), and options 2-4 are each defensible on cost. That is a product call about the wizard's CLI,
+not a correctness call, so it is left with the measurement.
+
+**Not measured beyond the above.** No option was prototyped. The 122 figure is `save_answer` CALL
+SITES on `ceb450e`, not distinct keys — loop-generated keys (`input_${i}_name`, …) count once per
+call site and expand at runtime, so the key count is higher, not lower.
+
+**Related:** `## BL-266:` (SIBLING BRANCH, PR #390 — the pause path files an unfinished section as
+complete; the door this entry finds closed is the same `is_section_complete` membership test, reached
+by a finished section with a wrong answer in it; the citation resolves once `fix/bl266` lands),
+`## BL-203:` (an answer with two homes, one of which the write did not reach), `## BUG-010:`
+(`load_progress` and what a hand-edited progress file can do to it — option 4 walks straight into
+that defect). BL-281 and BL-283, filed in this batch, are named without `## …:` citations because
+each lands on its own branch.
+
+---
+
+## BL-283: `prompt_yes_no` answers itself "N" under `SOIF_NONINTERACTIVE` / `CI` / a non-TTY without reading stdin, so a harness-driven intake records "ZDR not attested" whatever the canned input says — and the next canned line lands on the exception-reason prompt
+
+**Status:** Open — **ENTRY ONLY. May be by design.** Two readings are set out below; this entry
+recommends consistency and leaves the call to the maintainer, because the behaviour is in a shared
+helper (`prompt_yes_no` in `scripts/lib/helpers-core.sh`) with callers in ten other scripts, and
+"a yes/no must not be answerable by canned input" is a defensible policy for most of them.
+
+**Logged:** 2026-09-14, from a downstream adoption driving `scripts/intake-wizard.sh` from a harness
+with `SOIF_NONINTERACTIVE=1` and canned stdin, as the wizard's own refusal text invites
+(*"set SOIF_NONINTERACTIVE=1 to drive it from a harness"*). Every prompt took its canned line except
+one, and from that prompt on the stream was off by one.
+
+**Numbering:** BL-280 is the highest number on any ref — 56 refs under `refs/heads` and
+`refs/remotes` swept with `git grep -q -w`, zero hits for BL-281/282/283, positive control BL-280 hit
+on `heads/fix/bl280` and `remotes/fork/fix/bl280`. BL-281 and BL-282 are the same batch.
+
+**Mechanism.** The wizard OVERRIDES three prompt helpers with its own — `prompt_input`,
+`prompt_choice`, `prompt_with_suggestions` — each an unconditional `read -rp` carrying a
+`lint-raw-read-prompt: allow` note that says, in as many words, *"intake-wizard.sh defines its own
+prompt_input with pause-file semantics (overrides lib/helpers.sh::prompt_input); this IS the wizard's
+centralized prompt helper"*. It does NOT override `prompt_yes_no`; it inherits the library one, whose
+first arm is:
+
+    if [ ! -t 0 ] || [ -n "${CI:-}" ] || [ -n "${SOIF_NONINTERACTIVE:-}" ]; then
+      echo -e "${YELLOW}[WARN]${NC} Non-interactive context: skipping prompt (\"$message\") — defaulting to 'N' (caller default '$default_answer' ignored in non-interactive context)." >&2
+      return 1
+    fi
+
+No `read`. The wizard calls `prompt_yes_no` at exactly ONE site (`grep -c` on `ceb450e` → 1):
+Section 5.5's *"Is ZDR (Zero Data Retention) or self-hosted LLM in place for this project? [Y/n]"*,
+with caller default `Y`. On `return 1` the wizard takes the not-attested arm and immediately runs
+`prompt_input` for the documented exception — the wizard's own helper, which DOES read stdin — so
+the canned line the operator wrote for the yes/no is consumed as the exception text.
+
+**Measured, against `main` (`ceb450e`), three canned runs of Section 5 in a throwaway copy of the
+wizard, resumed from a record with sections 1-4 done.** The canned stream answers every 5.1-5.4 prompt,
+then `2` (classification `internal`), then `Y` (meant for the ZDR question), then `pause`.
+
+    A  SOIF_NONINTERACTIVE=1, --resume, canned stdin
+       [INFO] 5.5 Data Classification & ZDR Attestation (Phase 1 invariant — tier-crosscheck-6)
+       [WARN] Non-interactive context: skipping prompt ("Is ZDR (Zero Data Retention) or self-hosted LLM in place for this project? [Y/n]") — defaulting to 'N' (caller default 'Y' ignored in non-interactive context).
+         [OK]   Phase 1 artifacts persisted to process-state.json (classification=internal, zdr_attested=false)
+         [OK] Section 5 saved.
+       input_1_name = 'Alpha'            <- the canned stream lined up everywhere else
+       data_classification = 'internal'
+       zdr_attested = 'false'
+       zdr_attestation_reason = 'Y'      <- the yes/no's line, recorded as the written exception
+       process-state.json phase1_artifacts = {'data_classification': 'internal', 'zdr_attested': False, 'zdr_attestation_reason': 'Y'}
+
+    B  same stdin, NO SOIF_NONINTERACTIVE — `--resume` is dispatched BEFORE the wizard's TTY refusal,
+       so a piped --resume reaches the same arm through `[ ! -t 0 ]` alone:
+       [WARN] Non-interactive context: skipping prompt (…) — defaulting to 'N' …
+       zdr_attested = 'false'
+       zdr_attestation_reason = 'Y'
+
+    C  CONTROL — classification `public`: the yes/no is never asked, the stream stays aligned
+       [INFO]   Public data: ZDR not required (governance-framework.md § VII line 297-299).
+       data_classification = 'public'   zdr_attested = 'false'   zdr_attestation_reason = ''
+
+C shows the measurement discriminates: the one-line shift appears exactly when `prompt_yes_no` is
+reached and nowhere else.
+
+**What it costs, and why "it defaults to N" is not the whole of it.** Two things land in
+`.claude/process-state.json::phase1_artifacts`, which `scripts/check-phase-gate.sh` reads as the
+Phase 1→2 invariant: `zdr_attested: false` — the opposite of what the operator answered — and
+`zdr_attestation_reason: "Y"`. The gate's predicate is *"zdr_attested=true OR a non-empty
+zdr_attestation_reason"* (its own remediation text). A one-character exception is non-empty, so the
+gate CLEARS on a written exception nobody wrote. The safe default produced an unsafe record. And the
+`[WARN]` that explains it goes to stderr in the middle of a sixty-line transcript, where a harness that
+checks the exit code (0) and the `Section 5 saved` line sees nothing.
+
+**Two readings, both stated in full.**
+
+*Reading 1 — correct, by design.* A yes/no in this framework frequently GRANTS something (an
+attestation, a gate override, a destructive confirmation — `check-gate.sh` has 7 call sites,
+`process-checklist.sh` 7, `upgrade-project.sh` 12). Refusing to let canned input answer one is a
+deliberate safety property of the shared helper, the `[WARN]` discloses it, and the arm text says
+outright that the caller's default is ignored. Under this reading the defect is only that the
+wizard's not-attested arm then reads a free-text prompt from the same stream — the shift, not the N.
+
+*Reading 2 — inconsistent.* The wizard is the one script that has explicitly opted INTO canned input:
+it defines `SOIF_NONINTERACTIVE`'s meaning in its own refusal text, overrides every other prompt to
+read unconditionally, and documents that the harness path exists so the intake can be scripted. In
+that script — 122 `save_answer` call sites on `ceb450e` — one prompt silently declines the stream and
+shifts it. An operator cannot
+make a harness-driven intake attest ZDR at all — there is no canned line that does it — and cannot
+keep the following answer aligned without knowing to omit a line for a question that is printed.
+
+**Shapes a fix could take, none proposed and none costed.**
+1. **Leave the helper alone; make the wizard consistent with itself.** A wizard-local `prompt_yes_no`
+   with the same pause-file semantics as its three siblings, reading stdin unconditionally. Touches
+   only `scripts/intake-wizard.sh`; every other caller keeps the safe default. The `lint-raw-read-prompt`
+   allow-note pattern the three siblings use already covers it.
+2. **Leave everything alone; document it.** State beside the `SOIF_NONINTERACTIVE` refusal text that
+   yes/no prompts consume NO canned input and default to N, so a harness author omits the line. The
+   ZDR attestation stays unreachable from a harness, which under Reading 1 is the point.
+3. **Change the shared helper** so `SOIF_NONINTERACTIVE` (explicit opt-in) reads stdin while bare
+   `CI` / non-TTY keeps defaulting to N. Widest blast radius — 50 lines naming `prompt_yes_no` across 11 files on
+   `ceb450e` (`grep -c`; a line count that includes the helper's own definition and
+   `lint-raw-read-prompt.sh`'s patterns, so a ceiling on call sites, not the figure), several of them
+   confirmations that should never be scriptable by accident.
+
+This entry recommends 1 — the inconsistency is the wizard's, so the repair belongs there — but the
+recommendation is exactly the judgement the maintainer owns: whether a harness should be able to
+attest ZDR at all. If the answer is no, option 2 is the honest one and the shift should still be
+closed (the exception prompt should not run on a declined yes/no in non-interactive mode).
+
+**Not measured beyond the above.** No option was prototyped. The other lines naming `prompt_yes_no`
+were counted, not read; which of them a harness might legitimately want to answer is not assessed
+here.
+
+**Related:** `## BL-203:` (a recorded answer and an enforced field that disagree — here the recorded
+answer is itself wrong), `## BL-256:` (a gate clearing on a receipt it did not earn — a one-character
+exception is that receipt), `## BL-266:` (SIBLING BRANCH, PR #390 — the same wizard's other
+non-interactive-adjacent path; the citation resolves once `fix/bl266` lands). BL-281 and BL-282,
+filed in this batch, are named without `## …:` citations because each lands on its own branch.
+
+---
+
+## BL-276: four test suites ran in ~1 second against `/dev/null` and blocked FOREVER when the caller left stdin open — `full-project-test-suite.sh` is what CONTRIBUTING.md tells every contributor to run
+
+**Logged:** 2026-09-13, found by running `tests/test-intake-wizard-fixes.sh` from a harness that leaves
+stdin connected rather than closed. **Status:** Open — fix built on `fix/bl276`; see the Fix section
+and the three residuals.
+**Category:** Environment-dependent hang — a check that cannot report, and reports nothing about why.
+**Severity:** **Real.** The failure mode is an unbounded stall with no diagnostic, no timeout and no
+partial verdict, landing on the one command `CONTRIBUTING.md` § "Local development setup" names as the
+way to validate a checkout. It presumably passes in GitHub Actions only because that runner hands the
+step `/dev/null`; a contributor running the same line from a tool, agent harness, CI shim or editor
+that leaves stdin open gets a suite that simply stops.
+
+### Measured, both stdin shapes, on `main` @ `ceb450e1`
+
+```
+$ time bash tests/test-intake-wizard-fixes.sh < /dev/null
+Passed: 26   Failed: 0                                  rc=0, 1 second
+
+$ timeout 60 bash tests/test-intake-wizard-fixes.sh < <(sleep 300)
+T-bl203-session-check-null-safe: missing keys must not error or fail open
+                                                        rc=124 — still hung at 60s
+                                                        15 of 26 cases emitted
+```
+
+Same file, same tree, same commit. The only variable is what the CALLER left on file descriptor 0.
+
+### The mechanism
+
+`tests/test-intake-wizard-fixes.sh:618` was
+
+```
+OUT=$( cd "$D" && bash "$SESSCHECK" 2>&1 ); RC=$?
+```
+
+with no stdin redirect, so the child inherits the caller's. `$SESSCHECK` is
+`scripts/session-test-gate-check.sh` (assigned at `:509`), a **SessionStart hook**, and its line 27 is
+
+```
+if [ ! -t 0 ]; then
+  ENVELOPE=$(cat 2>/dev/null || echo "")
+```
+
+`[ ! -t 0 ]` separates a terminal from everything else, and everything else is assumed to be a pipe
+that will close. A bare `cat` returns instantly on `/dev/null` and **never sees EOF while any writer
+holds the pipe open**. A process sample during the stall gives the stack
+`command_substitute -> read_comsub -> zread -> read()`.
+
+### It was not one suite — a tree-wide sweep found four
+
+All 227 files under `tests/` were run twice, once with `/dev/null` and once with a writer holding a
+pipe open, each under a bound. Four suites change behaviour with the stdin shape, against **three
+different unbounded readers**, and **all four are children of `tests/full-project-test-suite.sh`**:
+
+| suite | `/dev/null` | held-open pipe | the reader it reaches |
+|---|---|---|---|
+| `test-intake-wizard-fixes.sh` | **1s**, 26/26 | hung, 15 verdicts | `session-test-gate-check.sh:27` — `[ ! -t 0 ]` then bare `cat` |
+| `test-bl032-gitlab-free-approvals-attestation.sh` | **1s**, 8/8 | hung, 0 verdicts | its own fake `glab` stub `:62` — `[ ! -t 0 ]` then bare `cat` |
+| `test-gitlab-ci-status-stderr-approvals.sh` | **3s**, 11/11 | hung, 0 verdicts | its own fake `glab` stub `:63` — same shape |
+| `test-pr-review-gate.sh` | **15s**, 51/18 | hung, 10 verdicts | `scripts/check-pr-review.sh:113` — `[ ! -t 0 ]` then `while read` |
+
+`test-pr-review-gate.sh`'s 18 failures are **pre-existing on `main`** — reproduced at `ceb450e1` with
+`/dev/null`, before any change here — and are not this entry's business. What BL-276 owns is that the
+stdin shape changed its behaviour at all.
+
+**One false positive, recorded because the bound produced it.** The first sweep pass used a 45s bound
+and flagged `tests/test-brownfield-wp4-driver.sh`. It is fine: 42s on `/dev/null`, 52s on a pipe, 24/24
+both ways. The bound was the confounder, not the suite. Re-measure before believing a bound.
+
+**`check-pr-review.sh` is the one with teeth.** Its comment already names half the problem — *"`[ -t 0 ]`
+separates the hook (stdin is a pipe) from a human running this by hand (stdin is a tty), where a read
+would block forever"* — and then blocks forever on the third case, a pipe nobody closes.
+
+### The fix, and why it is at the CALL SITES
+
+**Twelve invocations** across the four suites now redirect stdin, each marked `# BL-276-STDIN-REDIRECT`
+on the invocation line: intake-wizard 1, bl032 2, ci-status 5, pr-review-gate 4. **No reader was
+changed.**
+
+Hardening the readers was considered first and rejected on both of them:
+
+1. **The BL-202 remedy does not apply.** `## BL-202:` fixed this same class in the sibling hook
+   `session-intake-check.sh` by moving the stdin read to be **lazy** — inside `emit_state()`, reachable
+   only from a speaking path (`# BL-202-LAZY-STDIN`). That works there because that hook has five silent
+   states and needs the envelope only when it speaks. `session-test-gate-check.sh` has no such shape:
+   it needs `.source` on **every** invocation to choose between a destructive re-init of
+   `.claude/tool-usage.json` and a merge. There is no silent path to hide the read behind.
+2. **A bounded read trades a loud bug for a silent one.** The only remaining way to harden either
+   reader is a timeout. Under the real SessionStart envelope a slow write would then fall through to
+   the default `SESSION_SOURCE="startup"` and take the **destructive** branch — zeroing the `calls`
+   array and `commits_since_last_context7` mid-Build-Loop, which is the exact regression the envelope
+   parse was added to prevent (the hook's own header; `## BL-233:`, `## BL-236:`). For
+   `check-pr-review.sh` the same bound is worse: git hands a pre-push hook its ref list on a pipe, and
+   a short read means the gate passes commits it never checked. That is a deterministic test hang
+   traded for a nondeterministic production failure, in the wrong direction on both counts.
+3. **Nothing distinguishes the two pipes.** "A pipe that will carry an envelope" and "a pipe nobody
+   closes" are the same `[ ! -t 0 ]`. The reader cannot tell them apart without a bound, which is (2).
+
+The call site is also where the tree already stands. Both other suites that drive this hook —
+`test-session-test-gate-check-merge.sh:53` and `test-validate-counter-sanitizer.sh:73` — already pass
+`</dev/null`, as do most of `test-pr-review-gate.sh`'s own `$CHECK` invocations. The twelve fixed sites
+were the outliers that forgot it; this is the existing idiom applied consistently, not a new one.
+
+### Suite
+
+`tests/test-bl276-stdin-hang.sh`, registered in `tests/full-project-test-suite.sh` and in the
+`tests.yml` unit lane. **GREEN 10 / 0** in 73s; **RED 3 / 7** against `main` @ `ceb450e1` in 504s (the
+RED cost is four 120s bounds being paid in full, which only a broken tree does).
+
+The four defect cases assert **parity, not green** — the `/dev/null` run is the reference and the
+held-open run must match its exit status AND its verdict count. A case demanding rc=0 would be
+asserting `test-pr-review-gate.sh`'s 18 unrelated failures.
+
+| case | RED @ `ceb450e1` | GREEN |
+|---|---|---|
+| `A1-probe-flags-a-real-block` | pass (detector control) | pass |
+| `A1b-probe-clears-a-non-blocker` | pass (detector control) | pass |
+| `A2-intake-wizard-stdin-parity` | **FAIL** — hung, 15 of 26 | pass — rc=0, 26 = 26 |
+| `A3-bl032-gitlab-stdin-parity` | **FAIL** — hung, 0 of 8 | pass — rc=0, 8 = 8 |
+| `A8-ci-status-stdin-parity` | **FAIL** — hung, 0 of 11 | pass — rc=0, 11 = 11 |
+| `A9-pr-review-gate-stdin-parity` | **FAIL** — hung, 10 of 69 | pass — rc=1, 69 = 69 |
+| `A4-call-sites-carry-the-redirect` | **FAIL** — no marker anywhere | pass — 12 marked, all redirecting |
+| `A5-mutation-intake` | **FAIL** — A2 already red, proof undefined | pass — mutant stalls at 15 of 26 |
+| `A6-mutation-gitlab` | **FAIL** — A3 already red, proof undefined | pass — mutant stalls at 0 of 8 |
+| `A7-hook-still-honours-a-piped-envelope` | pass (unchanged contract) | pass |
+
+**Two mutants.** A5 and A6 strip `</dev/null` back off the marked lines and require the probe to flag
+the result as hung AND to have stalled **strictly earlier** than the fixed run — without that second
+half a slow host would satisfy the mutation proof. **A2 is the case that kills A5's mutant; A3 kills
+A6's.**
+
+**Every case was shown to be able to fail.** A2/A3/A4/A8/A9 and the mutation cases fail on `main`. The
+three that pass on `main` do not test the fix, so they were falsified by mutation instead: forcing
+`PR_HUNG=0` reds A1 (`DETECTOR CONTROL FAILED — a plain blocking cat ... was NOT flagged`), forcing
+`PR_HUNG=1` reds A1b (`a probe that flags everything proves nothing`), and rewriting the hook's source
+`case` arm to `SESSION_SOURCE="startup"` reds A7 (`calls=0 counter=0, expected 2 and 4`). **A7 is the
+guard on the decision above**: if someone later "fixes" BL-276 inside the hook with a timed read, A7 is
+what goes red under load.
+
+**The bound is two-mechanism and never absent.** `timeout`/`gtimeout` when either is on `PATH`,
+otherwise a poll loop over a done-file, which needs no external tool — macOS ships neither `timeout`
+nor `gtimeout` without coreutils. Both paths were exercised: 10/0 with `timeout`, and 10/0 again with
+the discovery loop neutered so the poll loop runs. Where a bound genuinely cannot be built (`mkfifo`
+unavailable) the affected case **FAILS**; nothing here passes by absence.
+
+**A defect in the first cut of the suite, found by its own leftovers.** `mutate()` was called inside
+`$( )` and appended the mutant's path to the cleanup list *from that subshell*, so the `trap` never saw
+it and two stray `.sh` files were left in `tests/` after every run. The path is now registered before
+anything writes to it, and `mutate` is called as a plain command.
+
+### Residuals — what this entry does NOT close
+
+1. **Six suites remain unmeasured.** `tests/test-bl099-guard-coverage.sh`, `tests/edge-cases-scripts.sh`,
+   `tests/test-delta-wp5-hotfix-retro.sh`, `tests/test-enforcement-level-reconfigure.sh`,
+   `tests/test-verify-install-fix-functions.sh` and `tests/upgrade-path-tests.sh` exceed 300s on
+   **both** stdin shapes, so the sweep cannot tell whether their runtime is hiding a hang. They are
+   recorded as unresolved rather than clear — a slow suite is not a clear one. Forty-two other slow
+   suites were resolved CLEAR at the 300s bound, and no suite outside the four above changed behaviour
+   with the stdin shape at any bound tried.
+2. **Nothing stops the next one.** There is no lint for "a command substitution invoking a stdin-reading
+   script without a redirect", and the three readers still block unboundedly by design. The new suite
+   pins the twelve sites that are fixed; a thirteenth call site added tomorrow is caught by nothing.
+   The honest detector is the one used to find these: run the suite with a writer holding stdin open,
+   under a bound. Not built as a lint.
+3. **`lint-tests-registered.sh` cannot prove this suite's registration**, and says so itself. Its
+   `_build_unit_list_set` scopes the unit list with `awk '/tests=\(/{f=1;next}'`, and
+   `.github/workflows/tests.yml:324` mentions the array-opening token **in prose**, so the scope opens
+   25 lines above the real array and folds intervening comments into the membership set. Demonstrated:
+   planting `# tests/test-bl276-stdin-hang.sh` above the array and deleting the real entry leaves the
+   lint **green**. This is the already-recorded `## BL-181:` residual, not a new defect. Membership was
+   therefore proven by **executing** the array as bash does — it evaluates to 191 members with
+   `test-bl276-stdin-hang.sh` among them, and commenting that one line out drops it to 0 — and by the
+   negative control of deleting it, which does red the lint (`fast unit test is not listed in the
+   tests.yml unit lane`).
+
+**Related:** `## BL-202:` (the same hang class in the sibling SessionStart hook, fixed by a lazy read —
+the precedent this entry examined and could not reuse), `## BL-239:` (**sibling, not duplicate**: same
+hook family, same `stdin`, opposite failure — there a PreToolUse gate copied to `.git/hooks/pre-commit`
+got NO stdin JSON and silently took the ALLOW path; here a reader gets stdin that never ends and takes
+no path at all. Absent input reading as success versus endless input reading as nothing),
+`## BL-181:` (residual 3 above — the lint-scope widening), `## BL-197:` (the diagnostic-destruction
+class: an instrument that yields no evidence about the failure it is reporting).
+
+---
+
+## BL-284: two `verify-install.sh` auto-fixers that could never run — `has_context()` is unsatisfiable on an adopted project, and `fix_superpowers` calls a CLI verb that does not exist
+
+**Renumbered BL-260 → BL-284 on merge (2026-09-15):** BL-260 was taken on `main` before this landed;
+the markers, the test file and both registrations were renamed to match. The contributor's prose is unchanged.\n\n**Status:** Open
+
+**Logged:** 2026-09-13, out of a brownfield adoption. Both arms were found and fixed in the ADOPTED
+project's installed copy of `scripts/verify-install.sh` before either was submitted here, so until this
+lands the two trees diverge in exactly these two places. Both are the same defect class — a row
+registered with `register_fixable`, offered to the operator as auto-fixable, and dispatched by
+`run_remediation` to a function that CANNOT succeed — which is why they are one entry; the blast
+radius differs per arm and is stated per arm below.
+
+**Arm 1 — `# BL-284-CONTEXT-STATE`. The fixer's precondition is the file the fixer creates.**
+`has_context()` is `[ -n "$PLATFORM" ] && [ -n "$LANGUAGE" ] && [ -n "$TRACK" ]`, and `load_context()`
+had exactly two sources for those three:
+
+- `.claude/tool-preferences.json` (`.context.platform` / `.language` / `.track`) — and the only two
+  things in the tree that CREATE that file are `init.sh` (writes at `:1245` and `:1279`) and
+  `fix_tool_prefs` itself. `adopt-project.sh` does not write it, `intake-wizard.sh` does not write it,
+  and `reconfigure-project.sh` only edits it behind an `[ -f ]` guard. So on an adopted project the
+  file is absent, and the only thing that would create it is the fixer that refuses unless
+  `has_context()`. It is its own precondition.
+- `grep -m1 'Platform:' CLAUDE.md` and its two siblings — anchors emitted by the SCAFFOLDED
+  `CLAUDE.md`. An adopted project keeps its own `CLAUDE.md`; that is the point of adoption.
+
+So every one of PLATFORM/LANGUAGE/TRACK stayed empty for ever on the adoption path, and the row was
+listed as auto-fixable while `--auto-fix` declined it on every pass.
+
+**What the adoption path actually records, and why the fix reads it rather than adding a source.**
+`adopt_render_intake_progress` (`scripts/lib/adopt/adopt-intake.sh`) writes seven subscribed top-level
+keys into `.claude/intake-progress.json`, three of them `platform`, `language` and `track`;
+`adopt_write_phase_state` (`scripts/lib/adopt/adopt-state.sh`, `# BL-242-PHASE0-LANDING`) writes
+`track: "full"` into `.claude/phase-state.json`. `intake-wizard.sh`'s `init_progress` writes the same
+three top-level keys, populated, once the operator answers Section 1. **`load_context()` already opens
+both files** — `.claude/intake-progress.json` for `.deployment`, `.claude/phase-state.json` for
+`.project` and `.deployment` — so this reads fields that are already there, in files already open.
+
+**There is precedent for the exact chain in the tree.** `_soif_plan_recover_and_render`
+(`scripts/lib/plan-staging.sh`) documents and implements `TRACK  phase-state.track →
+tool-preferences.context.track → manifest → "standard"` and `LANGUAGE
+tool-preferences.context.language → intake-progress.language → CLAUDE.md → ""`. The fix brings
+`load_context()` into line with a resolution order the framework already had.
+
+**An EMPTY recorded value must not win, and that is a measured requirement, not caution.** Adoption
+writes `platform: ""` and `language: ""` deliberately — "not known and therefore written EMPTY rather
+than guessed" is the comment on `adopt_render_intake_progress`. `jq -r '.platform // empty'` on `""`
+yields `""`, because `""` is TRUTHY in jq and `//` only fires on `null`/`false`. So the `-z` guards are
+what stop a pre-intake adoptee from being handed a fabricated context.
+
+**Arm 2 — `# BL-284-PLUGIN-VERB`. `add` is not a subcommand, on any host.** `fix_superpowers` ran
+`claude plugins add superpowers`. Measured on Claude Code `2.1.269` (macOS 26.4.1):
+
+```
+$ claude plugin add superpowers ; echo rc=$?
+error: unknown command 'add'
+rc=1
+
+$ claude plugin --help | grep -E '^  install\|i'
+  install|i [options] <plugin>         Install a plugin from available
+```
+
+The group accepts both spellings (`Usage: claude plugin|plugins …`), so `plugins` was never the
+problem; the VERB was. This fixer has therefore never worked for anyone, on a scaffolded project or an
+adopted one, and because `run_remediation` reports per-row it announced `Could not fix: Superpowers
+plugin not installed` rather than anything that named the cause.
+
+**And the marketplace qualification is load-bearing, not tidiness.** The detector six lines above the
+registration reads `jq -r '.enabledPlugins["superpowers@claude-plugins-official"] // false'
+"$HOME/.claude/settings.json"`. A bare `superpowers` resolves through whichever marketplace the host
+has configured, and an install recorded under any other key satisfies the CLI and NOT the detector —
+a fixer that reports `Fixed` and leaves the row red on the next run. **That is not hypothetical: the
+repo's own `docs/cli-setup-addendum.md` documents a SECOND marketplace for this plugin** — it gives
+`/plugin install superpowers@claude-plugins-official` at `:52`, `:123` and `:595`, and at `:128`-`:129`
+the alternative `/plugin marketplace add obra/superpowers-marketplace` followed by
+`/plugin install superpowers@superpowers-marketplace`. An operator who followed the second recipe and
+then ran a bare-name fixer would get an install recorded under a key the detector does not read.
+`--scope user` is the CLI's own default and is stated because it is what writes
+`~/.claude/settings.json`, the file the detector reads. `--yes` is deliberately NOT passed: it
+auto-accepts running a marketplace-declared command, and a fixer must not execute code on the
+operator's behalf without a prompt — `claude plugin install --help` documents `-y` as required when
+stdin or stdout is not a TTY for exactly those plugins, so one that needs confirmation fails loudly
+under `--auto-fix` instead of running silently.
+
+**Measured, both directions.** Fixture: an adopted project — its own `CLAUDE.md` with no identity
+block, `.claude/intake-progress.json` carrying `platform: "web"`, `language: "typescript"`,
+`track: "full"`, `.claude/phase-state.json` carrying `track` and no platform or language, and no
+`tool-preferences.json`. At `ceb450e1`, three consecutive `--auto-fix` runs against the same fixture:
+
+```
+pass 1 rc=1 tool-prefs=ABSENT :: [FAIL] Could not fix: tool-preferences.json missing
+pass 2 rc=1 tool-prefs=ABSENT :: [FAIL] Could not fix: tool-preferences.json missing
+pass 3 rc=1 tool-prefs=ABSENT :: [FAIL] Could not fix: tool-preferences.json missing
+```
+
+With the fix, one run:
+
+```
+[INFO] Fixing: tool-preferences.json missing
+  [OK] Fixed: tool-preferences.json missing
+$ cat .claude/tool-preferences.json | jq -c .context
+{"dev_os":"darwin","platform":"web","language":"typescript","track":"full"}
+```
+
+and the tool row flips from `Tool check skipped — no project context` to `Tool check skipped —
+resolver or matrix missing`, which is `check_tools` reaching its SECOND guard for the first time.
+
+**Blast radius — measured, not estimated, and different per arm.**
+
+*Arm 1 — adopted projects only, five call sites.* `has_context()` has five callers in
+`verify-install.sh` and all five took the wrong branch for the whole life of an adoption:
+`check_tools` skipped the entire tool check; `fix_tool_prefs` refused; `fix_claude_md` refused;
+`fix_ci_pipeline` refused; and the CI-pipeline row's routing (`elif has_source && has_context`)
+downgraded a missing pipeline from auto-fixable to a MANUAL instruction. A scaffolded project is
+unaffected — `init.sh` writes `tool-preferences.json` at birth, so its first source is populated.
+
+*Arm 2 — every project, every host, both birth paths.* The registration is in `check_plugins_mcp`,
+which is reached whenever `jq` is present and `$HOME/.claude/settings.json` exists, and it is gated on
+nothing else. There is no host on which `claude plugins add` was a command.
+
+**Fix — BUILT, and it is the code already running in the adopting project, ported unchanged.** Arm 1
+is a `for` loop over `.claude/intake-progress.json` then `.claude/phase-state.json` behind
+`command -v jq`, each field assigned only when still empty, load order and `-z` guards mirroring the
+`DEPLOYMENT` block in the same function. Arm 1 adds no new source and no new file open. Arm 2 is a
+one-line command change plus the comment block that records why `install`, why the qualified id, and
+why not `--yes`.
+
+**Options considered, and why these.**
+1. **Read the state files** (chosen). No new source, no new file, and the resolution order already
+   exists elsewhere in the tree (`_soif_plan_recover_and_render`).
+2. **Have `adopt-project.sh` write `tool-preferences.json` at adoption.** Rejected: adoption does not
+   know the platform or the language — it writes them EMPTY on purpose — so this would either write a
+   context-free file that still fails `has_context()`, or guess. It also puts a second writer on a file
+   `init.sh` owns.
+3. **Relax `has_context()`** to require fewer than three fields. Rejected: `fix_ci_pipeline` and
+   `fix_claude_md` consume `$LANGUAGE` and `$PLATFORM` directly, so a laxer predicate would let them
+   render with blanks — trading a refusal for a corrupt artifact.
+4. **Arm 2: `claude plugin install superpowers` (bare).** Rejected, and it is the mutation the suite
+   keeps dead: it succeeds at the CLI and does not satisfy the detector.
+
+**Build note (2026-09-13, branch `fix/bl284`).** Suite
+`tests/test-bl284-verify-install-context.sh` drives the REAL `verify-install.sh` end to end from inside
+a fixture project, with a fixture `HOME` and a `claude` shim on `PATH` that mirrors the real CLI's
+dispatch (`plugin`/`plugins` are one group; the group validates its VERB first) and records its argv.
+It is hermetic: the fixture `HOME` carries a `~/.claude-dev-framework/.git` directory so
+`fix_framework_clone` is never REGISTERED — without it `--auto-fix` reaches a real `git clone` of the
+CDF — and the fixture `settings.json` declares `mcpServers.context7`, so `fix_context7` is never
+registered and no `npx` is reached. The dispatched fixer set is seven, all local, verified by reading
+the remediation block.
+
+GREEN **16 / 0 / 0** on bash 5.3.15 and on bash 3.2.57 (macOS 26.4.1), **15 / 0 / 1** in
+`ubuntu:24.04` on bash 5.2.21 as a non-root user, where `L1` correctly SKIPS. RED against
+`ceb450e1`'s `verify-install.sh` in the same tree: **3 / 13 / 0** on macOS, **2 / 13 / 1** on Linux.
+The three that pass RED are honest-outcome controls, true on main by construction: `A0` (the script
+runs at all), `A4` (an adoption whose recorded platform/language are EMPTY is still declined — the
+no-fabrication control) and `L1` (the live CLI rejects `add`, which is the DEFECT, so it is true before
+and after).
+
+Six mutants, and which case kills each is recorded in the suite:
+- **MA1** excises the state-file read (restores `ceb450e1`'s `load_context`) → **A1**.
+- **MA2** keeps the read and drops the three `-z` guards, so `phase-state.json`'s absent `platform`
+  blanks the value `intake-progress.json` supplied → **A1**. This is what makes "an empty value must
+  not win" load-bearing rather than decorative.
+- **MA3** reads `LANGUAGE` from `.platform` — a copy-paste slip that leaves `has_context()` true and
+  the file written, so `A0`/`A1`/`A2` all stay green → **A3** only, which pins the three values.
+- **MP1** restores `claude plugins add superpowers` → **P1**.
+- **MP2** de-qualifies the id to a bare `superpowers`. The install SUCCEEDS and the row still reports
+  `Fixed`, so `P1` stays green → **P2** only, which pins the argv by value.
+- **MP3** adds `--yes` — same shape, same killer: **P2**.
+
+`L1` is the anchor: everything in the `P` family trusts a shim, and `L1` checks the shim's one
+load-bearing claim against the REAL CLI when one is on `PATH` (`--help`, plus a verb the CLI rejects at
+dispatch before it resolves anything — no install, no network, no state). Where no `claude` exists it
+reports SKIP and is counted separately, so an absent CLI can never read as a pass. Registered in
+`tests/full-project-test-suite.sh` and in the `tests.yml` unit-lane array
+(`lint-tests-registered.sh --list`: `registered`; membership confirmed by NEGATIVE control — removing
+the `tests.yml` line flips the same lint to `FAIL  not-in-unit-lane`).
+
+**Residual — `_soif_plan_recover_and_render` has the same hole for PLATFORM.** Its documented chain is
+`PLATFORM  tool-preferences.context.platform → CLAUDE.md → ""`, with no `intake-progress.platform`
+rung, while its LANGUAGE chain has exactly that rung. On an adopted project the platform therefore
+recovers as `""` there for the same reason it did here. Not touched by this fix, not reproduced, and
+recorded as a lead rather than a defect.
+
+**Related:** `## BL-253:` (the adoption-vs-scaffold state-parity family — same birth-path divergence,
+different key), `## BL-231:` (absent-vs-unreadable), `## BL-256:` (two unrelated surfaces bound into
+one entry by a shared defect class — the precedent for this entry's shape), `## BL-242:`
+(`# BL-242-PHASE0-LANDING`, the phase-state write this arm reads).
+
+---
+
+## BL-265: `intake-wizard.sh` names a jq KEYWORD as a function parameter, so the intake appendix's Project Context table renders with zero rows on every jq since 1.5
+
+**Status:** Open — fix + suite committed on branch `fix/bl265` at `8f2eecb`. Not pushed, no PR.
+
+**THIS IS THE FIX FOR `## BUG-010:` DEFECT (3), WHICH THE MAINTAINER FILED ON 2026-09-01.** He
+diagnosed it, named `label` as the reserved keyword, and prescribed the same one-word rename — down to
+the replacement token. This entry was written before that was noticed and is not a first discovery.
+The independent reproduction is still worth recording, because it arrived by a different route
+(a downstream adoption rather than an adversarial review) and carries the blast-radius measurement and
+the regression suite that entry does not.
+
+**One half of his prescribed fix is NOT done here.** BUG-010 says: "rename the parameter (`lbl`,
+`field`) — a one-word change — **and check jq's exit status rather than reading its stdout**." Only
+the rename is in this branch. The exit-status check is the call-site hardening recorded as the
+residual below; it is what would have made the ORIGINAL failure loud instead of leaving it to be
+found twice. Worth doing, and deliberately not bundled.
+
+**Logged:** 2026-09-12 — independently hit during a downstream adoption
+(`si-6425-harness-baseline`); ALREADY FILED UPSTREAM as `## BUG-010:` defect (3) on 2026-09-01. The
+downstream project's
+`PROJECT_INTAKE.md` came back without a single context field.
+
+**The defect.** `render_intake_file()` in `scripts/intake-wizard.sh` opened its Project Context table
+with
+
+```
+def row(label; val): "| " + label + " | " + ((val // "") | tostring) + " |";
+```
+
+`label` is a jq **keyword** — it is the head of `label $out | … | break $out` — so it cannot name a
+function parameter. jq does not reject the one definition; it refuses to compile the **whole program**
+and emits nothing:
+
+```
+$ echo '{}' | jq -r 'def row(label; val): "x"; row("a";"b")'
+jq: error: syntax error, unexpected label, expecting IDENT or BINDING at <top-level>, line 1, column 9:
+    def row(label; val): "x"; row("a";"b")
+            ^^^^^
+jq: 1 compile error
+```
+
+**Which jq versions — measured, not assumed.** `label`/`break` arrived in jq 1.5, and the reservation
+arrived with it. Every version from 1.5 on refuses the program; only 1.4, which has no `label` at all,
+accepts it:
+
+```
+for img in ubuntu:16.04 ubuntu:18.04 ubuntu:20.04 ubuntu:22.04 ubuntu:24.04; do
+  docker run --rm "$img" bash -c 'apt-get update -qq >/dev/null 2>&1;
+    apt-get install -y -qq jq >/dev/null 2>&1; jq --version;
+    echo "{}" | jq -r "def row(label; val): \"x\"; row(\"a\";\"b\")" 2>&1 | head -1'; done
+
+jq-1.5-1-a5b5cbe   jq: error: syntax error, unexpected label, expecting IDENT or '$' …
+jq-1.5-1-a5b5cbe   jq: error: syntax error, unexpected label, expecting IDENT or '$' …
+jq-1.6             jq: error: syntax error, unexpected label, expecting IDENT or '$' …
+jq-1.6             jq: error: syntax error, unexpected label, expecting IDENT or '$' …
+jq-1.7             jq: error: syntax error, unexpected label, expecting IDENT or BINDING …
+
+docker run -i --rm --platform linux/amd64 ubuntu:20.04 \
+  bash -c 'cat > /jq14; chmod +x /jq14; /jq14 --version;
+           echo "{}" | /jq14 -r "def row(label; val): \"x\"; row(\"a\";\"b\")"' < jq-1.4-linux-x86_64
+jq-1.4
+x
+```
+plus jq 1.8.2 on this Mac, which fails identically. **So this line has never worked on any jq a
+project could realistically have installed** — it is not a regression introduced by a new jq. The
+framework's own catalogue entry for jq (`templates/tool-matrix/common.json`) declares no minimum
+version, so there is no supported configuration in which it renders.
+
+**What the operator actually gets — and the brief on this was wrong in one direction, so read the
+measurement.** `PROJECT_INTAKE.md` **is** written; it is the Project Context table inside it that is
+empty. Both call sites are `render_intake_file || true`, and the `||` also suppresses the script's
+top-level `set -e` inside the function, so the failing `jq` does not abort the render — the remaining
+`printf`s and the SECOND jq program (the Answers table) run normally. Measured against a fixture
+progress file at `ceb450e`:
+
+```
+### Project Context
+
+| Field | Value |
+|---|---|
+
+### Answers
+
+| Key | Value |
+|---|---|
+| `problem_statement` | BL265-ANSWER-VALUE |
+```
+
+Nine rows are gone — project name, description, platform, track, deployment, language, POC mode, last
+section saved, completed sections — while `save_section` prints `[OK] Section N saved.` and the wizard
+continues. The jq compile error does reach the terminal on a real run (stderr is not redirected), so
+the failure is **noisy but non-blocking**, not silent; the `|| true` is what makes it survivable.
+
+**Measured on a full-size answer set**, rendering the same progress file through both versions of the
+wizard (each sourced from a complete `scripts/` tree — a lone copy in a bare tmpdir dies at
+`source "$SCRIPT_DIR/lib/helpers.sh"` under `set -e`, in BOTH arms, which reads as the defect and is
+not):
+
+```
+--- AT MAIN ceb450e (defect present)
+    PROJECT_INTAKE.md: written, 72 lines
+    Project Context table:  1 '| '-led line(s)      # the header, and nothing under it
+    Answers table:         51 '| '-led line(s)      # header + all 50 answers
+    stderr: jq: error: syntax error, unexpected label, expecting IDENT or BINDING …
+--- WITH THE FIX
+    PROJECT_INTAKE.md: written, 81 lines
+    Project Context table: 10 '| '-led line(s)      # header + nine rows
+    Answers table:         51 '| '-led line(s)
+    stderr:
+```
+
+**This is the more dangerous of the two failure shapes, and worth saying plainly.** A document that
+renders empty gets noticed on sight; a 72-line document whose Answers table is complete and correct,
+missing one metadata table among otherwise-finished content, reads as done. The one signal that
+something went wrong is a jq compile error on stderr that scrolls past mid-run, thirteen sections
+before the operator sees the finished file.
+
+**Blast radius.** `render_intake_file` is called from `save_section` — i.e. after EVERY one of the 13
+sections — and again from the upgrade path. Every project scaffolded by this framework that runs the
+wizard has an intake file missing its entire context block.
+
+**Fix.** `# BL-265-JQ-RESERVED`: rename the parameter to `lbl`. One line, no behaviour change beyond
+the program now compiling, and a three-line comment above it carrying the trap so the next reader does
+not reinstate a keyword. Not chosen: making `render_intake_file` fail loudly instead of `|| true` —
+that is a separate call-site decision with its own blast radius, recorded as the residual below.
+
+**Build note (2026-09-12, branch `fix/bl265`).** Suite `tests/test-bl265-jq-reserved-label.sh` drives
+the REAL `render_intake_file` — sourced through the wizard's own
+`__SOLO_INTAKE_WIZARD_SOURCED__` main-guard, in a subshell so the wizard's `set -euo pipefail` does
+not leak into the harness — against a hermetic progress file. It calls it as `render_intake_file ||
+exit $?`, reproducing production's `|| true` errexit suppression exactly: under a **bare** call the
+failing jq aborts the subshell and no appendix is appended at all, which is not what an operator sees,
+and a suite that got that wrong would be asserting the wrong artifact.
+
+RED at `ceb450e`: **2 passed / 7 failed**. The two passes are honest controls, not accidents — R0 (the
+render produced a file) and R1 (the Answers table, produced by a SEPARATE jq program that names no
+keyword, is intact). R2/R3 are the discriminators (`Project name row is [], want
+[BL265-PROJECT-NAME]`), R4 counts the table at 1 `| `-led line instead of 10, and R5 catches the
+stderr verbatim: `jq: error: syntax error, unexpected label, expecting IDENT or BINDING`. M0 and the
+MP1 setup fail because the marker does not exist yet.
+
+GREEN **9 / 0** on macOS `/bin/bash` 3.2.57 and on bash 5.2.21 / jq 1.7 in `ubuntu:24.04` as
+`uid=1000(ubuntu)`. Two mutants, each asserting the mutation landed (`bash -n`, the mutated spelling
+present exactly once, the original gone, and a changed-line count) before reading any verdict. **MP1**
+restores `label` on a mirror and requires the Project Context table to go empty **while the Answers
+table still renders** — the second half is what proves R2 discriminates the defect rather than a
+broken fixture. **MP2** repoints the project-name row at `.description`: the table still renders all
+10 lines, so only a by-value assertion sees it. Without MP2 the suite would pass with R2 written as a
+row-count check. Registered in `tests/full-project-test-suite.sh` and in the `tests.yml` unit lane
+(`scripts/lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
+
+**Residual, open.** `render_intake_file || true` swallows every failure of the render, not just this
+one — a missing template, an unwritable `PROJECT_INTAKE.md`, or the next jq mistake all land the same
+way. The suite pins the rendered OUTPUT, so a future breakage is caught by this test rather than by
+the call site; hardening the call site is a separate change and is not made here.
+
+**The pattern this belongs to.** The harness reasons about a project as if it were born under the
+harness — this entry assumes `PROJECT_INTAKE.md` is the harness's to render, and it is one of three
+faces of the same assumption. The full statement of it is in the BL-268 entry, filed separately in
+this batch; read it alongside this one if both have landed.
+
+**Related:** `## BUG-010:` **defect (3) — this entry is its fix**, and its defects (1) and (2) remain
+open (a swallowed `KeyError` in `load_progress`, and a choice prompt with no EOF guard). BL-266 and
+BL-267, filed separately in this batch, are the same wizard on the same downstream adoption; BL-268
+is the same born-under-the-harness assumption in the manifest. `## BL-256:` is the same "a step that
+produced nothing still reports success" family.
+
+*(BL-266, BL-267 and BL-268 are named without `## …:` citations on purpose: each lands on its own
+branch, so on a branch carrying only this entry those citations would resolve to nothing.)*
+
+---
+
+## BL-266: typing `pause` files the UNFINISHED intake section under `completed_sections`, and `--resume` then skips it permanently — with no message either way
+
+**Status:** Open — fix + suite committed on branch `fix/bl266` at `b3b781f`. Not pushed, no PR.
+
+**Logged:** 2026-09-12, reproduced live while filling in a downstream adoption's intake.
+
+**Counted, because the two numbers differ and an earlier cut used the wrong one.** There are **14
+section runners** and **16 `save_section` call sites**: sections 7 and 8 each carry a skip-path call
+as well as a normal one (`grep -c '^\s*save_section [0-9]'` on `ceb450e` → 16). The runner count is
+what the wizard's structure has; the call-site count is what a fix in `save_section` covers, and this
+entry needs the second.
+
+**The defect.** Every one of the 14 section runners in `scripts/intake-wizard.sh` ends in an
+unconditional `save_section N`. The pause path stops everything ELSE and nothing stops that:
+
+- `prompt_input` / `prompt_choice` / `prompt_with_suggestions` each short-circuit at entry while the
+  sentinel exists (`[ -f "${_PAUSE_FILE:-…}" ] && { echo ""; return; }`),
+- `save_answer` returns without writing for the same reason,
+- the collection loops inside a section break on the resulting empty string,
+- and then control reaches `save_section N`, which appends N to `completed_sections` and sets
+  `last_section` to N.
+
+`check_pause_requested` runs after the section returns, removes the sentinel and exits 0, so the
+record is already on disk by the time the wizard says "Pausing intake wizard. Progress saved."
+
+**Reproduced live.** Typing `pause` at "Must-have feature 1" put **section 4** into
+`completed_sections` with none of its `must_have_*` / `should_have_*` / `will_not_*` keys present.
+
+**What it costs the operator.** `is_section_complete` is a membership test against exactly that list:
+
+```
+is_section_complete() {
+  local section_num="$1"
+  [[ " $COMPLETED_SECTIONS " == *" $section_num "* ]]
+}
+```
+
+so on the next `--resume` the runner prints `[OK] Section 4 — already complete` and moves on. Those
+questions are never asked again. Nothing in the file or the transcript says the section is empty, and
+the section is one of the ones that feeds the MVP Cutline — so the cutline is authored against
+questions the operator was never allowed to answer.
+
+**Fix.** `# BL-266-PAUSE-INCOMPLETE`, in `save_section` itself so it covers all 16 call sites at once
+(sections 7 and 8 each carry two): while the sentinel exists, record the resume point, re-render the
+appendix so answers given BEFORE the pause still reach `PROJECT_INTAKE.md`, say plainly that the
+section was paused before it finished, and return 0 WITHOUT touching `completed_sections`.
+
+**The resume point is the subtle half, and the obvious spelling is wrong.** The runner's order is
+`1 2 3 4 5 6 7 8 9 10 11 115 12 13` — `115` encodes "section 11.5" as an integer so it can pass
+through `save_section` and `is_section_complete` — and `run_script_mode` skips with
+`[ "$section" -lt "$start_section" ]`, where `start_section` is `LAST_SECTION + 1`. Writing
+`section - 1` therefore yields **114** for section 115, and every section id 1-13 is less than 114, so
+the entire wizard is skipped on resume and the run reports "Intake Complete!". The guard writes the
+runner-order predecessor instead: `section - 1` for the ordinary ids, and **11** for 115.
+
+Two spellings considered and rejected:
+1. **Leave `last_section` alone.** Correct for every section except 12 — at that point
+   `last_section` is 115 (written by `save_section 115`), giving `start_section` 116, and sections 12
+   and 13 are then skipped by the numeric guard.
+2. **Write `last_section = 0`.** Correct for the runner, because `is_section_complete` re-skips the
+   finished sections. But the interactive menu gates on `[ "$LAST_SECTION" -gt 0 ]`, and with 0 it
+   falls through to `init_progress`, which **overwrites the answers file**. Rejected outright.
+
+**Build note (2026-09-12, branch `fix/bl266`).** Suite
+`tests/test-bl266-paused-section-marked-complete.sh` drives the REAL `save_section`, sourced through
+the wizard's `__SOLO_INTAKE_WIZARD_SOURCED__` main-guard in a subshell, against a hermetic progress
+file recording sections 1-3 done. The sentinel is set by the REAL `prompt_input` reading the literal
+word `pause` from stdin — not by a bare `touch` — and the harness exits 92 if that did not set it, so
+a case cannot pass because the fixture faked the trigger.
+
+**An earlier cut of this build note follows, superseded and kept for the reasoning trail.** Its figures and two of its claims are STALE and are corrected below at the `Suite 10 / 0` paragraph: the RED tally is **2 passed / 8 failed**, not 2/7; GREEN is **10 / 0**, not 9/0; MP2 was REPLACED rather than repaired, so the description of it as the plausible wrong fix no longer matches the shipped mutant; and R4 ships labelled `corroboration — seeded, cannot fail here; see E1`, so it is not the only thing standing between the fix and a silent skip. Read the corrected paragraph, not this one, for the shipped artefact.
+
+RED at `ceb450e`: **2 passed / 7 failed**, the two passes being honest controls — R0 (an UNPAUSED
+`save_section 4` still files section 4, so the fixture works) and R6 (the answer stored before the
+pause is untouched). The discriminators name the damage in the failure text: R1
+`completed_sections is [1, 2, 3, 4], want [1, 2, 3]`; R2 `last_section is [4] … --resume would start
+at 5`; R3 `is_section_complete 4 reports [SKIPPED] — --resume would skip section 4 permanently`; R4
+`last_section is [115], want [11] — --resume would start at 116 and skip every section`.
+
+GREEN **9 / 0** on macOS `/bin/bash` 3.2.57 and on bash 5.2.21 in `ubuntu:24.04` as
+`uid=1000(ubuntu)`. Two mutants, each asserting the mutation landed (`bash -n`, marker gone,
+`save_section() {` still unique, changed-line count) before reading a verdict. **MP1** deletes the
+whole guard, restoring main, and requires R1 to re-open. **MP2** is the PLAUSIBLE WRONG FIX: it drops
+the one line that special-cases 115 so the resume point becomes `section - 1` everywhere. Every other
+case in the suite still passes under MP2 — R4 is the only thing standing between the fix and a wizard
+that silently skips all 14 sections. That is why R4 exists as a case rather than as a comment.
+Registered in `tests/full-project-test-suite.sh` and the `tests.yml` unit lane
+(`scripts/lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
+
+**Residual, open — the same `115` arithmetic bites without any pause.** `save_section 115` writes
+`last_section: 115` and `run_script_mode` compares numerically, so a run interrupted between section
+115 and section 12 by ANYTHING other than `pause` (Ctrl-C, a closed terminal, a crash) resumes at
+`start_section` 116 and skips sections 12 and 13 in silence. This fix does not reach that path — it
+only stops the pause path from creating it. The durable repair is to make the runner skip on POSITION
+in its own ordered list rather than on the integer value, which is a behaviour change to `--resume`
+and wants its own entry.
+
+**THE GUARD WRITES NOTHING, AND AN EARLIER CUT OF THIS ENTRY ARGUED THE WRONG WAY.** That cut had the
+guard compute and write a resume point, which forced `save_section` to know the runner's ORDER — that
+the predecessor of `115` is `11`, because `115 - 1` is not a section id. It defended that as an
+accepted coupling. It should not have been accepted, and the review was right on all three counts:
+
+1. **It was a THIRD home for the ordering.** On `ceb450e` the literal `115` appears at exactly two
+   homes, both entitled to it: the `save_section 115` call site with its explanatory comment, and
+   `run_script_mode`'s `local sections=(1 2 3 4 5 6 7 8 9 10 11 115 12 13)` with its dispatch. Nowhere
+   else in `scripts/`, `init.sh` or `templates/`. On `main`, `save_section` knows nothing of section
+   identity beyond `int(sys.argv[1])`. The branch made it a third — so it could not point at where the
+   pattern lives in the original project, because the pattern was not there.
+2. **The write was unnecessary.** `last_section` already holds the previous section's number, set by
+   the last `save_section` to complete. That IS the resume point. There was nothing to record.
+3. **The case it was defended with was unreachable.** The rejection rested on "leave `last_section`
+   alone is correct for every section except 12". Section 12 cannot pause: `run_section_12` is five
+   lines — two `print_info`, `save_section 12`, `echo` — with zero prompts, and section 13 the same.
+   The sentinel is only ever set by `prompt_input`, `prompt_choice` and `prompt_with_suggestions`, so
+   `save_section 12` and `save_section 13` can never run with it live. The exception the design existed
+   to handle does not exist.
+
+The block is deleted — eighteen lines out, behaviour unchanged, third home gone. Verified for 11.5
+specifically: with it gone, pausing at 115 leaves `last_section` at 11, `--resume` starts at 12, and
+the ordered list still runs 115, 12 and 13 because none of them is `-lt 12`.
+
+**AND THE VACUITY FINDING WAS REAL BUT LED TO THE WRONG CONCLUSION.** The earlier cut measured that
+under a write-nothing shape R2 and R4 read back the fixture's own seed, and concluded the shape was
+worse. Weaker assertions are a reason to strengthen the assertions, not to keep a design that needs
+them. Both cases are now LABELLED as corroboration that cannot fail on this branch, and the proof
+moved to where it belongs:
+
+**Case E1 drives the REAL `--resume`, twice.** Resume #1 pauses inside section 4; resume #2 must ASK
+section 4 again rather than print "Section 4 — already complete". That is the outcome the defect
+destroyed, asserted as the operator experiences it rather than as a field in a JSON file. It needs no
+stubs — `--resume` is dispatched at `intake-wizard.sh:2243`, BEFORE the non-TTY refusal at `:2324`, so
+it drives from a pipe. Verified non-vacuous by deleting the guard entirely on a mirror:
+`[FAIL] E1 — after pausing in section 4 completed_sections is [1, 2, 3, 4], want [1, 2, 3]`.
+
+**MP2 was replaced, not repaired.** Its target — the `115` resume-point arithmetic — no longer exists,
+and a mutant whose target is gone fails at setup rather than proving anything. The new MP2 deletes the
+guard's own `return 0`, which is the only thing stopping the fall-through into the normal write.
+
+Suite **10 / 0** on macOS `/bin/bash` 3.2.57, macOS bash 5.3 and bash 5.2.21 in `ubuntu:24.04`,
+against RED **2 / 8** (R0 and R6 are the controls that pass at base).
+
+**SAME SYMPTOM AS `## BUG-010:`, DIFFERENT MECHANISM — AND THIS ENTRY DOES NOT FIX THAT ONE.**
+BUG-010's title is "`intake-wizard.sh --resume` fails SILENTLY on a progress file it does not like — a
+swallowed `KeyError`, then a skipped section, then 'Intake Complete!' at rc 0". That ending is
+verbatim what this defect produces: a section skipped on resume, and the wizard reporting completion.
+The mechanisms are unrelated. BUG-010 defect (1) is `load_progress()` subscripting seven keys with no
+`.get` and no default, so a progress file missing one raises a `KeyError` whose traceback goes to
+stderr and whose exit status nobody checks. This entry is `save_section` firing under the pause
+sentinel and writing the section into `completed_sections` with no answers. A progress file that
+BUG-010 defect (1) chokes on is a DIFFERENT input from one this defect corrupts, and fixing either
+leaves the other reachable.
+
+**Residual, open — BUG-010 defect (1) is untouched here.** `load_progress()` still subscripts, and
+still carries on with the variables unset when it raises. The maintainer's prescribed fix is
+`.get(k, '')` (or validating the key set and refusing by name) plus checking the exit status instead of
+reading stdout over a traceback. Nothing in this branch goes near it, and it produces this entry's
+symptom by its own route, so a reader who sees "skipped section, Intake Complete" after this fix lands
+should look there next.
+
+**Related:** `## BUG-010:` (same observable ending, different mechanism; its defect (1) still open),
+`## BL-257:` (state writes that announce a success they did not check for). BL-265 and BL-267, filed
+separately in this batch, are the same wizard on the same downstream session.
+
+*(BL-265 and BL-267 are named without `## …:` citations on purpose: each lands on its own branch, so
+on a branch carrying only this entry those citations would resolve to nothing.)*
+
+---
+
+## BL-267: the wizard's own `?` help key is recorded as the answer at 81 of its prompts, because only one of the two prompt helpers handles it
+
+**Status:** Open — fix + suite committed on branch `fix/bl267` at `1989933`. Not pushed, no PR.
+
+**Logged:** 2026-09-12, observed on `one_time_budget` and `users_12mo` in a downstream adoption's
+`.claude/intake-progress.json`, both stored as the literal string `?`.
+
+**The defect.** `scripts/intake-wizard.sh` has two prompt helpers and they disagree about `?`.
+`prompt_with_suggestions` treats it as the help key, exactly as the wizard's own banner promises:
+
+```
+    if [ "$result" = "?" ]; then
+      show_suggestions "$suggestion_key"
+      continue
+    fi
+```
+
+`prompt_input` has no such arm. A `?` falls straight through to `echo "$result"`, and the caller's
+very next line is a `save_answer`:
+
+```
+  users_12mo=$(prompt_input "Expected users at 12 months" "")
+  save_answer "users_12mo" "$users_12mo"
+```
+
+**Blast radius, counted.** `grep -c '=$(prompt_input "'` → **81** call sites, against **18** for
+`prompt_with_suggestions`. The banner the operator reads three lines before the first prompt says
+"Type '?' at prompts marked with [? for suggestions] to see options" — and `prompt_input` never
+prints that marker, so the operator who tries `?` anywhere else is not misreading the instructions so
+much as discovering that four-fifths of the wizard does not implement them. The junk value is then
+carried into `PROJECT_INTAKE.md`'s Answers table by `render_intake_file`.
+
+**Fix.** `# BL-267-BARE-QUESTION-MARK`: in `prompt_input`, after the pause arm, treat a bare `?` as a
+request for help, say there is none for this field, and ask again.
+
+**The fix's own hazard, and it is not hypothetical.** `prompt_input` returns its value **on stdout** —
+every one of the 81 call sites is `x=$(prompt_input …)` — and this repo's `print_info`
+(`scripts/lib/helpers-core.sh:50`) writes to **stdout** as well. A notice printed without `>&2` is
+therefore captured as part of the answer. Measured, on the first cut of this fix:
+
+```
+v=$(printf "?\n42\n" | prompt_input "Expected users at 12 months" "" 2>/dev/null); echo "[$v]"
+[[INFO] No suggestions for this field — answer it directly, or type N/A.
+42]
+```
+
+That is a strictly worse value than the `?` it replaced. The shipped arm redirects with `>&2`, which
+is what the sibling `prompt_with_suggestions` already does for its own retry line
+(`echo "  Please enter a value or type ? for suggestions." >&2`). Verified after the redirect:
+`CAPTURED=[42]`.
+
+**Build note (2026-09-12, branch `fix/bl267`).** Suite `tests/test-bl267-bare-question-mark.sh` drives
+the REAL `prompt_input` from stdin through command substitution — the same shape as a call site, not a
+re-implementation — and case S1 walks the whole path an operator walks, `prompt_input` into the real
+`save_answer`, then reads the value back off the progress file.
+
+RED at `ceb450e`: **3 passed / 6 failed**. The three passes are honest controls — C0 (an ordinary
+answer round-trips), C4 (an answer that merely CONTAINS a `?`, `why? about 42`, is untouched, which
+pins that the arm tests the bare token and not the character), and C2, which passes **vacuously** at
+base because there is no notice to leak yet. C2 is a control at base and a discriminator under MP2;
+that is stated here rather than claimed as a RED signal it is not. The discriminators are C1
+(`prompt_input returned [?], want [42]`), C3 (the `one_time_budget` shape: `?` then Enter must yield
+the default `N/A`, and on main returns `?`), and S1 (`users_12mo was saved as [?], want [42]`).
+
+GREEN **9 / 0** on macOS `/bin/bash` 3.2.57 and on bash 5.2.21 in `ubuntu:24.04` as
+`uid=1000(ubuntu)`. Two mutants, each asserting the mutation landed (`bash -n`, the mutated spelling
+absent, `prompt_input() {` still unique, changed-line count) before reading a verdict. **MP1** deletes
+the `?` arm, restoring main: the bare `?` comes back as the return value AND lands on disk, while an
+ordinary answer still works — the second half is what shows C1/S1 discriminate the defect rather than
+the fixture. **MP2** drops the `>&2` from the notice and nothing else: the `?` is still swallowed, and the value
+saved to disk is the notice followed by the answer, so C1, C3 and S1 ALL GO RED. An earlier cut of
+this sentence claimed those three still pass; that was false and self-refuting, since S1 asserts the
+saved value is `42` while the same sentence says the saved value is the notice. Measured under MP2:
+4 passed, 5 failed.
+MEASURED FROM THE CURRENT MUTANT, not from the draft: `  No suggestions available for this field —
+answer it directly, or type N/A.\n42`. (An earlier cut of this paragraph quoted
+`[INFO] No suggestions for this field — …` here. That was the ABANDONED FIRST CUT's output, pasted
+into a description of the shipped mutant: the shipped arm is a bare `echo`, so there is no `[INFO]`
+prefix, and its wording carries "available". The quote two paragraphs up is the same string but is
+correctly labelled as the first cut — that one is honest; this one was not.) C2 additionally pins that the notice still REACHES the operator on stderr, which is the one case that
+sees it. Registered in
+`tests/full-project-test-suite.sh` and the `tests.yml` unit lane
+(`scripts/lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
+
+**Residual, open — and it is WORSE than this entry first recorded.** `prompt_choice` has the same `?`
+gap in a milder form: a `?` there is not accepted as an answer (it fails the numeric range test and the
+loop re-asks), but the operator is told "Invalid choice. Enter a number between 1 and N" rather than
+that there are no suggestions. No data is corrupted, so it is not fixed here.
+
+That same loop carries `## BUG-010:` **defect (2)**, which this entry did not know about when it was
+written: the prompt has **no EOF guard**, so `read` returning non-zero is treated as a wrong answer
+rather than the end of input. The maintainer measured **19,819,553 bytes of "Invalid choice. Enter a
+number between 1 and 2." in under two minutes, still running when killed.** His prescribed shape is
+`scripts/lib/adopt/adopt-core.sh`'s `adopt_read_optional` / `ADOPT_MANDATORY_REFUSAL` path, which
+treats EOF as an unanswered mandatory question and stops.
+
+**AND THAT DEFECT IS NOT ONLY IN `prompt_choice` — THIS WIDENS BUG-010 BEYOND WHAT IT RECORDS.** An
+earlier cut of this residual said "both live in `prompt_choice`". That is wrong, and wrong in the
+direction that matters: the second instance is in `prompt_with_suggestions`, the very function this
+entry holds up as the correct `?` idiom. Read from source on this branch — `while true`, then
+`read -rp … result` whose **exit status is never checked**, then `[ -z "$result" ] && [ -n "$default" ]`,
+then `[ -n "$result" ]`, then `echo "  Please enter a value or type ? for suggestions." >&2` and
+around again. **With NO DEFAULT, EOF leaves `result` empty and BOTH exit arms fail**: the first needs a
+default, the second needs a non-empty answer. Nothing else can stop it. With a default it terminates
+via the default arm, which is why the trigger is the no-default call specifically. BUG-010 locates
+this defect only in `prompt_choice`; it belongs in both.
+
+**Evidence, stated at the strength it has.** The SOURCE reading above is direct and is what this claim
+rests on. A dynamic reproduction here was inconclusive and is reported as such rather than dressed up:
+a bounded probe driving the function from a sourced harness at EOF produced no loop — but the SAME
+harness also produced no loop for `prompt_choice`, the case the maintainer measured at 19.8 MB, and
+reported `errexit` OFF inside it. A harness that cannot reproduce a known-true case cannot be used to
+confirm or refute a second one, so it is recorded as not-reproduced-here and nothing more.
+
+**The uncomfortable corollary, and it belongs in the same breath.** The loop this fix ADDS to
+`prompt_input` is safe by ACCIDENT OF ITS PREDICATE, not by a guard. `prompt_choice` hangs because its
+exit condition demands a VALID answer and EOF yields empty, which is invalid. `prompt_input` exits
+because its condition is "anything that is not `?`", and empty is not `?`. So this entry adopted a
+loop shape the maintainer had already filed as defective, and got away with it on the shape of the
+test rather than on an EOF check. It cannot hang — C0/C1/C3 and the python3-absent run all terminate,
+and the suite would not complete otherwise — but **if `prompt_choice` is reworked to his prescribed
+`adopt_read_optional` shape, this loop should be revisited in the same pass** rather than left as the
+one that happened not to need it.
+
+**Related:** `## BUG-010:` (its defect (2) is the EOF hang in the same `prompt_choice` loop this
+residual names; its defect (3) is the jq reserved word fixed on the BL-265 branch). BL-265 and BL-266,
+filed separately in this batch, are the same wizard on the same downstream session.
+
+*(BL-265 and BL-266 are named without `## …:` citations on purpose: each lands on its own branch, so
+on a branch carrying only this entry those citations would resolve to nothing.)*
+
+---
+
+## BL-270: a project adopted before the mode-vocabulary fix carries a `mode` no reader understands, and nothing shipped could repair it
+
+**Status:** Open — fix + suite committed on branch `fix/bl270` at `836312e`. Not pushed, no PR.
+
+**Logged:** 2026-09-12. Depends on `## BL-268:`, which fixes the birth path and the readers; this is
+the migration for projects already on disk.
+
+**The gap.** BL-268 has two arms: adoption now writes `org` instead of `organizational`, and all
+three host drivers refuse a mode they do not know. Neither touches an existing project, and together
+they make an existing organizational adoptee STRICTLY WORSE:
+
+```
+before BL-268   host_verify_protection main organizational  -> rc 0, silent   (false pass)
+arms 1+2 only   host_verify_protection main organizational  -> rc 1, refused  (permanent)
+```
+
+**And there was no supported way out, measured rather than assumed.** Adoption cannot be re-run:
+`_adopt_preflight_adopted` (`scripts/lib/adopt/adopt-state.sh:231`, `# BL-242-PREFLIGHT-ARM1`)
+refuses on two witnesses — "this project has already been adopted — the manifest records it". And
+re-running the writer would falsify the record even if it were reachable: the same pass moves
+`adoptedAtCommit` to the current tip, which `scripts/lib/adoption-stamp.sh:218` documents as a known
+hazard in its own words. `upgrade-project.sh` handles `deployment`, which was already correct;
+`reconfigure-project.sh` says in its own `--help` that the deployment axis is not its to touch; and
+the manifest is config-guard protected, so hand-editing is refused by design.
+
+**Fix — one migration entry in `_run_idempotent_backfill`** (`scripts/upgrade-project.sh`),
+`# BL-270-MODE-VOCABULARY-BACKFILL`, beside the host backfill and the BL-030 fields backfill. No new
+flag: `--backfill-only` is already the operator entry point. No new helper, and no second
+derivation — it applies the same `organizational -> org` translation adoption now uses.
+
+**Why HERE and not on `reconfigure-project.sh`.** An earlier attempt put this on
+`reconfigure-project.sh --field mode` and it was wrong: every field that script supports is an
+OPERATOR CHOICE, and it states in its own `--help` that the deployment axis belongs to
+`upgrade-project.sh`. `_run_idempotent_backfill`'s own header is this case word for word — entries
+that "migrate pre-existing projects to the current schema without requiring the operator to also pick
+a track / deployment / POC transition" — and it already derives `.deployment` and `.poc_mode` from
+`phase-state.json`, which is the same derive-from-another-record shape a `mode` repair needs.
+
+**THE NATIVENESS CITATIONS, ON `main`, WHICH AN EARLIER CUT DID NOT MAKE.** That cut argued
+nativeness from adoption's writer — unverifiable on this branch, and the weaker argument anyway. Two
+lines on `main` settle it:
+
+- **`init.sh:4733-4735`** is the identical translation, in the file that births every project:
+  ```
+  # Map DEPLOYMENT "organizational" → "org" for consistency with spec
+  _RESOLVED_MODE="$DEPLOYMENT"
+  [ "$_RESOLVED_MODE" = "organizational" ] && _RESOLVED_MODE="org"
+  ```
+  Same field, same shape, same direction. This block applies the mapping the scaffolding path has
+  always applied; it invents nothing.
+- **`upgrade-project.sh:494`**, inside this very function (`_run_idempotent_backfill` opens at
+  `:488`), is a PRESENT-AND-WRONG-SHAPE predicate:
+  `if [ -d templates/pipelines/ci ] && [ ! -d templates/pipelines/ci/github ] && ls templates/pipelines/ci/*.yml …`
+  The directory EXISTS; the migration fires because its LAYOUT is wrong. That is structurally the same
+  guard as this block's "present, but outside the vocabulary", and it is the precedent that settles
+  the predicate question outright rather than arguing it.
+
+**THE PREDICATE DIFFERS FROM THE TWO MANIFEST-FIELD SIBLINGS, AND IT IS SAID OUT LOUD.** The host
+block and the BL-030 block guard on the field being ABSENT; this one guards on it being PRESENT AND
+INVALID, because the defect WROTE a value rather than omitting one. **That is not a departure from
+the function's contract, and the first draft of this paragraph overstated it.** Counted: of the five
+blocks in `_run_idempotent_backfill`, only those two key on absence — the BL-174 gitignore block
+appends to an existing file, the vendored-skills sync overwrites existing `SKILL.md` files, and the
+BL-088 block `cp`s over existing scripts. The shared contract is the migration, not the predicate.
+
+**The contradiction refusal.** When `manifest.json` and `phase-state.json` disagree about
+`deployment` there is no correct mode to derive, and guessing writes a value that matches one record
+while contradicting the other — the shape of the defect being repaired. The block warns naming both
+and leaves `mode` alone. It does not abort: a backfill never fails the upgrade, which is the posture
+of every block in that function.
+
+**No audit row, deliberately.** The BL-030 sibling writes one because it also installs the filesystem
+gate and changes enforcement posture. The closer sibling — the host backfill — writes none, and this
+changes one derived field. `soif_append_approval_row` stays dead.
+
+**Dependencies:** `jq` only, as its neighbours. `python3` is already a hard dependency of
+`upgrade-project.sh` and is recorded as followup **F-012**; this block adds nothing to it.
+
+**Build note (2026-09-12, branch `fix/bl270`).** Suite
+`tests/test-bl270-mode-vocabulary-backfill.sh` extracts the REAL `_run_idempotent_backfill` from the
+shipped file and drives it against hermetic fixture projects — nothing re-implemented — then feeds the
+repaired value to the REAL `host_verify_protection` behind a stub `gh`. The extraction is ASSERTED
+(found, non-empty, parses) before any case runs, because every case below would otherwise pass against
+an empty shell. Declared tool dependencies: `jq` and `git`, both hard failures at startup.
+
+RED at `ceb450e`: **6 passed / 8 failed**, identical on both platforms. The six passes are controls —
+B0 (reachability: the function runs to completion on a project needing no repair, so a red below is
+not a broken fixture), B2, B3, B4, V0 and V2. GREEN **14 / 0** on macOS `/bin/bash` 3.2.57 and on
+bash 5.2.21 / jq 1.7 in `ubuntu:24.04` with `--network none`.
+
+Three mutants, each asserting the mutation landed (the mutated text absent, an exact changed-line
+count, and the extracted function still parsing) before any verdict: **MP1** drops the empty-string
+arm so the block claims an ABSENT `mode` — input that belongs to the sibling backfills — and B4 is
+what stops it; **MP2** removes the contradiction refusal; **MP3** is the plausible wrong fix, letting
+the derivation reach `deployment` too, where B1 still passes and only B2 sees it.
+
+**Two honesty notes on the cases.** **V2 passes at base as well**, for a different reason (the
+unvalidated driver accepts anything and the shared rules pass); its value is inside the GREEN run,
+where it shows V1 is the org rules firing rather than a blanket failure. And there is **no case for
+the drivers refusing the stranded value** — that is BL-268's second arm on a different branch, and
+asserting it here would make this suite fail on its own branch and pass only once the other landed.
+
+**Verified against this project's real manifest**, not only fixtures — a copy of a 21-key adopted
+manifest carrying `mode: "organizational"`:
+
+```
+BEFORE: {"mode":"organizational","deployment":"organizational"}   top-level keys: 21
+  [OK] mode repaired: organizational -> org (derived from deployment=organizational)
+AFTER:  {"mode":"org","deployment":"organizational"}              top-level keys: 21
+adoption.adoptedAtCommit unchanged: 72ecc8e2…   valid JSON: yes   re-run diff: 0 lines
+```
+
+The unchanged `adoptedAtCommit` is the point: this repairs the field WITHOUT touching the adoption
+provenance, which is exactly what re-running the writer could not do.
+
+**The command a stranded project runs**, from its root:
+
+```
+bash scripts/upgrade-project.sh --backfill-only
+```
+
+**Numbering.** BL-284 and BL-261 are reserved, not free, and this was checked rather than assumed:
+BL-284-CONTEXT-STATE and BL-284-PLUGIN-VERB in `scripts/verify-install.sh`, and
+BL-261-INTEGRATION-BRANCH in `scripts/pre-commit-gate.sh`, all three in committed code in a DOWNSTREAM
+project, plus two committed audit rows naming BL-261. <!-- lint-bl-markers: allow the three tokens are deliberately written bare; they are markers in a downstream project, not in this code surface, and backticking them would assert they resolve here --> 262-268 are taken by this batch and 269
+is held for the `scripts/validate.sh` phase-inference defect, so this is 270.
+
+**TWO CORRECTIONS TO THIS ENTRY AND THE CODE COMMENT, BOTH AGAINST US.**
+
+**The stated placement dependency does not exist.** The block sits after the BL-030 backfill, and both
+this entry and the in-code comment justify that by saying it "derives from `deployment`, and that
+block is what guarantees `deployment` is present". Neither half holds. The block reads
+`phase-state.json` itself and falls back to it, so moving it ABOVE BL-030 produces identical results —
+measured by the reviewer. And BL-030 only runs when `enforcement_level` is absent-or-empty, so it
+guarantees nothing in the general case. The ordering is harmless but the REASON given for it is wrong,
+and a reader who relies on that sentence will draw a false conclusion about the block's dependencies.
+**FIXED in the code comment too**, which now states the ordering is conventional rather than
+dependent, and names the hazard the order actually creates.
+
+**Where the order DOES matter, the block consumes a neighbour's guess under an `[OK]`.** On a
+`phase-state.json` with no `.deployment`, BL-030 prints `assuming 'personal' for backfill` and writes
+it — a warned GUESS. This block then reads that value back as fact and reports
+`[OK] mode repaired: organizational -> personal`. An organizational adoptee is silently converted to
+personal, which is the same class of outcome this entry exists to prevent. The block refuses to derive
+from a manifest/phase-state DISAGREEMENT but happily derives from an invented value, and it announces
+the result as a repair. **FIXED.** `phase-state.json` is now treated as the authority for
+`deployment`: when it records none, the block REFUSES rather than deriving, and carries BL-030's own
+`--deployment organizational` remedy into its warning. It refuses a DISAGREEMENT, so it must refuse an
+INVENTION too. **Case B7** pins it, verified non-vacuous by removing the guard on a mirror — without
+it the block prints `[OK] mode repaired: organizational -> org` off a guessed value.
+
+**Related:** `## BL-268:` (the defect this migrates; read its observation section first),
+`## BL-242:` (`# BL-242-PREFLIGHT-ARM1`, the refusal that closes the re-adoption route),
+`## BL-030:` (the sibling manifest backfill this sits beside), `## BL-221:` (the same "the two birth
+paths must produce the same manifest shape" argument).
+
+---
+
+## BL-268: adoption writes the `deployment` vocabulary into the `mode` field, and `host_verify_protection` — the one function that reads it — validates nothing, so an adopted ORGANIZATIONAL project is measured against the personal branch-protection bar and told it passed
+
+**Status:** Open — fix + suite committed on branch `fix/bl268` at `4ae2d3a`. Not pushed, no PR.
+
+**Logged:** 2026-09-12, found by reading the two birth paths against each other.
+
+**The defect is a join of two halves, and either alone is survivable.**
+
+**Half one — the write.** The framework manifest carries two tier fields with DIFFERENT vocabularies:
+`deployment` is `personal|organizational`, `mode` is `personal|org`. `init.sh` keeps them apart at its
+own write site:
+
+```
+  # Map DEPLOYMENT "organizational" → "org" for consistency with spec
+  _RESOLVED_MODE="$DEPLOYMENT"
+  [ "$_RESOLVED_MODE" = "organizational" ] && _RESOLVED_MODE="org"
+  …
+  '. + {host:$h, mode:$m, remote_url:"", deployment:$dep, …}'      # $m=_RESOLVED_MODE, $dep=DEPLOYMENT
+```
+
+`adopt_write_manifest` in `scripts/lib/adopt/adopt-state.sh` did `mode="$ADOPT_DEPLOYMENT"` and then
+fed that ONE value to BOTH fields (`--arg m "$mode" --arg d "$mode"`). `ADOPT_DEPLOYMENT` is set from
+the audience question and is `organizational` or `personal`, so every organizational adoptee was born
+carrying `mode: "organizational"` — a word no reader of `mode` knows. A SCAFFOLDED project has never
+carried it.
+
+**Half two — the read.** All four readers of `.mode` do the same thing with it:
+
+```
+scripts/check-gate.sh:141        mode=$(jq -r '.mode // "personal"' … ) ; host_verify_protection "main" "$mode"
+scripts/check-gate.sh:418        (same)
+scripts/check-phase-gate.sh:1968 (same)
+scripts/process-checklist.sh:1619 (same)
+```
+
+`host_verify_protection` gates its org-only assertions on the literal string `"org"`:
+
+```
+  if [ "$mode" = "org" ]; then
+    val=$(echo "$resp" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0')
+    …
+    val=$(echo "$resp" | jq -r '.required_status_checks // empty')
+```
+
+and it had **no validation of `mode` at all** — unlike its sibling `host_configure_protection`, which
+has refused an unknown mode since it was written (`host_configure_protection: mode must be 'personal'
+or 'org', got '$mode'`). So `"organizational"` fell through every org-only rule and the function
+**returned 0** having run only the two shared checks.
+
+**The join, measured.** Against a protection response that satisfies the personal tier and fails the
+org tier (force-push off, admins enforced, `required_approving_review_count: 0`, no status checks):
+
+```
+mode=org             → rc 1, "required_approving_review_count is 0 (org mode requires at least 1)"
+mode=personal        → rc 0
+mode=organizational  → rc 0, nothing on stderr          # what an adopted org project carried
+```
+
+An adopted organizational project asks to be held to the org bar, is measured against the personal
+bar, and is told it passed. On GitHub that silently skips the required approving review and the
+required status check. The same gate exists in the GitLab driver (push-access-level, approvals,
+pipeline success) and the Bitbucket driver (push restriction, approvals, passing builds), and neither
+validated either.
+
+**And the banner would have lied about which tier it ran.** The failure text interpolates `$mode`:
+`printf "github driver: protection verification failed for %s#%s (%s mode):"`. Any unknown mode that
+DID produce a failure would print "(organizational mode)" over personal-tier results. **That path IS
+reachable at base and was measured** — the unknown mode returns 0 only when the SHARED rules also
+pass. Leave force-push enabled on the same fixture and base prints, verbatim:
+
+```
+github driver: protection verification failed for acme/api#main (organizational mode):
+  - main branch allows force-push (should be disabled)
+```
+
+A banner naming a tier it never verified, over a list containing only personal-tier findings. Case H6
+pins it; H5 is its control.
+
+**Fix — `# BL-268-MODE-VOCABULARY`, both halves, four files.**
+1. `adopt-state.sh` mirrors init.sh's translation for `mode`, and `deployment` is sourced from
+   `ADOPT_DEPLOYMENT` directly so it keeps its own vocabulary. Fixing the write alone was not enough:
+   it leaves the reader still willing to accept any word.
+2. `host_verify_protection` in all three drivers refuses an unknown mode by name, **before** the
+   origin parse and the API call, matching `host_configure_protection`'s existing contract. Fixing the
+   read alone was not enough either: it would turn the adopted project's gate from a silent pass into
+   a hard failure with no way to fix the manifest.
+
+**THE FIX ENFORCES A CONTRACT THE FILE ALREADY STATED, AND CANNOT BLOCK A SCAFFOLDED PROJECT.** Two
+facts from `main`, neither claimed by an earlier cut of this entry and both stronger than the
+argument it did make:
+- `scripts/host-drivers/github.sh` documents the vocabulary in its own function headers — `# mode:
+  "personal" | "org"` at **`:112`** above `host_configure_protection` and again at **`:166`** above
+  `host_verify_protection`. The contract was written down twice and enforced once; this fix enforces
+  what the file already said rather than introducing a new rule.
+- `init.sh:2489` is `local mode="$_RESOLVED_MODE"`, and `_RESOLVED_MODE` is the translated value. So
+  `init.sh` has NEVER written `organizational` into `.mode`, and the new refusal therefore cannot
+  newly block any SCAFFOLDED project — only an adopted one, which is the population this entry is
+  about.
+
+**The trap in the obvious fix.** The two manifest fields share ONE local in that function. Translating
+`$mode` without re-sourcing `deployment` corrupts `deployment` instead — `"org"` where every reader
+expects `"organizational"`, including `assert_choosable`'s tier ladder. Case A2 is the case for that;
+mutant MP3 is the proof it is load-bearing.
+
+**Build note (2026-09-12, branch `fix/bl268`).** Suite `tests/test-bl268-mode-vocabulary.sh` drives
+the REAL `adopt_write_manifest` — sourced out of the framework's own lib set exactly as
+`scripts/adopt-project.sh` sources it, in a subshell so the driver's write ledger and the stamp's
+refuse-a-second-stamp guard cannot leak between cases — against hermetic tmpdir projects. It drives
+the REAL `host_verify_protection` out of all three driver files against hermetic git repos with stub
+`gh` / `glab` / `curl` on PATH: no network, no live host, no reimplementation of anything under test.
+Case E1 chains the two halves — the `mode` value adoption actually wrote is handed to the verifier
+that consumes it, which is the join the defect lives in.
+
+What the suite covers:
+- **Both manifest write branches.** `adopt_write_manifest` has two: `adopt_jq_edit` when
+  `.claude/manifest.json` already exists, and `jq -n` when it does not. Cases A3/A4/A5 drive the edit
+  branch from a pre-existing manifest, and
+  A6 is the control that proves it WAS the edit branch — the adoptee's own key and `remote_url`
+  survive the write. MP2 and MP3 mutate the two `--arg d` sites SEPARATELY, so each branch is shown to
+  be independently covered; a single mutant over both would not distinguish them.
+- **All three drivers, hermetically, with per-driver controls.** Stub `gh`, `glab` and `curl` on PATH
+  and a git repo with a host-appropriate origin, tuned so `personal` PASSES and `org` FAILS naming an
+  org-only rule. That pair (H1/H2) is what makes H3 mean anything: it proves the fixture reaches the
+  org-only block, so `organizational` returning 0 is the personal subset being run rather than a
+  fixture that never got that far. Nothing here shells out to a real host CLI, so the suite cannot
+  red on a missing `glab` or reach the network.
+- **Six mutants**, including one per driver: MP4/MP5/MP6 excise each driver's gate
+  and require `organizational` to come back rc 0 AND SILENT — indistinguishable from `personal` —
+  while `org` still fails, which is the defect stated exactly rather than approximately.
+
+RED at `ceb450e` (fix stashed): **13 passed / 20 failed** — and HALF THAT RED IS STRUCTURAL, which a
+later reader should not over-count as discrimination. Ten of the twenty are SETUP reds that say only
+that the fix is absent: four `M0` marker cases, and `MP1`-`MP6` failing at setup because the lines
+they mutate do not exist at base. The ten that actually OBSERVE the defect are A1, A4, H3+H4 on each
+of the three drivers, H6 and E1. The thirteen passes are controls and they
+are the reason the red is trustworthy: A0/A3 (personal round-trips through both write branches), A2/A5
+(the `deployment` half, which base gets right), A6 (the edit branch really ran), A7 (init.sh still
+carries `_RESOLVED_MODE="org"`), H1/H2 on all three drivers, and H5. The discriminators all red for
+the right reason and the failure text says so — `mode=organizational returned 0 — the org-only
+assertions were skipped and the project was told it passed` on each driver, `.mode is
+[organizational], want [org]` on both write branches, and E1 `an adopted ORGANIZATIONAL project's mode
+[organizational] verified CLEAN against the github driver`. No case reds for a reason other than the
+defect.
+
+GREEN **33 / 0** on macOS `/bin/bash` 3.2.57, verified three ways — stdin a terminal, stdin
+`/dev/null`, and stdin an OPEN PIPE. The third is not ceremony. A first cut of the `curl` stub copied
+`tests/host-drivers/mock-cli.sh`'s stdin drain (`[ -t 0 ] || cat >/dev/null`), which that harness needs
+because its stubs also serve call sites that pipe a body. The only path this suite reaches,
+`_bb_curl_no_body`, pipes nothing — so the drain read the HARNESS's stdin and, under a runner whose
+stdin is an open pipe rather than a terminal, **blocked for ever**. Measured: three stuck processes on
+a backgrounded run, and it would have HUNG a CI lane rather than failed it. The stub no longer reads
+stdin at all and both subshells take `< /dev/null`. Every mutant asserts it landed (`bash -n`, an
+exact occurrence count for the mutated and original spellings, and a changed-line floor) before any
+verdict is read, and a mutation that cannot be applied fails loudly as a `setup` case.
+
+**No regression from the fix, measured rather than assumed.** `tests/host-drivers/run-all.sh` exits 1
+on this host — `e2e-init` 2/3, `e2e-init-bitbucket` 2/3 and `e2e-init-gitlab` **2/5**, each measured
+individually rather than assumed uniform (an earlier cut of this line said "3 failed each"). That is
+PRE-EXISTING and not this fix: the whole log contains the string `mode must be` **zero** times, the
+failing cases carry `mode=personal` and `mode=org` (both accepted by the new gate), and
+`e2e-init.test.sh` run against a copy of this tree with the four fixed files reverted to `HEAD`
+produces the identical 2/3 with identical failure text on T1, T2 and T5. `dispatcher`, `github`,
+`gitlab`, `bitbucket`, `regressions`, `error-translate` and the mock-cli self-test all pass on both.
+
+**AN OBSERVATION ABOUT PROJECTS ALREADY ADOPTED, AND DELIBERATELY NO TOOLING FOR IT.**
+This fix is the birth path. A project adopted BEFORE it carries `mode: "organizational"` on disk, and
+after the driver half lands its gate stops returning a false pass and starts refusing by name — the
+safe direction, but a change those projects will notice. Two measurements bound the situation:
+
+- **Re-running the writer would repair the field.** `adopt_write_manifest`'s `adopt_jq_edit` branch
+  assigns `.mode` unconditionally, so a second pass rewrites `organizational` to `org` (measured on a
+  fixture in exactly that shape). It also rewrites the `.adoption` block — `adoptedAtCommit` moves to
+  the current tip and `adoptedAt` to now, which is the hazard `scripts/lib/adoption-stamp.sh:218`
+  documents in its own words.
+- **Adoption cannot be re-run anyway, by design.** `_adopt_preflight_adopted`
+  (`scripts/lib/adopt/adopt-state.sh:231`, `# BL-242-PREFLIGHT-ARM1`) refuses on two witnesses:
+  "this project has already been adopted — the manifest records it … Adoption is a one-time act."
+
+**Where such a thing would belong, if it is ever built.** Not on
+`scripts/reconfigure-project.sh`: every field that script supports is an OPERATOR CHOICE, and it says
+in its own `--help` that the deployment axis is not its to touch. The harness's existing mechanism for
+correcting a manifest field on an EXISTING project without a tier change is
+`scripts/upgrade-project.sh --backfill-only`, whose `_run_idempotent_backfill` already repairs
+`.host`, `.enforcement_level`, `.deployment` and `.poc_mode` — the last three DERIVED from
+`phase-state.json`, which is the same shape a `mode` repair would need. Recorded as a fact about the
+harness's own layout, not as a proposal.
+
+**No tooling is proposed, and that is the decision rather than an omission.** Almost everyone who
+adopts will adopt a repo that already carries this fix, so the birth path IS the product. "The fix
+landed halfway through my adoption" describes only the projects adopted in the window before it
+shipped. For those few the answer is a deliberate, one-off data correction of the recorded value,
+taken with the knowledge of what it is for — not a new route through the tooling for a population that
+stops growing the moment this lands.
+
+
+**Residuals, open.**
+1. **OPEN — a project adopted before this fix has no supported route back.** Re-running adoption is
+   refused at the only entrypoint: `_adopt_preflight_adopted`
+   (`scripts/lib/adopt/adopt-state.sh:231`, `# BL-242-PREFLIGHT-ARM1`) rejects on two witnesses —
+   "this project has already been adopted — the manifest records it". And re-running the writer
+   would falsify the record even if it were reachable: the same pass moves `adoptedAtCommit` to the
+   current tip, which `scripts/lib/adoption-stamp.sh:218` documents as a known hazard in its own
+   words. Both measured. No tooling is proposed here, per the observation above — the birth path is
+   the fix, and this shape describes only projects adopted before it landed.
+2. **Bitbucket's `host_configure_protection` still has no mode validation.** This fix does not create
+   that asymmetry — bitbucket was ALREADY the outlier on main, the only driver with no `case "$mode"`
+   anywhere in it. Counted on `main`: `grep -c 'mode must be'` gives github 1, gitlab 1, bitbucket 0,
+   so four mode entry points accepted an unvalidated value (three `verify`s plus bitbucket's
+   `configure`). This fix takes that from **four to one**.
+
+   **An earlier cut of this residual said the survivor "is on a path adoption never calls". That is
+   false.** `scripts/check-gate.sh`'s `cmd_repair()` (`:192`) reads the exact field adoption corrupts
+   — `:418` is `jq -r '.mode // "personal"'` over the manifest — and hands it to
+   `host_configure_protection` at `:466`. Adoption does not call it; the OPERATOR does, one command
+   later.
+
+   **The ruling stands anyway, on a better argument: this fix strictly IMPROVES that path.** Before
+   it, on a corrupted project, `--repair` wrote the weak personal-tier restrictions, returned 0,
+   recorded the step, and `verify` then silently certified the result. After it the write is
+   byte-identical and `verify` REFUSES. Same weak write, false certificate removed — so closing
+   `configure` as well would be scope creep on a path this change already makes safer.
+
+   **The LATCH is the strongest argument for eventually closing it, and it is recorded here rather
+   than left to be discovered.** Because bitbucket's `configure` returns 0,
+   `_record_phase2_step "branch_protection_configured"` fires at `:359`; the `_step_done` guard at
+   `:462` then makes every later `--repair` print "Skipping configure — already recorded" and never
+   re-configure. The project is left with personal-tier restrictions, a RECORDED CLAIM that protection
+   was configured, and a verify failure whose remedy text points at the host UI — the wrong place. On
+   github and gitlab this is unreachable: `configure` refuses, and `cmd_repair` dies before any write
+   or any recording.
+3. **The `other` host's fallback `host_verify_protection` in `scripts/lib/host.sh` ignores `mode`
+   entirely** — it is attestation-based and has no tier distinction, so an org project on an unmanaged
+   host gets the personal bar by design. That is a design question, not a vocabulary bug.
+
+**THE PATTERN THIS BELONGS TO, AND IT IS BIGGER THAN THIS ENTRY.** The harness reasons about a project
+as if it were born under the harness. `## BL-265:` assumes the intake file is the harness's to render;
+this entry assumes the manifest was written by `init.sh`; and the phase-inference warning in
+`scripts/validate.sh` — filed separately — assumes the Phase 2 and Phase 4 artifacts appear only as
+those phases complete, which is true of a scaffolded project and false of an adopted one that has
+carried a CHANGELOG and release notes for months. Adoption breaks that assumption in three places, and
+in each one the failure is silent or actively misleading rather than loud. The repair question is the
+same in all three: what does this look like for a project the harness did not create?
+
+**Related:** `## BL-221:` (the same function, the same "the two birth paths must produce the same
+manifest shape" argument — this is one more field it did not cover), `## BL-253:` (adoption stamping a
+value no reader understands, `poc_mode: "production"`), `## BL-002:` (the free-tier attestation escape
+that makes a verification result load-bearing).
+
+---
+
+## BL-281: `intake-wizard.sh --resume` after a CLEAN finish of Section 11.5 runs nothing, prints "Intake Complete!", and never runs Sections 12 and 13 — the resume point is `115 + 1`
+
+**Status:** Open — fix + suite built on branch `fix/bl281`, not yet checked in, not pushed, no PR. The
+operator verifies and submits.
+
+**Logged:** 2026-09-14, from a downstream adoption's intake: the operator finished Section 11.5 cleanly,
+came back with `--resume`, and the wizard printed the completion banner with Section 13 — the Agent
+Initialization Prompt, the thing `scripts/resume.sh` is later told to print — never generated. The
+banner's own closing line, *"it prints your project's own Section 13 initialization prompt"*, names
+the artefact the run just skipped.
+
+**Numbering, swept rather than assumed.** BL-280 is the highest number on any ref. Swept all 56 refs
+under `refs/heads` and `refs/remotes` with `git grep -q -w "BL-NNN" <ref>` for BL-281, BL-282 and
+BL-283: zero hits on every ref. Positive control BL-280 hit on `heads/fix/bl280` and
+`remotes/fork/fix/bl280`, so the sweep discriminates. (A first pass with `-E 'BL-NNN\b'` returned
+zero for the control too — `\b` is not a `git grep -E` atom — and was discarded; the `-w` pass is the
+one recorded here.) BL-282 and BL-283 are filed in the same batch on sibling branches.
+
+**Mechanism — the runner's list is not monotonic and the resume point is arithmetic on an id.**
+`run_script_mode` in `scripts/intake-wizard.sh` walks `1 2 3 4 5 6 7 8 9 10 11 115 12 13`, where
+`115` encodes Section 11.5 as an integer so it can pass through `save_section` and
+`is_section_complete` (the comment at the `save_section 115` call site says so, and says `115` "sits
+between 11 and 12 which preserves 'what's next' arithmetic in resume logic" — it does not). The
+runner skipped with `[ "$section" -lt "$start_section" ]`, and both resume paths — the `--resume`
+flag and the interactive "Resume or start over?" menu — passed `$((LAST_SECTION + 1))`. After
+`save_section 115` writes `last_section: 115`, that is **116**. Every id in the list is below 116,
+so the loop skipped all fourteen, `render_intake_file` ran, and the banner printed at exit 0.
+
+**Measured, against `main` (`ceb450e`), in a throwaway copy of the wizard and its helpers with a
+progress file recording `last_section: 115` and `completed_sections: [1..11, 115]`,
+`SOIF_NONINTERACTIVE=1`, stdin from `/dev/null`:**
+
+    $ SOIF_NONINTERACTIVE=1 bash scripts/intake-wizard.sh --resume </dev/null
+    [INFO] Sections completed: 1 2 3 4 5 6 7 8 9 10 11 115
+    [INFO] Resuming from Section 116
+    …
+    ║              Intake Complete!                           ║
+      [OK] Done — your answers are recorded in the appendix at the end of PROJECT_INTAKE.md.
+        3. Paste the first message printed by:  bash scripts/resume.sh
+           (it prints your project's own Section 13 initialization prompt)
+    exit=0
+    last_section = 115
+    completed_sections = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 115]
+
+No `[STEP] Section 12`, no `[STEP] Section 13`, no `saved` line, the record unchanged, rc 0. The
+`jq: error: syntax error, unexpected label` line in the same transcript is `render_intake_file`'s
+reserved-keyword defect recorded under `## BUG-010:` in `solo-orchestrator-bugs.md`; it fires on every
+run here and is unrelated.
+
+**`## BL-266:` (PR #390) does not reach this, and says so.** That branch — a SIBLING not yet merged,
+so the citation resolves only once `fix/bl266` lands — stops the PAUSE path from filing an unfinished
+section as complete. Its own entry records this case as a residual in as many words: *"the same `115`
+arithmetic bites without any pause … a run interrupted between section 115 and section 12 by ANYTHING
+other than `pause` … resumes at `start_section` 116 and skips sections 12 and 13 in silence. This fix
+does not reach that path."* And the case is wider than "interrupted": a **clean** finish of 11.5 with
+nothing interrupting it — the ordinary path — writes 115 and the next `--resume` does the same. This
+entry is the durable repair that entry asked for.
+
+**Fix, on `fix/bl281`.** Four markers, one list:
+- `# BL-281-SECTION-ORDER` — `INTAKE_SECTION_ORDER=(1 … 11 115 12 13)` defined ONCE at file scope,
+  replacing the `local sections=(…)` inside the runner. The literal `115` still has exactly two
+  homes (the `save_section 115` call site and this list); `save_section` still knows nothing about
+  order, which is the boundary `## BL-266:`'s review insisted on.
+- `# BL-281-NEXT-SECTION` — `next_section_after <last>` returns the element AFTER `<last>` by
+  position: `0 → 1`, `11 → 115`, `115 → 12`, `13 → ""` (nothing left). An id not in the list yields the
+  first element; `is_section_complete` re-skips whatever is already recorded, so starting from the
+  top loses nothing.
+- `# BL-281-POSITION-SKIP` — the runner skips until it REACHES the start id, then runs everything
+  after it (still honouring `is_section_complete`). No `-lt`.
+- `# BL-281-RESUME-POINT` — `--resume` and the interactive menu both call `next_section_after`; the
+  menu label reads "Resume from Section 12" rather than "Resume from Section 116", and when nothing
+  is left it says so instead of naming a section that does not exist.
+
+Verified on the same fixture: `Resuming from Section 12`, `[STEP] Section 12`, `[STEP] Section 13`,
+`last_section = 13`, `completed_sections = [1, …, 11, 12, 13, 115]`, banner AFTER Section 13, rc 0. A
+fully complete record (`last_section: 13`) resumes straight to the banner with nothing re-run and no
+`integer expression expected` leak from the now-possibly-empty start id.
+
+**Two shapes considered and not taken.**
+1. **Always start at position 0 and let `is_section_complete` do all the skipping.** Smallest diff,
+   and correct for the record — but the resume point is also what the operator is SHOWN
+   ("Resuming from Section N", the menu label), so it has to be derived somewhere; deriving it once
+   in `next_section_after` and using it for both the skip and the message keeps one truth.
+2. **Give 11.5 a monotonic id** (string `"11.5"`, or renumber). `save_section` casts with `int()`
+   and sorts `completed_sections` as integers; every downstream project's progress file already
+   carries `115`; sixteen `save_section` call sites and `## BL-266:`'s fixtures are written against
+   it. A migration for a comparison bug is the wrong size.
+
+**Suite: `tests/test-bl281-resume-after-115.sh`**, every case driving the REAL wizard through
+`--resume` from a pipe against a copy of the wizard in a fixture project (`--resume` is dispatched
+before the non-TTY refusal, as `## BL-266:`'s E1 established). Run with `</dev/null`.
+- **RED at `ceb450e`: 3 passed / 16 failed, exit 1.** The three passes are honest controls — C1
+  (`last_section 3` resumes at Section 4), C2 (`11` resumes at 11.5 — 115 is never below 12, so base
+  passes), C3 (a fully complete record resumes to the banner, rc 0). The discriminators name the
+  damage: `R1 — Section 12 never ran: [INFO] Resuming from Section 116`; `R3 — completed_sections=[1,
+  …, 11, 115] last_section=115`; the six U cases report `next_section_after` `<<MISSING>>`.
+- **GREEN on `fix/bl281`: 19 passed / 0 failed, exit 0**, on macOS `/bin/bash` 3.2.57 and under
+  `/usr/bin/env bash`, and **19 / 0, exit 0** under bash 5.2 in `ubuntu:24.04` as the non-root user
+  the CLAUDE.md recipe creates (`docker run … ubuntu:24.04`, `python3` added to its apt line).
+- **Two mutants on a mirror, each asserting it LANDED** (syntax still parses, changed-line count,
+  the mutated text present) before reading a verdict. **MP1 is the plausible wrong fix**: keep the
+  position skip but derive the resume point as `last + 1` again — `next_section_after 115` then
+  answers 116, no element matches, and the run is base's by another route: `MP1 (MUTATION) — with
+  the resume point back to last+1 (=[116]) Section 12 never runs again: R1 is what stops it`. **MP2**
+  deletes `reached=1`: the start section runs (it matches) and every later one is skipped: `MP2
+  (MUTATION) — without reached=1 Section 12 runs but Section 13 is skipped: R2 is what stops it`.
+- Registered in `tests/full-project-test-suite.sh` and the `tests.yml` unit-lane array (one line
+  each, after the BL-259 entries). The three neighbouring wizard suites still pass on the branch:
+  `tests/test-intake-wizard-fixes.sh`, `tests/test-bl202-session-intake-check.sh` (23 / 0), and the
+  two other suites that mention the runner are recorded in the build note below.
+
+**Left to the maintainer, stated rather than quietly omitted.**
+- The interactive "Resume or start over?" path is covered through `next_section_after` (the U cases)
+  and by reading, not driven end to end — it sits behind the TTY-only mode menu, and the suite does
+  not fake a TTY.
+- `next_section_after` on an id that is not in the list starts from the top rather than refusing.
+  That is the forgiving choice; a record carrying `last_section: 116` (written by nothing on `main`,
+  but a hand edit could) would silently restart at Section 1 with the finished sections skipped.
+  Refusing by name is the stricter alternative and is a one-line change in the helper.
+- `## BUG-010:` defect (1) — `load_progress` subscripting keys with no `.get` — is untouched here and
+  produces this entry's ending ("skipped section, Intake Complete!") by its own route.
+
+**Related:** `## BL-266:` (sibling branch, PR #390 — the pause half of the same `115` arithmetic; its
+entry names this residual), `## BUG-010:` (same observable ending, a different mechanism, still open),
+`## BL-203:` (an intake answer that did not reach the place the framework reads — the same "recorded
+but not acted on" family, here a section rather than a value). BL-282 and BL-283, filed in this batch,
+are the same wizard on the same downstream session and are named without `## …:` citations because
+each lands on its own branch.
+
+---
+
+## BL-286: the TDD gate's branch axis resolves its base as the literal `main`, so on a project whose trunk is not `main` it exempts every commit — installed, healthy, inert
+
+**Renumbered BL-261 → BL-286 on merge (2026-09-15):** BL-261 was taken on `main` before this landed;
+the marker, the test file and both registrations were renamed to match.
+
+**Status:** Open — reproduction + fix BUILT on branch `fix/bl286`, NOT yet submitted.
+`# BL-286-INTEGRATION-BRANCH`: `_tdd_triggers` reads the project's own integration branch from
+`integration_branch` in the project manifest and resolves the branch axis against that, falling back to
+today's literal `main` when the key is absent. Suite `tests/test-bl286-integration-branch.sh` **15 / 0**
+on bash 3.2.57 (macOS), against RED **4 / 11**; three mutants, EMBEDDED in the suite, each killing a
+different case. shellcheck 0.11.0 output on the gate is line-for-line unchanged by the fix (34 lines
+before, 34 after, same codes).
+
+**Read the scope limit before promoting this.** It does NOT close the keyless case, and that is every
+project today — see "What this does NOT fix" below. An entry claiming otherwise would be worse than no
+entry.
+
+**Numbering.** The number is not free-chosen. The marker token `BL-286-INTEGRATION-BRANCH` is already
+committed in a downstream adopting project's `scripts/pre-commit-gate.sh` and in that project's
+divergence record, where the fix was applied locally during adoption and never submitted. This entry
+claims the number that project's committed code already carries.
+
+**Logged:** 2026-09-13.
+
+**The defect.** `_tdd_triggers` (`scripts/pre-commit-gate.sh`) decides whether a test-less
+`feat:`/`fix:`/`refactor:` commit should trigger the TDD-ordering gate. Its third axis asks "did a test
+ride EARLIER on this branch", and to ask that it needs the branch's own base. The base was the literal
+string `main`:
+```
+$ git show main:scripts/pre-commit-gate.sh | grep -n 'rev-parse --verify --quiet \(main\|origin/main\)'
+202:  if git rev-parse --verify --quiet main >/dev/null 2>&1; then
+204:  elif git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+```
+On a project whose integration branch is `preview`, `develop` or `trunk`, `main` still resolves — it is
+usually a stale branch, or a remote-tracking ref left from a template — so `base` is set and the range
+`main...HEAD` stops meaning "this branch". It becomes the whole divergence between `main` and the real
+trunk, plus this branch. Any test anywhere in that divergence makes `b_test` greater than zero, the
+function returns 1 (EXEMPT), and the gate never fires.
+
+**This FAILS OPEN, which is why it outranks a merely wrong number.** An UNRESOLVABLE base already leaves
+`base` empty, skips the axis and falls through to fire — fail-closed, correct, and unchanged by this fix.
+A resolvable-but-WRONG base is the dangerous case, and it is the common one, precisely because `main`
+usually exists where it is not the trunk.
+
+**Measured, both directions.** The framework's own classifier (`scripts/lib/tdd-classify.sh`,
+`_bl072_classify_status`) over the two candidate ranges in a real adopting project whose integration
+branch is `preview`, on 2026-09-13:
+```
+origin/main     ...HEAD -> IMPL:1419 TEST:125   (files=4002)
+origin/preview  ...HEAD -> IMPL:76   TEST:8     (files=397)
+```
+and the number that makes it structural rather than incidental — the divergence every branch cut from
+`preview` inherits before it has done anything at all:
+```
+origin/main...origin/preview -> IMPL:1438 TEST:95   (files=3841)
+```
+95 test files in the inherited range. `b_test` on that project can never be 0, so the branch axis cannot
+ever fail to exempt, for any branch, on any commit. The gate is installed, `verify-install.sh` reports it
+healthy, and it has never fired.
+
+**What the operator sees, and why nothing complains.** Nothing. There is no output on the exempt path —
+the whole point of an exemption is silence — so the only observable is the absence of a block that was
+never going to arrive. The gate's own health check verifies that the hook is INSTALLED, not that its
+classifier can reach a firing verdict, so every reporting surface agrees the gate is working. A project
+adopts the framework for test-first enforcement, passes its install verification, and gets none. That is
+`## BL-229:`'s shape again: not a wrong answer, a MISSING one that reads exactly like a clean one.
+
+**Fix — BUILT on this branch.** Read an explicit `integration_branch` key from the project manifest and
+resolve the base against it (`$_ib`, then `origin/$_ib`), keeping the existing two-step resolution and
+the existing empty-base fall-through untouched. An ABSENT key resolves to `main`, which is today's
+behaviour exactly.
+
+**Options considered, and why an explicit key.**
+1. **An explicit manifest key.** The trunk becomes a fact the project states, which is what every other
+   governance input in this framework already is.
+2. **`origin/HEAD`.** Rejected. It is local git config, so a governance gate keyed on it is configurable
+   by the thing it governs — a contributor can move their own gate's base with one `git remote set-head`.
+3. **Infer the trunk** (longest-lived branch, most-merged-into, remote default). Rejected: it is the
+   class of guess `adopt-intake.sh` refuses, "a fact nobody gave", and a wrong inference is silent.
+4. **Fire whenever the key is absent.** Rejected: it false-blocks every keyless `main`-trunk project,
+   which is all of them, so the gate would be removed rather than fixed.
+Chose (1). Because the absent key keeps the literal `main`, the change introduces no new permissive
+resolution anywhere: it can only ever narrow a range that was too wide.
+
+**What this does NOT fix, stated plainly because it is tempting to overclaim.** On a wrong-trunk project
+with NO key — which is EVERY project today, since nothing in this repository writes `integration_branch`
+(`grep -rn integration_branch` over the tree at `ceb450e` returns nothing; the control token
+`BL-107-RUST-INLINE-TESTS` returns 22, so the pattern works) — the absent key still resolves to `main`
+and the gate stays inert. That is the permissive answer, and it is unchanged. This does not satisfy
+`## BL-221:` in the direction that matters. What it guarantees is (a) byte-identical behaviour for every
+existing project and (b) no NEW permissive resolution. Closing the keyless case needs a WRITER — the key
+set at `init.sh` / adoption time, and backfilled for existing projects — and this ships the reader
+without picking one, because the writer is a separate decision about where the trunk is recorded and who
+may change it. Whether that writer should also make an absent key fire is the open question; it cannot be
+answered by this change.
+
+**Build note (2026-09-13, branch `fix/bl286`).** Suite `tests/test-bl286-integration-branch.sh` drives
+the REAL gate end to end via `--terminal-mode --tdd-only` against hermetic scratch projects on a
+sponsored-POC tier (the non-bypassable one, so "fired" and "did not fire" are distinguishable by exit
+status alone). Fixture topology is the fixture: `main` carries no test, the real trunk is cut from it and
+adds one, the feature branch is cut from the trunk — so `main...HEAD` carries a test and `trunk...HEAD`
+does not. A0 asserts that topology rather than assuming it.
+
+GREEN **15 / 0**. RED **4 / 11**, measured by running the same suite against a tree whose
+`scripts/pre-commit-gate.sh` is `ceb450e:scripts/pre-commit-gate.sh` (asserted byte-identical by `cmp`
+before the run). A1 is the discriminator: with `integration_branch: preview`, a test-less `feat:` on a
+branch cut from `preview` must BLOCK; on unfixed code the divergence test exempts it and the gate
+answers rc 0. A2 (a test that rode earlier on THIS branch still exempts) and A3 (a test staged alongside
+the impl still exempts) are the controls that stop A1 being satisfiable by simply disabling the axis.
+C1 pins the fail-closed direction: a key naming a branch that resolves nowhere must fire, with no quiet
+fall-back to `main`, even though `main` resolves and carries a test.
+
+**The key-absent cases are the compatibility guarantee, and they are proven by byte comparison, not by
+argument.** b1-b5 each drive one fixture twice — same project, same cwd, same script path — once with
+the shipped gate and once with a reconstruction of the pre-fix gate, and require the combined
+stdout+stderr to be BYTE-IDENTICAL and the rc equal: absent manifest (rc 1), manifest with no key and a
+test earlier on the branch (rc 0), key `null` (rc 1), key `""` (rc 1), and an unresolvable base (rc 1,
+fail-closed). The reconstruction is built by reverse-mutating the shipped file, and the suite refuses to
+trust it until it has asserted the mutation landed — without that, a B case would compare the shipped
+script against itself and pass vacuously. Separately verified at build time, outside the suite because
+the comparison rots the moment this merges: the reconstruction is byte-identical to
+`ceb450e:scripts/pre-commit-gate.sh`, sha256 `5d51f6eb…`. Each B case also pins the rc today's code
+actually returns, so it cannot pass on two vacuous halves agreeing with each other.
+
+**Three mutants, each named with the case that kills it.** MP1 restores the literal `main` — A1 catches
+it (the test-less `feat:` is allowed again). MP2 deletes the `_ib` fallback line so an absent key leaves
+the base empty — b2 catches it, because a keyless project whose test rode earlier on the branch flips
+from exempt to blocked (rc 0 to rc 1), which is a behaviour change for existing projects even though it
+is the *stricter* direction. MP3 inserts a permissive `base="main"` fall-back after the resolution, a
+plausible-looking "be helpful when the key does not resolve" — C1 catches it.
+
+**A defect this suite's first cut had, recorded because the class is the point.** `mk_proj` took its
+trunk argument with the `:-` form of default substitution, and the B cases pass an EMPTY trunk to ask for
+a main-only project. `:-` substitutes the default for an empty value, so every "main-trunk" fixture was
+silently built with the two-branch topology, and b1/b3/b4 compared two runs that both exempted for the
+wrong reason — byte-identical, and testing nothing. It read green. Caught by noticing that an impl-only
+`feat:` on a main-trunk project reported rc 0 when running the same fixture by hand reported rc 1. Fixed
+to the plain `-` form, and a want-rc argument added so each case asserts what today's behaviour IS rather
+than only that two runs agree.
+
+**Related:** `## BL-072:` (the TDD-ordering detector this axis belongs to), `## BL-107:`
+(`# BL-107-RUST-INLINE-TESTS`, the two content probes that sit either side of this base resolution),
+`## BL-221:` (the fail-closed direction this does NOT close for a keyless project), `## BL-229:` (the
+missing-answer-reads-as-clean class), `## BL-231:` (the absent-vs-unreadable family — here, absent
+resolves to a DEFAULT and that is deliberate, not the family's defect).
+
+---
+
+## BL-275: the self-approval check enforces the INVERSE of the invariant it cites, and its remedy line advises the failing action and offers a flag that was never built
+
+**Status:** Open — **HALF ONE SHIPPED, HALF TWO STILL THE MAINTAINER'S.** `# BL-275-REMEDY`: the two
+false statements are gone from the refusal and replaced with text that asserts neither rule. Suite
+`tests/test-bl275-selfapproval-remedy.sh` **8 / 0** on bash 3.2.57 (macOS) and 5.2.21 in `ubuntu:24.04`
+as a non-root user, against RED **2 / 7** at `ceb450e`; two mutants, each reinstating one of the two
+removed statements. The underlying CONTRADICTION is untouched and is what remains open.
+
+**The split is the useful part.** Removing a flag that does not exist and advice that reproduces the
+failure needs no governance ruling and cannot be invalidated by whichever of A/B/C below wins. Telling
+the operator how to make the gate PASS does need the ruling, because control 1 and the implementation
+prescribe opposite actions. Half one is shipped; half two is deliberately not attempted.
+
+**Logged:** 2026-09-13, while establishing why a single-authority organisation can never pass the
+Phase 1→2 gate (`## BL-274:` (never filed — see PR #401; the gate message now points at this entry instead)). The taxonomy question there is real; this is the defect underneath it,
+and it affects every organizational deployment, not just single-authority ones.
+
+**THREE SOURCES, TWO ANSWERS, AND THE CODE IS THE ODD ONE OUT.**
+
+`scripts/check-phase-gate.sh:1719` fails when the blame author of the Approver row equals the name in
+the Approver cell, both sides lowercased and trimmed, full-string equality (`:1624`, `:1717`):
+
+```
+if [ -n "$commit_author_norm" ] && [ "$commit_author_norm" = "$approver_norm" ]; then
+    ... self-approval detected for organizational deployment
+```
+
+So the code requires **author ≠ approver**. Both governing statements say the opposite:
+
+| source | what it requires |
+|---|---|
+| `docs/governance-framework.md` §V, Approval Verification Control 1 | *"Each approval entry MUST be committed to `APPROVAL_LOG.md` by the **approver**, not the Orchestrator."* — author **=** approver |
+| baseline §5 invariant #9, as quoted by the code itself at `check-phase-gate.sh:1502-1505` | *"The git author on the commit adding the approval entry must be the approver, not the Orchestrator."* — author **=** approver |
+| `scripts/check-phase-gate.sh:1719` (the implementation) | author **≠** approver |
+
+**The code quotes the invariant in its own comment and then enforces its inverse.** And the baseline
+document that would settle it **is not in this repository** — a search for "invariant #9" returns only
+`check-phase-gate.sh:1502`, `:1736` and `tests/test-check-phase-gate-self-approval.sh:14`, `:139`,
+`:157`. The phrase *"must be the approver"* appears nowhere outside those two files. The only
+statement of the rule in the repo is a paraphrase inside the code that contradicts the code.
+
+**The tests pin the inverse deliberately, so this is not a slip.**
+`tests/test-check-phase-gate-self-approval.sh` T2: *"approver 'Karl Raulerson' committed by author
+'Karl Raulerson' → MUST FAIL (true self-approval — commit author matches approver)"*. And T1's
+fixture comment states the model outright: *"Karla was approved by someone else — **Bob committed the
+entry**."* The suite's happy path IS control 1's violation. Whatever is wrong here has been wrong
+consistently and on purpose for as long as the walker has existed.
+
+**WHY THE CHECK CANNOT TELL THE TWO CASES APART.** The gate never establishes who the Orchestrator
+is. It knows the Approver cell and the row's blame author, and nothing else about the roles. So:
+
+| situation | governance verdict | gate verdict |
+|---|---|---|
+| Alice (STA, not the Orchestrator) approves and commits her own row | **compliant** — control 1 and invariant #9 mandate exactly this | **FAIL** |
+| Bob (the Orchestrator) commits a row naming Bob as approver | **violation** — control 3 forbids it | **FAIL** |
+
+The control the framework wants is *"the Orchestrator must not author a row naming themselves"*
+(control 3). The check implemented is *"nobody may author a row naming themselves"*. Those coincide
+only when the approver IS the Orchestrator — which is `## BL-274:`'s case, and is why that adopter
+reads a governance question as a tooling fault.
+
+**How anyone passes today.** Two states clear it, and neither is a posture to rely on. Either a
+non-approver authors the row — which control 1 forbids — or the approver's git author name is spelled
+differently from the Approver cell, since the comparison is exact after lowercase and trim. My first
+reading of this was "following control 1 always fails", and that was too strong: **the spelling
+escape is real.** It is just not something anyone should want in an audit trail.
+`## BL-212:` records the same effect from the other side, and its sentence is the corroboration:
+*"solo's non-Orchestrator signers typically have no git identity in the repo, so approver-committed
+rows are rare in practice today."* Rows are rare precisely because when they happen, this fires.
+
+**THE REMEDY LINE IS WRONG IN BOTH HALVES.** `check-phase-gate.sh:1721-1722`:
+
+```
+  Governance requires a different individual to approve phase gates for organizational projects.
+  Have the approver commit the APPROVAL_LOG.md entry themselves, or use --force with documented justification.
+```
+
+1. *"Have the approver commit the entry themselves"* **is the failing condition.** An operator who
+   follows the advice reproduces the failure. The sentence was written from control 1; the code
+   implements its inverse; nobody reconciled them.
+2. *"or use `--force`"* — **the flag does not exist.** Measured, not read:
+   ```
+   $ bash scripts/check-phase-gate.sh --force
+   [FAIL] Unknown argument: '--force'
+   ```
+   The parser (`:122`-`:145`) accepts `--gate`, `--gate=`, `--help`/`-h` and exits 2 on everything
+   else. `--help` contains no `--force`; its only "force" is the word *"Forces"* describing what
+   `--gate` does. A tree-wide search for a caller passing `--force` to this script returns nothing —
+   no script, doc or template ever called it. This is `## BL-213:`'s category exactly: a shipped
+   script advertising an escape that was never built.
+
+**THE FIX SPLITS IN TWO, AND ONLY THE SECOND HALF IS BLOCKED.**
+
+**Half one — remove the two false statements. No decision required; true under every option below.**
+Drop the `--force` clause outright: it names a flag that does not exist, and no reading of the
+governance rules makes it exist. Replace the advice that reproduces the failure with a description of
+what the check actually compared — true whichever rule turns out to be the real one:
+
+> `This gate compared the Approver cell against the git author of that row, and they match.`
+> `It cannot tell an independent approver who signed their own row from an Orchestrator approving themselves — it compares only the two names, and never establishes who the Orchestrator is. Confirm by hand which case this is.`
+> `If this project has one technical authority, the blocking pre-condition is docs/governance-framework.md §XIV item 5 — a second technologist — and this gate is the symptom, not the cause. See ## BL-275:.`
+
+That wording asserts neither rule. It says what was compared, names the distinction the check cannot
+make, tells the operator which one to make by hand, and points a single-authority project at its
+actual blocker. It offers no way to turn the gate green, **which is the honest position** — see half
+two.
+
+**Half two — the prescription. BLOCKED, and it is the maintainer's to unblock.** Any sentence of the
+form "do X and the gate will pass" must pick a rule, because the two rules prescribe opposite
+actions: control 1 says the approver commits the row; the code requires that they do not. No wording
+satisfies both, and inventing an escape hatch to paper over the contradiction is the move
+`## BL-274:` refused for the same reason. The three ways out:
+
+- **A — the code is right, the doc is wrong.** Anti-self-approval means nobody signs their own row.
+  Then control 1 and invariant #9 must be rewritten, and `## BL-212:`'s widening inherits the corrected
+  rule before it reaches two more gates.
+- **B — the doc is right, the code is wrong.** The approver's git identity IS the signature, and the
+  check should compare the row's author against the ORCHESTRATOR, not against the approver. Then
+  `:1719` inverts, T1 and T2 swap verdicts, and the gate needs a source for who the Orchestrator is
+  that is better than the ambient `git config user.name`.
+- **C — neither, and the evidence model is control 2.** The out-of-band confirmation is the real
+  control; the blame comparison is a weak proxy either way and should WARN rather than FAIL.
+
+**What is measured — the two-row table is now DEMONSTRATED, not reasoned.** An earlier revision of
+this entry carried a caveat saying the compliant-vs-violation table rested on reading the comparison
+rather than on a run. That caveat is withdrawn because the run now exists, in two registered suites:
+
+- `tests/test-bl275-selfapproval-remedy.sh` **R5** drives a fixture whose Approver cell and row author
+  are the same person and requires the refusal to fire — the "violation" row.
+- `tests/test-bl274-single-authority-attestation.sh` **A12** drives the opposite fixture, Alice named
+  as Approver with Bob authoring the row, and requires the control to stay SILENT — the row control 1
+  forbids, passing cleanly.
+
+Both fixtures run in CI. So the table's claim — that the check gives the same verdict to an
+independent approver signing their own row as it gives to an Orchestrator approving themselves, and
+passes only when a non-approver authors the row — is observed behaviour on both shells.
+
+The `--force` half was always measured, and `tests/test-bl275-selfapproval-remedy.sh` **R2** now pins
+it as a permanent fact rather than a one-off observation: it runs `check-phase-gate.sh --force` and
+requires exit 2 with "Unknown argument". If the flag is ever implemented, R2 turns red and the removal
+in half one must be revisited. The three-source contradiction remains READ, from the files named and
+quoted verbatim — there is nothing to run about a disagreement between two documents and a comparison.
+
+**Related:** `## BL-274:` (never filed on any branch — a placeholder entry now holds the number; the shipped
+refusal text points at THIS entry instead), `## BL-212:` (the same walker — its coverage stops at Phase 1→2, and
+whichever rule wins here must land before that widening reaches two more gates), `## BL-213:` (the
+category sibling: a shipped script advertising an exit code that does not exist), `## BL-055:` and
+`## BL-143:` (the per-line blame walker this check is built on), `## BL-060:` (the last time this
+script's documented CLI surface and its implemented CLI surface disagreed).
+
+---
+
+## BL-287: `reconfigure-project.sh` regenerates the CI pipeline from a path that cannot exist on any host, warns, and reports success anyway
+
+**Renumbered BL-262 → BL-287 on merge (2026-09-15):** BL-262 was taken on `main` before this landed;
+the markers, the test file and both registrations were renamed to match.
+
+**Status:** Open — reproduction + fix BUILT on branch `fix/reconfigure-ci-host`, NOT yet submitted.
+`# BL-287-RECONFIG-CI-HOST`: the `language` arm resolves the recorded host from the project manifest,
+reads the template from `templates/pipelines/ci/<host>/<lang>.yml`, and takes the destination from the
+shared resolver (`# BL-229-HOST-PIPELINE-PATHS`) rather than minting a fourth copy of the mapping. An
+unrecognised host is REFUSED rather than normalised (`# BL-287-RECONFIG-CI-FAIL-CLOSED`; the reasoning
+is below, and it reverses this branch's first cut). Suite `tests/test-bl287-reconfigure-ci-host.sh`
+**12 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in `ubuntu:24.04` as a non-root user, against RED
+**1 / 11**; three mutants, EMBEDDED in the suite, each killing a different case set. shellcheck 0.11.0
+clean.
+
+**Numbering.** Filed as BL-287, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
+the next free number here, and two carried fixes in a DOWNSTREAM project already hold BL-260 and
+BL-261 in committed code and in a committed audit trail — three marker tokens across
+`scripts/verify-install.sh` and `scripts/pre-commit-gate.sh` in that project, none of them filed in
+this backlog yet. <!-- lint-bl-markers: allow the three tokens are deliberately written bare; they are markers in a downstream project, not in this code surface, and backticking them would assert they resolve here -->
+So **BL-260 and BL-261 are reserved, not free.** See `## BL-285:` and `## BL-288:` for the other two
+of the three, and read all three numbers as provisional until those downstream carries are filed:
+nothing in this repository holds a number until an entry header claims it.
+
+**Logged:** 2026-09-12.
+
+**The defect.** The CI-regeneration block of `scripts/reconfigure-project.sh` built its template path as
+`"$ORCHESTRATOR_SOURCE/templates/pipelines/ci/$ci_template"` — **omitting the per-host directory the
+templates actually live in**. `init.sh`'s `generate_ci` builds the same path WITH it. The templates are
+laid out per host, so the reconfigure spelling names a file that exists for no host and no language:
+the `[ -f "$template_path" ]` guard is false on every run, control falls to
+`print_warn "CI template not found"`, and the function continues to the script's
+`[OK] Reconfiguration complete.` banner at **rc 0**.
+
+The second half is the destination. The same block hardcoded `cp "$template_path" .github/workflows/ci.yml`
+while `init.sh` switches by host — `.github/workflows/ci.yml`, `.gitlab-ci.yml`,
+`bitbucket-pipelines.yml`, and an explicit early `return 0` for `other`. So even with the source path
+corrected, a GitLab project would have had a GitHub-shaped file written to a path GitLab never reads.
+**The block had no host awareness at all**, which is why the two halves failed together.
+
+**Measured, both directions:**
+```
+$ git show main:scripts/reconfigure-project.sh | grep -c host
+0
+
+$ git show main:scripts/reconfigure-project.sh | grep -n 'pipelines/ci'
+361:      local template_path="$ORCHESTRATOR_SOURCE/templates/pipelines/ci/$ci_template"
+$ grep -n 'pipelines/ci/\$host' init.sh
+3215:  local template_path="$SCRIPT_DIR/templates/pipelines/ci/$host/$ci_template"
+
+$ ls templates/pipelines/ci/
+bitbucket
+github
+gitlab
+```
+Driving the REAL script against a fixture project whose recorded host is `gitlab`
+(`--field language --old python --new typescript`), at `ceb450e`:
+```
+[STEP] Reconfiguring project: language (python → typescript)
+  [OK] Updated language in tool-preferences.json
+[WARN] CI template not found: <src>/templates/pipelines/ci/typescript.yml
+[WARN] Review .gitignore and settings permissions for typescript-specific entries
+
+  [OK] Reconfiguration complete.
+[INFO] Review the changed files and commit when ready.
+RC=0
+```
+and on disk: **no `.gitlab-ci.yml`, no `.github/workflows/ci.yml`, no `bitbucket-pipelines.yml`.**
+After the fix, the same fixture writes `BL262-CI-TEMPLATE-GITLAB` to `.gitlab-ci.yml` and nothing under
+`.github/`.
+
+**What the operator sees, and why nothing complains.** They ask to change the project's language, and
+the script tells them it worked. The warning that carries the real news sits between two successes — an
+`[OK]` above it and an `[OK] Reconfiguration complete.` below — and is worded as an absence
+(`CI template not found`) rather than a failure, so it reads like an optional artefact that was not
+applicable. It is also the SECOND `[WARN]` in the run; the other is the routine `.gitignore` advisory
+that fires on every language change, so the pair reads as normal noise. Nothing raises the exit status:
+the `else` arm neither returns non-zero nor sets a flag, and the script ends at rc 0, so no caller and
+no gate can tell this run apart from a clean one. The intake wizard, which is what invokes this script
+on a field change, surfaces nothing further.
+
+What they are left with is a project whose recorded language says `typescript` and whose CI still runs
+the old language's jobs — a divergence with no artefact recording it. The failure is invisible until CI
+runs, and when it does the symptom (wrong toolchain) points at CI, not at a reconfiguration that
+reported success days earlier. A `grep` for the missing path would have found it instantly, which is
+the shape of `## BL-229:`: not a wrong answer, a MISSING one that reads exactly like a clean one.
+
+**This is BL-229's defect class, in a file BL-229 named and did not convert.** `scripts/lib/host.sh`'s
+own sync-sibling note lists the live `HOST_CI_PATH` copies and names this file among them:
+```
+$ grep -n 'reconfigure-project' scripts/lib/host.sh
+74:# writer), `scripts/reconfigure-project.sh`, `scripts/validate.sh`'s
+```
+That note was accurate and the entry was closed anyway, so the record is that this was known, written
+down, and left standing. The fix asks the resolver rather than re-deriving the mapping, which is what
+that note asks of the next editor.
+
+**RESIDUAL, OPEN — the release arm has the identical omission and this branch does NOT fix it.**
+Two more sites in the same file build `templates/pipelines/release/<platform>.yml` where `init.sh`
+builds `release/<host>/<platform>.yml`, and the release templates are laid out per host exactly as the
+CI ones are:
+```
+$ git show main:scripts/reconfigure-project.sh | grep -n 'pipelines/release'
+375:          local release_src="$ORCHESTRATOR_SOURCE/templates/pipelines/release/${current_platform}.yml"
+418:      local release_src="$ORCHESTRATOR_SOURCE/templates/pipelines/release/${NEW_VALUE}.yml"
+$ grep -n 'pipelines/release/\$host' init.sh
+3251:  local release_template="$SCRIPT_DIR/templates/pipelines/release/$host/$PLATFORM.yml"
+$ ls templates/pipelines/release/
+bitbucket
+github
+gitlab
+```
+Line 375 is the `language` arm's release re-template and line 418 is the `platform` arm's. Both are
+guarded by `[ -f "$release_src" ]` with **no else arm at all**, so they are quieter than the CI one:
+they emit nothing whatever and the operator is told only `[OK] Reconfiguration complete.` Scoped out
+deliberately rather than folded in — the CI fix is testable on its own and the release arm needs its
+own cases (it also re-templates through `sed`, and line 375's destination is hardcoded to
+`.github/workflows/release.yml`, which `host_pipeline_resolve` already owns as `HOST_RELEASE_PATH`).
+**Not measured end to end**, unlike the CI half: the grep and the directory listing above are the whole
+evidence, and the `platform` arm was never driven against a fixture.
+
+**The suite.** `tests/test-bl287-reconfigure-ci-host.sh` drives the REAL script against a hermetic
+fixture project — a SYNTHETIC orchestrator source carrying only the three per-host CI template dirs, so
+it does not depend on the shipped `templates/` tree, and a project dir with `scripts/` mirrored in the
+way a generated project carries them, deliberately lacking `init.sh` and `templates/generated` so the
+`_soif_dir_is_framework` self-contamination guard does not fire. No network, no `init.sh` invocation.
+Nine cases: the three hosts, `other`, an unknown host, a missing `host.sh`, an absent template, and
+the TWO absent-host shapes (no manifest; a manifest with no `.host`). **Cases pin template CONTENT per host, not existence** — a fix that resolves the source
+directory but keeps the hardcoded destination still writes a real file, and an existence check calls
+that green; mutant M2 is exactly that fix and dies at T2/T3 on content plus a stray-GitHub-file
+assertion.
+
+Two cases were written to avoid passing for the wrong reason. **T4 (`other`)** cannot assert only
+"wrote nothing", because the defect writes nothing on every host — so it also asserts the operator is
+told WHY, and that the script does **not** claim a template is missing. Pre-fix, an `other` project is
+warned its CI template is absent when none is wanted. **T6 (absent template)** cannot assert only "it
+warned", because the pre-fix code always warns — so it asserts the warning names the HOST-QUALIFIED
+path. `ci/typescript.yml` and `ci/github/typescript.yml` are indistinguishable to an operator skimming
+a warning, and only the second is a real answer.
+
+**RED 1 / 11 at `ceb450e`, and the single pass is the point.** A first cut of this suite was
+**0 / 7** — a red with no passing control, which cannot distinguish "the defect is real" from "the
+harness never drove the script": every case would read identically if `run_reconf` silently did
+nothing. **T0** is the floor. It asserts only what the language arm already did correctly before this
+entry — the recorded language changes and the script says so — so it passes on unmodified `main` and
+must keep passing after the fix. It is a control, never a discriminator. The other ten are the seven
+host cases plus T5b and the three mutant setups, which fail at base because the arms they revert are
+not there yet; that failure now READS as a setup failure rather than as a case failure (see below).
+
+**Mutants — EMBEDDED, not run by hand.** The first cut ran three mutants manually and recorded the
+tallies in this entry. A mutant recorded in prose is re-run by nobody; a mutant in the suite is re-run
+by CI on every push, which is the only version that still works after the branch that wrote it is
+merged. Each builds a mirror of `scripts/`, asserts the mutation LANDED (`bash -n` plus a changed-line
+count), and names what must SURVIVE it as well as what must die:
+
+| Mutant | What it restores | Must die | Must survive, and does |
+|---|---|---|---|
+| M1 | the `$host` segment dropped from the template path | all three host cases go dark | `other` — it returns before the path is built |
+| M2 | the hardcoded `.github/workflows/ci.yml` destination | gitlab + bitbucket, on the STRAY-FILE assertion | github — for GitHub the hardcode is the right answer |
+| M3 | the warned GitHub fallback for an unknown host | T5 | — |
+
+M2 is the one that pays for itself: with the source path corrected but the destination hardcoded, a
+REAL file is written on every host, and an existence check calls that green. Only the per-host content
+pin and the stray-file assertion separate it from a correct run — which is why the cases pin CONTENT.
+
+**Two bugs were found IN THIS SUITE while embedding the mutants, and both were silent.** The first:
+the perl expressions that build each mirror had unescaped `$template_path` / `$ci_template` on the
+REPLACEMENT side, so perl interpolated its own unset variables and substituted the empty string — M2's
+mutation produced a broken script rather than the intended one, and M1's passed for a partially wrong
+reason. The second is sharper. `mk_mirror` was called as `MM1="$(mk_mirror ...)"`, and `fail_` writes to
+stdout: on the setup-failure path its diagnostic was CAPTURED INTO `MM1` instead of printed, so the
+caller read a non-empty string as success and ran the mutant against an unmutated mirror, while the
+`FAILED` increment was lost in the substitution's subshell. Measured at base, every mutant reported a
+CASE failure and not one reported a SETUP failure — precisely backwards. `mk_mirror` now reports
+through a global.
+
+**The unrecognised-host decision — FAIL CLOSED, and this reverses the branch's first cut.**
+`host_pipeline_resolve` fails closed on an unrecognised host (rc 4, no paths), and its comment says why:
+defaulting an unknown host to the GitHub paths "is how a mis-recorded host silently produced a
+GitHub-shaped answer everywhere". `init.sh`'s `generate_ci` does the opposite — it warns and falls back.
+This branch first followed init.sh, on the argument that a visible, warned-about GitHub file is more
+correctable than a silent no-op. **That argument does not survive being written out**, and it is
+recorded here rather than quietly replaced:
+
+1. **It is not more correctable; it is less visible.** A stray `.github/workflows/ci.yml` in a GitLab
+   project looks exactly like an ordinary framework artefact. The only thing distinguishing it from a
+   correct run is a `[WARN]` sitting between an `[OK]` above and `[OK] Reconfiguration complete.`
+   below — which is verbatim the reading this entry argues, at length, that the operator does not do.
+   It trades this entry's silent no-op for a silent WRONG WRITE.
+2. **The two callers are not alike.** `init.sh` runs at CREATION, where the host arrives in the same
+   run from `--git-host` or the wizard and there is no recorded value that can be wrong. This script
+   runs against an EXISTING project and reads the host the manifest already records, so an
+   unrecognised value means the manifest is wrong — the precise case `host_pipeline_resolve`'s comment
+   names.
+3. **init.sh's fallback is a remnant, not a counter-policy.** `generate_release`, forty lines below it
+   in the same file, WAS converted to ask the resolver (`# BL-229-INIT-RELEASE-PATH`); `generate_ci`
+   was not, and still carries its own `case "$host"`. Following it would re-mint the mapping BL-229
+   exists to collapse — and `host.sh`'s sync-sibling note names THIS file as one of the copies to
+   convert, not as a second opinion to adopt.
+4. **Nothing legitimate is refused.** `other` is handled and returns before the resolver is reached, so
+   the only values that can reach the refusal are ones no host recognises.
+
+The refusal names the offending value, prints the resolver's own diagnostic, names the valid set, and
+**states that the language field HAS already been written while the pipeline has not** — a half-applied
+change reported as half-applied. It is `exit 1`, which is this script's established idiom (eleven other
+`print_fail` + `exit 1` sites) and which reaches the intake wizard that invokes it. T5 is the case; M3
+is the mutant that restores the fallback, so the decision is enforced rather than merely written down.
+
+**A MISSING `scripts/lib/host.sh` refuses with a DIFFERENT message, and T5b pins that.** The library
+being absent is not the host being wrong, and `## BL-231:` is the family that exists because those two
+get collapsed — the operator's repair differs in each case.
+
+**AN ABSENT `host` IS REFUSED TOO, AND A FIRST CUT OF THIS FIX GOT THAT WRONG.** That cut wrote
+`local ci_host="github"`, then `jq -r '.host // "github"'`, then a third `|| echo "github"` — and it
+contradicted the refusal directly above it. The refusal's own stated ground is that guessing GitHub is
+how a mis-recorded host silently produces a GitHub-shaped answer; the absent case then guessed exactly
+that. T7 pinned the wrong behaviour, so the test agreed with the bug.
+
+**Nothing in the framework defaults a missing host to github.** There are two established behaviours,
+and the arm now adopts the first rather than minting a third:
+- `host.sh`'s `host_read_from_manifest` — refuse at rc 2 naming the remedy
+  (`scripts/check-gate.sh --backfill-host`). This is the reader `host_pipeline_resolve` uses when
+  called with no argument, which is how the three existing consumers call it
+  (`scripts/validate.sh:111`, `scripts/check-phase-gate.sh:2794`, `scripts/cut-release.sh:1231`).
+- `scripts/verify-install.sh`'s `_detect_pipeline_host` — infer from the git remote, yield `other`
+  when it cannot tell. Never a bare "github".
+
+`# BL-287-RECONFIG-CI-HOST-READ` drops the local jq and both cuts of the default. The two absent
+shapes are now separate cases because `host.sh` distinguishes them and the operator's next move
+differs: **T7** (no manifest at all, rc 1) and **T7b** (a manifest with no `.host`, rc 2, asserting
+host.sh's `--backfill-host` remedy reaches the operator rather than being swallowed). **M4** is T7's
+mutant — it reinstates the GitHub default and requires T7 to catch it, the companion to M3 on the
+unrecognised path. Both halves of the contradiction now have a mutant, so neither can quietly return.
+
+**AND THE ABSENT-HOST CASE CANNOT BE COMPLETED BY ANY MECHANISM CURRENTLY REACHABLE FROM THIS SCRIPT.**
+That is a measured fact, not a scoping preference, and it holds whichever way the question below is
+answered. `_detect_pipeline_host` — the framework's own remote-inference helper, and the obvious thing
+to reuse — is defined only in `scripts/verify-install.sh:1319`, and that file carries
+`set -euo pipefail` at `:2` and `guard_not_in_framework || exit 1` at `:20`, both at TOP LEVEL with no
+sourced-detection guard. Sourcing it does not import a function; it runs the verification script, and
+inside the framework repo it exits the caller. Its only callers are inside that file.
+
+There is no shared home to reach for either: the same four-arm inference is duplicated at FOUR shipped
+sites — `check-gate.sh:159`, `upgrade-project.sh:511`, and `verify-install.sh` at BOTH `:242` and
+`:1328` — while `scripts/lib/host.sh`, the shared host library this arm already depends on, carries
+none. So the routes are a fifth copy, a subprocess call to `check-gate.sh --backfill-host` (which
+WRITES `.host`, so a language change would acquire a manifest mutation the operator did not ask for,
+and which is interactive — `prompt_yes_no` hard-returns N under CI), or a hoist into `host.sh`, which
+is a refactor. That is the structural defect recorded as `## BL-273:`, and this fix is one of the
+places it bites.
+
+**OPEN QUESTION FOR THE MAINTAINER, not settled here.** Refusing is consistent with the resolver this
+arm delegates to, but `init.sh`'s `generate_ci` warns and falls back on the same input. Whether
+reconfigure should refuse or follow `_detect_pipeline_host` and infer from the remote is a policy call
+about whether every pre-host-field project must run the backfill before it can change language. This
+entry adopts the existing `host.sh` behaviour rather than inventing one, and raises the choice in the
+PR description.
+
+**Related:** `## BL-229:` (the same defect class, the resolver this fix asks, and the note that named
+this file), `## BL-084:` (`# BL-084-TIER-KEY`, the sync-sibling trap this avoids re-creating),
+`## BL-231:` (the absent-vs-unreadable family — here, absent-and-unreported).
+
+---
+
+## BL-288: Scout reports a shallow clone as a completed `full-history` secrets scan — a `--depth 1` checkout is issued a clean bill of health over a credential the scanner was never given
+
+**Renumbered BL-264 → BL-288 on merge (2026-09-15):** BL-264 was taken on `main` before this landed;
+the markers, the test file and both registrations were renamed to match.
+
+**Status:** Open — fix prepared on `fix/scout-shallow-history-claim`, not yet raised as a PR. Suite
+`tests/test-bl288-scout-shallow-history-claim.sh` **10 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in
+`ubuntu:24.04` as a non-root user, against RED **2 / 8** on unmodified `main` (`ceb450e`); three
+mutants, all killed. Registered in the aggregator and in the `tests.yml` unit lane
+(`lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
+
+**The Linux run needed gitleaks installed, and the suite is right to insist.** A first container run
+reported `0 passed, 0 failed, 1 skipped` at exit 0 — the whole suite skipped, because the image had no
+gitleaks. That is the suite behaving correctly: it skips LOCALLY and **fails when `CI` is set**, which
+is the posture the tests.yml gitleaks step was added for (`the twelve gitleaks-gated cases were
+skipping here too`). Re-run with gitleaks 8.30.1 present and `CI=1`: **10 / 0, 0 skipped.** Recorded
+because a green container run that ran nothing is exactly the unearned receipt this entry is about.
+
+**Numbering.** Filed as BL-288, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
+the next free number here, and two carried fixes in a DOWNSTREAM project already hold BL-260 and
+BL-261 in committed code and in a committed audit trail, unfiled in this backlog. <!-- lint-bl-markers: allow the downstream marker tokens are deliberately not backticked; they are markers in another project, not in this code surface -->
+So **BL-260 and BL-261 are reserved, not free.** The other two of the three are `## BL-287:` and
+`## BL-285:`; read all three numbers as provisional until those downstream carries are filed, since
+nothing here holds a number until an entry header claims it.
+
+
+**Logged:** 2026-09-12, from a live report that claimed `full-history` having reached **1 of 3,653
+commits**.
+
+**The defect.** `scripts/lib/scout/scout-secrets.sh` decides the secrets scope by asking exactly one
+question — is this inside a work tree? — and answers `full-history` whenever it is:
+
+```
+  _mode="dir"; _scope="working-tree-only"
+  if command -v git >/dev/null 2>&1 \
+     && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    _mode="git"; _scope="full-history"
+  fi
+```
+
+A shallow clone is inside a work tree. `gitleaks git` then walks the commits git *has*, which on a
+`--depth 1` checkout is one, finds nothing in it, and exits 0. **Nothing fails.** There is no error
+for the 3,652 commits the scanner was never handed, so the report takes the clean path and records
+`status: "scanned"`, `scope: "full-history"`, `findingCount: 0`. The scan is not what is wrong here;
+the **claim** is. `grep -rn shallow scripts/lib/scout/` returns **zero** — the case was never
+enumerated.
+
+**Measured, both directions, on the same repository.** A three-commit fixture whose first commit adds a
+BASE32-valid `AKIA` key, whose second removes it and whose third is noise — so the key is absent from
+the working tree and only a history walk can find it — cloned twice from the same origin:
+
+```
+=== full ===
+commits reachable : 3
+is-shallow        : false
+plant in worktree : 0 file(s)
+{"schemaVersion":1,"secrets":{"status":"scanned","scope":"full-history","findingCount":1}}
+=== shallow ===
+commits reachable : 1
+is-shallow        : true
+plant in worktree : 0 file(s)
+{"schemaVersion":1,"secrets":{"status":"scanned","scope":"full-history","findingCount":0}}
+```
+
+The two reports differ only in the number that matters, and neither says so. The second is a clean bill
+of health issued under the word "full" over a live credential.
+
+**Why this section and not another.** `docs/adoption.md` § "What every adoption gets" promises the
+secrets scan unconditionally — *"The full secrets scan. History does not care what phase you land
+at."* — and that page's own honesty table already marks the adjacent capability as absent (*"Adoption
+that can fail on a serious finding — the secrets stop, not built (WP10)"*). A scan that silently
+narrows to one commit is worse than the one that is documented as missing, because it is documented as
+present. `scout-secrets.sh`'s header states the governing rule in its own words: collapsing two
+different claims into an empty findings array "is the silent-success defect class, aimed at the one
+section of this report where a false clean bill of health has a credential behind it". The framework
+legislates the same shape for CI in `# BL-147` (`templates/pipelines/ci/github/typescript.yml`): *"a
+check that cannot run must not pass."*
+
+**Who consumes it.** Not a person — `scripts/lib/adopt/`. Both readers spell their switch on the
+status word alone: `adopt-tools.sh` `_adopt_rescan_secrets` (`[ "$status" != "scanned" ] || return 0`)
+and `adopt-stubs.sh` `adopt_stub_secrets_disposition` (`if [ "$status" != "scanned" ]`). That is what
+decides the fix's shape below, and it is what `MP2` exists to prove.
+
+**The fix — `# BL-288-SHALLOW-SCOPE`.** Degrade the recorded scope and the status; do not refuse, and do
+not warn-and-keep-the-claim.
+
+- **Not refuse.** Scout is a read-only pre-adoption survey pointed at somebody else's checkout, and
+  `--depth 1` is what CI hands you. Refusing would discard six perfectly valid sections to punish one,
+  and the operator's response to a tool that refuses to run is to stop running it.
+- **Not warn-and-continue.** The consumer is a shell script reading JSON. A sentence in `note` reaches
+  nobody who acts on it.
+- **Degrade, and say so in a value.** `scope` becomes `shallow-history`, beside the existing
+  `working-tree-only` degradation for a non-repository — the same arm for the same reason, a case §6.1
+  did not enumerate. `status` becomes a **fourth word**, `scanned-partial`, because a boolean sibling
+  would have left both adoption readers above reading a shallow scan as a completed one. A new
+  `commitsScanned` integer records what the checkout actually had. Findings that *were* produced are
+  still emitted — narrowing the scope does not make what was found inside it untrue — and the status
+  word is what withdraws the zero.
+
+**`schemaVersion` goes 1 → 2.** A reader written against 1 is entitled to an exhaustive
+`secrets.status` of three words and a `secrets.scope` of two, and both enumerations widened.
+`commitsScanned` is additive and would not have justified a bump on its own. The precedent is
+`scripts/lib/adoption-stamp.sh`, whose own comment records that its 1 → 2 "is not cosmetic".
+
+**The suite.** `tests/test-bl288-scout-shallow-history-claim.sh`, unit lane, ~5s. `S0` asserts the
+fixture is sound **before** anything else — 3 commits against 1, the plant absent from the working
+tree, the full scan finding it — so a dud fixture fails loudly rather than certifying nothing (the WP2
+suite's G0 doctrine; BASE32-validity is load-bearing and a plant containing a character outside
+`[A-Z2-7]` yields zero findings and a vacuous green). `S1` holds the full clone unchanged, which is the
+guard against a fix that calls every repository partial. `S2` is the bug, stated as the weakest
+assertion that excludes it. `S3` is the design: the value must be machine-readable — a scope enum, a
+status word distinct from `scanned`, and the depth as a JSON **number**. `S5` holds §6.1's existing
+non-repository arm. Three mutants on mirrors: `MP1` re-points the detection at the old value and the
+false claim returns; `MP2` keeps the honest scope but restores `status: "scanned"` — the half-fix a
+reviewer would most plausibly accept, and the one that keeps the false clean bill for every consumer
+that matters; `MP3` deletes `commitsScanned` while leaving the warning prose intact, which only `S3`'s
+machine-readable demand notices.
+
+**`file://` in the fixture is load-bearing.** `git clone --depth 1 /local/path` silently ignores the
+depth and hardlinks the whole object store, which would make the shallow arm a second full clone and
+the entire suite vacuously green.
+
+**Regressions measured, not assumed.** `test-brownfield-wp1-scout.sh` 33/2 and
+`test-brownfield-wp2-scout-sections.sh` 51/2 — **byte-identical failure sets before and after** on this
+host (`V2`/`V6` reality probes; `C1`/`C3` hook descriptions), confirmed by stashing the change and
+re-running. `wp2`'s `G3`, which is §6.1's full-history claim under test, stays green. One existing pin
+moved with the schema: `test-brownfield-wp1-scout.sh` `A2` asserted `schemaVersion == 1`.
+
+**Not covered, and deliberately.** A **partial** clone (`--filter=blob:none`) is not shallow: git has
+every commit and fetches blobs on demand, so `gitleaks git` still walks the whole history. It reports
+`full-history` and that is correct. A shallow clone whose depth exceeds the real history is likewise
+not shallow — git writes no marker — and reports `full-history` correctly.
+
+**EXTENSION (2026-09-12, same branch) — the SECOND reader.** This entry's own note says
+`scanned-partial` is a fourth status word and that "both of adoption's readers spell that switch
+`[ "$status" != "scanned" ]`". A first cut updated one of them — `adopt_stub_secrets_disposition`.
+The other is `_adopt_rescan_secrets` (`scripts/lib/adopt/adopt-tools.sh`), and the same spelling put
+`scanned-partial` on the WRONG side of its guard.
+
+**The guard.** `[ "$status" != "scanned" ] || return 0` treats a partial scan as "nobody looked", so a
+shallow adoption re-walked the whole history. That is exactly the cost the function's own doc-comment
+says the guard exists to avoid — "re-running the scanner over it would cost a full history walk and
+replace the measurement the stamp names with a different one" — and its stated rule decides the case:
+**"Only a report that says nobody looked is worth asking again."** A partial scan LOOKED; a tool ran
+and produced real findings over the history it could reach. `# BL-288-RESCAN-PARTIAL` moves it to the
+`scanned` side. The re-scan happens moments after the survey in the SAME clone at the same depth, so
+it would return `scanned-partial` again; the remedy for a shallow clone is the operator's deliberate
+`git fetch --unshallow` and re-scan, which the disposition stub now tells them to do, not an automatic
+re-walk inside the adoption run.
+
+**The enumeration.** The `# BL-242-RESCAN-HONEST` case had no `scanned-partial` arm, so a re-scan that
+came back partial fell through to `"The scan was re-run; its status is 'scanned-partial'."` — a status
+string and nothing about what it means, on the one surface where "we could not read all of it" must
+not be heard as "we found nothing". **That arm is still reachable after the guard change**, and the
+path is worth stating because it is not obvious: a re-scan triggered by `tool-unavailable` installs
+the scanner and then meets the shallow clone. The arm now says which part was read and names the
+remedy.
+
+**Two cases, and the control is the point.** **S7** drives the REAL `_adopt_rescan_secrets` with
+`ADOPT_FRAMEWORK_ROOT` pointed at an empty directory: past the guard the function hits its
+missing-Scout arm and says so, so "did the guard return early" is observable with no scanner ever
+running. Its control runs FIRST — `tool-unavailable` must still get PAST the guard — because an early
+return for every input would satisfy S7 otherwise. **S8** is source-level and labelled so: the arm is
+reachable only through a real scanner meeting a real shallow clone inside an adoption run, so the
+assertion is scoped to the `# BL-242-RESCAN-HONEST` block and fails if that block cannot be found
+rather than passing by absence.
+
+Suite **13 / 0** on macOS `/bin/bash` 3.2.57 and on bash 5.2.21 / gitleaks 8.28.0 in `ubuntu:24.04`.
+Scoped RED with ONLY `adopt-tools.sh` reverted: **11 / 2**, both new cases failing and the control
+passing. Full RED with all four fix files reverted: **3 / 10**.
+
+**One unexplained flake, recorded rather than smoothed over.** The first Linux run of this suite
+reported **12 / 1**; three consecutive re-runs on the identical stage reported 13 / 0. The failing
+case was not captured and the cause is unidentified. Four runs to one is not a clean bill of health
+for the suite's determinism, and the next person to see a red here should suspect the suite before
+the fix.
+
+**Regression note.** `test-brownfield-wp1-scout.sh` reports **33 / 2** on this branch — and the same
+**33 / 2**, on the same two cases (V2 `pre_commit_hooks_installed`, V6 `initialization_verified`),
+from a tree built by `git archive main`. Pre-existing on main and unrelated to this entry.
+
+**OPEN, AND IT IS AGAINST THIS ENTRY'S OWN ADVICE: THE REMEDY WE PRESCRIBE DOES NOT REMEDIATE.**
+This fix tells the operator to run `git fetch --unshallow` in five places — `scout-secrets.sh`'s
+secnote, `scout-report.sh`'s markdown arm, `adopt-stubs.sh`, `adopt-tools.sh` and `docs/scout.md`.
+Following that advice exactly leaves the defect intact, because `--depth` narrows the REFSPEC as well
+as the history and `--unshallow` only deepens what the refspec already covers. Both halves are in
+git's own manual (git 2.54.0, `git clone --help`):
+
+```
+:251  --depth=<depth>   Create a shallow clone with a history truncated to the specified
+                        number of commits. Implies --single-branch unless
+                        --no-single-branch is given …
+
+:267  --single-branch   … Further fetches into the resulting repository will only update
+                        the remote-tracking branch for the branch this option was used
+                        for the initial cloning.
+```
+
+Line 251 is why a `--depth 1` clone is single-branch; **line 267 is the half that matters here** — it
+is what makes `--unshallow` insufficient rather than merely incomplete, because the narrowed refspec
+persists into every later fetch. So a credential on a side branch is still never fetched, and Scout
+then reports `status: scanned`, `scope: full-history`, `findingCount: 0` over it — this entry's own
+headline sentence, reached by doing what this entry says.
+
+**FIXED.** The remedy is now `git remote set-branches origin '*' && git fetch --unshallow` at all five
+sites — `scout-secrets.sh`'s secnote, `scout-report.sh`'s markdown arm, `adopt-stubs.sh`,
+`adopt-tools.sh` (the `scanned-partial` arm and the guard comment) and `docs/scout.md`. Measured to
+take findingCount 0 → 1.
+
+**A SIXTH SITE WAS DELIBERATELY LEFT ALONE.** `scripts/lib/plan-staging.sh:94`'s
+`SOIF_PLAN_SHALLOW_FALLBACK` also says `git fetch --unshallow`, and it is CORRECT as it stands: the
+currency system's need is `git cat-file -e "${pin}^{commit}"` — depth on the framework's own history,
+which `--unshallow` alone does supply. It is a different remedy for a different problem, and the line
+is byte-pinned by a test. A blanket find-and-replace across "unshallow" would have broken it.
+
+**AND THE FIRST CUT OF THIS FIX SHIPPED ADVICE THAT WAS NOT RUNNABLE AS PRINTED.** The glob has to
+reach the operator QUOTED, and the five sites sit in three different quoting contexts — a
+single-quoted `printf` in `scout-report.sh`, double-quoted arguments in the other three. The spelling
+that is safe in one is broken in the others, and both mistakes were made here in turn: `"*"` inside a
+double-quoted string terminates it, `'*'` inside a single-quoted string terminates that, and in BOTH
+cases the quotes are STRIPPED from the rendered text. What the operator was told to run was
+`git remote set-branches origin *` — a bare glob that expands against whatever is in their working
+directory. **`bash -n` passes on every one of those variants**; only rendering the line catches it.
+The shipped form uses a literal `'*'` in the double-quoted sites and the `'\''` idiom in the
+single-quoted one, so all five render identically. **Case S9** pins that by RENDERING each site rather
+than grepping the source, and fails if any site prints an unquoted glob or if the site count is not 5
+— verified non-vacuous by unquoting one site on a mirror
+(`[FAIL] S9 … adopt-stubs.sh(unquoted)`).
+
+That mistake is worth recording rather than quietly correcting, because it is this entry's own subject
+one layer further out: a remedy that is native, invents nothing, and does not work when followed.
+
+**Residual, open — a plain `--single-branch` clone is not detected at all.** The detection added by
+this entry keys on shallowness. A full-depth `--single-branch` clone is not shallow, so it reports
+`full-history` while carrying exactly the same blind spot. Same defect class, genuinely wider, and
+deliberately not bundled into this change.
+
+**Related:** `## BL-147:` (a check that cannot run must not pass — the same principle, in CI),
+`## BL-256:` (gates handing out receipts they did not earn), `## BL-231:` (the absent-vs-unreadable
+family), `## BL-242:` (`# BL-242-RESCAN-HONEST`, the enumeration this widens).
+
+---
+
+## BL-278: the pending-approval sentinel is read from the SESSION's directory, so it gates every repository except the one it belongs to
+
+**Status:** Open — **the under-block half is FIXED on this branch for the bare-`git commit` shape; the over-block half is an OPEN QUESTION and is deliberately not answered; a second residual (the target named only in the command text) is OPEN.** See "Two halves" and "Open residual" below.
+
+**Logged:** 2026-09-13, out of the `## BL-277:` work: a commit in a contributor clone was refused
+because a sentinel existed in a completely different repository. Reproduced in both directions before
+filing, and the fix here is built and covered.
+
+**The mechanism, and it is an ABSENCE rather than a wrong answer.** `pa_check` in
+`scripts/pre-commit-gate.sh` runs as a **PreToolUse** hook — it matches `_is_git_commit "$COMMAND"`
+and emits `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", …}}`.
+The sentinel it consults is the bare relative literal
+
+    local sentinel=".claude/pending-approval.json"
+
+and **on that path the script never changes directory.** Its only `cd` is
+`cd "$PROJECT_ROOT"` inside the `if [ "$TERMINAL_MODE" -eq 1 ]` branch, which is the commit-msg-hook
+path, not this one; `CLAUDE_PROJECT_DIR` appears nowhere in the file. So the literal resolves against
+whatever cwd Claude Code hands the hook — the SESSION's project directory — and never against any
+other repository. There is no root resolution to be wrong; there is none at all.
+
+**Measured, both directions.**
+
+- A sentinel in the session's project **blocked a commit in `/Users/asborien/solo-orchestrator`**, a
+  different repository with no `.claude/` directory of its own.
+- A throwaway repository carrying **its OWN sentinel committed cleanly** when committed to from a
+  session rooted elsewhere:
+
+      $ git init -q .            # a scratch repo, with its own sentinel
+      $ printf '%s' '{"question":"BL278-PROBE-LOCAL-SENTINEL-QUESTION",…}' > .claude/pending-approval.json
+      $ git commit -s -m "chore: sentinel probe"
+      [main (root-commit) 13c8594] chore: sentinel probe
+
+So it gates every repository **except** the one it lives in — exactly inverted from what a pending
+decision means.
+
+**TWO HALVES, and only one of them is unambiguously a defect.**
+
+1. **Under-block — FIXED HERE, for one shape.** A repository carrying its own sentinel is not
+   protected when committed to from a session rooted elsewhere. This is the case the design says must
+   work. `docs/builders-guide.md` § "Structured Decision Points: The Pending-Approval Sentinel" ships
+   this reader INTO each project — "`upgrade-project.sh` copies … the updated
+   `scripts/pre-commit-gate.sh` **into existing projects**, so the **enforcement** (reader + helper)
+   goes live immediately on upgrade" (that section's "Upgrading existing projects" paragraph) — and
+   calls the sentinel "the single source of truth", singular (same section). A gate shipped to fire on
+   a project's own sentinel, that does not fire on it. The shape fixed here is a bare `git commit`
+   issued while the hook's `.cwd` is inside that repository; see "Open residual" for the shapes it is
+   not.
+2. **Over-block — OPEN, NOT ANSWERED HERE.** A sentinel in the session's project stops commits in
+   every other repository touched from that session. **Both readings are defensible and the design
+   states neither.** Against: the Builder's Guide model above is per-project throughout, and a
+   decision pending in project A silently halting unrelated work in project B — mid-flight, with a
+   message about a question B's operator never asked — is a poor outcome nobody designed. For: the
+   sentinel means "the agent is holding, do not advance", and the incident that produced it (the same
+   section's "Why this matters" paragraph, lancache 2026-04-24) was an agent advancing while the user
+   was still deciding —
+   advancing in a *different* repository is the same failure. Cross-repo reach is most likely an
+   accident of the PreToolUse path rather than a decision, but it is not obviously wrong, so this
+   entry leaves it to the maintainer and changes nothing about it.
+
+**Why the over-block is not fixed here, stated plainly because the operational cost is real.** Five
+blocking sentinels were declined by hand in one day, each halting every agent in every repository
+touched from that session. That cost is genuine and it is **attributable to `## BL-277:`, not to
+this entry**: BL-277 manufactures false sentinels from ordinary file reads, and a cross-repo hold is
+only painful in proportion to how often a sentinel is raised for nothing. Fixing BL-277 removes the
+pain; narrowing the scope here would spend a security control to relieve a symptom whose cause is
+elsewhere. That reasoning is the reason this half stays open rather than being quietly "fixed".
+
+**Fix — BUILT on this branch, additive, and narrower than its first cut claimed.**
+`# BL-278-SENTINEL-ROOT`: a `_pa_target_sentinel` helper reads `.cwd` from the hook envelope, resolves
+it with `git -C "$c" rev-parse --show-toplevel`, and returns the sentinel path of the repository that
+CONTAINS `.cwd`; `pa_check` consults it **only when the session-relative read found nothing**. **What
+`.cwd` is, precisely: the directory Claude is in BEFORE the intercepted command runs.** It is not the
+repository the command will run in, and nothing in the arm parses the command text. So the arm covers
+exactly one shape — **a bare `git commit` issued while `.cwd` is inside the repository that owns the
+sentinel** — which is the shape the measured under-block took, and no other. The `.cwd` field is real and already modelled by the repo's own fixtures
+(`tests/test-bl233-mcp-outcome-enforcement.sh` carries `"cwd"` in both PreToolUse and PostToolUse
+envelopes). The existing read is untouched, so **nothing that blocks today stops blocking** — that is
+what makes this strictly more blocking rather than a scope change. Every unreadable or unresolvable
+input returns 1 and degrades to exactly today's behaviour: absent `.cwd`, a `.cwd` that is not a
+directory, a directory that is not a repository. One property to know rather than a defect: a `.cwd`
+inside a LINKED WORKTREE resolves to that worktree's own root, so a sentinel held by the repository's
+main checkout does not reach it (reviewer probe S5, reproduced 2026-09-13: linked worktree ALLOW, main
+checkout DENY) — consistent with the sentinel being an untracked, per-checkout file.
+
+**Open residual — the target named only in the command text is not read.** A commit whose target is
+carried by the command rather than by `.cwd` is not covered. Adversarial review probed three shapes
+against the fixed gate (2026-09-13):
+
+    git -C target commit        .cwd = session   -> ALLOW
+    cd target && git commit     .cwd = session   -> ALLOW
+    git commit                  .cwd = target    -> DENY
+
+The first is doubly out of reach: `_is_git_commit` (`grep -qE '(^|[^"'\''])git[[:space:]]+commit\b'`)
+does not match `git -C <path> commit` at all, so that shape never reaches `pa_check` — a pre-existing
+gap in the classifier, not something this branch introduced. Resolving the target from the command
+text — parsing `-C` and `cd` out of an arbitrary shell line — is a change to a security arm with its
+own false-positive surface, and it is left to the maintainer; **the decision taken here is to narrow
+the claim rather than parse the command.** C6 in the suite pins the `cd <target> && git commit` shape
+at its CURRENT behaviour (rc 0, no sentinel denial) and is labelled a residual pin, not a control, so
+closing the residual has to invert a case rather than happen by accident.
+
+**Options considered.**
+1. **Additive** (chosen). Closes the under-block, spends no control, leaves the unstated scope
+   question to the maintainer with its measurement.
+2. **Replace — resolve only against the target repo.** Fixes the under-block AND removes the
+   over-block, which is the cost actually being felt. Rejected: it changes the behaviour of a
+   security control whose intent is unstated, and it would stop blocking in cases that block today.
+   If the maintainer decides the per-project reading is the right one, this is the one-line follow-up
+   and C2 in the suite is the case that would change.
+3. **Resolve from `CLAUDE_PROJECT_DIR`.** Rejected: it names the session, which is the value already
+   producing the wrong answer, and the variable is absent from this file by design.
+
+**Build note (2026-09-13, branch `fix/bl278`).** Suite `tests/test-bl278-sentinel-root.sh` drives the
+REAL gate over stdin the way Claude Code drives it, against two throwaway git repositories under one
+temp tree. After adversarial review: **RED 5 / 5** against `main`'s gate (`ceb450e`), GREEN **10 / 0**
+on bash 5.3.15 and on bash 3.2.57 (macOS 26.4.1). C1 and C1b are the discriminators and both failed
+RED for the right reason — rc 0 and EMPTY output, the gate allowing silently; M0, M1 and M2 fail RED
+because the marker and the operative lines are absent from `main`'s gate. The 7-case first cut also ran
+**7 / 0** on bash 5.2.21 in `ubuntu:24.04` as a non-root user; the 10-case suite has not been re-run on
+Linux.
+
+**The Linux run's C4 comparison is VACUOUS and does not count as a compatibility check.** That
+container has no real upstream, so the fixture points `refs/remotes/origin/main` at HEAD — which
+already carries this fix — and C4's comparison half therefore compares the fixed gate with itself. The
+macOS runs are where it has a genuine pristine baseline. Recorded rather than left for a reader to
+assume, because a case that cannot fail must not be counted as having passed. C2 (session sentinel
+still blocks), C3 (no sentinel ⇒ no sentinel denial), C4, C5 and C6 pass on `main` by construction;
+they are controls (C6 a residual pin), not evidence of the fix.
+
+**An earlier cut of this entry, and the fix commit's title, claimed more than `.cwd` can deliver.**
+Both said the helper resolved "the repository the intercepted commit targets". It resolves the
+repository containing the directory Claude was in before the command ran, which coincides with the
+target only for a bare `git commit`; the three probes under "Open residual" are what showed the
+difference. And no case exercised the toplevel resolution at all: every case set `.cwd` to a repository
+ROOT, so replacing `root=$(git -C "$c" rev-parse --show-toplevel …) || return 1` with `root="$c"`
+survived the whole suite — **reproduced at 7 / 0 with the mutant in place** before anything was
+changed. Both findings came from adversarial review, not from the suite; C1b and M2 are the repair for
+the second, the reworded claim and C6 for the first.
+
+Three things the suite had to learn the hard way, each caught by a control rather than by review:
+
+- **The fixture repos need an `origin` remote.** An earlier arm of this same gate — the "no git
+  remote configured" guard — denies BEFORE `pa_check` is reached, and denies on the SESSION repo.
+  Without a remote every case "passed" by denying for a reason that had nothing to do with sentinels.
+  **C3 is what exposed it**, by refusing to accept a denial when no sentinel existed.
+- **Assertions are scoped to the suite's own unique question strings, not to "denied at all".** This
+  gate has many arms and a bare fixture legitimately trips some of them, so the broader predicate
+  would fire on unrelated enforcement.
+- **The `origin/main` baseline must live in a COMPLETE MIRROR of `scripts/`.** The gate resolves its
+  siblings through `SCRIPT_DIR` — `process-checklist.sh` among them — so a lone copy in a temp dir
+  denies with "…/process-checklist.sh: No such file or directory". Measured: bare copy 334 bytes of
+  stdout where the in-tree gate produced 0. A first cut compared against a bare copy and was
+  measuring the copy's isolation.
+
+**C4 is the `.cwd`-absent compatibility check, scoped to the sentinel decision.** A first cut compared
+the WHOLE of stdout, stderr and rc with `cmp` against the pristine `origin/main` gate. Review pointed
+out what that becomes: a permanent tripwire that fails on any later change to any other arm's output on
+a branch, for reasons unrelated to this fix, and a comparison of `main` with itself once BL-278 lands.
+The reviewer confirmed the comparison was NOT vacuous as built — in a fresh worktree `origin/main` is
+`ceb450e` with the marker absent, and the CI unit lane checks out with `fetch-depth: 0`, so
+`origin/main` is present there too; the hazard is later PRs changing the gate's output, and the
+self-comparison after merge. Of the two minimal remedies — restrict the comparison to the allow/deny
+decision plus the `pa_check` reason string, or pin the baseline to the pre-BL-278 blob of the gate
+instead of `origin/main` — the first was chosen: a pinned blob keeps the whole-output tripwire and
+merely freezes it, whereas restricting the comparison to the one envelope this fix touches keeps a
+genuine comparison while `main` lacks the arm and stops being a tripwire afterwards. The compared line
+is the JSON deny envelope, which carries both the decision and the reason. C4 now asserts, per case
+(sentinel present / absent):
+(a) against this gate alone, a session sentinel denies on the session's question and no sentinel
+produces no sentinel denial and rc 0 — this half can never go vacuous; and (b) against `origin/main`
+on identical fresh fixtures, the pending-approval deny envelope (the stdout line carrying "pending user
+decision") is identical, or identically absent. A fresh fixture per gate is still load-bearing — with
+no sentinel the gate falls through to arms that WRITE project state, so running both gates over one
+fixture compares run 1 with run 2 rather than gate with gate.
+
+**Two mutants.** M1 removes the operative line and asserts C1 re-opens. Following MT4's lesson, a
+marker-only landing check is necessary and not sufficient: M1 asserts the OPERATIVE TEXT verbatim
+(`sentinel="$(_pa_target_sentinel)" || sentinel=""`) occurs exactly once before mutating, that it
+occurs zero times and exactly one line changed after, and runs `bash -n` on the mutated file so a
+mangled substitution cannot pass as a landed mutation. M2 is the reviewer's survivor: it substitutes
+`root="$c"` for the toplevel resolution under the same discipline (once before, zero after, exactly
+one line removed and one added, parse check), confirms the mutant still passes C1's fixture — `.cwd`
+at the root resolves correctly either way — and then asserts C1b's fixture, `.cwd` two directories
+below the target's root, stops blocking. Killed in-tree as well as in the mirror: C1b and M2 both fail
+with the substitution in place, GREEN again on restore. (`bash -c 'set -n; . file'` is not a parse
+check — once `set -n` is active the `. file` after it is never executed, so it returns 0 on a file
+with an unterminated `if`; measured while building M2.) Registered in
+`tests/full-project-test-suite.sh` and the `tests.yml` unit lane (`lint-tests-registered.sh --list`:
+`registered`; confirmed by a negative control — removing the `tests.yml` line flips the same lint to
+`FAIL  not-in-unit-lane`).
+
+**Related:** `## BL-277:` (the detector that manufactures the false sentinels this arm then enforces —
+the two entries are a pair, and the operational pain belongs to that one; it is a **SIBLING BRANCH not
+yet merged**, `fix/bl277`, so that citation resolves only once it lands), `## BL-015:` (the sentinel
+reader this arm extends), `## BL-176:` (`# BL-176-GITPATH-EDITMSG`, the sibling case where a linked
+worktree's `.git` POINTER FILE silently disabled two gates — the same class of path assumption in the
+same file).
+
+---
+
+## BL-280: the Phase 2→3 bug gate treats an unmeasured GitHub as zero bugs — an absent SEV label, and a repo `gh` cannot even resolve, both read as "no bugs" and clear the gate
+
+**Status:** Open — reproduction + fix BUILT on branch `fix/bl280`, NOT yet submitted.
+`# BL-280-SEV-LABEL-PROBE` distinguishes "this label does not exist" from "zero open issues"
+with one bounded `gh api repos/{owner}/{repo}/labels/<name>` per label; `# BL-280-NO-SEV-VOCAB`
+stops `gh auth status` alone from establishing a bug-tracking SOURCE; `# BL-280-PARTIAL-VOCAB`
+reports an arm whose labels are absent as NOT MEASURED instead of `[OK]`; `# BL-280-QUERY-LIMIT`
+passes `--limit 1000`; `# BL-280-QUERY-STATUS` captures each query's exit status so a failed query
+is NOT MEASURED rather than 0; `# BL-280-REPO-PREFLIGHT` asks `gh repo view` once so a repository
+`gh` cannot resolve is reported as that, not as "no SEV label". Suite
+`tests/test-bl280-bug-gate-unmeasured-source.sh` **19 / 0** against RED **3 / 16**; seven mutants,
+each with a named killer; shellcheck 0.11.0 clean on the suite and no new finding on
+`scripts/test-gate.sh` (same SC1091/SC2001/SC2155 set as main). An earlier cut of this entry said
+13 / 0 against 3 / 10 with four mutants and four markers; adversarial review of that cut found two
+holes in it, recorded under **"Second cut"** below.
+
+**Numbering.** Filed as BL-280. Swept before claiming it: the token `BL-280` appears on **no ref**
+of this repository — 0 hits across all `refs/heads` and `refs/remotes` — against a positive control
+of `BL-279`, which the identical sweep finds on exactly the two refs that carry it
+(`fix/bl279`, `fork/fix/bl279`). The first cut of that sweep piped `git grep` into `head -1` inside
+an `if`, so the pipeline's exit status was `head`'s and **every ref reported a hit**; the number was
+only established once the predicate was fixed and controlled. `## BL-287:` records that BL-260 and
+BL-261 are reserved by downstream carries.
+
+**Duplicate sweep — by file touched, not by keyword.** `scripts/test-gate.sh` is modified by **no**
+open branch: for every ref, `git diff --name-only $(git merge-base main $ref) $ref -- scripts/test-gate.sh`
+is empty. That predicate is live rather than vacuous — the same loop over the same refs lists real
+files for fourteen of them (`fix/bl268` → five paths, `fix/scout-shallow-history-claim` → nine, and
+so on). Merged history on `main` carries seventeen commits touching this file, none on
+`check_phase_gate`'s GitHub arm. The four `gh issue list` calls named below are the **only** four in
+`scripts/`, `scripts/lib/` and `scripts/host-drivers/` combined, so the blast radius is one function.
+
+**Logged:** 2026-09-13, found while adopting the framework into a downstream project.
+
+**ONE entry, two arms, and the reason they are not two entries.** They share four lines in one
+function and one diff repairs both; splitting would mean two branches editing the same four lines
+and a conflict between them for no analytic gain. The information a split would have carried — that
+the arms differ sharply in consequence — is recorded per arm below, and the arms differ more than
+the finding as reported to me suggested. The shape is `## BL-275:`'s ("half one" / "half two" inside
+one entry), not two numbers.
+
+**ARM 1 — an absent label is indistinguishable from zero bugs, and the gate clears on it.**
+`gh issue list --label SEV-1 --state open --json number` against a repository that has no `SEV-1`
+label returns an **empty list at rc 0**. Not an error, not a diagnostic — a successful query with no
+results, which is the same thing a genuinely clean repository returns.
+
+**Measured, with the positive control first** (110-label repository, no `SEV-*` label among them):
+```
+gh label list  --limit 200 --json name | jq length                  -> 110
+gh label list  --limit 200 --json name | jq -r '.[].name' | grep ^SEV  -> (nothing)
+
+gh issue list --label "SEV-1" --state open --json number            -> [] , rc 0
+gh issue list --label "SEV-1" --state open --json number | jq length -> 0
+
+gh issue list --label "bug"   --state open --json number | jq length -> 30    # control: the pipeline works
+```
+
+The old code then did two things with that 0. It **added** it to the severity tally, and — the part
+that actually clears the gate — it set `has_bugs=true`, unconditionally, on the strength of
+`gh auth status`. `gh auth status` says the OPERATOR is logged in. It says nothing about whether
+this repository tracks bugs in GitHub Issues, and nothing about whether the SEV vocabulary exists
+here. With no `BUGS.md` present, the function printed `[OK] No open SEV-1 bugs` and its three
+siblings and reported the Phase 2→3 bug gate clear having measured nothing at all. This is
+`CLAUDE.md`'s own prohibition — *"a check that cannot run must not pass"* — and the failure class
+`# BL-112-SAST-NOTRUN` exists to name.
+
+**Three routes into it, not one.** The missing-label case above is the narrowest. Wider:
+
+- **No GitHub remote at all.** Measured in a fresh `git init` directory with no remote:
+  `gh issue list --label "SEV-1" --state open --json number` exits **1** with empty stdout; `jq length`
+  on empty input prints nothing and exits 0 (the `## BL-256:` residual-4 shape); `tr -d` yields the
+  empty string; and the existing sanitizer `case "$gh_sev1" in ''|*[!0-9]*) gh_sev1=0 ;; esac`
+  converts that to **0**. A GitLab or Bitbucket project with `gh` installed and logged in therefore
+  received four fabricated all-clears. The sanitizer is not at fault — it is doing its job — but it
+  is the last place a failed query becomes a number.
+- **Partial vocabulary, and this is the dangerous one.** The two SEV-2 arms query
+  `--label "SEV-2" --label "fix-now"` and `--label "SEV-2" --label "deferred"`. Two `--label` flags
+  **intersect**, measured: `bug` -> 257, `enhancement` -> 228, both together -> **1**. So a project
+  that created `SEV-1`/`SEV-2`/`SEV-3` but not the framework's `fix-now` / `deferred` jargon gets 0
+  from both queries — and **both of those arms BLOCK**. Open SEV-2 bugs, gate clear.
+
+**ARM 2 — the counts saturate at 30. This one does NOT let a gate pass; correct the framing.**
+No `--limit`, so every query stops at `gh issue list`'s default of 30.
+
+**Measured, same repository, same pipeline:**
+```
+gh issue list --label "bug" --state open --json number | jq length               -> 30
+gh issue list --label "bug" --state open --limit 1000 --json number | jq length  -> 257
+```
+
+Under-counted 8.5×. **It was reported to me as failing permissively in the same direction as arm 1,
+and it does not.** Every threshold in `check_phase_gate` is `-gt 0` — verified by reading all four
+consumers, `sev1_count`, `sev2_open`, `sev2_deferred` and `sev3_open` are used in a `-gt 0` test and
+in the message string, nowhere else — and saturation at 30 never yields 0 from a non-zero truth. A
+verdict cannot flip. What arm 2 corrupts is the **number the operator triages against**: "SEV-1 bugs
+open: 30" when the true figure is 257 is the difference between an afternoon's work and a
+re-planning conversation. It is a reporting defect of real cost, filed as one, and the entry should
+not borrow arm 1's severity for it.
+
+**Fix — BUILT on this branch.** Four markers, and one of them is a trap avoided rather than a
+mechanism:
+
+1. `# BL-280-SEV-LABEL-PROBE` — the missing distinction. `gh api repos/{owner}/{repo}/labels/<name>`
+   is rc 0 when the label exists and rc 1 + 404 when it does not (measured both ways), one request,
+   no pagination, and it fails rc 1 in a repository `gh` cannot resolve — which is the correct answer
+   there too. **NOT `gh label list`:** its own default limit is **30**, measured
+   (`gh label list --json name` -> 30, `--limit 200` -> 110), so probing with it would have rebuilt
+   arm 2 inside the fix for arm 1. Case R6 in the suite is the standing guard on that.
+2. `# BL-280-NO-SEV-VOCAB` — with none of `SEV-1`/`SEV-2`/`SEV-3` present, GitHub is no longer
+   counted as a bug-tracking SOURCE. `has_bugs` is left alone, so the function falls through to **its
+   own existing honest arm** — `[WARN] No bug tracking source found (BUGS.md or GitHub Issues)`,
+   `Cannot verify bug status`, exit 2. No new policy is minted: that arm and that exit code were
+   already the answer for a project with no tracker, and this makes the GitHub case consistent with
+   it instead of inventing a verdict.
+3. `# BL-280-PARTIAL-VOCAB` — vocabulary adopted but incomplete, and GitHub the only source: the
+   affected arm prints `NOT MEASURED … This is NOT a clean result` and sets `warnings=true` rather
+   than `[OK]`. Gated on `[ ! -f "BUGS.md" ]`, because a BUGS.md project counted every severity from
+   the file and GitHub contributing 0 is then **correct**, not a silence.
+4. `# BL-280-QUERY-LIMIT` — `--limit 1000` on all four queries. Ten pages at the REST `per_page` cap
+   of 100. **Residual, stated rather than hidden:** above 1000 open issues of a single severity the
+   figure is still understated; the verdict is not, because it is already a block.
+5. `# BL-280-QUERY-STATUS` (second cut) — each `gh issue list` is run into a variable with
+   `|| rc=$?`, and jq only sees the body of a query that exited 0. A query that failed marks its
+   arm NOT MEASURED — `the 'SEV-1' query failed (gh exit 1), so GitHub's count is unknown` — and
+   sets `warnings=true`, whether or not `BUGS.md` exists: the label is there, so GitHub may hold
+   issues under it that nobody counted. The `|| rc=$?` shape is what survives the script's `set -e`;
+   a bare `x=$(cmd); rc=$?` exits on the very failure it is trying to record.
+6. `# BL-280-REPO-PREFLIGHT` (second cut) — one `gh repo view --json name` before the label probes.
+   On failure the probes are skipped and the scope note reads `could not resolve a GitHub
+   repository, so its issues were NOT counted`; the earlier note, `no SEV-1/SEV-2/SEV-3 label
+   exists in this repository`, is reserved for a repository that resolved and has no such label.
+   The note is now printed on the no-source arm too, so a project with no `BUGS.md` sees the
+   reason before `No bug tracking source found`.
+
+**Blast radius of the fix, measured on the shipped script.** A project tracking bugs in `BUGS.md`
+— the common case — keeps all four `[OK]` lines and gains one `[INFO]` naming what GitHub
+contributed. A project with no `gh`, or `gh` not authenticated, is byte-identical: the whole block
+is already behind `command -v gh && gh auth status`. The outcomes that change from clear to
+not-clear are the ones that were never measured — including, since the second cut, a `BUGS.md`
+project whose SEV labels exist on GitHub but whose queries failed: it now reads NOT MEASURED on
+those arms (exit 2) where it read `[OK]` before, because BUGS.md's count says nothing about what
+GitHub holds.
+
+**What this entry does NOT decide, and why the maintainer should.** Two judgements were deliberately
+left open rather than taken here:
+
+- **Should an unmeasurable bug source BLOCK rather than warn?** This fix routes it to `exit 2`
+  (attestation required), matching the function's existing no-source arm. Failing closed would block
+  every project that has not adopted the SEV vocabulary on GitHub, which on the evidence is most of
+  them, and `# BL-112-SAST-NOTRUN` argues at length that a gate you cannot pass is a gate people
+  work around. That reasoning is persuasive but it is a security posture, not an implementation
+  detail, and it is yours.
+- **The gate has no record of which tracker the project actually uses, and could have one.**
+  `.claude/build-progress.json` carries a `bug_tracker` field — written in exactly two places,
+  `init.sh` and `scripts/test-gate.sh`'s `ensure_progress_file` heredoc, **both hardcoded to the
+  literal `"github_issues"`**, and **read by no code anywhere in the repository**. The intake wizard
+  does ask ("Bug tracking tool", default `GitHub Issues`) and saves the answer as
+  `bug_tracking_tool` in the intake record, where nothing consults it either. That is
+  `# BL-203-INTERVAL-PLUMB`'s defect one field over: an operator answer that never reaches the
+  enforced field. Plumbing it through would give this gate a real discriminator and make arms 2 and 3
+  of the fix unnecessary — but it mints a third writer and a new contract, so it is proposed here,
+  not built. **It is not filed as its own entry; it needs a number if you want it chased.**
+
+**Build note (2026-09-13, branch `fix/bl280`).** Suite
+`tests/test-bl280-bug-gate-unmeasured-source.sh` drives the REAL `scripts/test-gate.sh
+--check-phase-gate` against a PATH-shimmed `gh` in a `mktemp` project. No network, no real `gh`.
+The shim models the four behaviours that matter and nothing else: `auth` always rc 0 (that is all
+the old code checked), `repo view` rc 0 unless the fixture is `norepo`, `api` answering by a
+per-fixture label list, and `issue list` honouring `--limit` exactly as gh does — default 30,
+capped at the given value — or exiting 1 with nothing on stdout when the fixture is `queryfail`.
+
+RED against `main`'s file: **3 passed / 16 failed**. GREEN: **19 / 0**. (The first cut measured
+3 / 10 and 13 / 0 with the cases it had; the second cut's six additions are all RED on main.)
+
+**The three passes at RED are the honest-outcome controls, and they are load-bearing.** P0 asserts
+the shim is the `gh` the gate calls — without it R1/R2/R3 would pass whenever `gh` is merely absent
+from PATH, because no `gh` skips the GitHub block entirely and produces the honest warning for
+entirely the wrong reason. That is this entry's own defect reproduced inside its test, and P0 exists
+so it cannot be. R0 asserts a genuinely clean project still reads clear. R7 asserts a partly-adopted
+vocabulary **with** BUGS.md still reads `[OK]` — true on main by construction, and the bound on the
+fix's blast radius.
+
+Discriminators R1-R6 and R8 all go red on main: R1 the missing-label clear, R2 the no-remote clear,
+R3 the two blocking SEV-2 arms, R3b/R3c the SEV-1 and SEV-3 arms alone, R4 `257` reported as `30`,
+R5 the unstated scope, R6 four unlimited queries, R8 four failed queries read as four all-clears.
+
+**Seven mutants, each with a named killer, and each proving it changed the file before it concludes
+anything.** MT1 strips `--limit` → R4. MT2 reinstates `has_bugs=true` on the no-vocabulary branch →
+R1. MT3 drops the `[ ! -f "BUGS.md" ]` guard → R7, which is what makes that guard load-bearing
+rather than decoration. MT4 drives R6's own predicate against a stripped file and requires it to
+report 4 of 4 while still reporting 0 on the real one. MT5 and MT6 delete the SEV-1 and SEV-3
+PARTIAL-VOCAB lines respectively → R3b, R3c; each proves the edit landed by a line count that
+dropped by exactly one and the target line absent. MT7 rewrites all four `|| gh_<arm>_rc=$?` to
+`|| gh_<arm>_rc=0` — the first cut's sanitise-to-zero, reinstated in one substitution — → R8.
+
+**Second cut (2026-09-13): two holes in the first cut, found by adversarial review, not by me.**
+Both were reproduced before anything was changed. First, the two single-severity lines of
+`# BL-280-PARTIAL-VOCAB` — `sev1_measurable=false` and `sev3_measurable=false` — were **untested**:
+R3's fixture carried SEV-1 and SEV-3, so neither line ever fired, and deleting either one left the
+suite at **13 / 0**. Measured on the tip: line count 672 → 671, target text absent, `Passed: 13
+Failed: 0`, both lines. R3b and R3c now isolate each line (SEV-1 absent with everything else
+present, and the SEV-3 mirror), MT5 and MT6 are the reviewer's deletions made permanent, and the
+same two deletions against the fixed file now read **17 / 2** each — R3b + MT5, and R3c + MT6.
+Second, and worse because it is main's defect one step later: with all five labels present and
+every `gh issue list` exiting 1 with empty stdout, the first cut still **sanitised the empty body
+to 0 and printed four `[OK]` all-clears**, `has_bugs=true`, exit 2 only because FEATURES.md was
+missing. The label probe had succeeded, so the code trusted the query that followed it — the
+`case ''|*[!0-9]*) → 0` sanitizer this entry's ARM 1 describes as "the last place a failed query
+becomes a number" was still doing exactly that. `# BL-280-QUERY-STATUS` is the fix; R8 the case;
+MT7 the mutant. Two smaller review findings landed with them: the scope note now distinguishes an
+unresolvable repository from a repository with no SEV labels (`# BL-280-REPO-PREFLIGHT`, asserted
+in R2 both ways, and R2's pass string no longer claims "a failed query is not a zero count" — it
+claims what R2 measures, a repository `gh` cannot resolve), and MT4's RED path no longer calls the
+counting predicate with an empty mutant directory (it emitted `grep: /scripts/test-gate.sh: No
+such file` against main). The shim gained a `repo` verb and a `queryfail` mode, and P0 now also
+proves the shim answers `gh repo view` — without that, every case would take the unresolvable-repo
+arm and R1–R4 would pass having never reached the code they test.
+
+**Two defects in the suite itself, both caught by running it and both this repo's documented
+traps.** First, R6's predicate was **comment-blind** and reported three violations that were all
+prose inside the fix's own comments — `## BL-258:` #7 verbatim ("one script accused on the strength
+of the words `exit 1` inside a COMMENT"), and `code_lines()` now drops whole-line comments before
+matching. Second, and worse: **MT1 and MT2 originally PASSED against main while mutating nothing.**
+Their `perl` substitutions target text that only exists once the fix is applied, so against main the
+file came back byte-identical and every assertion below measured the unmutated script. Both "landed"
+checks were written as *"is the target text absent afterwards"*, which is trivially true when it was
+never present. They now compare a `cksum` taken before the edit and refuse to conclude anything if
+the file did not change — which is why the RED tally moved from 5/8 to 3/10. A mutant that mutates
+nothing is an assertion that cannot fail.
+
+**Fails CLOSED on a missing prerequisite, and the control for that is real.** Absent `jq`, the suite
+prints `[FAIL] PREREQ` and exits 1 at **0 / 1** — it does not SKIP, because a suite that skips
+reports green having run nothing, which is the class this entry is about. The **first** attempt to
+prove this used `PATH=/usr/bin:/bin` and the suite ran 13/0 — `jq` is at `/usr/bin/jq` on this host
+as well as `/opt/homebrew/bin/jq`, so the control was fake and would have certified a check that
+never ran. Re-measured against a `PATH` containing one symlink (`dirname`) and nothing else, with
+`command -v jq` confirmed to find nothing first.
+
+Registered in `tests/full-project-test-suite.sh` and in the `tests.yml` unit lane
+(`lint-tests-registered.sh --list`: `registered`), and the lint's **negative control** was run: with
+the aggregator entry removed it names this file — *"test file is not invoked by any aggregator"*,
+1 violation — and is clean with it restored. The five other unit suites that drive
+`scripts/test-gate.sh` re-run green (`test-bl073-review-manifest-gate` 29/0,
+`test-bl121-cutline-bsd-sed` 2/0, `test-test-gate-counter-sanitizer` 5/0,
+`test-test-gate-null-handling` and `test-unrecord-feature` rc 0).
+
+**Related:** `## BL-112:` (`# BL-112-SAST-NOTRUN` — the shipped doctrine that a check which did not
+run must never read as a check that found nothing; this is that class in a gate rather than a hook),
+`## BL-231:` (the absent-vs-unreadable family), `## BL-256:` (residual 4, `jq` on empty input as a
+silent success — the mechanism by which a failed query becomes 0 here), `## BL-203:`
+(`# BL-203-INTERVAL-PLUMB`, the intake answer that never reaches the enforced field — the same shape
+as the unread `bug_tracker` above), `## BL-258:` #7 (the comment-blind predicate this suite walked
+into), `## BL-275:` (the one-entry-two-halves shape, and the precedent for leaving a maintainer
+judgement explicitly undecided).
+
+---
+
+## BL-274: PLACEHOLDER — the self-approval gate's single-technical-authority case, cited by BL-275 and BL-279 but never filed
+
+**Status:** Open — PLACEHOLDER, written by the maintainer on merge (2026-09-15), not by the
+contributor who cited it.
+
+**Why this exists.** The 2026-09-13 contributor batch (`## BL-275:`, `## BL-279:`) cites
+`## BL-274:` nine times — as "the A13 fixture whose construction exposed" the WARN-vs-block
+drift, and as "the adopter-facing question this defect produces, and the attestation built
+for it". No branch on the contributor's fork carries the entry (`git grep BL-274` finds
+nothing on `main` before this batch, and no `fix/bl274` ref exists), so every one of those
+cites resolved to nothing. `lint-backlog-references.sh` checks commit messages and
+`lint-bl-markers.sh` checks `# BL-NNN-` markers; neither covers an in-file `## BL-NNN:` cite,
+so this dangled silently. A placeholder holds the number so the cites resolve, in the same
+never-delete-the-trail spirit as every Closed entry above.
+
+**What it appears to be, from the citing text.** A project with ONE technical authority
+cannot satisfy `docs/governance-framework.md` §XIV item 5 (a second technologist with
+repository and hosting access), so the organizational self-approval check will always
+fire for it — the gate is the symptom, the missing second person is the cause. BL-275
+rewrote the gate's message to say exactly that; BL-279 built an "A13" case around it. What
+BL-274 was going to propose — an attestation route, a documented pre-condition check, or
+nothing — is not recoverable from the cites and is deliberately not invented here.
+
+**To close:** either write the real entry over this placeholder, or fold the number into
+`## BL-275:` and re-point the cites. Not both, and not by deleting the number.

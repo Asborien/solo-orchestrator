@@ -170,8 +170,24 @@ if [ "$(jq -r '.enforcement_level // "missing"' "$BASE/.claude/manifest.json" 2>
 fi
 # Grep the appended block's LOAD-BEARING LINE, not its marker comment: a comment
 # is cheap to satisfy and would let this precondition pass vacuously.
-GATE_CALL='bash "$(git rev-parse --show-toplevel)/.git/hooks/framework-gate.sh"'
-if ! grep -qF "$GATE_CALL" "$HOOK"; then
+#
+# # BL-209-GATE-PATH — PIN THE BEHAVIOUR, NOT ONE BYTE STRING. This was a single
+# `grep -qF 'bash "$(git rev-parse --show-toplevel)/.git/hooks/framework-gate.sh"'`.
+# BL-209 changed the emitted hook to resolve the gate through
+# `git rev-parse --git-common-dir` (a worktree's `.git` is a FILE, so the old
+# literal was false there), and that silently un-pinned BOTH uses below — this
+# precondition AND the pre-mutant guard at the strict-gate proof, which then
+# refused a correctly-targeted mutant and switched the RED/GREEN pair off.
+#
+# So this now asserts the two things that actually have to be true — the hook
+# RESOLVES a gate path and INVOKES it — and is indifferent to the expression in
+# between. `scripts/install-filesystem-gates.sh` names this suite as its pin;
+# the marker makes the coupling greppable from both ends.
+_bl112_gate_invoked() {   # <hook-file> — BL-209-GATE-PATH
+  grep -qE '^[[:space:]]*SOIF_GATE=.*framework-gate\.sh' "$1" \
+    && grep -qE '^[[:space:]]*bash "\$SOIF_GATE"' "$1"
+}
+if ! _bl112_gate_invoked "$HOOK"; then
   fail_ "precond-gate-block" "the pre-commit hook never invokes framework-gate.sh"; precond_ok=0
 fi
 if ! grep -qF '# BL-112-SAST-ERROR' "$HOOK"; then
@@ -704,7 +720,7 @@ if want T-mutation-strict-gate; then
     fail_ "T-mutation-strict-gate" "MIS-TARGETED — the conditional-exit anchor is not present exactly once in the scaffolded hook"
   elif ! grep -qF '# BL-112-STRICT-GATE' "$HK"; then
     fail_ "T-mutation-strict-gate" "the mutation removed the marker — it must attack BEHAVIOUR, not the marker text"
-  elif ! grep -qF "$GATE_CALL" "$HK"; then
+  elif ! _bl112_gate_invoked "$HK"; then   # BL-209-GATE-PATH
     fail_ "T-mutation-strict-gate" "the mutation removed the gate invocation itself — that is not the mutation under test"
   elif ! bash -n "$HK" 2>/dev/null; then
     fail_ "T-mutation-strict-gate" "the mutated hook has a syntax error — a broken mutant proves nothing"

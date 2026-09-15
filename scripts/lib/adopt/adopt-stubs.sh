@@ -126,6 +126,17 @@ adopt_stub_secrets_disposition() {
   # HISTORY is a different surface from §7.3's archive scan, which WP6 did
   # build, and §10 assigns §6.3 to no work package at all. Naming WP6 here now
   # that WP6 has landed would read as "already done".
+  # BL-288: `scanned-partial` is the one non-`scanned` status where a tool DID
+  # run, so it gets its own sentence. The old wording — "did not run a secrets
+  # tool" — would have been false here, and false in the direction that makes
+  # an operator discount the warning.
+  if [ "$status" = "scanned-partial" ]; then
+    adopt_stub_notice "the secrets disposition" "unassigned — §10 gives §6.3 to no work package" \
+      "The scan ran but could only read part of this project's history (a shallow clone), so its"
+    adopt_note "result is not a statement about your history. Run 'git remote set-branches origin '*' && git fetch --unshallow' and re-scan"
+    adopt_note "before you treat this repository as free of committed credentials."
+    return 0
+  fi
   if [ "$status" != "scanned" ]; then
     adopt_stub_notice "the secrets disposition" "unassigned — §10 gives §6.3 to no work package" \
       "The scan did not run a secrets tool, so this adoption knows nothing about credentials in your history."

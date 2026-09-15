@@ -163,6 +163,15 @@ _bl072_tier_bypassable() {
 #   • AND no test rode earlier on the branch (git diff <base>...HEAD).
 # Pure detection, mode-independent: both the PreToolUse WARN path and the
 # --terminal-mode enforcement call it (single source of truth). set -e safe.
+# _tdd_note_key_exempt <base> <from_key> — one line on stderr when, and ONLY
+# when, the branch-axis exemption was measured against an integration_branch
+# read from .claude/manifest.json. A silent exemption sourced from a tracked
+# file is the framework's own `# BL-147` shape; a keyless project is unchanged.
+_tdd_note_key_exempt() {   # BL-286-EXEMPT-BY-KEY
+  [ "${2:-0}" -eq 1 ] || return 0
+  echo "[note] BL-072 TDD ordering: EXEMPT on the branch axis — a test rode earlier on this branch, measured against integration_branch '$1' from .claude/manifest.json. That key is a tracked file; if it does not name this project's real trunk, this exemption is wrong." >&2
+}
+
 _tdd_triggers() {
   local subject="$1" staged="$2"
   echo "$subject" | grep -qE '^(feat|fix|refactor)(\([^)]*\))?!?:' || return 1
@@ -199,23 +208,74 @@ _tdd_triggers() {
       return 1
     fi
   fi
+  # BL-286-INTEGRATION-BRANCH — the branch axis asks "did a test ride EARLIER
+  # on this branch", which needs the branch's OWN base. That base was the
+  # literal `main`. On a project whose integration branch is not `main`, the
+  # range stops being "this branch" and becomes the whole divergence between
+  # `main` and the real trunk, so `b_test` is almost always > 0 and the
+  # classifier returns 1 (EXEMPT) on every commit. The gate is installed,
+  # reports healthy, and never fires.
+  #
+  # This FAILS OPEN, which is why it matters more than a wrong number: an
+  # UNRESOLVABLE base already skips the axis and falls through to fire
+  # (fail-closed, correct, unchanged below). A resolvable-but-WRONG base is
+  # the dangerous case, and it is the common one, because `main` usually
+  # exists even where it is not the trunk.
+  #
+  # Read an explicit key and nothing else. `origin/HEAD` was considered and
+  # rejected: it is local config, so a governance gate keyed on it is
+  # configurable by the thing it governs, and inferring a trunk is the class
+  # of guess `adopt-intake.sh` refuses ("a fact nobody gave"). An ABSENT key
+  # therefore resolves to today's behaviour EXACTLY, byte-identical for every
+  # existing project, rather than to something cleverer that could be wrong.
+  #
+  # Stated precisely, because it is tempting to overclaim here: this does NOT
+  # satisfy BL-221 in the direction that matters. On a wrong-trunk project with
+  # no key — which is EVERY project today, since nothing writes it yet — the
+  # absent key still resolves to `main` and the gate stays inert, which is the
+  # permissive answer. Always-firing on an absent key is not available either:
+  # it would false-block every keyless main-trunk project. What this guarantees
+  # is byte-identity and no NEW permissive resolution; closing the keyless case
+  # needs a writer, and this ships the reader without picking one.
+  local _ib="" _ib_from_key=0
+  if [ -f .claude/manifest.json ] && command -v jq >/dev/null 2>&1; then
+    _ib=$(jq -r '.integration_branch // ""' .claude/manifest.json 2>/dev/null || echo "")
+  fi
+  if [ -n "$_ib" ]; then _ib_from_key=1; else _ib="main"; fi
+
+  # BRANCH REFS ONLY, AND LOUD WHEN THE KEY DECIDES. Two things a review found
+  # after the block above was written, both measured:
+  #   * `rev-parse --verify` accepts ANY revision spec. A key naming a tag,
+  #     `HEAD~50` or a sha resolved, widened `<base>...HEAD` until it held a
+  #     test, and the non-bypassable block became rc 0 with zero bytes of
+  #     output and no ledger row. `refs/heads/` and `refs/remotes/origin/`
+  #     accept a branch and nothing else.
+  #   * a REAL branch cut behind the tests does the same, and no read-side
+  #     check can tell a wrong trunk from a right one. What it can do is stop
+  #     being silent: when the key — a tracked file in the repo the gate
+  #     governs — is what exempted the commit, say so and name the base.
+  #     Keyless projects print nothing new, so the B-case byte-identity holds.
   local base=""
-  if git rev-parse --verify --quiet main >/dev/null 2>&1; then
-    base="main"
-  elif git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
-    base="origin/main"
+  if git rev-parse --verify --quiet "refs/heads/$_ib" >/dev/null 2>&1; then
+    base="$_ib"
+  elif git rev-parse --verify --quiet "refs/remotes/origin/$_ib" >/dev/null 2>&1; then
+    base="origin/$_ib"
   fi
   if [ -n "$base" ]; then
     local branch_status bcounts b_test
     branch_status=$(git diff --name-status "$base"...HEAD 2>/dev/null || true)
     bcounts=$(printf '%s\n' "$branch_status" | _bl072_classify_status)
     b_test=${bcounts##*TEST:}
-    [ "${b_test:-0}" -gt 0 ] 2>/dev/null && return 1
+    if [ "${b_test:-0}" -gt 0 ] 2>/dev/null; then
+      _tdd_note_key_exempt "$base" "$_ib_from_key"   # BL-286-EXEMPT-BY-KEY
+      return 1
+    fi
     # BL-107-RUST-INLINE-TESTS (branch axis): a test that rode EARLIER on the
     # branch may be an inline .rs test — same content probe over base...HEAD
     # (same attribute family + --no-ext-diff rationale as the staged probe).
     if printf '%s\n' "$branch_status" | grep -qE '\.rs([[:space:]]|$)'; then
       if git diff --no-ext-diff -U0 "$base"...HEAD -- '*.rs' 2>/dev/null | grep -qE "$_bl107_attr_re"; then
+        _tdd_note_key_exempt "$base" "$_ib_from_key"   # BL-286-EXEMPT-BY-KEY
         return 1
       fi
     fi
@@ -890,6 +950,55 @@ If this is a stale file from a crashed session, remove it manually:
 EOF
 }
 
+# BL-278-SENTINEL-ROOT — the sentinel belonging to the repository that contains
+# the hook envelope's `.cwd`.
+#
+# WHAT `.cwd` IS, precisely: the directory Claude is in BEFORE the intercepted
+# command runs. It is NOT the repository the command will run in. So this arm
+# covers exactly one shape — a bare `git commit` issued while `.cwd` is inside
+# the repository that owns the sentinel — and no other. `git -C <path> commit`
+# and `cd <path> && git commit` carry their target only in the command text,
+# which nothing here parses (and `_is_git_commit` does not match the `-C` shape
+# at all). `## BL-278:` records both as an open residual with the probes that
+# showed it; resolving the target from the command text is a change to a
+# security arm and is left to the maintainer.
+#
+# `$sentinel` below is a BARE RELATIVE LITERAL, and on the PreToolUse path this
+# script never changes directory: its only `cd` is in the TERMINAL_MODE branch,
+# which this path does not take, and CLAUDE_PROJECT_DIR appears nowhere in this
+# file. So the literal resolves against whatever cwd Claude Code hands the hook
+# — the SESSION's project directory — never against the commit's target. That is
+# the ABSENCE of root resolution rather than a wrong one, and it cuts both ways.
+# Measured 2026-09-13: a sentinel in the session's project blocked a commit in
+# an unrelated clone with no .claude/ of its own, AND a repository carrying its
+# OWN sentinel was NOT blocked when committed to from a session rooted
+# elsewhere.
+#
+# The second case is what this arm closes, for the bare-`git commit` shape, and
+# it is the one the design says must work: docs/builders-guide.md § "Structured
+# Decision Points: The Pending-Approval Sentinel" ships this reader INTO each project (`upgrade-project.sh` "copies … the
+# updated scripts/pre-commit-gate.sh into existing projects, so the enforcement
+# … goes live immediately on upgrade") precisely so a project's own sentinel
+# gates that project's own commits.
+#
+# ADDITIVE ON PURPOSE. The session-relative read above is untouched, so nothing
+# that blocks today stops blocking; this only covers the case where NOTHING
+# fired. Whether a session-scoped hold SHOULD reach other repositories is
+# UNSTATED in the design and is deliberately left alone — `## BL-278:` records
+# both readings and decides neither.
+#
+# FAILS CLOSED: every unreadable or unresolvable input returns 1, which degrades
+# to exactly today's behaviour rather than to permissiveness.
+_pa_target_sentinel() {
+  local c root
+  c=$(printf '%s' "${INPUT:-}" | jq -r '.cwd // empty' 2>/dev/null) || return 1
+  [ -n "$c" ] || return 1
+  [ -d "$c" ] || return 1
+  root=$(git -C "$c" rev-parse --show-toplevel 2>/dev/null) || return 1
+  [ -n "$root" ] || return 1
+  printf '%s/.claude/pending-approval.json\n' "$root"
+}
+
 pa_check() {
   # Only applies to git commit or gh pr create. Other commands fall through.
   local is_commit=false is_pr=false
@@ -898,7 +1007,10 @@ pa_check() {
   [ "$is_commit" = false ] && [ "$is_pr" = false ] && return 0
 
   local sentinel=".claude/pending-approval.json"
-  [ -f "$sentinel" ] || return 0
+  if [ ! -f "$sentinel" ]; then
+    sentinel="$(_pa_target_sentinel)" || sentinel=""
+    [ -n "$sentinel" ] && [ -f "$sentinel" ] || return 0
+  fi
 
   local action_label="commit"
   [ "$is_pr" = true ] && action_label="PR creation"

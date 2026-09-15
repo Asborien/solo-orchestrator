@@ -112,6 +112,34 @@ load_context() {
     PROJECT_NAME=$(jq -r '.project // empty' ".claude/phase-state.json" 2>/dev/null || echo "")
   fi
 
+  # BL-284-CONTEXT-STATE — read platform/language/track from the STATE FILES
+  # before falling through to CLAUDE.md prose. Without this, has_context() is
+  # unsatisfiable on an ADOPTED project and fix_tool_prefs can never run:
+  #   * the only prior sources were .claude/tool-preferences.json — the file
+  #     fix_tool_prefs exists to CREATE, so it cannot be its own precondition —
+  #     and `grep 'Platform:'`-style anchors in CLAUDE.md, which are emitted by
+  #     the scaffolded CLAUDE.md and absent from a project that kept its own.
+  #   * so on a brownfield adoption every one of PLATFORM/LANGUAGE/TRACK stayed
+  #     empty, has_context() returned false, and verify-install listed
+  #     "Tool preferences not configured" as auto-fixable while --auto-fix
+  #     silently declined it on every run. Measured on an adopted project: the
+  #     row stayed fixable across repeated --auto-fix passes.
+  # Both files are already opened by this function for other fields, and both
+  # carry .track (adoption writes it), so this reads what is there rather than
+  # adding a source. Load order and the `-z` guards mirror DEPLOYMENT above:
+  # intake-progress, then phase-state, then the CLAUDE.md fallback — and an
+  # EMPTY value must not win, because adoption records platform/language as ""
+  # when it did not collect them.
+  if command -v jq &>/dev/null; then
+    for _ctx_src in ".claude/intake-progress.json" ".claude/phase-state.json"; do
+      [ -f "$_ctx_src" ] || continue
+      [ -z "$PLATFORM" ] && PLATFORM=$(jq -r '.platform // empty' "$_ctx_src" 2>/dev/null || echo "")
+      [ -z "$LANGUAGE" ] && LANGUAGE=$(jq -r '.language // empty' "$_ctx_src" 2>/dev/null || echo "")
+      [ -z "$TRACK" ]    && TRACK=$(jq -r '.track // empty' "$_ctx_src" 2>/dev/null || echo "")
+    done
+    unset _ctx_src
+  fi
+
   # Deployment from intake-progress, phase-state, or CLAUDE.md (in that
   # order of trust). Bonus catch alongside code-verify-reconfigure-9:
   # the prior load order skipped phase-state.json (which init.sh writes
@@ -1969,10 +1997,27 @@ fi
 
 fix_superpowers() {
   # Drop `2>/dev/null` per the same rationale as the other auto-fix
-  # functions: a silenced `claude plugins add` failure cannot be
-  # distinguished from success and leaves the project without the
-  # superpowers plugin while reporting healthy.
-  claude plugins add superpowers
+  # functions: a silenced failure cannot be distinguished from success and
+  # leaves the project without the superpowers plugin while reporting healthy.
+  #
+  # BL-284-PLUGIN-VERB — the command was `claude plugins add superpowers`, which
+  # is not a command: `claude plugin --help` lists install|i, and `add` exits 1
+  # with "error: unknown command 'add'". The fixer could therefore never work,
+  # on any host. Two corrections, both load-bearing:
+  #   * `install`, not `add`.
+  #   * the MARKETPLACE-QUALIFIED name, because the check immediately above
+  #     keys on .enabledPlugins["superpowers@claude-plugins-official"]. A bare
+  #     `superpowers` can resolve through any configured marketplace, and an
+  #     install recorded under a different key satisfies the install but NOT the
+  #     detector — a fixer that "succeeds" and leaves the row red. This is the
+  #     spelling docs/cli-setup-addendum.md already documents.
+  # --scope user is git's default here and is stated explicitly because it is
+  # what writes ~/.claude/settings.json, the file the detector reads.
+  # `--yes` is deliberately NOT passed: it auto-accepts running a
+  # marketplace-declared command, and a fixer must not silently execute code on
+  # the operator's behalf. superpowers is a url-source plugin and needs no
+  # confirmation; a plugin that does will fail loudly here instead.
+  claude plugin install --scope user superpowers@claude-plugins-official
 }
 
 fix_context7() {
