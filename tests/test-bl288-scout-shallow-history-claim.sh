@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# tests/test-bl264-scout-shallow-history-claim.sh
+# tests/test-bl288-scout-shallow-history-claim.sh
 #
-# `## BL-264:` — SCOUT CALLED A ONE-COMMIT SCAN "full-history".
+# `## BL-288:` — SCOUT CALLED A ONE-COMMIT SCAN "full-history".
 #
 # scripts/lib/scout/scout-secrets.sh decided the secrets scope with a single
 # question — is this inside a work tree? — and answered `full-history` whenever
@@ -59,7 +59,7 @@ fail_() { echo "  [FAIL] $1 — $2"; FAILED=$((FAILED + 1)); }
 skip_() { echo "  [SKIP] $1 — $2"; SKIPPED=$((SKIPPED + 1)); }
 
 command -v jq >/dev/null 2>&1 || {
-  echo "jq is required for tests/test-bl264-scout-shallow-history-claim.sh" >&2; exit 2; }
+  echo "jq is required for tests/test-bl288-scout-shallow-history-claim.sh" >&2; exit 2; }
 [ -f "$SCOUT" ] || {
   echo "  [FAIL] setup — $SCOUT not found"; echo ""; echo "Results: 0 passed, 1 failed"; exit 1; }
 
@@ -140,7 +140,7 @@ if [ "$HAVE_GITLEAKS" -eq 0 ]; then
   if [ "$GITLEAKS_ABSENT_IS_FATAL" -eq 1 ]; then
     fail_ "setup" "gitleaks is not installed and CI is set — every case here needs a real scan; a green check credited with a proof that never ran is the outcome this arm exists to prevent"
   else
-    skip_ "the whole suite" "gitleaks not installed (install it to run BL-264's proofs locally)"
+    skip_ "the whole suite" "gitleaks not installed (install it to run BL-288's proofs locally)"
   fi
 else
   D="$(newtmp)"

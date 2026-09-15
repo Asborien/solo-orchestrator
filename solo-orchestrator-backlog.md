@@ -19695,10 +19695,13 @@ this file), `## BL-084:` (`# BL-084-TIER-KEY`, the sync-sibling trap this avoids
 
 ---
 
-## BL-264: Scout reports a shallow clone as a completed `full-history` secrets scan — a `--depth 1` checkout is issued a clean bill of health over a credential the scanner was never given
+## BL-288: Scout reports a shallow clone as a completed `full-history` secrets scan — a `--depth 1` checkout is issued a clean bill of health over a credential the scanner was never given
+
+**Renumbered BL-264 → BL-288 on merge (2026-09-15):** BL-264 was taken on `main` before this landed;
+the markers, the test file and both registrations were renamed to match.
 
 **Status:** Open — fix prepared on `fix/scout-shallow-history-claim`, not yet raised as a PR. Suite
-`tests/test-bl264-scout-shallow-history-claim.sh` **10 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in
+`tests/test-bl288-scout-shallow-history-claim.sh` **10 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in
 `ubuntu:24.04` as a non-root user, against RED **2 / 8** on unmodified `main` (`ceb450e`); three
 mutants, all killed. Registered in the aggregator and in the `tests.yml` unit lane
 (`lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
@@ -19710,11 +19713,11 @@ is the posture the tests.yml gitleaks step was added for (`the twelve gitleaks-g
 skipping here too`). Re-run with gitleaks 8.30.1 present and `CI=1`: **10 / 0, 0 skipped.** Recorded
 because a green container run that ran nothing is exactly the unearned receipt this entry is about.
 
-**Numbering.** Filed as BL-264, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
+**Numbering.** Filed as BL-288, not BL-260. Three separate builds on 2026-09-12 each took BL-260 as
 the next free number here, and two carried fixes in a DOWNSTREAM project already hold BL-260 and
 BL-261 in committed code and in a committed audit trail, unfiled in this backlog. <!-- lint-bl-markers: allow the downstream marker tokens are deliberately not backticked; they are markers in another project, not in this code surface -->
-So **BL-260 and BL-261 are reserved, not free.** The other two of the three are `## BL-262:` and
-`## BL-263:`; read all three numbers as provisional until those downstream carries are filed, since
+So **BL-260 and BL-261 are reserved, not free.** The other two of the three are `## BL-287:` and
+`## BL-285:`; read all three numbers as provisional until those downstream carries are filed, since
 nothing here holds a number until an entry header claims it.
 
 
@@ -19775,7 +19778,7 @@ status word alone: `adopt-tools.sh` `_adopt_rescan_secrets` (`[ "$status" != "sc
 and `adopt-stubs.sh` `adopt_stub_secrets_disposition` (`if [ "$status" != "scanned" ]`). That is what
 decides the fix's shape below, and it is what `MP2` exists to prove.
 
-**The fix — `# BL-264-SHALLOW-SCOPE`.** Degrade the recorded scope and the status; do not refuse, and do
+**The fix — `# BL-288-SHALLOW-SCOPE`.** Degrade the recorded scope and the status; do not refuse, and do
 not warn-and-keep-the-claim.
 
 - **Not refuse.** Scout is a read-only pre-adoption survey pointed at somebody else's checkout, and
@@ -19796,7 +19799,7 @@ not warn-and-keep-the-claim.
 `commitsScanned` is additive and would not have justified a bump on its own. The precedent is
 `scripts/lib/adoption-stamp.sh`, whose own comment records that its 1 → 2 "is not cosmetic".
 
-**The suite.** `tests/test-bl264-scout-shallow-history-claim.sh`, unit lane, ~5s. `S0` asserts the
+**The suite.** `tests/test-bl288-scout-shallow-history-claim.sh`, unit lane, ~5s. `S0` asserts the
 fixture is sound **before** anything else — 3 commits against 1, the plant absent from the working
 tree, the full scan finding it — so a dud fixture fails loudly rather than certifying nothing (the WP2
 suite's G0 doctrine; BASE32-validity is load-bearing and a plant containing a character outside
@@ -19836,7 +19839,7 @@ shallow adoption re-walked the whole history. That is exactly the cost the funct
 says the guard exists to avoid — "re-running the scanner over it would cost a full history walk and
 replace the measurement the stamp names with a different one" — and its stated rule decides the case:
 **"Only a report that says nobody looked is worth asking again."** A partial scan LOOKED; a tool ran
-and produced real findings over the history it could reach. `# BL-264-RESCAN-PARTIAL` moves it to the
+and produced real findings over the history it could reach. `# BL-288-RESCAN-PARTIAL` moves it to the
 `scanned` side. The re-scan happens moments after the survey in the SAME clone at the same depth, so
 it would return `scanned-partial` again; the remedy for a shallow clone is the operator's deliberate
 `git fetch --unshallow` and re-scan, which the disposition stub now tells them to do, not an automatic

@@ -51,7 +51,7 @@ scout_emit_json() {
   TAB=$(printf '\t')
 
   printf '{\n'
-  # 2 since BL-264. The bump is not cosmetic: a reader written against 1 is
+  # 2 since BL-288. The bump is not cosmetic: a reader written against 1 is
   # entitled to an exhaustive `secrets.status` of three words and a
   # `secrets.scope` of two, and both enumerations widened. `commitsScanned` is
   # additive and would not have justified a bump on its own.
@@ -158,7 +158,7 @@ _scout_emit_secrets() {
   cfg=$(_scout_meta "$work" secconfig)
   count=$(_scout_meta "$work" seccount)
   commits=$(_scout_meta "$work" seccommits)
-  # BL-264: the two statuses under which gitleaks actually produced findings.
+  # BL-288: the two statuses under which gitleaks actually produced findings.
   # `scanned-partial` findings are REAL — narrowing the scope does not make
   # what was found inside it untrue — so they are emitted rather than nulled,
   # and the status word is what carries the caveat.
@@ -492,7 +492,7 @@ _scout_md_secrets() {
       return 0
       ;;
     scanned-partial)
-      # BL-264: printed BEFORE the findings, not after, because the reader's
+      # BL-288: printed BEFORE the findings, not after, because the reader's
       # conclusion is formed by the count and the count is the part that is
       # not trustworthy here.
       printf '**Only part of this history was read.** %s\n\n' "$(_scout_meta "$work" secnote)"
@@ -504,7 +504,7 @@ _scout_md_secrets() {
   fi
 
   if [ -z "$count" ] || [ "$count" = "0" ]; then
-    # BL-264 added the third arm. The two-arm ternary this replaces printed
+    # BL-288 added the third arm. The two-arm ternary this replaces printed
     # "every commit in this project" for a `--depth 1` clone, which is the
     # human-facing half of the same false claim the JSON's scope field made.
     case "$(_scout_meta "$work" secscope)" in

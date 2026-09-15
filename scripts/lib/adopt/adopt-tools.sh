@@ -388,7 +388,7 @@ _adopt_rescan_secrets() {
   local status work sec
 
   status="$(adopt_report_read "$report" '.secrets.status // ""')"
-  # BL-264-RESCAN-PARTIAL — `scanned-partial` belongs on the `scanned` side of
+  # BL-288-RESCAN-PARTIAL — `scanned-partial` belongs on the `scanned` side of
   # this guard, and the rule is this function's own: "Only a report that says
   # nobody looked is worth asking again." A partial scan is a scan that LOOKED;
   # a tool ran and produced real findings over the history it could reach.
@@ -514,7 +514,7 @@ _adopt_rescan_secrets() {
         adopt_note "The scan was re-run and it FAILED. Nothing is known about credentials in this"
         adopt_note "project's history — a scan that broke is not a scan that found nothing." ;;
       scanned-partial)
-        # BL-264-RESCAN-PARTIAL — REACHABLE even though the guard above now
+        # BL-288-RESCAN-PARTIAL — REACHABLE even though the guard above now
         # declines to re-scan a report that ALREADY says `scanned-partial`: a
         # re-scan triggered by `tool-unavailable` installs the scanner and then
         # meets the shallow clone, and comes back partial. Without this arm that

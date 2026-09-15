@@ -928,9 +928,9 @@ run_child_suite "tests/test-bl275-selfapproval-remedy.sh" \
 run_child_suite "tests/test-bl287-reconfigure-ci-host.sh" \
   "BL-287: reconfigure regenerates CI from the per-host template to the per-host destination" \
   "BL-287 reconfigure-ci-host tests FAILED (run tests/test-bl287-reconfigure-ci-host.sh for details)"
-run_child_suite "tests/test-bl264-scout-shallow-history-claim.sh" \
-  "BL-264: a shallow clone must not be reported as a full-history secrets scan" \
-  "BL-264 shallow-history-claim tests FAILED (run tests/test-bl264-scout-shallow-history-claim.sh for details)"
+run_child_suite "tests/test-bl288-scout-shallow-history-claim.sh" \
+  "BL-288: a shallow clone must not be reported as a full-history secrets scan" \
+  "BL-288 shallow-history-claim tests FAILED (run tests/test-bl288-scout-shallow-history-claim.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS

@@ -252,7 +252,7 @@ _scout_secrets_render() {
 # `scanned` with zero findings is a positive result. `tool-unavailable` is
 # "nobody looked". `scan-failed` is "we looked and something went wrong".
 # `scanned-partial` is "we looked at part of it and cannot speak for the rest"
-# (BL-264 — a shallow clone). Collapsing any two of these into an empty
+# (BL-288 — a shallow clone). Collapsing any two of these into an empty
 # findings array is the silent-success defect class, aimed at the one section
 # of this report where a false clean bill of health has a credential behind it.
 scout_secrets_scan() {
@@ -289,7 +289,7 @@ scout_secrets_scan() {
   # repository there is no history to walk, and the scope field says so rather
   # than letting a working-tree scan be read as a history scan.
   #
-  # A SHALLOW CLONE IS THE SAME LIE WITH A REPOSITORY UNDERNEATH IT.  # BL-264-SHALLOW-SCOPE
+  # A SHALLOW CLONE IS THE SAME LIE WITH A REPOSITORY UNDERNEATH IT.  # BL-288-SHALLOW-SCOPE
   # `gitleaks git` walks what git HAS, and a `--depth 1` checkout has one
   # commit. It reads it, finds nothing, and exits 0 — there is no error for the
   # 3,652 commits it was never given. The scan is not what is wrong here; the
@@ -369,7 +369,7 @@ scout_secrets_scan() {
   _count=$(grep -c '' "$work/secjson" 2>/dev/null)
   case "$_count" in ''|*[!0-9]*) _count=0 ;; esac
   printf '%s\n' "$_count" > "$work/seccount"
-  # BL-264: `scanned-partial` is a FOURTH status word, not a flag beside the
+  # BL-288: `scanned-partial` is a FOURTH status word, not a flag beside the
   # third, because the three-word vocabulary above is what consumers switch on
   # and both of adoption's readers spell that switch `[ "$status" != "scanned" ]`.
   # A boolean sibling would have left every one of them reading a shallow scan

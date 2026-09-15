@@ -126,7 +126,7 @@ adopt_stub_secrets_disposition() {
   # HISTORY is a different surface from §7.3's archive scan, which WP6 did
   # build, and §10 assigns §6.3 to no work package at all. Naming WP6 here now
   # that WP6 has landed would read as "already done".
-  # BL-264: `scanned-partial` is the one non-`scanned` status where a tool DID
+  # BL-288: `scanned-partial` is the one non-`scanned` status where a tool DID
   # run, so it gets its own sentence. The old wording — "did not run a secrets
   # tool" — would have been false here, and false in the direction that makes
   # an operator discount the warning.
