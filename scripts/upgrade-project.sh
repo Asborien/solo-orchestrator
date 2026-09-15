@@ -652,7 +652,12 @@ _run_idempotent_backfill() {
     case "$bl270_mode" in
       ''|personal|org) ;;   # absent, or already the mode vocabulary
       *)
-        bl270_dep="$(jq -r '.deployment // ""' .claude/manifest.json 2>/dev/null)"
+        # Through the shared reader, not an inline jq — `## BL-095:` retired every
+        # inline `.deployment` parse behind `soif_read_deployment`, and its suite
+        # (T-no-inline-parse-left) refuses a new one. Same normalisation as the
+        # phase-state read below: the helper answers "null" for an absent key.
+        bl270_dep="$(soif_read_deployment .claude/manifest.json)"
+        [ "$bl270_dep" = "null" ] && bl270_dep=""
         bl270_ps=""
         if [ -f .claude/phase-state.json ]; then
           # BL-095: through the # BL-095-STATE-READERS fence, as the BL-030
