@@ -16316,7 +16316,8 @@ evidence the PATTERN occurs in practice, not instances the rule now catches.
 **TRIAGED 2026-09-14. Verdict: NOT exploitable as shipped; a real CORRECTNESS bug; and an
 UNDOCUMENTED, UNENFORCED trust assumption.** Taken site by site, because they are not alike:
 
-- **`:299` (`addBug`, the `bugs-list` sink) — inert to INJECTION, and DEFECTIVE by
+- **`addBug` (the `bugs-list` sink, `# BL-264-APPEND-NOT-RESERIALIZE`) — inert to
+  INJECTION, and DEFECTIVE by
   RE-SERIALIZATION. A first draft of this entry said "inert" full stop and was wrong.**
   The injection half holds: everything concatenated is a string literal, `n` (an integer
   from `bugCount++`), or `__FEATURE_OPTIONS__`, which the authoring agent substitutes at
@@ -16339,7 +16340,8 @@ UNDOCUMENTED, UNENFORCED trust assumption.** Taken site by site, because they ar
   cited `grep -n` hit counts and line numbers here; they went stale inside this same
   branch, which is what CLAUDE.md § CITATION RULE forbids bare `file:line` for. Cite the
   function and `# BL-264-APPEND-NOT-RESERIALIZE`.)
-- **`:246` (`renderScenarios`) — injects, from generation-time-authored text.** `s.id`,
+- **`renderScenarios` (`# BL-263-ESCAPE-SCENARIO-TEXT`) — injects, from
+  generation-time-authored text.** `s.id`,
   `s.title`, `s.steps` and `s.expected` are concatenated raw out of `__SCENARIOS_JSON__`,
   and `s.steps.replace(/\n/g,'<br>')` treats steps as HTML deliberately. Nothing escapes:
   the file's only two `textContent` uses are the progress counter and the `<h1>` read, and
@@ -16432,16 +16434,34 @@ skips there, which would have left the PR-blocking checks resting on greps — a
 cannot tell `escapeHtml(s.title)` from a helper that returns its argument.** Measured: an
 identity-function mutant passed every static case. So `E` lifts `escapeHtml` out of the
 shipped template and asserts what it RETURNS, using node alone, which the runner has.
-Without jsdom the suite is 22/0 with 2 loud skips. And node absent is now a FAILURE, not
+Without jsdom the suite is 28/0 with 2 loud skips. And node absent is now a FAILURE, not
 a skip: `E` is the only section that can tell `escapeHtml(x)` from identity, so a green
 that never ran it would be an unearned receipt. `tests.yml`'s "Verify required tools are
 available" step asserts `node --version` alongside `jq` and `git`.
 
 Every arm is pinned separately because a helper that DELETES a character also "changes"
 the input: a mutant replacing the `"` arm's replacement with `''` passed an earlier draft
-at 14/14. Mutants now killed: escaping removed from all three fields (4/10), identity
-function (10/4 with jsdom, 11/5 without), and each of the `<`, `>`, `&`, `"` arms deleting
-instead of escaping (13/1 each).
+at 14/14.
+
+**THE MUTANT TABLE, RE-DERIVED AT THIS TREE — and three drafts of it were stale, each
+describing a suite that had since grown.** Quote it only with a re-run; the suite is 40
+checks with jsdom and 30 without (28 run, 2 loud skips). Both columns matter because the
+gating lane is the one WITHOUT jsdom — no CI lane installs it:
+
+| mutation | jsdom | gating lane |
+|---|---|---|
+| pristine | 40/0 | 28/0, 2 skips |
+| the four `escapeHtml` `g` flags dropped | 34/6 | 24/4 |
+| the FIFTH `g` (the `<br>` substitution) dropped | 38/2 | 27/1 |
+| `String(t)` -> `t` | 32/2 | 27/1 |
+| the eight `escapeHtml(s.id)` reverted | 35/5 | 26/2 |
+| `escapeHtml` body commented out (identity) | 25/15 | 19/9 |
+| `addBug` reverted to `innerHTML +=` | 35/5 | 26/2 |
+
+Three of those — the fifth `g`, `String(t)`, and the `s.id` revert — were GREEN on the
+gating lane until a review found them, because their only pins lived behind jsdom. `S5`
+and `S6` are the static pins that now hold them, and `E8` is the one that catches
+`String(t)`: `_esc` passes argv, always a string, so no other `E` case can see it.
 
 **Found:** 2026-09-14, triaging `## BL-262:`.
 
@@ -16534,7 +16554,8 @@ edit.
 that entry's first triage draft had just cleared as "inert". It is inert to INJECTION; it
 is not inert.
 
-**What happens.** `templates/uat/test-session-template.html:299`:
+**What happens.** `addBug` in `templates/uat/test-session-template.html`, at the line the
+`# BL-264-APPEND-NOT-RESERIALIZE` marker now sits above:
 ```
 document.getElementById('bugs-list').innerHTML +=
   '<div class="bug-entry" id="bug-' + n + '">' + …

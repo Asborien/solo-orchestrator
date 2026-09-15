@@ -257,7 +257,9 @@ const scenarios = __SCENARIOS_JSON__;
 // dependency name, a failing test's message or an issue title (`## BL-263:`).
 // Escaping first and substituting <br> AFTER is what keeps the line breaks:
 // measured on the shipped example, output is byte-identical — 12/12 element
-// nodes, 6/6 <br>s, same text.
+// nodes, 6/6 <br>s, same text. (A draft said "12/12 element nodes"; measured on
+// the shipped example it is 22/22, with the innerHTML and the textContent both
+// byte-identical. The load-bearing halves were right; the count was not.)
 // `expected` is escaped but NOT given the <br> substitution, because it never
 // had one — its newlines collapsed to spaces before this change and they still
 // do. Adding it would be a rendering change nobody asked for, and this edit is
@@ -269,11 +271,26 @@ const scenarios = __SCENARIOS_JSON__;
 // `onclick="setResult(N,…)"` JS context. Measured both ways:
 //   numeric id (what the schema permits): HTML byte-identical, onclick
 //     identical — escaping is a NO-OP.
-//   string id carrying markup: raw yields 4 live injected elements; escaped
-//     yields 0, and the onclick degrades to a JS syntax error, which is a
-//     broken button rather than an execution.
+//   string id carrying MARKUP: raw yields 7 live injected elements; escaped
+//     yields 0. (A draft said 4. Seven is right and structural: 8 `s.id` sites,
+//     of which the `<textarea id="notes-…">` one lands in RCDATA and yields
+//     text, not an element.)
 // So the claimed corruption does not exist and the claimed protection failure
-// is backwards. The "it is a number per the schema" half was also load-bearing
+// is backwards.
+// WHAT THIS DOES NOT CLOSE, stated because a draft overclaimed it: HTML
+// escaping does not protect a JS context. A draft said the escaped onclick
+// "degrades to a JS syntax error, a broken button rather than an execution".
+// True for a markup-shaped id, false for the class — `escapeHtml` touches only
+// `& < > "`, so an id shaped as JS passes through untouched:
+//     id                 1);window.PWNED=true;//
+//     escapeHtml(id)     1);window.PWNED=true;//        (unchanged)
+//     rendered onclick   setResult(1);window.PWNED=true;//,'pass',this)
+//     after one click    window.PWNED === true          (it EXECUTED)
+// Not reachable today — `__SCENARIOS_JSON__` is operator-authored, `## BL-262:`
+// measured that — and deliberately not fixed here, because widening this edit
+// from "escape" to "validate the id type" is the scope creep this fix twice
+// caught itself in. The guard that would close it is a type check in
+// `scripts/lint-uat-scenarios.sh`. The "it is a number per the schema" half was also load-bearing
 // and unenforced: `scripts/lint-uat-scenarios.sh` checks duplicate ids, field
 // lengths and banned phrases, but never the TYPE of `id`.
 function escapeHtml(t) {

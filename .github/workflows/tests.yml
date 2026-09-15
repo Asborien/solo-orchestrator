@@ -1081,8 +1081,11 @@ jobs:
         # init.sh / upgrade-project.sh run `git commit` while scaffolding a
         # project; a fresh CI runner has no git identity, so the commit fails
         # (rc=128, "empty ident name not allowed"). Configure one.
+        # `node` alongside them for the same reason as `unit-shard`: `## BL-263:`'s
+        # `E` section FAILS rather than skips without it, and a lane that cannot
+        # run it should say so loudly and early rather than mid-suite.
         run: |
-          jq --version && git --version
+          jq --version && git --version && node --version
           git config --global user.name "solo-orchestrator-ci"
           git config --global user.email "ci@solo-orchestrator.invalid"
 

@@ -66,6 +66,22 @@ for fld in title steps expected; do
   chk "S4: no RAW s.$fld survives in the render body" \
     "$(grep -c "+ s\.$fld" "$_body")" "0"
 done
+# `s.id` NEEDS ITS OWN PINS, and they must be STATIC. The behavioural proof for
+# the id escaping lives in R5, which needs jsdom — and NO CI lane installs
+# jsdom, so reverting all eight sites left the gating lane at 24/0. These two
+# are what the merge actually rests on. Eight is derived, not chosen: the
+# render body has that many `s.id` interpolations.
+chk "S5: every s.id site goes through escapeHtml" \
+  "$(grep -c 'escapeHtml(s\.id)' "$_body")" "8"
+chk "S5: and no RAW s.id survives in the render body" \
+  "$(grep -c '+ s\.id' "$_body")" "0"
+# S6 — THE FIFTH `g`. `escapeHtml` has four `g` flags and `E7` pins each; the
+# `<br>` substitution one line below it carries a fifth that `E7` cannot reach.
+# `R4` catches it behaviourally, but R needs jsdom and no CI lane has jsdom, so
+# dropping that one letter left the gating lane at 27/0. Static, therefore, and
+# by its literal bytes: a changed-line count would not know which `g` moved.
+chk "S6: the steps <br> substitution is GLOBAL (the fifth g flag)" \
+  "$(grep -c 'escapeHtml(s\.steps)\.replace(/\\n/g' "$_body")" "1"
 
 echo "=== E — escapeHtml's BEHAVIOUR, node only, no jsdom ==="
 
@@ -106,6 +122,13 @@ if command -v node >/dev/null 2>&1; then
   # And ordinary text is untouched, or the fix would mangle every scenario.
   chk "E6: text with nothing to escape is returned verbatim" \
     "$(_esc 'fails when a plus b')" 'fails when a plus b'
+  # `String(t)` IS LOAD-BEARING and no other case can see it: `_esc` passes
+  # argv, which is always a string. Eight `s.id` sites are NUMBERS, so dropping
+  # `String()` throws `t.replace is not a function` inside renderScenarios and
+  # the page renders ZERO scenarios — measured, and the gating lane stayed at
+  # 24/0. A number in, a string out.
+  chk "E8: escapeHtml(1) returns the string '1' — every s.id site needs String()" \
+    "$(node -e "eval(require('fs').readFileSync('$WORK/esc.js','utf8')); process.stdout.write(escapeHtml(1))" 2>/dev/null)" "1"
 else
   # NOT A SKIP. A skip never fails, and `E` is the only section that can tell
   # `escapeHtml(s.title)` from a helper that returns its argument — the static
@@ -157,7 +180,11 @@ const scenarios = [{
   // Each character TWICE, so a g-less escape leaves a live element behind:
   // with one `<` the first-match escape covers it and R1-R3 pass on a broken fix.
   title: 'Repair has <button disabled> set & "quoted" > done <img src=x onerror=BOOM> & "again"',
-  steps: "1. open\n2. <script>alert(1)<\/script>",
+  // TWO line breaks, not one. The `<br>` substitution one line below
+  // escapeHtml carries a FIFTH `g` flag that E7 does not reach, and with a
+  // single `\n` first-match and global are identical — measured, dropping that
+  // `g` left the suite at 36/0 with jsdom and 24/0 without.
+  steps: "1. open\n2. <script>alert(1)<\/script>\n3. done",
   expected: "an <img src=x onerror=alert(1)> must not appear"
 }, {
   id: '1"><img src=q onerror=PWN>', feature: 7,
@@ -171,7 +198,9 @@ const out = {
   injected_script: c.querySelectorAll('script').length,
   injected_img:    c.querySelectorAll('img').length,
   title_text:      (c.querySelector('.scenario-title') || {}).textContent,
-  id_imgs:         c.querySelectorAll('img').length,
+  // SCOPED to the second scenario — the one with the string id. Container-wide
+  // it would duplicate R3 and could not say WHICH scenario injected.
+  id_imgs:         (c.querySelectorAll('.scenario')[1] || {querySelectorAll:()=>[]}).querySelectorAll('img').length,
   id_num_text:     (c.querySelectorAll('.scenario-num')[1] || {}).textContent,
   br_in_steps:     (c.querySelectorAll('.steps')[0] || {querySelectorAll:()=>[]}).querySelectorAll('br').length,
 };
@@ -191,17 +220,20 @@ JSEOF
     chk "R4: and the title still READS as written, as text" \
       "$(_f title_text)" 'Repair has <button disabled> set & "quoted" > done <img src=x onerror=BOOM> & "again"'
     # Escaping happens BEFORE the <br> substitution, so line breaks survive.
-    # TWO, not one: the div opens with a literal `<strong>Steps:</strong><br>`
-    # and the single \n in the fixture adds the second. A first draft of this
-    # case asserted 1 and failed against correct code — the count is of the
-    # rendered div, not of the substitution.
-    chk "R4: the steps line break still renders as a <br> (1 literal + 1 from \n)" \
-      "$(_f br_in_steps)" "2"
+    # THREE: the div opens with a literal `<strong>Steps:</strong><br>` and the
+    # fixture's TWO `\n`s add one each. A first draft asserted 1 and failed
+    # against correct code; a second used one `\n` and could not see the fifth
+    # `g` flag drop. The count is of the rendered div, not of the substitution.
+    chk "R4: EVERY steps line break renders as a <br> (1 literal + 2 from \n)" \
+      "$(_f br_in_steps)" "3"
     # `s.id` goes through escapeHtml too. A draft left it raw on the stated
     # grounds that escaping would "corrupt" the onclick — measured false: for a
     # numeric id the HTML is byte-identical, and for a string id carrying markup
-    # the raw form yields 4 live injected elements while the escaped form yields
-    # 0 and a merely-broken button. The scenario schema says `id` is a number;
+    # the raw form yields 7 live injected elements while the escaped form yields
+    # 0. (A draft said 4. Seven: 8 `s.id` sites, and the `<textarea id="notes-…">`
+    # one lands in RCDATA, yielding text rather than an element.) HTML escaping
+    # does NOT close the JS context — an id shaped as JS still executes; see the
+    # template comment. The scenario schema says `id` is a number;
     # `lint-uat-scenarios.sh` never checks that, so this is the guard.
     chk "R5: a string id carrying markup injects NOTHING"     "$(_f id_imgs)" "0"
     chk "R5: and the scenario num still reads as written"     "$(_f id_num_text)" '1"><img src=q onerror=PWN>'
