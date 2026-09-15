@@ -17009,7 +17009,7 @@ operator reads it).
 is already the repo's own, documented by `## BL-104:`; what is missing is any way for a reader of the
 gate's output to apply it.
 
-**Logged:** 2026-09-13, from the other side: while building `## BL-274:`'s A13 case, which needed a
+**Logged:** 2026-09-13, from the other side: while building `## BL-274:` (cited but never filed on any branch — see PR #401)'s A13 case, which needed a
 project the Phase 0→1 gate clears cleanly so that an exit code could be attributed to one control.
 
 **THE FRAMEWORK ALREADY KNOWS, AND THAT IS THE POINT.** This is not an undiscovered trap.
