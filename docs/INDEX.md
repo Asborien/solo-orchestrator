@@ -99,10 +99,11 @@ amendment folded. **Built and shipping** — the user-facing page is [delta-trac
 re-cut as **four acts**: Scout surveys, the shell driver prepares and lands the project at
 **phase 0**, a Claude Code session assesses, and the plan is presented. Ten settled decisions
 (D1–D10) plus eight delegated author decisions; full-history secret scanning tiered by audience,
-five archive classes, and an init-parity table with thirteen unowned rows. **Half built** — Scout,
-the driver, the test-debt ledger with its ratchet, the collision archive and WP9a's act boundaries
-ship; the secrets stop, the archive's two new classes, the assessment and the Adoption Record do
-not. User-facing pages: [scout.md](scout.md) and [adoption.md](adoption.md), which name every gap).
+five archive classes, and an init-parity table with fourteen unowned rows. **Half built** (v2.1,
+measured 2026-09-16) — Scout, the driver, the test-debt ledger with its ratchet, the collision
+archive, WP9a's act boundaries, WP9b's preflight and WP10a's tool resolution ship; the secrets stop
+(WP10b, including the ruled `scanned-partial` arms), the archive's two new classes, the assessment
+and the Adoption Record do not. User-facing pages: [scout.md](scout.md) and [adoption.md](adoption.md), which name every gap).
 [designs/2026-08-02-brownfield-adoption-v1.md](designs/2026-08-02-brownfield-adoption-v1.md)
 (**superseded**, kept because shipped code still cites its section numbers where v2's packages have
 not reached, and because it is the design the first build was made against).
