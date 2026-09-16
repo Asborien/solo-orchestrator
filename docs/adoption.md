@@ -369,7 +369,7 @@ IDENTICAL — a halted run wrote nothing
 
 ```text
 ══ Committing exactly what was written
-   77 file(s), named one by one. Anything else you had in progress stays
+   79 file(s), named one by one. Anything else you had in progress stays
    exactly as you left it — unstaged, uncommitted, untouched.
 ```
 
@@ -379,8 +379,9 @@ counter-example this exists to avoid is `create_project()`'s
 your uncommitted work into a framework commit with verification bypassed.
 
 Observed on a completed run — one commit,
-`chore: adopt <project> into the Solo Orchestrator framework`, containing **77**
-files: the nine below, and the framework `scripts/` tree (68 of them).
+`chore: adopt <project> into the Solo Orchestrator framework`, containing **79**
+files: the nine below, and the framework `scripts/` tree (70 of them — measured 2026-09-16;
+the count follows `init.sh`'s copy list and drifts with it).
 **Your own files are not in it.**
 
 ```text
@@ -403,13 +404,14 @@ it.)*
 
 ```text
 ══ Installing the framework's own scripts
-   Installed 68 framework script(s); left 0 of your own file(s) untouched.
+   Installed 70 framework script(s); left 0 of your own file(s) untouched.
 ```
 
 The set is **derived from `init.sh`'s own copy list** rather than duplicated, so
 an adopted project's script set cannot drift from a scaffolded one's. Measured,
 comparing this adopted project against a project scaffolded by `init.sh` on the
-same tree: **68 scripts each, and the difference in both directions is empty.**
+same tree: **70 scripts each, and the difference in both directions is empty** (measured
+2026-09-16; it was 68 each before `## BL-254:` added two).
 
 The commit-msg hook comes from the same emitters `init.sh` uses. Measured — the
 adopted and the scaffolded project's `.git/hooks/commit-msg` have the **same
@@ -1024,7 +1026,8 @@ not among them. Read them here, in the framework clone you run the driver from.
 | Gates that were skipped actually run and recorded | ✅ By construction — nothing is skipped; the project starts below every gate |
 | Being asked what the project is for, and told whether the stack fits | ❌ The assessment (Act 3) — **not built** (WP12a) |
 | A fitness verdict, a plan, and the reasoning behind both | ❌ The assessment (Act 3) — **not built** (WP12a) |
-| Adoption that can *fail* on a serious finding | ❌ The secrets stop — **not built** (WP10) |
+| The required secrets scanner resolved before anything reads the scan — installed where the host has a recipe, named for you where it does not — and the scan re-run after an install | ✅ Tool resolution — ships (WP10a). Adoption does **not** refuse when the scanner cannot be resolved; it carries on and the report says nobody looked. The refusal is D2's — WP10b, **not built** |
+| Adoption that can *fail* on a serious finding | ❌ The secrets stop — **not built** (WP10b); the `scanned-partial` arms Karl ruled on 2026-09-16 are WP10b's too |
 | A recorded, non-growing set of untested files | ✅ [Test-debt ledger + ratchet](#the-test-debt-ledger-and-its-ratchet) — ships and works, **but you run it; nothing calls it on commit yet (WP7)** |
 | Your colliding hooks/settings archived with a restore path | ✅ Collision archive — ships |
 | Plain disclosure of what was archived, path by path | ✅ Ships |

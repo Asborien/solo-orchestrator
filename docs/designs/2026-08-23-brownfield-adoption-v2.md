@@ -1553,8 +1553,8 @@ ruled the next day. **The ruling:**
   The ruling names no fields. That the record also carries the scope and the commit count the
   report already holds is **author-proposed** (§0.1), not part of the ruling — a reviewer may
   attack it; nobody may build a signer-less or reason-less record from it.
-  Every finding the partial scan produced is printed redacted, and the partial scope is stated in
-  those words — never rendered as clean.
+  Author-proposed too (§0.1), not the ruling's: every finding the partial scan produced is printed
+  redacted, and the partial scope is stated in those words — never rendered as clean.
 
 **Consistent with the sibling ruling, and stated so.** This is §6.4's shape for `tool-unavailable`
 — *"yes on personal, no on organizational"* (Karl, 2026-08-31) — with the findings the partial scan
