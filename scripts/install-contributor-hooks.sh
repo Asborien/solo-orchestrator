@@ -55,6 +55,23 @@ if [ ! -d "$ROOT/.git" ] || [ ! -f "$ROOT/scripts/lib/hook-templates.sh" ]; then
   exit 1
 fi
 
+# BL-261-CONTRIB-SEMGREP-PRECONDITIONS — the SAST arm's config is laid below as a
+# symlink to the tracked template (the BL-261 laying block, further down). Both
+# things that can stop that are checked HERE, before a single hook is written:
+# a refusal must leave the checkout exactly as it found it. The paths live
+# outside the laying block so the summary can still name the file when the
+# block is mutated away in the suite.
+_sg_src="$ROOT/templates/semgrep/soif-dom-sinks.yml"
+_sg_dst="$ROOT/.semgrep/soif-dom-sinks.yml"
+if [ ! -f "$_sg_src" ]; then
+  echo "[FAIL] $_sg_src is missing — it is tracked, so this checkout is incomplete; refusing to install hooks whose SAST arm could not resolve its config." >&2
+  exit 1
+fi
+if [ -e "$_sg_dst" ] && [ ! -L "$_sg_dst" ]; then
+  echo "[FAIL] $_sg_dst exists and is NOT a symlink — refusing to overwrite it. Remove it and re-run to link the tracked template." >&2
+  exit 1
+fi
+
 # shellcheck source=./lib/hook-templates.sh
 . "$ROOT/scripts/lib/hook-templates.sh"
 
@@ -92,6 +109,30 @@ chmod +x "$CM"
 # because there the existing hook may be the operator's own.
 soif_write_prepush_hook "$ROOT/.git/hooks/pre-push"                    # BL-243-CONTRIB-PREPUSH
 
+# BL-261-CONTRIB-SEMGREP-CONFIG-BEGIN — the emitted pre-commit hook --config's
+# `.semgrep/soif-dom-sinks.yml` by repo-relative path (# BL-131-DOM-SINKS),
+# passed UNCONDITIONALLY so a missing file makes semgrep exit >=2 and the
+# NOTRUN arm fires loudly. Only init.sh lays that file, in GENERATED projects —
+# so in this checkout the SAST arm was PERMANENTLY inert and every commit
+# printed `SAST NOT ENFORCED` (`## BL-261:`). Lay it here as a RELATIVE SYMLINK
+# to the tracked template: one source of truth, no second copy for `## BL-175:`
+# to lose track of, the hook text (and the # BL-194-HOOK-SEMGREP-POLICY parity
+# `tests/test-bl147-ci-template-integrity.sh` derives from it) untouched, and
+# a template that moves DANGLES the link so the arm goes loud, never quiet.
+# `.semgrep/` is gitignored — a local artifact like .git/hooks, never tracked.
+# A REGULAR file at the path is somebody's own work — refused UP FRONT with the
+# other preconditions (# BL-261-CONTRIB-SEMGREP-PRECONDITIONS), before any hook
+# is written, so a refusal leaves the checkout exactly as it was.
+mkdir -p "$ROOT/.semgrep"
+rm -f "$_sg_dst"                                   # only ever a symlink or absent here
+ln -s ../templates/semgrep/soif-dom-sinks.yml "$_sg_dst"
+if [ ! -f "$_sg_dst" ] || ! cmp -s "$_sg_src" "$_sg_dst"; then
+  echo "[FAIL] $_sg_dst does not resolve to templates/semgrep/soif-dom-sinks.yml after linking." >&2
+  exit 1
+fi
+echo "[OK] .semgrep/soif-dom-sinks.yml -> templates/semgrep/soif-dom-sinks.yml (symlink, untracked; the SAST arm's config resolves here)"
+# BL-261-CONTRIB-SEMGREP-CONFIG-END
+
 # VERIFY WHAT WAS INSTALLED, rather than reporting on what was intended. A hook
 # that is not executable, or that git will not run, is the defect this entry is
 # about; saying "installed" without looking is how it survived.
@@ -121,17 +162,23 @@ if command -v gitleaks >/dev/null 2>&1; then
 else
   echo "       gitleaks        INERT  (not installed — the arm WARNs, never blocks)"
 fi
-if [ -d "$ROOT/.semgrep" ]; then
-  echo "       SAST (semgrep)  LIVE"
+# BL-261-SEMGREP-LIVE-PREDICATE — LIVE means the arm can actually FIRE here:
+# the tool is on PATH AND the config the hook names resolves. Either alone is
+# INERT, and the line says which (a directory existing is not a config).
+if command -v semgrep >/dev/null 2>&1 && [ -f "$_sg_dst" ]; then
+  echo "       SAST (semgrep)  LIVE   ($(semgrep --version 2>/dev/null | head -1); config -> templates/semgrep/soif-dom-sinks.yml)"
+elif ! command -v semgrep >/dev/null 2>&1; then
+  echo "       SAST (semgrep)  INERT  (semgrep is not installed — the arm WARNs"
+  echo "                              'SAST NOT ENFORCED' on every commit, never blocks)"
 else
-  echo "       SAST (semgrep)  INERT  (.semgrep/ configs are written by init.sh for"
-  echo "                              GENERATED projects; absent here, so semgrep loads"
-  echo "                              no config and the arm reports SAST NOT ENFORCED)"
+  echo "       SAST (semgrep)  INERT  (.semgrep/soif-dom-sinks.yml does not resolve —"
+  echo "                              the arm WARNs 'SAST NOT ENFORCED', never blocks)"
 fi
 echo "       BL-006 msg gate INERT  (framework repo, not a scaffolded project —"
 echo "                              the hook says so itself and allows the commit)"
 echo ""
-echo "     So in the framework repo this is mainly a SECRET-DETECTION gate."
-echo "     That is worth having and is more than the previous install did — which"
-echo "     was nothing — but it is not 'the same gates CI runs'. CI is the"
-echo "     authority; see \`## BL-239:\`."
+echo "     So in the framework repo this is a SECRET-DETECTION gate plus SAST over"
+echo "     the staged markup files the DOM-sink ruleset scopes (*.html, *.vue —"
+echo "     \`## BL-261:\`). It is still not 'the same gates CI runs': the message"
+echo "     gate is inert here and CI runs no SAST over this repo's own source."
+echo "     CI is the authority; see \`## BL-239:\`."

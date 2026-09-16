@@ -1,6 +1,13 @@
 .worktrees/
 .DS_Store
 
+# BL-261: the contributor pre-commit hook --config's .semgrep/soif-dom-sinks.yml
+# by repo-relative path — the path init.sh lays in GENERATED projects. Here
+# scripts/install-contributor-hooks.sh lays it as a SYMLINK to the tracked
+# template under templates/semgrep/, a local artifact like .git/hooks and
+# never a second copy. Ignored so it cannot be committed.
+.semgrep/
+
 # Internal planning documents (not tracked)
 V2_PLANNING.md
 test-logs/

@@ -63,6 +63,12 @@ mk_repo() {
   cp "$TEMPLATES" "$d/scripts/lib/hook-templates.sh"
   printf 'echo hi\n' > "$d/a.sh"
   ( cd "$d" && git add -A )
+  # BL-261: the installer lays .semgrep/soif-dom-sinks.yml from this tracked
+  # template and REFUSES a root without it — a framework root carries it. Laid
+  # AFTER the add so it stays untracked: git's own "create mode … templates/
+  # semgrep/…" summary line would otherwise match ARM_RE and break A1's control.
+  mkdir -p "$d/templates/semgrep"
+  cp "$REPO_ROOT/templates/semgrep/soif-dom-sinks.yml" "$d/templates/semgrep/soif-dom-sinks.yml"
 }
 
 # commit_arm_lines <dir> <msg> — commit, echo "<rc> <arm-output-line-count>".
