@@ -16081,17 +16081,24 @@ and not of a memory of it:
 
 - **Where it lives.** `.claude/settings.local.json` in this checkout — **untracked, and ignored by
   Karl's global gitignore** (`~/.config/git/ignore:1`, `**/.claude/settings.local.json`). No commit
-  in the repo's history has ever touched a settings file. It ships nowhere and governs one machine.
-- **What it is.** `allow`: bare `Bash` (plus `Bash(*)` and 42 accumulated per-command approvals),
-  `WebSearch`, and the context7/qdrant MCP tools. `deny`: `rm -rf /`, `rm -rf /*`, `rm -rf ~*`,
+  has ever touched THIS file. (The repo does track a `.claude/settings.json`, since `aa47c24` — it
+  carries PreToolUse hooks only and no permissions block; a draft of this bullet said no settings file
+  was ever committed, which a single `git log --all -- '*settings*'` refutes.) It ships nowhere and
+  governs one machine.
+- **What it is.** `allow` (66 entries): bare `Bash` plus `Bash(*)` plus 41 accumulated per-command
+  `Bash(…)` approvals; 9 `WebFetch(domain:…)` grants; 6 `Read(…)` path grants, several reaching
+  OUTSIDE this repo (`~/.claude/**`, `~/projects/**`, `/tmp/**`, two other projects' hooks) and
+  fenced by NEITHER net below, since both nets are `Bash(…)`-only; 2 `Skill(…)`; `WebSearch`; and
+  the context7/qdrant MCP tools. `deny`: `rm -rf /`, `rm -rf /*`, `rm -rf ~*`,
   `rm -rf $HOME*`. `ask` (32): every `rm`/`rmdir`/`shred`/`find -delete` shape, `git rm`, `git clean`,
   `git reset --hard`, `git checkout --`/`.`, `git restore`, branch/tag deletion, force-push,
   `git push --delete`/`:ref`, stash drop/clear, worktree remove/prune, `update-ref -d`,
   `filter-branch`, `gc --prune`, `reflog expire`, `gh repo delete`, `gh release delete`.
 - **Why it is acceptable, in Karl's terms.** The operator is the framework's author working on
   the framework's own repo. Bare `Bash` is not "anything goes": the four denies make the
-  catastrophic wipes unreachable, and the ask list puts a confirmation in front of every shape
-  that destroys data or rewrites history — which is exactly the set a per-command allow list
+  catastrophic wipes unreachable, and the ask list puts a confirmation in front of the destructive
+  shapes that recur in this workflow — not every one: `git commit --amend`, `git rebase`,
+  `git checkout HEAD -- <path>`, shell truncation and `sudo rm` are outside it — which is the set a per-command allow list
   would otherwise grow to exclude one approval at a time. The alternative the review implied
   (a granular allow list) costs a prompt on every novel command in a repo whose whole workflow
   is novel commands, and buys nothing the deny+ask nets do not already buy on this machine.
@@ -16100,10 +16107,13 @@ and not of a memory of it:
   not the same: `init.sh` (grep `PERMEOF`) writes every scaffold's `.claude/settings.json` with
   bare `Bash` in `allow`, a deny list of `rm -rf /`, `rm -rf /*`, `curl * | bash`,
   `wget * | bash` and `.env` reads — and **no `ask` list at all** — while
-  `docs/cli-setup-addendum.md` § permissions tells operators to configure a granular allow list
-  (`Bash(git *)`, `Bash(npm run *)`, …) with `rm -rf *` and `sudo *` denied. So the shipped
-  block is BROADER than Karl's local one (no ask net) and NARROWER than the docs say. That is
-  a real inconsistency in a shipped surface and it is **not** what lead #8 was about; it is
+  `docs/cli-setup-addendum.md` § 2 (Auto Mode → Setup) tells operators WITHOUT Auto Mode to
+  configure a granular allow list (`Bash(git *)`, `Bash(npm run *)`, …) with `rm -rf *` and
+  `sudo *` denied. So the shipped block is MORE PERMISSIVE THAN BOTH: no ask net at all, bare
+  `Bash` where the docs grant ten narrow shapes, `WebFetch(domain:*)` the docs never grant, and a
+  deny list weaker than the docs prescribe (two exact `rm -rf` paths, no `sudo`). A draft of this
+  sentence said "narrower than the docs", which is backwards on a security surface. That is a
+  real inconsistency in a shipped surface and it is **not** what lead #8 was about; it is
   recorded here as an observation for Karl and deliberately not filed as an entry or changed,
   because "what every generated project should allow by default" is his product decision.
 
