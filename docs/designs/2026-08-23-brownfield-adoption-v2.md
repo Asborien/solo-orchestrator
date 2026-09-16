@@ -5,17 +5,18 @@
 | Field | Value |
 |---|---|
 | **Document ID** | ADOPT-002-ARCH |
-| **Version** | v2.0, 2026-08-24; reconciled pre-landing 2026-08-28, and again across four passes on 2026-08-31 (§0.3). Supersedes ADOPT-001-ARCH (`docs/designs/2026-08-02-brownfield-adoption-v1.md`) in full. |
+| **Version** | **v2.1, 2026-09-16** — amended in place after fifteen days of `main` (measured at `01b66e3`): WP9b, WP10a, `## BL-225:`'s before-any-write half, `## BL-288:`, `## BL-268:`, `## BL-253:` and `## BL-251:` reconciled, and **one ruling recorded** — Karl, 2026-09-16, on the `scanned-partial` status `## BL-288:` coined, which adds ONE ROW to D2's table (§6.1, §6.1a). **D2's principle is unchanged; no other settled decision, decision table, or WP boundary changed** (§0.3). v2.0, 2026-08-24; reconciled pre-landing 2026-08-28, and again across four passes on 2026-08-31 (§0.3). Supersedes ADOPT-001-ARCH (`docs/designs/2026-08-02-brownfield-adoption-v1.md`) in full. |
 | **Supersedes — and overturns** | **This is the first document in this feature's history that overturns a settled decision, and it says so here rather than in a footnote.** v1's §0.1 lists the scenario chooser (v1-D2, Karl's verbatim question) among the decisions carried into that design; v1's every amendment was able to say *"no settled decision, decision table, or WP boundary changed."* **This document cannot say that and does not.** Karl's D4 (2026-08-23, recorded in `## BL-242:`) deletes the chooser outright — not demotes it — and D5/D6 redraw the work-package boundaries. §0.2 maps every v1 decision to its v2 disposition: carried, re-derived, or overturned. |
 | **Classification** | Product architecture — normative-once-reviewed for the build. **Two adversarial architecture rounds have run** (r1: block on two structural findings; r2: B1 dissolved by execution, block on B2). B2 and r2's three new gaps are answered in §8.3a as **A1–A4**, and **r3 reviewed those answers**: B2 closed, seven majors against the A-layer's edges and proofs — including a preflight arm that would otherwise have let adoption silently corrupt an already-scaffolded project. r3's findings were folded into the prose in a seventh pass and into §10's build cells in an **eighth**, after r4 found the seventh had edited the essays and left the instructions untouched. |
 | **Audience** | (a) the adversarial design reviewer this document must survive; (b) the implementer of the work packages in §10 |
 | **Subject** | **Brownfield adoption, second architecture** — an existing codebase enters Solo Orchestrator through four acts: a read-only survey, a deterministic shell preparation that lands the project at phase 0, a model-driven assessment, and a documented plan the project proceeds from — **starting at the beginning, with no rung derived by anyone** (D10). Adoption **assesses** rather than asking the operator to classify the project; it asks exactly one thing — who the project is for (D9). |
-| **Companion documents** | ADOPT-001-ARCH (superseded; kept as the record of the first build and of §-citations in shipped code — see §0.2) · `## BL-242:` in `solo-orchestrator-backlog.md` (the D1–D10 decision record this document designs from) · `docs/adoption.md`, `docs/scout.md` (the shipped user-facing pages, which describe the v1 build and must be revised by §10-WP12b, except the chooser sections §4.2 gives to WP9) · `docs/messaging-standard.md` (the presentation contract D8 makes binding) · `docs/module-contract.md` (M1–M5) · SOI-002-BUILD (`docs/builders-guide.md`) |
-| **Status of the thing described** | **WP9 IS BUILT — 9a AND 9b; NOTHING ELSE OF v2 IS.** This row said "nothing of v2 is built" until 2026-09-01, and it was stale for exactly the reason it warns about — **derivation (2) had stopped returning what the row claimed, and the row's own instruction is to re-run rather than quote.** v1's status row was wrong three times because it was a hand-maintained list; this one is a **set of derivations**, re-run at the tip on **2026-09-01**, and re-run AGAIN after WP9b the same day. Of the **four** derivations the pre-WP9b row carried, exactly **one** moved — (3), and it moved because of a COMMENT; (5) and (6) are new here. *(A draft said "two of the five", counting a set that never existed.)* (1) *What is still unbuilt* — the `adopt_stub_*` functions actually called, §1.2's recipe → **7** (unchanged in count, changed in membership: `adopt_stub_certification` went with WP5's retirement and `adopt_stub_assessment` took its place). (2) *Whether the chooser still exists* — `scripts/lib/adopt/adopt-chooser.sh` is **GONE**; the file is `adopt-evidence.sh` and Karl's sentence resolves in **no tracked file** but the frozen v1 design and the suite that must spell it to search for it (§4.2, §10-WP9's `C2`). (3) *That adoption still runs no tool resolution* — **this derivation is now self-poisoning and is restated rather than quietly repaired**: `grep -c 'resolve-tools'` over the driver and its lib returns **1**, and the single hit is a COMMENT in `adopt-core.sh` about this very recipe. The property holds — no executed line invokes it — but the recipe as written no longer measures it. Read the hit before believing the count; against **7** mentions in `init.sh`; still WP10's (§13-V3). (4) *That `scripts/resume.sh` knows nothing of adoption* — `grep -c 'adopt' "scripts/resume.sh"` returns **0**; the fifth branch is WP12a's, and WP9a deliberately did not pull it forward (§10-WP9). (5) *That A1's preflight is live* — `grep -c 'BL-242-PREFLIGHT-ARM' scripts/lib/adopt/adopt-state.sh` returns **4**: one per arm plus `# BL-242-PREFLIGHT-ARM3-INSTALLED`, arm 3's third signal. **This derivation said 3 and was self-poisoned by the same commit that wrote it** — the prefix match catches the fourth marker — which is precisely what derivation (3) two rows up warns about. Read the markers, do not trust the count. (6) *That A4's log is written FIRST* — `_adopt_state_order` emits `approval_log phase_state intake manifest`. **When any derivation stops returning what this row says, this row is stale — re-run them; do not quote them.** **A caveat the derivations themselves taught:** the framework's install set measured **65** files on `main`, **67** on the branch this document was first verified against, and **68** re-derived on 2026-09-01 (§13-V6). Three values in nine days. A count in this document is a measurement with a date and a branch, never a property — which is also why this row was allowed to go stale: nobody re-ran it. |
+| **Companion documents** | ADOPT-001-ARCH (superseded; kept as the record of the first build and of §-citations in shipped code — see §0.2) · `## BL-242:` in `solo-orchestrator-backlog.md` (the D1–D10 decision record this document designs from) · `docs/adoption.md`, `docs/scout.md` (the shipped user-facing pages; WP9a revised `docs/adoption.md`'s chooser sections and phase-0 landing, and the rest of both pages' v2 revision is §10-WP12b's — on 2026-09-16 `docs/adoption.md`'s summary table still files the secrets stop under an unsplit `WP10`, has no row for the tool resolution WP10a built, and its write-set prose still says 77 files and 68 scripts where §13-V27 measures 79 and 70; §13-U(v2.1)) · `docs/messaging-standard.md` (the presentation contract D8 makes binding) · `docs/module-contract.md` (M1–M5) · SOI-002-BUILD (`docs/builders-guide.md`) |
+| **Status of the thing described** | **WP9 (9a AND 9b) AND WP10a ARE BUILT; WP10b, WP11, WP12a, WP12b AND WP7 ARE NOT — and the two `scanned-partial` arms Karl ruled on 2026-09-16 (§6.1a) are WP10b's and NOT BUILT. `## BL-225:`'s before-any-write half — §10's sequencing precondition — is BUILT.** Measured on **2026-09-16** against tree `01b66e3` (§13-V17–V28). This row said *"WP9 IS BUILT — 9a AND 9b; NOTHING ELSE OF v2 IS"* from 2026-09-01 until this amendment, and it was stale from **2026-09-04**, the day WP10a merged (PR #373) — the fifth time in this document's life the row has lagged the tree, and for the reason it keeps giving: nobody re-ran it. It is a **set of derivations**, each printed with its output in §13-V19; re-run them, do not quote them. (1) *What is still unbuilt* — §1.2's recipe → **7** `adopt_stub_*` functions actually called, unchanged in count AND membership since 2026-09-01. (2) *The chooser is gone* — `ls scripts/lib/adopt/` lists `adopt-evidence.sh` and no `adopt-chooser.sh`; Karl's verbatim question resolves in **four** tracked files, none of them under `scripts/`, `docs/adoption.md` or `docs/scout.md` (the two designs, the backlog entry that quotes him, and the WP9 suite that must spell the sentence to assert its absence — read the hits, do not count them). (3) *Tool resolution is BUILT — WP10a.* **The 2026-09-01 derivation is RETIRED, not repaired**: it counted `resolve-tools` mentions and predicted 1-and-a-comment; the count is now **2**, and the second is the executed path `_adopt_resolver_path` prints in `adopt-tools.sh`, a file that did not exist when the recipe was written. The replacement measures the built thing: `grep -c 'adopt_resolve_tools "$root" "$report"' scripts/lib/adopt/adopt-state.sh` → **1**, the call at `# BL-242-RESOLVER-CALL`. (4) *`scripts/resume.sh` knows nothing of adoption* — `grep -c 'adopt' scripts/resume.sh` → **0**; the fifth branch is still WP12a's. (5) *A1's preflight is live* — `grep -on 'BL-242-PREFLIGHT-ARM[A-Z0-9-]*' scripts/lib/adopt/adopt-state.sh` → four markers, the fourth being arm 3's third signal; read them, do not count them. (6) *A4's log is written FIRST* — `_adopt_state_order` emits `approval_log phase_state intake manifest`. (7) *The write phase is REHEARSED before the first write* — `# BL-225-PREWRITE-CALL` and `# BL-225-WRITE-PHASE-REAL` are both in `adopt-state.sh`, and `_adopt_write_phase` has exactly those two callers (§8.2a). (8) *The secrets STOP is NOT built — WP10b* — `adopt_stub_secrets_disposition` is in derivation (1)'s output, `adopt-tools.sh`'s own header says it *"makes no stop/proceed decision"*, and the stub's `scanned-partial` arm prints and `return 0`s — so the 2026-09-16 ruling has no implementation yet (§13-V28). (9) *Framework-wins is NOT built — WP11* — `adopt_install_framework` still `continue`s on `[ -e "$dst" ]` (§13-V23). **When any derivation stops returning what this row says, this row is stale.** Three counts moved since 2026-09-01 and are recorded here as measurements with a date: the framework's install set is **70** files (was 68 on 2026-09-01 — `scripts/check-changelog.sh` and `scripts/check-session-state.sh`, added to `init.sh`'s copy list on 2026-09-08 by `## BL-254:`, PR #378; §13-V20 — four distinct values, 65/67/68/70, in twenty-three days), the Scout report's `schemaVersion` is **2** (was 1; `## BL-288:`), and `scripts/lib/adopt/` holds **eight** files (was seven). **§8.7a's write set was RE-MEASURED BY EXECUTION on 2026-09-16: 79 files — 70 under `scripts/`, the same nine elsewhere** (§13-V27); the 2026-09-01 value of 77 was falsified by the install set's growth, not by anything adoption did. |
 
 **Provenance.** Ten architecture decisions — **D1 through D10** — are settled and recorded in
 `## BL-242:` in `solo-orchestrator-backlog.md`. **D1–D8** were settled **by Karl on 2026-08-23**
-(D2 refined 2026-08-25); **D9 and D10 on 2026-08-31**, each ruling a question this document had
+(D2 refined 2026-08-25, and D2's table gained one ruled row on 2026-09-16 — §0.1, §6.1a); **D9 and
+D10 on 2026-08-31**, each ruling a question this document had
 wrongly read as already answered — D9 a deletion D4 never ordered (§4.2), D10 a placement
 mechanism D4 never asked for (§4.3). This document
 **transcribes** them and designs *within* them; it does not relitigate them. §0.1 attributes each
@@ -36,7 +37,9 @@ which D8 makes part of the product requirement rather than a courtesy.
 **2026-08-24** and appears in §13 with its command and output. Claims this author could **not**
 execute are listed separately and prominently in §13-U — this repository's recorded failure mode is
 numbers that are right attached to explanations that are invented, and the one unrecoverable
-failure is an unverified claim reported as verified. One structural caveat applies to everything
+failure is an unverified claim reported as verified. Claims added by the v2.1 amendment were
+executed on **2026-09-16** against `01b66e3` and appear under §13's v2.1 heading (V17–V28), with
+their own unverified list in §13-U(v2.1). One structural caveat applies to everything
 here: `## BL-242:` lives on the branch `docs/bl242-brownfield-filing` and is **not** on the branch
 this document's code measurements were taken from (`feat/messaging-standard`) — §0.4 states what
 that means for which claims are whose.
@@ -108,6 +111,16 @@ about your history. **If the scanner was never installed at all**, your own proj
 carries on only if you accept that risk in writing. On a **company's** project neither one can be
 overridden: the scan has to succeed. Act two installs the scanner itself, so both should be rare.
 
+**A third case was found on 2026-09-12 and decided on 2026-09-16.** If the copy of the project on
+disk holds only its most recent commits — the shortened form many build servers hand out — the
+scanner can read only those, and it now says so plainly instead of calling it a full scan. On a
+**company's** project that is a stop, with no way round it: fetch the whole history, scan again,
+and deal with whatever it finds. On your **own** project you may acknowledge it and carry on — and
+that acknowledgement is written down, with what was and was not read, and adoption refuses to
+continue if it cannot write it down. Whatever the partial scan did find is shown either way; a
+partial scan is never presented as a clean one. **Neither half is built yet** — today adoption
+tells you and decides nothing (§6.1a).
+
 Some of your files — scripts and documents whose names the framework
 claims — will be **replaced by the framework's versions**, with yours archived and every moved
 path named, because a half-wired framework that stays silent about it is worse than an honest
@@ -116,22 +129,22 @@ archive, you are told exactly where each one went, and you are invited to copy a
 keeping into the new files. **Nothing is deleted, and nothing is moved silently.** If your own build calls one of those scripts, it will break at adoption, visibly, rather
 than months later, silently — and the notice tells you exactly which files to look at.
 
-**Options.** Approve this design and the build resumes on it — the cost is the build itself, plus
-revising the two user-facing pages that describe the old flow. Or amend the old design instead —
-cheaper on paper, but it would carry a deleted decision in its list of settled ones, which is the
-kind of quiet self-contradiction its own changelog exists to prevent. Or do neither and leave the
-feature half-built with its gaps honestly announced at every run, as they are today.
+**Options.** Continue the build in §10's order — the tier-scoped secrets stop next (WP10b), now
+that every row of its table is ruled, then the two archive classes, then the assessment. Or pause:
+the built half keeps working and keeps announcing its gaps at every run. Or revisit a settled
+decision — none was found to need it; the record was measured unchanged (§0.3, v2.1).
 
-**Recommendation: approve this design, and fix `## BL-225:` before building any of it.** The
-reasoning: the decisions are already made and recorded; the only question is whether the document
-the builders read matches them. And the one live defect that actually burns an operator — a
-half-staged repository with a message claiming nothing was committed — sits directly on the path
-every act-two run takes, so building on top of it means shipping the burn.
+**Recommendation: build WP10b next, on this design as it stands.** The reasoning: the decisions
+are unchanged and were measured unchanged; the one defect this recommendation used to put first —
+a half-staged repository with a message claiming nothing was committed (`## BL-225:`) — is fixed on
+both halves, so adoption now rehearses every write on a copy and refuses before the first real one;
+the scanner is installed by adoption itself; and the secrets stop's table has no unruled row left
+(§6.1a, ruled 2026-09-16). Nothing is waiting on a decision.
 
 **If you do nothing.** Nothing breaks today. The driver keeps announcing its own gaps at every
-run, the seven unbuilt capabilities stay unbuilt, and the decision record in `## BL-242:` slowly
-drifts out of anyone's working memory — which is exactly how this feature spent six weeks tracked
-by a note asking whether it should be tracked.
+run, the seven unbuilt capabilities stay unbuilt, a shortened history keeps being reported honestly
+and treated as nothing in particular, and the status row of this document goes stale again the day
+the next package merges — which it has now done five times, always because nobody re-ran it.
 
 ---
 
@@ -146,7 +159,7 @@ design work lives and what remains author-proposed.
 | # | Settled decision (Karl — D1–D8 on 2026-08-23, D2 refined 2026-08-25, D9 and D10 on 2026-08-31) | Designed in | Author-proposed inside it |
 |---|---|---|---|
 | **D1** | **Colliding scripts: archive theirs, install the framework's, say so.** REVERSES the shipped behaviour, where `adopt_install_framework` skips any path with `[ -e "$dst" ]` and the operator's file wins silently. The notice must name **every archived path, not a count**, plus a standing warning that **replacing a framework script with their own may break the framework**. `scripts/` becomes an archive class exactly as D3 makes documents one. | §7.1, §8.2 | The receipt check between archive and install; the notice's exact shape (§7.1) |
-| **D2** | **Secrets are TIER-SCOPED: an ORGANIZATIONAL adoption STOPS, a CASUAL PERSONAL one WARNS LOUDLY and carries on.** Karl, 2026-08-23: *"Stop adoption until acknowledged with a reply of having been corrected or the risk is being accepted"*; refined 2026-08-25: *"Keep warn loudly for casual personal projects. Organizational projects are always a stop."* The stop lifts only when every finding carries a recorded acknowledgement, and an acknowledgement that cannot be recorded is refused (BL-072's shape, reused by `## BL-233:` for `SOLO_MCP_ACCUM_ATTESTED`). The tiering axis is **`deployment`**, not `enforcement_level`, which **overturns v1 §6.3 as written** — derived on 2026-08-25, not ruled a second time (§6.1). A scan that never ran is **not an acceptable state at either tier**: Karl — *"Why wouldn't the secrets scan run? That should never be an option."* **The two not-scanned statuses were ruled apart on 2026-08-31, and they differ**: `tool-unavailable` is a hard refusal at `organizational` and escapable on a recorded acceptance at `personal` (*"Yes on personal, no on organizational"*); `scan-failed` is *"action as if it ran"* — a hard refusal at `organizational` (*"it cannot continue as it's required"*) and a **loud warning that carries on** at `personal`. §6.1's ladder and §6.4 carry the reasoning. | §6 | The disposition file's location and shape; the re-scan-after-install mechanic (§6.2); the warn arm's record |
+| **D2** | **Secrets are TIER-SCOPED: an ORGANIZATIONAL adoption STOPS, a CASUAL PERSONAL one WARNS LOUDLY and carries on.** Karl, 2026-08-23: *"Stop adoption until acknowledged with a reply of having been corrected or the risk is being accepted"*; refined 2026-08-25: *"Keep warn loudly for casual personal projects. Organizational projects are always a stop."* The stop lifts only when every finding carries a recorded acknowledgement, and an acknowledgement that cannot be recorded is refused (BL-072's shape, reused by `## BL-233:` for `SOLO_MCP_ACCUM_ATTESTED`). The tiering axis is **`deployment`**, not `enforcement_level`, which **overturns v1 §6.3 as written** — derived on 2026-08-25, not ruled a second time (§6.1). A scan that never ran is **not an acceptable state at either tier**: Karl — *"Why wouldn't the secrets scan run? That should never be an option."* **The two not-scanned statuses were ruled apart on 2026-08-31, and they differ**: `tool-unavailable` is a hard refusal at `organizational` and escapable on a recorded acceptance at `personal` (*"Yes on personal, no on organizational"*); `scan-failed` is *"action as if it ran"* — a hard refusal at `organizational` (*"it cannot continue as it's required"*) and a **loud warning that carries on** at `personal`. §6.1's ladder and §6.4 carry the reasoning. **AMENDED 2026-09-16 (Karl): a FIFTH status, `scanned-partial` — a shallow clone, coined by `## BL-288:` on 2026-09-12 — takes the split.** At `organizational` it **STOPS with no escape** and the refusal prints the unshallow remedy; at `personal` the operator **may acknowledge and continue**, the acknowledgement is **RECORDED** (scope, commits scanned, date) in §6.3's shape and **refused if it cannot be recorded**; the findings the partial scan did produce are printed either way and the partial scope is stated in those words. Karl's words: *"go with the split."* The shape is §6.4's `tool-unavailable` ruling with the findings added. This adds ONE ROW to D2's table (§6.1) for a status that did not exist when D2 was written; D2's principle — tier-scoped, recorded, never silent — is unchanged (§6.1a). | §6 | The disposition file's location and shape; the re-scan-after-install mechanic (§6.2); the warn arm's record; the `scanned-partial` acknowledgement's record — §6.3's shape, §6.1a |
 | **D3** | **Project documents: written to the framework's documentation requirements** — adapted or merged from what the project has, or written new where the assessment shows merging would carry a false picture forward. **Originals archived in the project for historical purposes.** With D1, this makes documents and `scripts/` the third and fourth classes of the collision archive — one mechanism serving four cases. **Reach ruled 2026-08-31: it covers `FEATURES.md`, `BUGS.md` and `RELEASE_NOTES.md` too — overturning v1 §7.5 — and the operator must be TOLD, by name, that content can be retrieved from the archive and added to the new files** (*"All previous info is archived and the user informed so that they may retrieve or add to the new proper framework files."*). | §7.2, §7.3 | The framework-document name set's derivation; the adapt-versus-replace criterion (§7.2); the notice's phrasing — its CONTENT is bound (§7.2) |
 | **D4** | **THE CHOOSER IS DELETED, NOT DEMOTED.** No completed/in-flight question, and no "was an SDLC framework used" question either — **those two, and no others.** Karl's reasoning, verbatim, which is the load-bearing part: ***"I think trusting an end user to know what's needed is a mistake considering they are using the orchestrator BECAUSE they are not already following a proper SDLC."*** This **overturns v1-D2**, which v1 §0.1 lists among its settled decisions — see §0.2. *(`## BL-242:` heads this decision **"Adoption assesses; it does not ask."** That is the entry's headline, **not Karl's words** — the entry marks his quote separately — and reading it as a general principle is what produced the error D9 corrects. D7, also Karl's, requires asking.)* | §4 | **Nothing about the two dropped questions.** The claim that stood here — *"the deletion's blast radius is enumerated, not chosen"* — was **false, and is exactly what D9 corrects**: the enumeration silently added a third question the ruling never reached (§4.2) |
 | **D5** | **FOUR ACTS**, and the split is **forced, not chosen**: the evaluators are model-driven and the driver is shell, so adoption cannot be one process. (1) **SURVEY** — Scout, read-only. (2) **PREPARE** — shell: tool resolution against the matrix; the secrets stop; the test-debt census **before** the install; the collision archive **before any writer**; install; **land at PHASE 0 PROVISIONALLY**; commit; hooks last. (3) **ASSESS** — Claude Code via `scripts/resume.sh`: the requirements interview and all evaluators. (4) **PROCEED** — documents written, plan presented, Build Loop, **from the beginning** (D10 corrects this step, which read "rung from evidence" and was never Karl's; D10 also drops the *provisionality* from step 2's landing — it is simply phase 0, because nothing was ever going to promote past it). **The provisional phase-0 landing is load-bearing**: it preserves the promise `adopt_main` already prints, so **a project cannot land high by abandonment** — the scheme cannot express that outcome. | §3, §8 | The act-boundary artifacts; the `resume.sh` branch predicate; the assessment brief's home (§8.5) |
@@ -741,11 +754,120 @@ because care is what produces it.** What fixes it is mechanical and cheap: re-de
 the tip, re-run the mutant against the shipped file, and `git show` the commit before writing its
 message.
 
+**v2.1 (2026-09-16) — reconciliation with fifteen days of `main`, and ONE RULED ROW ADDED TO D2's
+TABLE. D2's principle is unchanged; NO OTHER settled decision, decision table, or WP boundary
+changed.** The unqualified formula v1's every amendment could use — *"no settled decision, decision
+table, or WP boundary changed"* — is NOT used here, because it would be false by one row; the
+qualified one is used **because it was measured, not because it is customary**: the `## BL-242:`
+entry was extracted at the last commit of 2026-08-31 (`f73dfca`) and at `01b66e3`, and the two
+DECIDED sections that hold D1–D10 are **byte-identical** — `diff` over lines 190–667 of both extracts
+returns rc 0 (§13-V17). Everything the whole-entry diff does touch is appended build notes, two
+residual sections and two corrections inside the WP9 build note. **D1–D10 stand as ruled; §0.2 is
+untouched; A1–A8 are untouched; §0.1's table changes in exactly one cell, D2's, and the change is
+an addition.**
+
+**Why this entry exists at all.** Karl decided on 2026-09-15 to AMEND this document in place rather
+than supersede it, after a premise put to him — *that decisions had been reversed since D10* — was
+refuted by that measurement. Recorded because the premise was the same class of defect this
+changelog has logged since v2.0: a plausible statement about the record, made without reading the
+record. The document's own §11 rule stands: a superseding document is for an overturned decision,
+and none was overturned. §11's first bullet — that amending v1 was rejected because it would carry
+an overturned decision in its settled list — is exactly why amending v2 is right: nothing in v2's
+settled list is overturned; one row is added.
+
+**The one ruling, and how it came to be needed.** `## BL-288:` widened Scout's `secrets.status`
+enumeration from three words to four — `scanned-partial`, a shallow clone — on 2026-09-12, and
+§6.1's table had no row for it. Adoption's two readers were widened to print honestly and decide
+nothing (`# BL-288-RESCAN-PARTIAL`), which was correct because nothing in Act 2 decides anything on
+the status until WP10b. Which row of §6.1's tier table the status takes was raised as an open
+question during this amendment's drafting on 2026-09-15 — §12 item 16 — and **Karl ruled it on
+2026-09-16, before the amendment landed: *"go with the split."*** At `organizational` a
+`scanned-partial` result STOPS with no escape, the refusal printing the unshallow remedy; at
+`personal` the operator may acknowledge and continue, and the acknowledgement is RECORDED — scope,
+commits scanned, date — in the same place and shape as the `tool-unavailable` acknowledgement,
+refused if it cannot be recorded. §6.1a records it; §6.1's table gains its row; §0.1's D2 row
+carries the amendment with his words; §12 item 16 is struck as ruled the day after it was raised.
+The set awaiting Karl is therefore EMPTY again, having been one for a single day. **What the ruling
+did NOT do:** it built nothing — the organizational stop and the personal recorded acknowledgement
+are WP10b's, and §13-V28 shows the shipped stub still prints and returns 0 on the status. Writing
+the obvious extrapolation into the table on 2026-09-15 instead of asking would have been the fourth
+inference recorded as a ruling in this document's history, with the previous three named in §8.3a
+— and the ruling that came differs from the drafted extrapolation on the `personal` arm (a recorded
+acknowledgement, not a warning), which is the whole argument for asking.
+
+**What the tree changed, by section, each verified in §13-V18–V27:**
+
+1. **WP10a is BUILT (`4009790`, merged 2026-09-04 as PR #373)** — Act 2's step 2,
+   `adopt_resolve_tools` in the new `scripts/lib/adopt/adopt-tools.sh`, plus §6.2's
+   re-scan-after-install (`_adopt_rescan_secrets`). §3.3, §6.2, §8.2 step 2 and §10 are amended
+   from *"the step adoption skips"* to *built*, and §1.3's *"the driver never resolves tools"* is
+   dated as the v1 fact it was. **WP10 is delivered as two PRs, 10a and 10b, on the same terms §10
+   already records for WP9a/9b: one scope row, one boundary, a review-surface seam.** 10a's commit
+   message attributes the split to Karl (*"on Karl's call"*); that attribution is the commit's and
+   was not independently verified here (§13-U(v2.1)). WP10a's review also found a defect in the
+   shared resolver — a documentation URL filed in the `auto_install` bucket that `init.sh`
+   executes — recorded as a `## BL-242:` residual, not fixed, and named in §6.2a. `## BL-251:`
+   (Closed, PR #375) then added `# BL-251-FAST-PATH`: a scanner already on `PATH` costs no resolver
+   subprocess, and the re-scan still runs. **One row WP10a does NOT close, and the draft of this
+   entry said it did:** §8.7a row 7, the tool matrix — Act 2 reads it from the framework root, and
+   the adoptee receives no copy (§13-V27's write set carries no `templates/`); the row is PARTIAL,
+   and the reason nobody has tripped over it is row 32 (below).
+2. **`## BL-225:`'s before-any-write half is BUILT (`8356317` … `2613937`, merged 2026-09-14 as
+   PR #410).** `_adopt_write_phase` is the ONLY writer of the adoptee's files and is called twice —
+   once by `adopt_prewrite_preflight` against a `cp -a` copy of the whole tree, once for real — so
+   the planned path set is what the writers produced on a rehearsal, never a maintained list.
+   Adoption **refuses before the first write** when the adoptee's ignore rules refuse any planned
+   path (`# BL-225-PREWRITE-REFUSE`, *"NOTHING WAS WRITTEN"*). The entry records that Karl chose
+   the copy over a per-writer no-write flag. §8.2 gains a rehearsal row (§8.2a), §8.4 gains the
+   refused-before-write state (§8.4a), §10's sequencing paragraph and §12 items 1 and 4a are
+   corrected from *"the before-any-write half is still open"*. `## BL-225:` itself stays **Open**
+   for two named residuals — a `.claude` symlinked outside the repository, and an installer recipe
+   that modifies an adoptee file in place, which the path-list fingerprint cannot see — both
+   recorded there, not here.
+3. **`## BL-288:` — a shallow clone is `scope: shallow-history`, `status: scanned-partial`, and the
+   report's `schemaVersion` is 2** (`2a8fafb`, `35a222a`, renumbered `22b034d`; merged 2026-09-15
+   inside PR #412). §6.1a is added (the ruling above); §6.1's table gains the row; §6.4 gains a
+   one-line pointer; §9's Scout row is amended a second time — Scout is *"almost whole"* by a wider
+   margin than 2026-09-01 said.
+4. **`## BL-268:` — the manifest's `mode` takes `personal|org`, `deployment` takes
+   `personal|organizational`, and `adopt_write_manifest` now translates the one from the other as
+   `init.sh` does** (`eba7291`, `# BL-268-MODE-VOCABULARY`, merged inside PR #412). **`## BL-253:`
+   — `poc_mode` is JSON `null` for production in both state files** (`269ee02`, Closed PR #377,
+   `# BL-253-POC-MODE`, `# BL-253-POC-NULL`, `# BL-253-POC-NULL-MANIFEST`), as `init.sh` writes it;
+   until then every adoptee was refused at `--start-phase4` and every organizational adoptee
+   skipped six Pre-Phase-0 conditions. §8.3b states what the two writers emit today, by function,
+   so the manifest's shape is a reading and not a memory. The related `## BL-270:` (migration for
+   projects adopted before the fix — its backfill is on `main` at `0dc57fc`, whatever its status
+   line says) and `## BL-271:` (the same hole on the `upgrade-project.sh` path) are named in §12,
+   not designed here.
+5. **`## BL-284:` and `## BL-273:` — §8.7 territory.** BL-284 found, by dogfood, that
+   `verify-install.sh`'s `has_context()` was unsatisfiable on an adopted project because adoption
+   writes no `.claude/tool-preferences.json` — an `init.sh` effect **absent from §8.7a's table**,
+   whose `init.sh` half is acknowledged partial and has now been shown partial by one row; row 32
+   is added, UNOWNED, and `## BL-284:`'s fix reads the context from state adoption does write
+   (`# BL-284-CONTEXT-STATE`). The same missing file is what keeps row 7's missing matrix
+   unreachable: the adoptee's own gate keys its tool-needs block on it (§8.7a). BL-273 records that
+   the remote-URL-to-host inference exists at four shipped sites and `scripts/lib/host.sh` carries
+   none — an observation about scripts an adoptee receives, recorded in §12 with no fix proposed.
+6. **The status row is rewritten** as a dated measurement with nine derivations, derivation (3)
+   retired rather than repaired (it counted mentions of a thing that has since been built), and
+   three moved counts stated with their dates. **§8.7a's write set is RE-MEASURED BY EXECUTION —
+   79 files, 70 under `scripts/`, the same nine elsewhere** (§13-V27): the value this document
+   carried, 77, was falsified on 2026-09-08 by two files `## BL-254:` added to `init.sh`'s copy
+   list, which no adoption package touched. **§13 gains a v2.1 addendum (V17–V28) and §13-U gains
+   a v2.1 list.** A first attempt at this amendment, on 2026-09-15, measured everything but the
+   write set and was stopped by an environment fault before writing a line; every one of its
+   measurements was re-taken on 2026-09-16 against `01b66e3`, and what §13 prints is the re-take.
+
+**Describe, never total.** This entry names its changes and does not count them; the fourth-pass
+entry above explains why.
+
 ### §0.4 — Verification posture, and the branch topology caveat
 
 Every claim marked *verified* was **executed on 2026-08-24**; §13 prints the commands and their
 output, and **§13-U lists what was NOT executed and why** — read §13-U before trusting anything
-here that it names.
+here that it names. The v2.1 amendment's claims were executed on **2026-09-16** against `01b66e3`
+(§13-V17–V28; §13-U(v2.1)).
 
 **The branch topology caveat.** `## BL-242:` — the decision record this entire document designs
 from — lives on the branch `docs/bl242-brownfield-filing` (commits `4719f00`, `9050a18`) and is
@@ -758,6 +880,11 @@ correction the measured branch's copy does not; (iii) the supervisor wiring this
 land it on, or after a merge with, the BL-242 branch — otherwise it cites a backlog entry the tree
 cannot resolve, and `scripts/lint-backlog-references.sh` territory begins. This document takes no
 position on merge order; it records the fork so nobody discovers it at review.
+
+**Historical as of 2026-09-16.** `## BL-242:` has been on `main` since the filing merged;
+`grep -n '^## BL-242:' solo-orchestrator-backlog.md` resolves on this tree, and every v2.1
+quotation was read from the working tree at `01b66e3`, not from a branch. §12 item 11 is struck
+accordingly.
 
 **One measurement disagrees with BL-242, and the disagreement is the lesson, not an error.**
 BL-242 (2026-08-23) records the framework install set as **65 files** (36 `scripts/` + 24
@@ -786,6 +913,32 @@ nine `scripts/lib/scout/*.sh`; `scripts/adopt-project.sh` plus seven `scripts/li
 `tests/test-brownfield-wp*.sh` files plus `tests/test-lint-module-dependencies.sh` (§13-V14 lists
 them; their assertion tally is BL-242's measurement, **not re-run here** — §13-U).
 
+### §1.1a — What has shipped since v2.0 — derive it, never maintain it (2026-09-16)
+
+§1.1's inventory is the v1 build's and is left as written. What landed on the adoption surface
+after the status row was last measured is a **range**, not a list, and the recipe is the claim
+(§13-V18):
+
+```
+git log 45a749b..HEAD --format='%h %cs %s' -- scripts/lib/adopt scripts/lib/scout scripts/adopt-project.sh
+```
+
+Twelve commits at `01b66e3`: **one v2 work package** — WP10a (`4009790`, PR #373) — and **eleven
+defect fixes** under `## BL-251:`, `## BL-253:`, `## BL-225:`, `## BL-268:` and `## BL-288:`,
+each reconciled by section in §0.3's v2.1 entry. Anchored on WP9b's commit because that is the
+tree the 2026-09-01 status row was measured on; `f73dfca..HEAD` — the last 2026-08-31 commit, the
+D-block anchor — returns seventeen, the extra five being WP9b and four 2026-09-01 corrections the
+2026-09-01 passes already record. **Do not use `--since=<date>` for this:** git fills a bare date
+in with the CURRENT TIME OF DAY, so `--since=2026-09-01` returned thirteen commits at 21:00 and
+fifteen at 07:30 on this host, and seventeen only as `--since='2026-09-01T00:00:00'` — a recipe
+that returns a different number by the hour is not a recipe.
+
+Three counts moved with those commits, each a measurement with its date: `scripts/lib/adopt/`
+holds **eight** files (`adopt-tools.sh` is new — §13-V19); the adoption-related suites number
+**seventeen** by `ls tests/ | grep -i 'brownfield\|module-dep\|bl225\|bl288\|bl268\|bl253\|bl251\|bl284\|bl273'`,
+**ten** of them `tests/test-brownfield-wp*.sh` (§13-V25 — `## BL-242:` still says nine suites and
+eight, a stale carrier not corrected here); and the framework's install set is **70** (§13-V20).
+
 ### §1.2 — What is not built announces itself — derive the list, never maintain it
 
 The authoritative unbuilt list is the set of `adopt_stub_*` functions the driver actually
@@ -812,7 +965,11 @@ stub is silent when no framework-script path collides; the secrets stub prints o
 *not-`scanned`* status **or** a non-zero finding count, and is silent exactly when the scan ran
 clean. On a clean adoptee **five** blocks appear, not seven — defensible behaviour, and a fact v2
 inherits: *"the driver announces every gap"* is true only per-run, so the derivation above, not
-the run transcript, is the inventory.
+the run transcript, is the inventory. *(Re-derived 2026-09-16: still 7, same membership —
+§13-V19-(1) — and the five-blocks-on-a-clean-adoptee claim, source-read in 2026-08-24's §13-V2, is
+now MEASURED: §13-V27's transcript carries exactly five `NOT DONE` blocks. `adopt_stub_secrets_disposition`
+gained a third arm at `## BL-288:` for `scanned-partial`; it prints and returns 0, so the silence
+condition is unchanged — silent exactly when the scan ran clean over a full history.)*
 
 | Capability (verbatim from the notice) | v1 owner | v2 owner (§10) | Announces |
 |---|---|---|---|
@@ -822,12 +979,14 @@ the run transcript, is the inventory.
 | the commit-time scanners (the fallback pre-commit hook) | WP7 (its printed string is stale — see below) | **WP7 (re-cut)** | always |
 | your project's framework documents | nobody | **WP11 + WP12b (D3)** | always |
 | installing the framework's version of *N* colliding script(s) | nobody | **WP11 (D1)** | only when N > 0 |
-| the secrets disposition | nobody | **WP10 (D2)** | only when the scan found something |
+| the secrets disposition | nobody | **WP10b (D2)** — WP10a built the resolver and the re-scan, not the stop (§6.2a); the `scanned-partial` arms ruled 2026-09-16 are 10b's too (§6.1a) | on `scanned-partial`, on any not-`scanned` status, or when the scan found something |
 
 The stale string: `adopt_stub_hooks` prints `Owner: nobody yet — §10 names no owner` while
 `docs/adoption.md` and `scripts/lib/adopt/adopt-stubs.sh`'s own header both record Karl's decision
 that the hook is WP7's. `## BL-242:` already filed the correction; **WP9 carries it** as the first
-package to touch that file.
+package to touch that file. *(WP9a touched the file and did not take this drive-by, on
+`## BL-242:`'s reasoning that the obvious rewrite propagates a false §10 attribution — §8.3a-A8;
+the string still ships on 2026-09-16, and §13-V27's transcript prints it.)*
 
 ### §1.3 — Why the shape changed: the driver asks what it should measure
 
@@ -844,7 +1003,8 @@ self-report from exactly the population Karl's D4 reasoning names as least equip
 fitness — because a shell process cannot hold an interview or weigh an architecture; v1 assigned
 that work to shell WPs and the build honestly stubbed it instead. **And the driver never resolves
 tools** (§13-V3: zero `resolve-tools` mentions across all eight driver files against seven in
-`init.sh`), so the D2 secrets stop would today depend on whatever happens to be installed. The
+`init.sh`), so the D2 secrets stop would today depend on whatever happens to be installed *(true of the v1
+build this section describes; WP10a built the step on 2026-09-02 — §6.2a, §13-V19-(3'))*. The
 four acts put each kind of work where it can actually be done: deterministic writes in shell,
 judgment in a model session, with a safe parked state between them.
 
@@ -911,14 +1071,18 @@ never shortens the ladder (§4.3).
 ### §3.3 — Act 2 — PREPARE
 
 Deterministic shell, ordered by facts already in the code rather than by preference. The full
-order and each constraint's justification is §8.2; the summary:
+order and each constraint's justification is §8.2; the summary *(two things sit outside the
+numbering and are stated in §8.2: step 0, A1's re-adoption preflight, built at WP9b; and the
+rehearsal of steps 4–7 on a copy of the tree before the first real write, built with
+`## BL-225:`'s second half — §8.2a)*:
 
 1. **The tier question** (D9) — *"Who is this project for?"*, the one question Act 2 asks.
    Verbatim and first, before anything is installed or written, so an abandoned run leaves the
    host untouched too. It produces `ADOPT_DEPLOYMENT`, which step 3 reads and step 7's two state
    writers persist. Unanswered, it **refuses the run** — no default, no skip (§13-V16).
 2. **Tool resolution** against the matrix — `scripts/resolve-tools.sh` with
-   `templates/tool-matrix/`, the step adoption skips entirely today (§13-V3). It installs the
+   `templates/tool-matrix/`, **built at WP10a** (§6.2a; it was the step adoption skipped until
+   2026-09-02, §13-V3). It installs the
    required set, **including `gitleaks`**, which `templates/tool-matrix/common.json` already
    carries as `"required": true` (§13-V9) — D2's stop asks for nothing the framework does not
    already demand of every scaffolded project.
@@ -927,7 +1091,9 @@ order and each constraint's justification is §8.2; the summary:
    (`tool-unavailable`) unless a `personal` project records an acceptance; no *organizational*
    adoption proceeds with an undispositioned finding or a broken scan. A casual personal adoption
    warns loudly and carries on for **both** a findings result and a `scan-failed` one. §6.1's
-   ladder is the authority; it keys on step 1's answer (§6.5).
+   ladder is the authority; it keys on step 1's answer (§6.5). **Not built — WP10b**; and the fifth
+   status, `scanned-partial`, was ruled on 2026-09-16 — stop with no escape at `organizational`,
+   acknowledge-on-the-record at `personal` (§6.1a) — and both arms are WP10b's as well.
 4. **The test-debt census** — before the install, as the shipped code already orders it and for
    the reason its comment states: the census reads `git ls-files`, and independence from the
    index's timing is worth keeping explicit.
@@ -936,8 +1102,9 @@ order and each constraint's justification is §8.2; the summary:
    `APPROVAL_LOG.md` (WP9b's `approval-log`, the only class adoption REPLACES).
 6. **The framework install** — framework-wins on script collisions (D1), with the archive receipt
    checked first (§7.1).
-7. **Minimal state, phase 0** — `phase_state` → `intake` (mechanical prefill only) →
-   `manifest` with the v2 stamp (§8.3), the fail-safe order carried from v1 (§8.4).
+7. **Minimal state, phase 0** — the tier-matched `APPROVAL_LOG.md` first (A4, WP9b), then
+   `phase_state` → `intake` (mechanical prefill only) → `manifest` with the v2 stamp (§8.3), the
+   fail-safe order carried from v1 (§8.4).
 8. **The adoption commit** — explicit staging, never `git add -A`, unchanged.
 9. **Hooks last** — after the commit, as shipped (`adopt_install_hooks` runs after
    `adopt_stage_and_commit`, and the commit-msg block composes by `SOIF_TDD_OPEN` marker fence).
@@ -951,7 +1118,7 @@ Claude Code.
 Claude Code, entered through the machinery that already exists for exactly this job:
 `scripts/resume.sh` is the single state-aware first-message generator, currently four branches
 (intake / `PROJECT_INTAKE.md` §13 verbatim / classic resume / `# DELTA-RESUME-PHASE4`), and today
-containing **zero** mentions of adoption (§13-V8). WP12a adds the adoption branch: manifest says
+containing **zero** mentions of adoption (§13-V8; re-measured 0 on 2026-09-16, §13-V19-(4)). WP12a adds the adoption branch: manifest says
 `adopted: true` and the adoption block carries no completed assessment → emit the assessment
 prompt (§8.5). In the session: the **requirements interview** (D7's five axes plus data
 classification, §5.2) and **all evaluators** run against the installed tree. Act 3's output is a
@@ -1228,11 +1395,13 @@ uses the controlled vocabulary.
 
 ## §6 — Secrets: an organizational adoption stops, a casual personal one warns loudly (D2)
 
-### §6.1 — Four status-and-findings cases, and the tier reaches three of them
+### §6.1 — Five status-and-findings cases (four until 2026-09-12), and the tier reaches four of them
 
-`scripts/lib/scout/scout-secrets.sh` emits exactly three statuses, and its own comment states the
-taxonomy this design builds on (§13-V5): *"`scanned` with zero findings is a positive result.
-`tool-unavailable` is 'nobody looked'. `scan-failed` is 'we looked and something went wrong'."*
+`scripts/lib/scout/scout-secrets.sh` emitted exactly three statuses when this section was written,
+and its own comment stated the taxonomy this design builds on (§13-V5): *"`scanned` with zero
+findings is a positive result. `tool-unavailable` is 'nobody looked'. `scan-failed` is 'we looked
+and something went wrong'."* **Since 2026-09-12 it emits four** (`## BL-288:`; §13-V21 prints the
+widened comment), and the fourth has its own row below, ruled on 2026-09-16 (§6.1a).
 
 | Status | Meaning | `deployment = organizational` | `deployment = personal` |
 |---|---|---|---|
@@ -1240,17 +1409,20 @@ taxonomy this design builds on (§13-V5): *"`scanned` with zero findings is a po
 | `scanned`, findings > 0 | Real findings, redacted per v1 §6.2's field allowlist | **STOP until every finding carries a recorded disposition** (§6.3) | **WARN LOUDLY and carry on** — every finding printed redacted and recorded in the Adoption Record; no disposition demanded, and no silence either |
 | `tool-unavailable` | gitleaks not on the host | **STOP — hard refusal.** No flag, no attestation, no escape (§6.4). After WP10, reachable only if tool resolution itself failed | **STOP, escapable.** Proceeds only on a recorded acceptance — named person, reason, date, §6.3's shape, refused if unrecordable (§6.4) |
 | `scan-failed` | gitleaks exited non-zero, or its report did not parse | **STOP; fix and re-run. No escape** — a successful scan is a hard requirement here (Karl: *"it cannot continue as it's required"*). "Could not measure" is never "nothing to measure" — the fail-open posture `docs/messaging-standard.md` Part 2 names a defect wherever it appears | **WARN LOUDLY and carry on** — treated *as if the scan had run* (Karl, 2026-08-31). No recorded acceptance demanded; the warning must say plainly that **nothing is known** about this history, because there is no findings list to print |
+| `scanned-partial` (`scope: shallow-history`) — **row added 2026-09-16** | gitleaks ran over the commits git HAS; a shallow clone gave it part of the history and the report says so, with the commit count walked (`## BL-288:`) | **STOP — no escape** (Karl, 2026-09-16: *"go with the split"*). The refusal prints the remedy already shipped at five sites — `git remote set-branches origin '*' && git fetch --unshallow`, then a deliberate re-scan. The findings the partial scan DID produce are reported, and once unshallowed §6.3's per-finding dispositions apply to every finding before proceeding | **STOP, escapable on the record** — the operator may acknowledge and continue; the acknowledgement is **RECORDED** (scope, commits scanned, date) in the same place and shape as the `tool-unavailable` acknowledgement, §6.3's shape, and adoption **refuses to proceed if it cannot record it**. Every finding the partial scan produced is printed redacted, and the partial scope is stated in those words — never rendered as clean (§6.1a). **Not built — WP10b** |
 
 **The tier governs every row but the clean one**, and the ladder it describes is a **severity**
 ladder rather than a status ladder. On `organizational` a successful scan is a hard requirement:
-findings must be dispositioned, and neither `tool-unavailable` nor `scan-failed` has any escape at
-all. On `personal` the requirement softens by how far the framework's own setup fell short:
+findings must be dispositioned, and neither `tool-unavailable` nor `scan-failed` — nor, since
+2026-09-16, `scanned-partial` — has any escape at all. On `personal` the requirement softens by
+how far the framework's own setup fell short:
 
 | What happened | `personal` outcome |
 |---|---|
 | The scan ran and found things | Warn loudly, carry on — the findings are known and printed |
 | The scan ran and broke (`scan-failed`) | Warn loudly, carry on — **treated as if it ran** (Karl, 2026-08-31) |
 | The scanner was never there (`tool-unavailable`) | Stop; carry on **only** on a recorded acceptance |
+| The scanner ran over PART of the history (`scanned-partial`, a shallow clone) | Stop; carry on **only** on a recorded acknowledgement — scope, commits scanned, date (ruled 2026-09-16, §6.1a) |
 
 **The one deliberate step in that ladder is worth naming, because it is not obvious.** A
 `scan-failed` personal project and a `tool-unavailable` personal project end in the same
@@ -1260,14 +1432,20 @@ whether the required tool was present and attempted** — gitleaks ran and stumb
 was never installed. Act 2's tool resolution (§6.2) is what makes the second case a failure of the
 framework's own setup rather than an environment hiccup, and that is what earns it the higher bar.
 **This design records the step rather than smoothing it**; if it proves wrong in practice the fix
-is one cell of the table above.
+is one cell of the table above. *(The 2026-09-16 ruling put `scanned-partial` at the same rung as
+`tool-unavailable` — a recorded acknowledgement, not a warning — although there the scanner WAS
+present and attempted; what fell short was the checkout, and the commits it withheld are exactly
+where a removed credential lives. So "was the required tool present and attempted" predicted
+`scan-failed`'s rung and did not predict this one; the ruling is recorded as ruled, in Karl's
+three words, and this document does not manufacture a longer reason for it — §6.1a.)*
 
 *(Two earlier drafts of this paragraph were wrong in the same direction. The first said the tier
 "governs one row of that table and no other" and that the bottom two rows were "byte-identical
 across the tiers"; the second, written after the `tool-unavailable` ruling, said the tier reached
 "two of them" and that `scan-failed`'s cells were "still identical". Both generalised an argument
 about `scanned`-with-findings — "the tier is about loudness on a known finding" — into a claim
-about rows it had never been tested against. The tier reaches three.)*
+about rows it had never been tested against. The tier reaches three.)* *(Four since 2026-09-16 — the
+`scanned-partial` row, §6.1a. The sentence before this one is left as the history it is.)*
 
 Karl's words, in the order he gave them, because the order is the correction. **First pass,
 2026-08-23:** *"Stop adoption until acknowledged with a reply of having been corrected or the risk
@@ -1322,6 +1500,85 @@ on a known finding and nothing more: it never buys a way past an unrun scanner (
 never weakens the redaction projection — no artifact in this section carries a secret's value, at
 either tier, on either arm.
 
+### §6.1a — A FIFTH status, `scanned-partial`, and the row it takes — RULED (Karl, 2026-09-16)
+
+§6.1's table was written against three status words and `## BL-288:` (2026-09-12) added a fourth to
+the scanner's own enumeration — the comment at the head of `scripts/lib/scout/scout-secrets.sh`
+now reads `secstatus scanned | scanned-partial | tool-unavailable | scan-failed`, beside a new
+`secscope full-history | shallow-history | working-tree-only` (§13-V21, `# BL-288-SHALLOW-SCOPE`).
+The case it names is a **shallow clone**: `--depth 1` is what CI hands out by default, gitleaks
+walks the commits it is given and reports zero findings, and Scout used to write `scope:
+full-history`, `status: scanned` over a credential the scanner was never shown — in the fixing
+commit's own words, it *"reported scope full-history with status scanned and zero findings"* on a
+`--depth 1` checkout (`2a8fafb`). Now the scope says `shallow-history`, the status says
+`scanned-partial`, the report carries the commit count actually walked (`git rev-list --count
+HEAD`, emitted as the secrets section's `commitsScanned`), and the report's `schemaVersion` moved
+**1 → 2** so the widened enumerations are announced to consumers rather than slipped past them. So
+§6.1's four status-and-findings cases are **five**.
+
+**What adoption does with it today: reports honestly, decides nothing.** Both of adoption's
+readers were widened in the same fix (`# BL-288-RESCAN-PARTIAL`, both sites in §13-V21).
+`_adopt_rescan_secrets` puts `scanned-partial` on the *scanned* side of its guard — a partial scan
+is a scan that LOOKED, and re-running it moments later in the same clone at the same depth would
+return `scanned-partial` again, so the remedy is the operator's (`git remote set-branches origin
+'*' && git fetch --unshallow`, then a deliberate re-scan — the string ships at five sites, §13-V21),
+not an automatic re-walk. `adopt_stub_secrets_disposition` gained its own arm, which says the scan
+*ran but could only read part of this history* and returns 0 — the old *"did not run a secrets
+tool"* sentence would have been false here, and false in the direction that makes an operator
+discount the warning. Neither reader stops or proceeds on the status, because **nothing in Act 2
+decides anything on the status until WP10b** (§13-V22, V28).
+
+**Which row of §6.1's tier table this status takes is RULED — Karl, 2026-09-16: *"go with the
+split."*** The check that it needed a ruling rather than an extrapolation: `## BL-242:`'s D2 text
+is byte-identical to its 2026-08-31 state (§13-V17), twelve days before the word `scanned-partial`
+existed, so no ruling there could name it; and `## BL-288:`'s entry decides Scout's own posture
+(report, never refuse — a read-only survey pointed at somebody else's checkout must not stop) and
+the two readers above, and nowhere assigns the status a tier outcome (grep the entry for `tier`,
+`organizational`, `personal`, `stop`, `proceed` — the two hits are a quotation of
+`docs/adoption.md`'s table and a sentence about an operator's response to a tool that refuses to
+run). The question was raised as §12 item 16 on 2026-09-15 while this amendment was drafted, and
+ruled the next day. **The ruling:**
+
+- **`deployment = organizational` — `scanned-partial` STOPS, with no escape.** The refusal prints
+  the unshallow remedy already shipped at five sites (`git remote set-branches origin '*' && git
+  fetch --unshallow`, then a deliberate re-scan). The findings from the commits the scan DID read
+  are still reported, and once unshallowed §6.3's per-finding dispositions apply to every finding
+  before the adoption proceeds — so a partial scan with findings at this tier needs both the
+  unshallow AND the dispositions, because the findings it did produce are real.
+- **`deployment = personal` — the operator may ACKNOWLEDGE AND CONTINUE, and the acknowledgement
+  is RECORDED.** Scope, commits scanned, date — in the same place and shape as the
+  `tool-unavailable` acknowledgement (§6.3: recorded, and refused if it cannot be recorded; the
+  `# BL-233-ATTEST-REFUSE` doctrine), and adoption **refuses to proceed if it cannot record it**.
+  Every finding the partial scan produced is printed redacted, and the partial scope is stated in
+  those words — never rendered as clean.
+
+**Consistent with the sibling ruling, and stated so.** This is §6.4's shape for `tool-unavailable`
+— *"yes on personal, no on organizational"* (Karl, 2026-08-31) — with the findings the partial scan
+did produce added to both arms. It is NOT `scan-failed`'s shape: at `personal` a `scan-failed`
+warns and carries on with no record, while a `scanned-partial` proceeds only on a recorded
+acknowledgement. The drafted recommendation this amendment carried on 2026-09-15 — never landed in
+this document — had put the personal arm at `scan-failed`'s warning; the ruling put it at the
+signature, which is why this document asks rather than extrapolates (§0.3, v2.1). The distinction
+the ruling draws is recorded, not reasoned past: a `scanned-partial` result is a scanner that was
+present and ran, so §6.1's *"was the required tool present and attempted"* predictor put it beside
+`scan-failed`; the ruling puts it beside `tool-unavailable`, and the reason on the record is Karl's
+three words and nothing this document adds to them.
+
+**What is built, and what is not.** NOTHING of the ruling is built: the organizational stop and
+the personal recorded acknowledgement are **WP10b's** (§10), and at `01b66e3` no adoption code
+refuses on the status — the stub prints and returns 0, the re-scan guard groups the status with
+`scanned`, and `adopt_refuse` is never reached on it (§13-V28). §10-WP10's eight status×tier cells
+are **ten**, and the ninth and tenth pairs need their own mutation in each direction like the two
+not-scanned statuses already have.
+
+**What WP10b must not do.** Not collapse `scanned-partial` into `scanned` for the stop/proceed
+decision. It sits on the `scanned` side of the RE-SCAN guard, which asks a different question
+(*did a tool look?*) from the table's (*may adoption proceed?*), and a fixture matrix that inherits
+the guard's grouping would pass against an implementation that issues a shallow clone a clean bill
+of health — the exact sentence `## BL-288:` exists to prevent, reached one package later. And not
+render the personal arm as a warning: a partial scan acknowledged with nothing written down is the
+advisory posture §6.3 exists to replace.
+
 ### §6.2 — Tool resolution makes the scanner guaranteed
 
 Act 2's **second** step runs `scripts/resolve-tools.sh` against `templates/tool-matrix/` (§8.2; the
@@ -1331,10 +1588,60 @@ shipped driver never takes (§13-V3). `gitleaks` is already a `"required": true`
 recipes for brew/apt/dnf/pacman — §13-V9), so **D2 demands nothing the framework does not already
 demand of every scaffolded project**; adoption was simply not asking. Ordering consequence: the
 Scout report Act 2 consumes may predate the install and carry `tool-unavailable` — so **when the
-consumed report's `secrets.status` is not `scanned`, Act 2 re-runs the secrets scan after tool
-resolution** rather than trusting a stale "nobody looked". A fresh `scanned` result replaces the
+consumed report's `secrets.status` is not `scanned` — nor, since `## BL-288:`, `scanned-partial`
+(§6.2a) — Act 2 re-runs the secrets scan after tool resolution** rather than trusting a stale
+"nobody looked". A fresh `scanned` result replaces the
 report's secrets section, and the persisted copy at `.claude/adoption/scout-report.json` (already
 written and SHA-recorded by the shipped state writer) reflects what was actually acted on.
+
+### §6.2a — Built at WP10a (`4009790`, merged 2026-09-04 as PR #373), and what it deliberately does not decide
+
+The step above is `adopt_resolve_tools` in `scripts/lib/adopt/adopt-tools.sh`, called once from
+`adopt_main` at `# BL-242-RESOLVER-CALL`, between the tier question and the reverse intake (§13-V19).
+Read from source on 2026-09-16, by function:
+
+- **The resolver is invoked as a command, not sourced** — `_adopt_resolver_path` prints
+  `$ADOPT_FRAMEWORK_ROOT/scripts/resolve-tools.sh`, or whatever `SOIF_ADOPT_RESOLVER` names, which
+  is the seam the suite drives so no test installs software on the host that runs it. The matrix
+  it is handed is the FRAMEWORK root's (`--matrix-dir "$ADOPT_FRAMEWORK_ROOT/templates/tool-matrix"`);
+  nothing copies it into the adoptee (§8.7a row 7).
+- **A scanner already on `PATH` costs no subprocess** — `# BL-251-FAST-PATH` (`## BL-251:`, Closed,
+  PR #375): `_adopt_scanner_present` short-circuits to the re-scan (`# BL-251-FAST-PATH-RESCAN`),
+  measured by that entry as 545 s → 100 s across the three affected suites with assertion counts
+  unchanged.
+- **It asks before it installs** — `adopt_ask_choice "setting up $name" "Set $name up now?"` with
+  the answers *set it up now* / *skip it*. An unanswered question refuses the run as every
+  mandatory question does; a *skip* prints that the scan will report nothing looked, re-scans, and
+  the adoption **completes** — the header's own promise that *"a `tool-unavailable` result still
+  completes an adoption here exactly as it did before this package"*.
+- **A URL where a command was expected is refused, never executed** — `# BL-242-RESOLVER-NO-EXEC`:
+  anything the resolver filed under `manual_install`, or a payload `_adopt_cmd_is_runnable`
+  rejects, is printed as an instruction to install by hand. The install itself runs under `eval`
+  in `$ADOPT_WORK` (`# BL-242-RESOLVER-INSTALL`), and success is **verified, not asserted** —
+  `_adopt_tool_present` is probed afterwards (`# BL-242-RESOLVER-VERIFY`), because a recipe's exit
+  status is not the tool being on `PATH`. `adopt_tree_fingerprint` is taken either side of the
+  `eval`, and a difference raises `# BL-225-TOUCHED-UNBOUNDED` (§8.2a) — an installer recipe may
+  write anything anywhere.
+- **The re-scan reuses Scout's own projection** — three libraries, the third (`scout-core.sh`) the
+  one a first cut missed; refuse-loud early returns; `# BL-242-RESCAN-HONEST` prints one sentence
+  per resulting status, including a `scanned-partial` arm reachable when a `tool-unavailable`
+  report triggers a re-scan that then meets a shallow clone. The guard is
+  `case "$status" in scanned|scanned-partial) return 0 ;; esac` (`# BL-242-SECRETS-RESCAN`,
+  `# BL-288-RESCAN-PARTIAL`), and the refreshed report is what every later step reads
+  (`# BL-242-RESOLVER-REFRESH`).
+- **It makes no stop/proceed decision.** The file's header says so in as many words and names
+  §6.1's table, §6.3's dispositions and §6.4's tiered escape as WP10b's (§13-V22); the
+  `scanned-partial` arms ruled on 2026-09-16 are WP10b's too (§6.1a).
+
+Pinned by `tests/test-brownfield-wp10a-tool-resolution.sh` — 54/0 at `01b66e3` (§13-V24) — through
+the `SOIF_ADOPT_RESOLVER` seam, which is why that suite does **not** pin the shipped matrix's
+`gitleaks` entry (§12 item 10).
+
+**A residual found at WP10a's review, recorded on `## BL-242:` and not fixed:** the shared resolver
+files gitleaks' documentation URL in the `auto_install` bucket on a host without the package
+manager, and `init.sh` executes that bucket — plus an unpinned, unverified root install in the
+Linux recipe. WP10a defends its own consumer with the refusal and the probe above; the defect is
+upstream of both consumers and is not WP10's boundary.
 
 ### §6.3 — The acknowledgement is recorded, and refused if it cannot be recorded
 
@@ -1416,6 +1723,9 @@ findings to print** — the report never parsed. The warning must therefore say 
 known about this history, in those terms, rather than reusing the findings-warning template with
 an empty list. An empty findings list rendered as a warning reads like a clean result, which is
 the fail-open posture this entire section exists to refuse.
+
+**A fifth status exists since 2026-09-12 and was ruled on 2026-09-16 with this section's shape — stop
+at both tiers, escapable only at `personal` and only on the record — §6.1a.**
 
 ### §6.5 — Where the tier value comes from: the audience question, kept and re-purposed (D9)
 
@@ -1683,14 +1993,78 @@ completion is recorded in state (§8.3), which is what the `resume.sh` branch pr
 |---|---|---|
 | 0 | **The re-adoption preflight** (**A1**) — refuse before anything is asked or written | **Before the tier question**, so a second run neither re-interrogates the operator nor destroys what the first produced. **Three arms.** (1) `soif_adoption_adopted` true, **or the committed witness `_soif_adoption_head_copy_adopted`** (which catches a hand-edited manifest that defeats both the flag and the restamp refusal) → refuse, naming `scripts/resume.sh` (the assessment route) and `--re-add`. (2) Stamp absent but a prior `.claude/adoption-archive/` present → refuse and NAME that directory: an interrupted first run, whose recovery is the archive's own restore lines. (3) **`.claude/phase-state.json` present, or `.claude/manifest.json` present with no adoption block, OR at least half of the framework's own install set already present → refuse: this tree LOOKS already framework-managed** (scaffolded by `init.sh`, or an interrupted adoption's state half). The phase-state half is decisive — `init.sh` and the adoption driver are its only writers. The manifest half is strong evidence rather than proof, so the message says what was found and names the explanations instead of asserting one. **THE THIRD SIGNAL WAS ADDED AT WP9b AND IS NOT DECORATION EITHER**: an adoption interrupted after the framework install on a COLLISION-FREE adoptee has no manifest, no phase-state and no archive — the archive directory only materialises when something collides — so arms 1, 2 and 3 were all silent and the operator was re-asked the tier question and every confirmation before the `n_copied -eq 0` tripwire refused. That is this step's own promise going unmet. It is **at least half of the install set**, counted over the same source-filtered entries `adopt_install_framework` would copy, and NOT a single named file: keying it on one file false-refused an adoptee that legitimately vendors a script of its own at a framework path, which adopted cleanly before WP9b. A majority cannot be coincidence; one file can. Without arm 3 a SCAFFOLDED GREENFIELD project passes every check, is archived as though its framework files were the operator's, has its gate-earned state overwritten, is stamped adopted and **committed at exit 0** — shipped v1 refuses it via the `n_copied -eq 0` tripwire that D1 unreaches. **Without this, `adopt_write_file` (`cat >`) overwrites `phase-state.json` and a completed `PROJECT_INTAKE.md` at steps 7's stages, and the second-stamp refusal does not fire until the manifest stage — after both** |
 | 1 | **The tier question** — `adopt_ask_audience`, kept by D9 and re-purposed (§6.5) | **Before step 3**, which keys on its answer, and before step 2, which installs software: a run abandoned at the only question adoption asks has changed neither the repository nor the host. Shipped position, effectively unmoved — `adopt_main` already asks it before any writer (§13-V4) — so this row costs a re-purpose, not a re-order |
-| 2 | Tool resolution (`scripts/resolve-tools.sh` against `templates/tool-matrix/`) | Before the secrets check, which needs the scanner it installs (§6.2). The one genuinely new step in the order |
-| 3 | The secrets check (§6) — at `organizational` every non-clean status stops; at `personal` findings and `scan-failed` warn and carry on, while `tool-unavailable` stops unless an acceptance is recorded (§6.1's ladder) | Before any write, so a *stopped* adoption has changed nothing — today's `adopt_stub_secrets_disposition` fires after the reverse intake, which a stop (as opposed to a notice) must not. **It keys on step 1's answer, never on the manifest**, which is not written until step 7 — the tier must be carried in the run, and `ADOPT_DEPLOYMENT` is what carries it (§6.5) |
+| 2 | Tool resolution (`scripts/resolve-tools.sh` against `templates/tool-matrix/`) | Before the secrets check, which needs the scanner it installs (§6.2). The one genuinely new step in the order. **BUILT at WP10a (§6.2a)**; `## BL-251:`'s fast path skips the subprocess when the scanner is already on `PATH` |
+| 3 | **NOT BUILT — WP10b.** The secrets check (§6) — at `organizational` every non-clean status stops; at `personal` findings and `scan-failed` warn and carry on, while `tool-unavailable` and (ruled 2026-09-16, §6.1a) `scanned-partial` stop unless an acknowledgement is recorded (§6.1's ladder) | Before any write, so a *stopped* adoption has changed nothing — today's `adopt_stub_secrets_disposition` fires after the reverse intake, which a stop (as opposed to a notice) must not. **It keys on step 1's answer, never on the manifest**, which is not written until step 7 — the tier must be carried in the run, and `ADOPT_DEPLOYMENT` is what carries it (§6.5) |
 | 4 | Test-debt census (`adopt_test_debt_record`) | **Before the install** — shipped and kept; the census reads `git ls-files` and its independence from the framework copies is stated in the code rather than resting on index timing |
 | 5 | Collision archive (`adopt_archive_write`), five classes | **Before any writer** — shipped and kept; an archive taken after a writer captures the framework's file under the operator's name. Now also before the D1 installs it newly precedes |
 | 6 | Framework install, framework-wins + receipt check (§7.1) | After the archive that makes overwriting honest |
 | 7 | State: **the tier-matched `APPROVAL_LOG.md` (A4) FIRST**, then `phase_state` → `intake` (mechanical prefill only) → `manifest` + stamp | `# BF-ADOPT-STATE-ORDER`, carried; §8.4's fail-safe analysis carried. The intake's judgment sections move to Act 3, so Act 2 writes the prefill-confirmed cells and leaves judgment cells blank |
-| 8 | The adoption commit (`adopt_stage_and_commit`) | Explicit staging, carried. **`## BL-225:` sits exactly here** — the staged-tree/`.gitignore` defect — and §10's sequencing gates the build on its fix |
+| 8 | The adoption commit (`adopt_stage_and_commit`) | Explicit staging, carried. **`## BL-225:`'s staging half sits exactly here** (`# BL-225-STAGE-PREFLIGHT`: ask `git add --dry-run` before staging, stop whole); its before-any-write half sits above step 4 (§8.2a). Both are built |
 | 9 | Hooks (`adopt_install_hooks`) | **Last, after the commit** — shipped and kept, with its marker-fenced commit-msg composition |
+
+### §8.2a — Steps 4–7 are REHEARSED on a copy before the first real write (`## BL-225:`, built 2026-09-12/13, PR #410)
+
+§8.2's table was written when `## BL-225:`'s staging half had shipped (`# BL-225-STAGE-PREFLIGHT`:
+ask `git add --dry-run` before staging, stop whole) and its before-any-write half was open — the
+driver could still put the whole write set on disk (79 files on a clean adoptee, §8.7a) and then
+discover the adoptee's ignore rules refused one. That half is built, and its mechanism is worth
+stating here because it changes what "step 4" means. **`_adopt_write_phase` is the ONLY function
+that writes the adoptee's files** — the test-debt census, the collision archive, the framework
+install, then the state loop (`_adopt_state_order`: `approval_log` → `phase_state` → `intake` →
+`manifest`) — **and it is called twice**: once by `adopt_prewrite_preflight` against a `cp -a`
+copy of the whole tree, `.git` included, at `$ADOPT_WORK/rehearsal/tree`; once for real
+(`# BL-225-PREWRITE-CALL`, then `# BL-225-WRITE-PHASE-REAL`, both in `adopt_main`). The planned
+path set is therefore **what the writers produced on the rehearsal**, never a maintained list — a
+writer added to the phase is in the preflight the moment it is in the real run, with no second
+edit. `## BL-225:` records that Karl chose the copy over a per-writer no-write flag, and the reason
+held: a flag is a second thing each writer can forget, and a writer that ignored it would write
+during the "rehearsal".
+
+**Where it sits.** After step 3's surface (today `adopt_stub_secrets_disposition`; after WP10b the
+stop) and before the first write. Steps 0–3 run once; steps 4–7 run twice — the first time
+discarded, the second time for real; steps 8 and 9 are git work, not file writing, and stay
+under the staging preflight.
+
+**The oracle is two questions, and a first cut that asked one over-refused working projects.**
+`git add` refuses a *tracked* path only when an ANCESTOR DIRECTORY is ignored — measured on a
+tracked path across rule shapes: `.claude/` → refuses; `.claude/*`, `*.json`, an exact path → all
+accept — while `git check-ignore --no-index` says IGNORED for all four. So the preflight asks
+`check-ignore --no-index` about the parent directory of a tracked path (a top-level tracked file
+is simply accepted) and about the path itself when untracked. Anything but exit 0 or 1 from the
+oracle **refuses** — `check-ignore` exits 128 on a pathspec beyond a symlink, and reading that as
+"not ignored" would be a fail-open guard inside the entry that exists to remove them
+(`# BL-225-ORACLE-FAIL-CLOSED`).
+
+**The refusal says NOTHING WAS WRITTEN only when that sentence is DERIVED.** The touched-disk
+marker (`# BL-225-TOUCHED-DISK`, a file under `$ADOPT_WORK`, raised before each write site)
+records an ATTEMPT, and step 2's resolver raises it before its `eval` on a host missing a tool
+even when the recipe leaves nothing — so a refusal was telling operators adoption *"had already
+ATTEMPTED writes"* over a provably clean tree. The clear at `# BL-225-REFUSE-DERIVED` is an
+**intersection**: no planned path exists on disk AND `# BL-225-TOUCHED-UNBOUNDED` is unraised.
+That second flag is evidence-based: `adopt_tree_fingerprint` hashes the adoptee's path list either
+side of the resolver's `eval` and raises it only on a difference, or when the tree could not be
+read at all — because the planned set bounds the driver's own writers and not an installer
+recipe, which may write anything anywhere. Then `# BL-225-PREWRITE-REFUSE` names every refused
+path *inside* the refusal (stderr, so a piped log keeps the list) and tells the operator that git
+cannot re-include a file under an ignored directory, so `!.claude/manifest.json` beneath a
+`.claude/` rule does not help — narrow the rule itself.
+
+**Three things the rehearsal had to be taught, each measured rather than reasoned** (`8356317`):
+it honoured `SOIF_ADOPT_HALT_AFTER`, a fault seam for the real run, and so "failed" and refused
+every suite that used it (`# BL-225-REHEARSAL-NO-HALT`); it sat *below* the census writer, so it
+claimed nothing was written while its own count said one file had been (the census is inside the
+phase now); and it raised the global touched marker for the copy (`# BL-225-REHEARSAL-NO-TRACE`
+removes the marker again when it was not raised before the rehearsal). **The cost, stated as
+one:** four mutation proofs (`S5`, `G4`, `PM1`, `TM1b`) lost their end-to-end observable, because
+nothing is written on any failure path now; each is re-proved where it is still observable, and
+each masking was measured.
+
+**Two residuals stay on `## BL-225:`, not here.** An adoptee whose `.claude` is a symlink to an
+absolute path outside the repository has its state files written *there* while the refusal
+correctly reports the repository untouched (pre-existing — it predates the fix); and the unbounded
+flag is path-list only, so a recipe that MODIFIES an adoptee file in place rather than creating one
+does not raise it (strictly lower reachability than the escape it catches, since the `eval` runs in
+`$ADOPT_WORK`, outside the adoptee).
 
 ### §8.3 — State writes and the stamp's v2 shape
 
@@ -1745,6 +2119,55 @@ judgment call about an operator-facing surface rather than a derivation.
 | **A7** | **Act 2's reverse intake stops asking JUDGMENT and NON-SKIPPABLE rows, data classification included; it asks only the scan-derived confirmations.** `adopt_judgment_question`, `adopt_ops_addendum` and `adopt_ask_data_classification` go with them; `adopt_persist_phase1_artifacts` is KEPT, uncalled, marked for Act 4, and its process-state *creation* half is split out and still runs in Act 2. | *Leave the judgment questions in Act 2* — §8.2 step 7 is normative ("the intake's judgment sections move to Act 3, so Act 2 writes the prefill-confirmed cells and leaves judgment cells blank"), and leaving them means WP12a's interview asks the same operator the same questions twice. **The classification is the load-bearing half, and its Act-2 mandate has LOST ITS OWN STATED REASON:** `adopt-intake.sh`'s header derives non-skippability from "an S1 adoption lands at 4, i.e. above [the ZDR] threshold on its FIRST commit" — under D10 nothing lands above 0, so the mechanical necessity that justified the guard is gone and §5.2 has already re-anchored it to Act 4's intake write. **The window is real and is stated rather than defended:** between WP9 and WP12a an adoption records no classification at all. It is fail-closed, and the mechanism is stated CORRECTLY here after being stated wrongly at first: the project rests at phase 0, and the ZDR backstop is a hard `[FAIL]` — a real `issues` increment, not a cosmetic `[WARN]` — at `current_phase >= 2` **however that value came to be 2**. The first version of this sentence said *"the only route to 2 crosses the 1→2 gate where that backstop lives"*, and that is **FALSE**: `scripts/process-checklist.sh`'s `_set_current_phase_min` writes `current_phase` at five call sites, an adoptee **receives that script**, and its `--complete-step` / `--verify-init` path reaches `_set_current_phase_min 2` with **no gate consult** — unlike `--start-phase1` (`# BL-114-START1-GATE-CONSULT-BEGIN`) and `--start-phase4` (`# BL-105-START4-GATE-CONSULT-BEGIN`), which do consult. A brownfield adoptee is exactly the population that already has a remote, CI, a lockfile and hooks, so that path is the expected one rather than a contrived one, and adversarial review executed it: `current_phase` 0 → 2 with the classification still absent. **The conclusion survives and is stronger without the false premise**: the gates are cumulative and evidence-keyed, so a rung reached by any writer without the evidence simply fails the gate — which does not depend on an enumeration of who can write the value. **AND THE OPERATIVE GUARD TODAY IS NOT THAT ONE, WHICH IS THE THIRD CORRECTION THIS SENTENCE HAS TAKEN.** On an adopted tree as WP9a leaves it, `check-phase-gate.sh` refuses EARLIER still: its precondition block prints `[FAIL] APPROVAL_LOG.md not found but .claude/phase-state.json exists.` and `exit 1`s **six lines before `current_phase` is parsed at all**, and adoption did not write that file until A4. **A4 HAS NOW LANDED (WP9b), so this paragraph's regime is the FORMER one and the ZDR backstop is the operative guard** — the paragraph above describes what executes today. The pre-A4 behaviour is kept because projects adopted before it still rest in it, and because the correction history is the point: this sentence was written as "right now" and became false the moment the package it names shipped. Deleting the log on an adopted project reproduces the old refusal exactly (measured: `[FAIL] APPROVAL_LOG.md not found but .claude/phase-state.json exists.`, rc 1). **This suite's own G section documents the early exit and stubs around it**, which is how the claim came to be written beside a fixture that disproved it. **THE SECOND CONJUNCT — that the operator still MEETS the question — WAS ASSERTED BY NOBODY AND WAS FALSE ON ALL THREE ROUTES**, which adversarial review found by executing them: `resume.sh`'s kickoff branch pointed at a `## 13.` section the adoption-rendered intake never wrote; `intake-wizard.sh --resume` raised a **swallowed** `KeyError` (its `load_progress()` subscripts seven keys adoption did not write) and then resumed at Section 14 — **past Section 5, the classification** — printing *"Intake Complete!"* at rc 0; and `reconfigure-project.sh`, **the hatch the ZDR block names in its own FAIL text**, died on a `.claude/orchestrator-source.json` adoption never wrote. All three are FIXED and each is now asserted by execution (§10-WP9's `R1`–`R4`): Act 2 renders a real §13 prompt that names the classification as non-optional, writes the seven keys with `last_section: 0` so `--resume` walks Section 5, and writes the source path. **Deferring a requirement is only honest if the route that re-asks it exists; three of them did not, and "fail-closed" was carrying the whole argument alone.** Two defects in `intake-wizard.sh` itself are OUT of this fix and filed rather than absorbed — a `KeyError` that is swallowed rather than fatal, and a choice prompt that loops forever on EOF. *Delete `adopt_persist_phase1_artifacts` and let WP12a re-extract it* — rejected: it is reuse-by-extraction of `intake-wizard.sh`'s own writer and re-deriving it is how two owners of one merge appear |
 | **A8** | **`scripts/check-phase-gate.sh`'s cosmetic `.adoption.scenario` read is retired with the field**, and the `[OK]` line stops naming a scenario. `adopt_stub_certification` is DELETED (WP5 is retired, §5.1) and `adopt_stub_project_docs`' owner string is corrected from *"unassigned — §10 names no owner"* to name D3/WP11+WP12b. `adopt_stub_hooks`' string is NOT touched — §10 routes it to WP7. | *Leave the gate read* — it would print `scenario: unknown` on every adopted project forever, and a gate that reports an unknown where the record is complete teaches operators to ignore it. **§4.2's blast-radius table does not list `check-phase-gate.sh` at all** — the same defect §4.2 itself names ("a blast-radius enumeration is the author's inference about consequences"), recurring inside the section that warns about it; the row is added below. *Leave `adopt_stub_certification`* — announcing a RETIRED package as not-yet-built is worse than silence: it tells an operator to expect something nobody will ever build. *Fix `adopt_stub_hooks` too* — rejected, and not on grounds of effort: `## BL-242:` establishes that the obvious rewrite ("WP7") would propagate a **false §10 attribution**, so that string needs the decision-naming spelling WP7 will give it |
 
+### §8.3b — What the three state writers emit today, by function (2026-09-16; `## BL-253:`, `## BL-268:`)
+
+Read from source so the manifest's shape is a reading, not a memory; two defects were found in
+it since 2026-09-01 and both were the same class — an adopted project born with a value a
+scaffolded one never carries.
+
+- **`adopt_write_phase_state`** (`# BL-242-PHASE0-LANDING`): `project`, `framework_version:
+  "1.0"`, `current_phase: 0`, `track: "full"`, `deployment` (from D9's question), **`poc_mode:
+  null`** (`# BL-253-POC-NULL`), `compliance_ready: false`, `review_gate_enforced: true`, and the
+  four `gates` at `null`.
+- **`adopt_write_intake`**: the rendered `PROJECT_INTAKE.md` with its `## 13.` kickoff section,
+  `.claude/intake-progress.json` with the seven keys `intake-wizard.sh` subscripts (A7),
+  `.claude/process-state.json` (the file, not the phase-1 merge), the persisted
+  `.claude/adoption/scout-report.json`, then `adopt_stub_provenance_headers`.
+- **`adopt_write_manifest`**: `host` from the report's `.stack.ciHost` (else `other`); **`mode`
+  in the `personal|org` vocabulary, translated from `deployment` exactly as `init.sh` does at its
+  own write site** (`# BL-268-MODE-VOCABULARY`: `[ "$mode" = "organizational" ] && mode="org"`);
+  `remote_url: ""`; `deployment` in `personal|organizational`; `poc_mode: null`
+  (`# BL-253-POC-NULL-MANIFEST`); `enforcement_level` seeded `strict` (`# BL-221-ADOPT-TIER-KEYS`);
+  then the evidence hash of the persisted report, refused if empty (`# BF-ADOPT-SHA-REQUIRED`), the
+  ONE stamp call (`# BF-ADOPT-STAMP-CALL`) and a `soif_adoption_adopted` read-back that refuses if
+  the stamp did not land.
+
+**`poc_mode` (`## BL-253:`, Closed, PR #377).** `ADOPT_POC_MODE` was the string `"production"`
+from WP4 until 2026-09-08 — a value `init.sh` never writes (it maps Production to `""` and emits
+JSON `null`) and one every reader takes as THE NAME of a POC mode — so `process-checklist.sh
+--start-phase4` refused every adoptee and `check-phase-gate.sh`'s organizational Pre-Phase-0
+guard, keyed on the key being null, printed zero pre-conditions for an organizational adoptee.
+It is `""` now (`# BL-253-POC-MODE`) and both writers emit `null` through `init.sh`'s own
+`--argjson` idiom; `tests/test-bl253-adoption-state-parity.sh` pins the two birth paths against
+each other (19/0, §13-V24). Adoption still asks **no** POC question — D9 is one question — so an
+adopted POC lands as production and must be moved with `upgrade-project.sh`; that stays a residual
+on the entry.
+
+**`mode` (`## BL-268:`).** `deployment` and `mode` are two fields with two vocabularies, and the
+writer fed `ADOPT_DEPLOYMENT` to both — so every organizational adoptee carried `mode:
+"organizational"`, a word no reader of `mode` knows, and `host_verify_protection` — the reader
+that runs against an adoptee, and unlike its sibling `host_configure_protection` one that had no
+validation of `mode` at all — skipped its org-only assertions in silence and returned success.
+Two arms shipped (`eba7291`): the translation above, and all three host drivers now **refuse** a
+`mode` outside the vocabulary. Two neighbours are recorded, not designed here: `## BL-270:` — a
+project adopted before the fix carries the bad word and, with the drivers now refusing it, is
+strictly worse off until the `upgrade-project.sh --backfill-only` migration runs
+(`# BL-270-MODE-VOCABULARY-BACKFILL`, on `main` at `0dc57fc` whatever the entry's status line
+says); and `## BL-271:` — `upgrade-project.sh --deployment organizational` never writes `.mode` at
+all, so a *scaffolded* project upgraded to organizational is verified against the personal bar
+for ever. Neither is adoption's defect; both are named because an adoptee receives every script
+involved.
+
 ### §8.4 — Fail-safe order — the between-acts row, and the Act 3/4 rows (A2)
 
 v1 §8.4's two-row table (phase-state present/manifest absent = phase gate live + tier strict;
@@ -1774,6 +2197,20 @@ merge refuses-on-exists — because copying the merge's discipline up to the rec
 the deadlock one level higher. And the merge plus its `adoption_event` audit row are **two writes**:
 a crash between them leaves merged-without-audit-row, which is bookkeeping-only and is named here
 rather than defended against.
+
+**A row added 2026-09-16 — refused-before-write (`## BL-225:`, §8.2a).** v1 §8.4's per-surface
+analysis assumed the writes had started; there is now a state before that one. When the rehearsal
+finds a planned path the adoptee's ignore rules refuse, or does not complete at all, adoption
+refuses with **no file written and no state changed**: phase-state absent, manifest absent, no
+archive directory, the tree's path list identical either side — and the refusal says *NOTHING WAS
+WRITTEN* only when `# BL-225-REFUSE-DERIVED`'s intersection holds, and otherwise says that
+adoption attempted writes (the `# BL-225-REFUSE-HONEST` class). It is the safest row in the
+table, and it is safe by construction rather than by write order; `tests/test-bl225-prewrite-preflight.sh`
+(50/0, §13-V24) is the check. **What it does not cover, so nobody reads it as more than it is:** a
+crash *inside* the real `_adopt_write_phase` — between the rehearsal and the commit — still leaves
+files on disk exactly as v1 §8.4's rows describe, with the archive's restore lines as the manual
+recovery and A1's three arms refusing the re-run (§12 item 4a); and step 2's resolver runs *before*
+the rehearsal, so a host that said yes to an install has changed even when the tree has not.
 
 ### §8.5 — `scripts/resume.sh`'s adoption branch
 
@@ -1882,8 +2319,8 @@ surface twice before (`## BL-181:`'s exempt-row audit, and `## BL-242:`'s own `a
 A shipped adoption was run against a hermetic adoptee and the tree diffed before and after:
 
 ```
-adopt rc=0
-total new files: 77   |  under scripts/: 68  |  under .claude/adoption-archive/: 0
+adopt rc=0                                        # 2026-09-16, tree 01b66e3 — §13-V27
+total new files: 79   |  under scripts/: 70  |  under .claude/adoption-archive/: 0
 ```
 
 The **nine** non-`scripts/` paths a completed adoption writes, in full — this is the whole of it,
@@ -1901,6 +2338,14 @@ The eighth path was `.claude/orchestrator-source.json`; the ninth is `APPROVAL_L
 stale, in the paragraph carrying the instruction that would have prevented it. Two documents in one
 commit disagreeing about one measurement. A measurement is only true of the tree it was taken on.
 **Re-run it after any package that adds a writer — and re-run BOTH copies, or delete one.**)*
+
+*(**And a fourth time, differently: 77 became 79 with the nine paths UNCHANGED**, because the
+`scripts/` half is `init.sh`'s copy list and `## BL-254:` added two files to it on 2026-09-08
+(PR #378) — no adoption package touched anything. Re-measured by execution on 2026-09-16, §13-V27,
+whose `scripts/` half is byte-identical to `soif_parse_shipped_scripts`' 70. So the trigger is wider
+than the sentence above says: **re-run it after any change to `init.sh`'s copy list, not only after
+a new adoption writer.** The other two carriers — `docs/adoption.md` and `## BL-242:` — still say
+77 and 68 and are not corrected here; §13-U(v2.1).)*
 
 (plus `.git/hooks/commit-msg`, which a tree diff cannot see because `.git` is pruned, and a
 `.claude/adoption-archive/` tree whose size depends entirely on what the adoptee already had —
@@ -1923,14 +2368,14 @@ plus the writers whose target is inside a function body (`generate_claude_md`,
 
 | # | `init.sh` effect | Placement, and the reason |
 |---|---|---|
-| 1 | `scripts/**` (68 files measured) | **Act 2** — `adopt_install_framework`, from `init.sh`'s own copy list via `soif_parse_shipped_scripts`. The one surface with no drift risk by construction |
+| 1 | `scripts/**` (68 files measured 2026-09-01; **70 measured 2026-09-16**, §13-V27 — `scripts/check-changelog.sh` and `scripts/check-session-state.sh`, added to `init.sh`'s copy list by `## BL-254:` on 2026-09-08) | **Act 2** — `adopt_install_framework`, from `init.sh`'s own copy list via `soif_parse_shipped_scripts`. The one surface with no drift risk by construction |
 | 2 | `.claude/phase-state.json` | **Act 2** — `current_phase: 0` (D10) |
 | 3 | `PROJECT_INTAKE.md` + `.claude/intake-progress.json` | **Act 2**, prefill-confirmed cells only; judgment cells blank (§8.2 step 7, **A7**) |
 | 4 | `.claude/manifest.json` + the stamp | **Act 2** |
 | 5 | `.claude/process-state.json` | **Act 2** — `adopt_write_process_state`, split out of `adopt_persist_phase1_artifacts` at WP9a. Under **A7** the `.phase1_artifacts` merge moves to Act 4; the *file creation* stays in Act 2, or the adoptee loses a file `init.sh` guarantees. *(An earlier review round recorded this row as "nobody persists"; it was written then and is written now, and that correction is the reason this half of the table is measured.)* |
 | 6 | `install_tdd_commit_msg_hook` | **Act 2** — `adopt_install_hooks`, last, after the commit |
-| 7 | `templates/tool-matrix/*.json` | **WP10** — `resolve-tools.sh` reads it; shipping the resolver without its matrix resolves nothing |
-| 8 | the `resolve-tools.sh` invocation (3 sites in `init.sh`) | **WP10** (§8.2 step 2) |
+| 7 | `templates/tool-matrix/*.json` | **PARTIAL — and the draft of this amendment said "WP10a — BUILT", which the tree refuted.** Act 2's *consumption* is built (WP10a reads the matrix from the FRAMEWORK root, §6.2a); the *copy* `init.sh` makes into the project is not — §13-V27's write set carries no `templates/` at all, while the adoptee receives `scripts/resolve-tools.sh` in the install set and its own `check-phase-gate.sh` names `$PROJECT_ROOT/templates/tool-matrix` in its tools-needed block. **Why nobody has tripped over it:** that block is keyed on `.claude/tool-preferences.json`, row 32's file, which adoption also never writes — so on an adoptee it never runs (measured: the resting-state gate exits 0 with no matrix line, §13-V27). Two unowned gaps masking each other; whether the adoptee must receive the matrix is undispositioned |
+| 8 | the `resolve-tools.sh` invocation (3 sites in `init.sh`) | **WP10a — BUILT** (§8.2 step 2, `# BL-242-RESOLVER-CALL`; §6.2a) |
 | 9 | `templates/generated/*.tmpl` (incl. `skills/`) | **WP11/WP12b** — the D3 document writers render from these |
 | 10 | `CLAUDE.md` | **WP11 (archive) + WP12b (write)** — D3 |
 | 11 | `FEATURES.md`, `BUGS.md`, `RELEASE_NOTES.md` | **WP11 + WP12b** — D3's reach, ruled 2026-08-31 |
@@ -1938,7 +2383,7 @@ plus the writers whose target is inside a function body (`generate_claude_md`,
 | 13 | `.github/workflows/*` (`generate_ci`, `generate_release`) | **WP7** — the CI carve-out (§7.4) |
 | 14 | `install_precommit_hook` (the fallback hook) | **WP7**, last — Karl's decision; installing it before the artifacts it reads exist refuses every commit |
 | 15 | `PRODUCT_MANIFESTO.md` / `PROJECT_BIBLE.md` | **NOBODY, in either path** — `init.sh` writes no manifesto either; the Phase-0 **agent** authors both (**A3**). Covered by construction, not by omission |
-| 16 | `.gitignore` (`generate_gitignore`) | **PARTIAL** — `## BL-225:`'s staging preflight reads the adoptee's; whether adoption should *amend* theirs is undispositioned |
+| 16 | `.gitignore` (`generate_gitignore`) | **PARTIAL** — `## BL-225:`'s staging preflight reads the adoptee's, and since its second half the pre-write rehearsal reads it too (§8.2a); whether adoption should *amend* theirs is still undispositioned |
 | 17 | `CHANGELOG.md` | **UNSPECIFIED** — D3's reach ruling names `FEATURES`/`BUGS`/`RELEASE_NOTES` and stops there. `init.sh` writes a fourth. Named here rather than folded silently into row 11 |
 | 18 | `docs/reference/*` (8 verbatim docs) | **UNOWNED — and load-bearing.** `messaging-standard.md` is the document **D8 binds**, and `builders-guide.md` is what `resume.sh`'s §13 prompt hands the agent. The adoptee receives neither, so D8 binds a product the project never gets |
 | 19 | `.claude/settings.json` — permissions + hook roster | **UNOWNED** — the adoptee's sessions run the ordinary SDLC with none of the session hooks wired |
@@ -1956,15 +2401,17 @@ plus the writers whose target is inside a function body (`generate_claude_md`,
 | 29 | `soif_currency_record_render_base` A1/A2 rows | **UNOWNED** |
 | 30 | remote creation / protection, `local_only_acknowledged` | **UNOWNED** — the ack has no post-init writer anywhere |
 | 31 | `git init`, and BL-030's organizational⇒strict forcing | **COVERED** — the adoptee is already a repository; `enforcement_level` seeds `strict` in `adopt_write_manifest` |
+| 32 | `.claude/tool-preferences.json` (`init.sh`, 9 mentions) | **UNOWNED — found by dogfood, not by this table** (`## BL-284:`, row added 2026-09-16): adoption writes it nowhere (`grep -rc tool-preferences scripts/lib/adopt/ scripts/adopt-project.sh` → 0 in every file), so `verify-install.sh`'s `has_context()` was unsatisfiable on every adoptee and its auto-fixer could never run; the fix reads the context from the state files adoption does write (`# BL-284-CONTEXT-STATE`). Its absence is also what keeps row 7's missing matrix unreachable. The `init.sh` half of this table is *acknowledged partial*, and this row is the first measured instance of how partial |
 
-**THIRTEEN rows are UNOWNED (18–22, 23a, 24–30), one is UNSPECIFIED (17) and one is PARTIAL (16),
-across **33** rows.** *(The denominator was 32 until WP9b added row **22a** — `APPROVAL_LOG.md` — so this number was falsified by the very commit that wrote the row, inside the paragraph telling you to count the rows rather than trust it. The UNOWNED half did not move; only the denominator did. This also said twelve, and twelve was wrong in a way worth keeping: WP9a closed row
+**FOURTEEN rows are UNOWNED (18–22, 23a, 24–30, 32), one is UNSPECIFIED (17) and TWO are PARTIAL (7, 16),
+across **34** rows.** *(Row 32 was added and row 7 re-classified from "WP10" to PARTIAL on 2026-09-16;
+thirteen, one and 33 were right for their date.)* *(The denominator was 32 until WP9b added row **22a** — `APPROVAL_LOG.md` — so this number was falsified by the very commit that wrote the row, inside the paragraph telling you to count the rows rather than trust it. The UNOWNED half did not move; only the denominator did. This also said twelve, and twelve was wrong in a way worth keeping: WP9a closed row
 23 and the split created row **23a**, itself unowned, so the count never moved. §12-3, §0.3 and
 `docs/INDEX.md` all said thirteen while this line said twelve — the document contradicted itself
 for one round. **The count is a MEASUREMENT of the table: read the rows, do not trust this
 number** — which is exactly what nobody did.)* That is the honest denominator §8.7 asked for, and it is larger than this
-document's own §10 implies: the five work packages ahead of WP9 close rows 7–14 and **almost none
-of 16–30**. Row 18 is the sharpest — it
+document's own §10 implies: the packages ahead of WP9 close rows 8–14 — row 8 closed at WP10a,
+row 7 only half — and **almost none of 16–32**. Row 18 is the sharpest — it
 makes D8 bind `docs/reference/messaging-standard.md` inside a project that never receives it — and
 rows 19–21 mean an adopted project's *sessions* are a materially weaker place than a scaffolded
 project's. **None of them is WP9's to fix**, and filing them is the point: the set is carried on
@@ -1978,7 +2425,7 @@ statement with a denominator.
 | Kept | Anchor | Note |
 |---|---|---|
 | Every phase-gate predicate | `scripts/check-phase-gate.sh` | v2 adds no gate arms beyond WP3's shipped ones, and under D10 it needs none — **but not for the reason this cell gave until 2026-09-01.** It said *"nothing writes `current_phase` outside Act 2's phase-0 landing"*, which is false: `process-checklist.sh`'s `_set_current_phase_min` writes it at five call sites and ships to adoptees. The real reason is better and does not depend on enumerating writers: the gates are **cumulative and evidence-keyed**, so a project whose rung was advanced without the evidence fails the gate on the evidence, whoever moved it |
-| Scout, **almost** whole | `scripts/scout.sh`, `scripts/lib/scout/` | Act 1 is the shipped Scout. Candidate future section (`chooserEvidence`) dies with the chooser. **AMENDED AT WP9a, and the amendment is here rather than only in the changelog because that is where a reader of this row looks:** `scout-report.sh` emitted, in the report and the rendered markdown, the note *"maximum satisfied rung; the interview may only lower this"* — the FLOOR RULE, whose interview D4 deleted and whose placement D10 deleted. Shipped operator-facing output making a claim about machinery that does not exist. Re-worded to *"…evidence for the Phase 0 intake, never a placement"* at four sites plus the WP1 suite's string-equality pin. Nothing else in Scout changes, and nothing outside Scout reads `phaseMap.suggestedPhase` any more, which is what made the note purely descriptive |
+| Scout, **almost** whole | `scripts/scout.sh`, `scripts/lib/scout/` | Act 1 is the shipped Scout. Candidate future section (`chooserEvidence`) dies with the chooser. **AMENDED AT WP9a, and the amendment is here rather than only in the changelog because that is where a reader of this row looks:** `scout-report.sh` emitted, in the report and the rendered markdown, the note *"maximum satisfied rung; the interview may only lower this"* — the FLOOR RULE, whose interview D4 deleted and whose placement D10 deleted. Shipped operator-facing output making a claim about machinery that does not exist. Re-worded to *"…evidence for the Phase 0 intake, never a placement"* at four sites plus the WP1 suite's string-equality pin. Nothing else in Scout changes, and nothing outside Scout reads `phaseMap.suggestedPhase` any more, which is what made the note purely descriptive. **AMENDED AGAIN at `## BL-288:` (2026-09-12):** `secrets.status` gained `scanned-partial`, `secrets.scope` gained `shallow-history`, and `schemaVersion` is 2 — a report consumer that switches on the old three words must be widened, and adoption's two were (§6.1a). Scout is *almost* whole by a wider margin than this row said on 2026-09-01 |
 | The in-core enabling arms | `scripts/lib/adoption-stamp.sh`, `# BF-ADOPT-FLAG-READ`, the TDD adoption-window arm | The `adopted` flag's meaning and every reader; the stamp's writer changes shape (§8.3), not home or discipline |
 | The test-debt ledger and ratchet | `scripts/lib/adopt/adopt-test-debt.sh` (WP5b, shipped) | Untouched; still kind (c)'s forward equivalent |
 | The collision archive mechanism | `scripts/lib/adopt/adopt-archive.sh` (WP6, shipped) | Gains three classes (§7.3) — `script` and `document` at WP11, and `approval-log` at WP9b, already shipped; layout, MANIFEST, `--re-add`, pre-staging scan unchanged |
@@ -2010,9 +2457,9 @@ signal.)* Every enforcement change carries the RED-under-neuter → GREEN-restor
 stages 64 files, then a `.gitignore` refusal claims *"nothing has been committed"* over a
 half-staged tree) is not a v2 package — it is a shipped defect on the exact path every Act 2 run
 takes, and `## BL-242:` names it the precondition for any resumption. No v2 package lands before
-its fix. **Its staging half shipped in PR #368; the before-any-write half is still open, and
-`## BL-225:` stays Open for it** — WP9's A1 preflight refuses three re-entry states before any
-write but does not enumerate the planned write set, which is what that half asks for.
+its fix. **Both halves are built** — the staging half in PR #368, the before-any-write half in PR #410
+(2026-09-14) as a rehearsal of the whole write phase on a copy (§8.2a) — and `## BL-225:` stays
+Open only for two named residuals (§12 item 17). The sequencing precondition is met.
 
 **WP12 IS SPLIT into 12a and 12b**, on an architecture review's recommendation made twice (once
 before D10 and once after, when the seam moved and improved). 12a is a complete, shippable minimal
@@ -2030,10 +2477,17 @@ A4's `APPROVAL_LOG.md`, each with its own fixtures and mutants. They are one wor
 scope row; the split is a review-surface decision, not a scope decision, and **both land before
 WP10**.
 
+**WP10 is being built as two PRs on the same terms — 10a BUILT (merged 2026-09-04, PR #373), 10b
+NOT.** 10a is step 2 and §6.2's re-scan; 10b is §6.1's tier table — now five rows, the fifth ruled
+2026-09-16 (§6.1a) — §6.3's dispositions and §6.4's tiered escape. One scope row, one boundary;
+10a's own header says it makes no stop/proceed decision, and its suite pins that a
+`tool-unavailable` report still completes an adoption (§13-V22, V24). The split is attributed to
+Karl by 10a's commit message; that attribution is the commit's (§13-U(v2.1)).
+
 | WP | Scope and boundary | Proofs |
 |---|---|---|
 | **WP9 — Chooser deletion + act boundaries (D4, D5 skeleton)** | Delete `ADOPT_CHOOSER_QUESTION`, both answers, `adopt_ask_scenario`, `adopt_ask_ladder`, the claimed operand (`# BF-ADOPT-FLOOR`'s second input). **`adopt_ask_audience` is RETAINED and re-purposed (D9)** — it is not a deletion target, it moves to the head of Act 2 (§8.2 step 1), and its output stops feeding placement while continuing to feed `deployment`; re-shape `soif_adoption_stamp` per §8.3 (in-core — inherits WP3's dual-direction proof duty); **A1's step-0 re-adoption preflight, all THREE arms** (stamped-or-committed-witness; prior archive; **already framework-managed** — §8.2 step 0) and **A4's `APPROVAL_LOG.md`, rendered from the tier-matched `init.sh` template and written FIRST in step 7** (not a fourth "empty, headed" shape — §8.3a-A4 rejects that by name; `verify-install.sh`'s `fix_approval_log` is the sibling whose shape must agree); Act 2 lands phase 0 and prints the Act 3 handoff — **an honest `adopt_stub_*` NOT-DONE notice naming WP12a, NOT the fifth `resume.sh` branch**, whose predicate reads an `.adoption.assessment` only WP12a writes, so emitting that prompt now would point at a step that does not exist; the init-parity audit table, **delivered at §8.7a**; **A5** (rename `adopt-chooser.sh` → `adopt-evidence.sh`), **A6** (the evidence block survives, re-worded), **A7** (Act 2's reverse intake keeps only its scan-derived confirmations), **A8** (retire the gate's cosmetic `.adoption.scenario` read; delete `adopt_stub_certification`; correct `adopt_stub_project_docs`' owner string); **`docs/adoption.md`'s chooser, placement, floor-rule and "what both scenarios share" sections — WP9's, not WP12b's**, because §4.2's completion check is that the verbatim question's grep returns nothing after WP9 and the page is one of the four files carrying it; drive-by NOT taken: `adopt_stub_hooks`'s stale owner string → WP7 (`## BL-242:` shows the obvious rewrite would propagate a false §10 attribution). **Added after adversarial review, and all three are what make A7's deferral honest rather than merely fail-closed:** the `## 13.` kickoff section rendered into `PROJECT_INTAKE.md` with a fenced prompt the extractor can find (and which names the classification as non-optional); the seven keys `intake-wizard.sh`'s `load_progress()` subscripts, with `last_section: 0` so `--resume` walks Section 5 rather than resuming past it; and `.claude/orchestrator-source.json` (`# BL-242-ORCH-SOURCE`), **the one §8.7a unowned row this package closes** — because the Phase 1→2 ZDR block names `reconfigure-project.sh` as its escape hatch in its own FAIL text and that hatch died on the missing file. Plus `workflow.html`'s Step-B/Step-C cards (§4.2). **Boundary: no tool resolution, no secrets stop, no archive classes — WP10/WP11's; no fifth resume branch and no interview — WP12a's.** | The WP4 suite's `CHOOSER_LITERAL` pin is **re-aimed at absence**: the verbatim question occurring anywhere in `scripts/` fails. **Mutation:** restore `adopt_ask_scenario`'s call in `adopt_main` → RED. **D9 needs the opposite pin, and it is not optional** — a suite that only proves absence would go green on a WP9 that deleted both questions: assert the audience question is ASKED and that `deployment` lands non-empty in both written files → **mutation:** delete `adopt_ask_audience`'s call → the fixture's `manifest.json` and `phase-state.json` carry `deployment: ""` and `assert_choosable` fail-closes → RED. Assert on the **empty value and the exit code**, not on the refusal's wording. Stamp dual-direction: (i) a fixture adoption lands `current_phase` 0 — mutate the landing to any other rung → RED via the fixture's phase-state (the stamp carries no `placement` key to assert on: §8.3 removed it with D10); (ii) the second-stamp refusal still refuses (regression, exit-code-asserted). **A1 — three fixtures, one per arm, and the first one's STARTING STATE is load-bearing.** (i) a **stamped** fixture whose phase-state records `current_phase` ≥ 1 with at least one dated gate, hand-advanced: at the natural resting state of 0-and-null a revert *to* 0-and-null is invisible and the mutation stays green forever → refuses with the **tree hash unchanged** (hash includes untracked files) → **mutation:** drop arm 1 → phase-state reverts and its gates dates null → RED. Assert on the reverted STATE, never the refusal text: the restamp refusal fires either way with near-identical wording, which is precisely what made this defect survivable. **ARM 3 MASKS THIS MUTATION UNLESS THE ARMS ARE SPELLED DISJOINTLY** — a stamped fixture necessarily has a `phase-state.json`, so arm 3 catches it too and dropping arm 1 changes nothing observable. Arm 3 therefore carries the *not-adopted* conjunct its §8.3a description already implies (it is the **already framework-managed but NOT adopted** arm), and the mutation drops arm 1 with that conjunct intact. (ii) an **unstamped fixture carrying a prior archive** → refuses, naming that directory → **mutation:** drop arm 2 → the fixture adopts → RED. That fixture must carry **no `.claude/phase-state.json` and no `.claude/manifest.json`** — an interrupted run that died before the state stage — or arm 3 masks this one as well. (iii) a **scaffolded greenfield** fixture → refuses, tree hash unchanged → **mutation:** drop arm 3 → phase-state reverts AND the manifest gains `.adoption`, **exit 0** → RED. Arms 2 and 3 both have mutants that exit **zero** (each completes the adoption), so neither assertion may key on a non-zero exit — assert the refusal and the unchanged tree instead. Arm 1's mutant exits 1 via the restamp refusal, which is why its assertion reads the reverted STATE. **A4 — two arms needing DIFFERENT fixtures.** Green, on the Act-2 resting fixture: the log exists and `check-phase-gate.sh` runs to a verdict instead of exiting on a missing file → **mutation:** drop the write → the gate refuses before parsing the phase → RED. **Converse, on a phase-0-complete-except-approval fixture** — manifesto with its eight non-placeholder sections, the `docs/phase-0/` trio, the intake — because on the resting fixture `--gate phase_0_to_1` blocks for three independent reasons and removing one leaves it blocked (3 → 2 issues, still exit 1), so "the gate passes a boundary nobody approved" is **unreachable there** and that mutation could never go RED. On the discriminating fixture: template as rendered → blocks with exactly 1 issue; **mutation:** seed a well-formed dated **gate-approval** row → **exit 0** → RED. Two constraints: the gate **auto-records** a seeded date into phase-state, so each arm needs a fresh tree; and a malformed row adds issues instead of passing. *(The template's pre-condition `__TODAY__` cells are not gate-approval rows and do not match the gate's evidence grep — that is why the rendered template still blocks.)* **A5–A8, and three of the four need a POSITIVE CONTROL because each asserts an absence.** **A5:** no file named `adopt-chooser.sh` under `scripts/lib/adopt/`, the driver's source loop names `adopt-evidence`, and `bash -n` on the driver — an absence with a structural discriminator, since a rename that broke the loop and an absence look identical downstream. **A6:** the transcript still carries all four evidence signals each with a confidence tier AND no longer carries the sentence that points at a deleted question → **mutation:** drop `adopt_present_evidence`'s call → the four signals vanish → RED. The positive half is the load-bearing one: an assertion that the old sentence is gone passes against a driver that prints nothing at all. **A7:** the transcript carries the scan-derived confirmations and NEITHER a judgment question NOR the classification prompt, and `PROJECT_INTAKE.md` carries the confirmed cells → **mutation:** restore `adopt_ask_data_classification`'s arm → the same short answer script now reaches `# BF-ADOPT-DC-MANDATORY` and the run REFUSES (exit 1, nothing written) → RED, asserted on the exit code and the absent state, not on the refusal's wording. **A8:** on an adopted fixture the gate prints its `Adoption Stamp Integrity` OK line and that line does NOT contain `scenario:` → **mutation:** restore the `.adoption.scenario` read → the line names `scenario: unknown` → RED; the positive control is that the line is printed at all, because "no scenario named" is trivially true of a gate that skipped the block. **R1–R4 — the three routes A7's deferral depends on, each EXECUTED rather than described**, because that conjunct was asserted by nobody and was false on all three: `resume.sh` on the adopted fixture must emit a real §13 prompt naming the classification (not the generic fallback); the progress file must carry all seven subscripted keys at `last_section: 0`; and `reconfigure-project.sh --field data_classification` must actually land the value in the file the gate reads → **mutation:** drop the `orchestrator-source` write → the hatch goes dead and the classification stays ABSENT after running the very command the gate tells the operator to run → RED. **C2 is a whitespace-normalised sweep of every TRACKED file**, not a `grep -F` over `scripts/`, with two allowlisted carriers named — and **C4 injects a LINE-WRAPPED occurrence** and asserts the naive recipe MISSES it while the normalised one FINDS it, which is the shape that escaped into `workflow.html`. **The stamp's v2 shape, asserted as a KEY SET and not as four absences:** the adopted fixture's `.adoption | keys` is exactly `{adopted, adoptedAt, adoptedAtCommit, schemaVersion, scannerReportSha256}` → **mutation:** re-add any removed key → RED, which catches a partial deletion that four separate absence assertions would each pass |
-| **WP10 — Act 2 completion: tool resolution + the tier-scoped secrets check (D2)** | Invoke `scripts/resolve-tools.sh` before any write; **§6.1's tier-scoped table, all four cases** — at `organizational` findings stop until dispositioned and both `tool-unavailable` and `scan-failed` stop with no escape; at `personal` findings and `scan-failed` warn loudly and carry on, while `tool-unavailable` stops unless an acceptance is recorded; the §6.3 disposition record via `bypass_audit_append`; the §6.2 re-scan-after-install mechanic; refusal-on-unrecordable. **Boundary: no archive or install changes — WP11's.** **Nothing blocks this package any more:** §6.5 is settled by D9 (it keys on `ADOPT_DEPLOYMENT`, produced at §8.2 step 1) and §6.4's escape is ruled — **hard refusal at `organizational`, recorded escape at `personal`**. `scan-failed` is ruled too: **hard refusal at `organizational`, loud warning that carries on at `personal`** — *"action as if it ran"*. **Nothing in §6 is unruled.** Note the two not-scanned statuses are NOT one code path: they share an organizational arm and differ on personal. | Fixtures per status **and per tier — eight cells, and all eight are specified**: a clean `scanned`/zero-findings fixture **completes at both tiers** → **mutation:** make the clean arm stop → RED at each tier (without those two the matrix says nothing about the regression that would block every well-behaved adoption). Then an `organizational` `scan-failed` report **stops Act 2 before any write** (tree-hash equal before/after, the Scout idempotency precedent) → **mutation:** neuter the `scan-failed` arm → the fixture adopts → RED; a `personal` `scan-failed` report **completes** and its warning **names the unknown** — assert the warning text does NOT render an empty findings list → **mutation:** reuse the findings template with zero findings → RED, and **mutation:** make the personal arm stop → RED. **The two not-scanned statuses must be pinned as separate paths**, because they agree on `organizational` and disagree on `personal`: a fixture matrix that collapses them passes against an implementation that treats `scan-failed` as `tool-unavailable` → assert a `personal` `scan-failed` needs **no** recorded acceptance while a `personal` `tool-unavailable` does → **mutation:** route both through one arm → RED whichever way it is routed. An `organizational` findings fixture with no disposition stops; with recorded dispositions completes, and each `accepted risk` appears as an `adoption_event` row in a fixture ledger **that contains it** (the dead-pin lesson of v1 §8.9). **Mutation:** accept without a signer → RED. A `personal` findings fixture **completes and prints every finding** → **mutation:** make the personal arm stop → RED; **converse mutation:** make the organizational arm warn → RED. **Both directions or one arm is vacuous** — a tiering pinned on one side passes against a table that ignores the tier. `tool-unavailable` stops at both tiers → **mutation:** add any proceed path → RED **at `organizational`**. At `personal` the tiered escape needs both directions or it is vacuous: a fixture with a recorded acceptance completes and the acceptance appears as an `adoption_event` row in a ledger that contains it → **mutation:** drop the signer → refuses → RED; and a fixture with NO acceptance stops → **mutation:** let it proceed unrecorded → RED. **The `organizational` hard refusal needs its own pin in the opposite direction:** feed it a validly recorded acceptance and assert it STILL refuses → **mutation:** wire the personal escape into the organizational arm → the fixture adopts → RED. That is the assertion that catches a tiering implemented as one shared code path |
+| **WP10 — Act 2 completion: tool resolution + the tier-scoped secrets check (D2)** | **10a BUILT / 10b NOT BUILT (2026-09-16; §6.2a).** Invoke `scripts/resolve-tools.sh` before any write (**built**); **§6.1's tier-scoped table, all FIVE cases** — at `organizational` findings stop until dispositioned and `tool-unavailable`, `scan-failed` and `scanned-partial` stop with no escape; at `personal` findings and `scan-failed` warn loudly and carry on, while `tool-unavailable` stops unless an acceptance is recorded and `scanned-partial` stops unless an acknowledgement (scope, commits scanned, date) is recorded (ruled 2026-09-16, §6.1a); the §6.3 disposition record via `bypass_audit_append`; the §6.2 re-scan-after-install mechanic; refusal-on-unrecordable. **Boundary: no archive or install changes — WP11's.** **Nothing blocks this package any more:** §6.5 is settled by D9 (it keys on `ADOPT_DEPLOYMENT`, produced at §8.2 step 1) and §6.4's escape is ruled — **hard refusal at `organizational`, recorded escape at `personal`**. `scan-failed` is ruled too: **hard refusal at `organizational`, loud warning that carries on at `personal`** — *"action as if it ran"*. **Nothing in §6 is unruled.** Note the two not-scanned statuses are NOT one code path: they share an organizational arm and differ on personal. **`scanned-partial` is a third path again: it shares `tool-unavailable`'s shape at both tiers and adds the findings the partial scan produced; 10b must not fold it into `scanned` (§6.1a).** | Fixtures per status **and per tier — TEN cells since 2026-09-16 (eight until `scanned-partial` was ruled), and all ten are specified**: a clean `scanned`/zero-findings fixture **completes at both tiers** → **mutation:** make the clean arm stop → RED at each tier (without those two the matrix says nothing about the regression that would block every well-behaved adoption). Then an `organizational` `scan-failed` report **stops Act 2 before any write** (tree-hash equal before/after, the Scout idempotency precedent) → **mutation:** neuter the `scan-failed` arm → the fixture adopts → RED; a `personal` `scan-failed` report **completes** and its warning **names the unknown** — assert the warning text does NOT render an empty findings list → **mutation:** reuse the findings template with zero findings → RED, and **mutation:** make the personal arm stop → RED. **The two not-scanned statuses must be pinned as separate paths**, because they agree on `organizational` and disagree on `personal`: a fixture matrix that collapses them passes against an implementation that treats `scan-failed` as `tool-unavailable` → assert a `personal` `scan-failed` needs **no** recorded acceptance while a `personal` `tool-unavailable` does → **mutation:** route both through one arm → RED whichever way it is routed. An `organizational` findings fixture with no disposition stops; with recorded dispositions completes, and each `accepted risk` appears as an `adoption_event` row in a fixture ledger **that contains it** (the dead-pin lesson of v1 §8.9). **Mutation:** accept without a signer → RED. A `personal` findings fixture **completes and prints every finding** → **mutation:** make the personal arm stop → RED; **converse mutation:** make the organizational arm warn → RED. **Both directions or one arm is vacuous** — a tiering pinned on one side passes against a table that ignores the tier. `tool-unavailable` stops at both tiers → **mutation:** add any proceed path → RED **at `organizational`**. At `personal` the tiered escape needs both directions or it is vacuous: a fixture with a recorded acceptance completes and the acceptance appears as an `adoption_event` row in a ledger that contains it → **mutation:** drop the signer → refuses → RED; and a fixture with NO acceptance stops → **mutation:** let it proceed unrecorded → RED. **The `organizational` hard refusal needs its own pin in the opposite direction:** feed it a validly recorded acceptance and assert it STILL refuses → **mutation:** wire the personal escape into the organizational arm → the fixture adopts → RED. That is the assertion that catches a tiering implemented as one shared code path. **The `scanned-partial` pair (added 2026-09-16, §6.1a), both directions each:** an `organizational` `scanned-partial` fixture (a `--depth 1` clone of a history whose removed credential lives in the withheld commits — `## BL-288:`'s own fixture shape) stops before any write, its refusal names the unshallow remedy, AND the findings the partial scan produced are printed → **mutation:** let it proceed → RED; feed it a validly recorded acknowledgement and assert it STILL refuses → **mutation:** wire the personal escape into the organizational arm → the fixture adopts → RED. A `personal` `scanned-partial` fixture with a recorded acknowledgement completes, the acknowledgement (scope, commits scanned, date) appears in a ledger that contains it, and the partial scope is stated in the transcript in those words → **mutation:** drop the recording and let it proceed → RED; with NO acknowledgement it stops → **mutation:** let it proceed unrecorded → RED; and **mutation:** route `scanned-partial` through `scanned`'s clean arm → the shallow fixture adopts as clean at either tier → RED |
 | **WP11 — Archive classes `script` and `document` (D1, D3 mechanics)** | Extend `adopt_archive_inventory` with both classes; framework-wins install with the receipt check; the every-path notice and the standing warning (string-pinned — it is a decision, not phrasing); **the archived-document disclosure per §7.2 — every archived document named with its archive path AND the explicit invitation to retrieve content into the new framework file** (D3's reach ruling, 2026-08-31); the framework-document set derived from **`init.sh`'s writers ∪ Act 4's write set** (§7.2 — the init-writer set alone excludes `PRODUCT_MANIFESTO.md` and `PROJECT_BIBLE.md`, which deadlocks a bible-owning adoptee and silently skips D10's entry for a manifesto-owning one; the init-writer derivation stays as the drift check); Act 2 archives colliding documents, replaces nothing (Act 4 replaces). **Boundary: no document *writing* — WP12b's.** | A fixture with a colliding `scripts/validate.sh`: after Act 2 the framework's bytes are at the path, theirs are in the archive with a MANIFEST row and restore line, and the notice names the path. **Mutation A:** restore skip-on-collision → the framework's file absent at the path → RED. **Mutation B:** drop the receipt check → an unarchived colliding path is overwritten in a crafted fixture → RED. **Mutation C:** reduce the notice to a count → RED (path-presence assertion). `--re-add` on class `script` warns, restores byte-identically, records |
 | **WP12a — Act 3 and Act 4's assessment half: interview, record, verdict, intake pre-fill (D4, D6, D7, D8, D10)** | The `resume.sh` fifth branch (predicate §8.5, ordered before the intake branch); the assessment brief writer; the interview per §5.2 (data classification non-skippable at the Phase 0 intake write) — **which is where A7's Act-2 removal lands, so this is the package that closes the WP9→WP12a classification window**; the assessment record schema; `soif_adoption_assess` (§8.3); the D6 rebuild exit with `# BL-204-PREFILL-READ`-pattern intake pre-fill; **A2's write order — the `.adoption.assessment` merge LAST**, which in 12a means last after the *assessment* outputs, and the unheaded outputs (record, brief, verdict artifact) homed under `.claude/adoption/` with overwrite-own on re-entry; **A3: `PRODUCT_MANIFESTO.md` is written by NOBODY in adoption**, arriving when the ordinary Phase 0 produces it (`init.sh` writes no manifesto either; building an adoption-side writer would duplicate the Phase-0 agent's path); the D8 verdict artifact and its two-halves check. **Boundary: no document writing — WP12b's; the model conducts the interview; every proof below is a shell-checkable edge, and the model's judgment quality is explicitly not provable by suite** (§12). | `resume.sh` on an adopted-unassessed fixture emits the assessment prompt; on an assessed one, **one of the two Phase-0 entries and NEVER the classic prompt** (A3, §8.5) — the disjunction, not a named branch: the shipped intake template carries 87 blankable cells against `resume.sh`'s `>20` threshold and the intake branch is checked first, so pinning the kickoff branch by name would go RED against a *correct* implementation on any realistic fixture. **The strong A3 pin — have Act 4 write `PRODUCT_MANIFESTO.md` → the assessed fixture lands in the classic prompt and the Phase-0 entry is skipped → RED — moves to WP12b**, because it needs a document writer to mutate and 12a builds none; the reasoning that shaped it is kept here because it constrains this row's fixture too. It must run **on an INTAKE-COMPLETE fixture — no blank cells at all**: on a realistic freshly-assessed fixture the intake branch intercepts first and the mutant still satisfies the disjunction, so the manifesto's effect is only observable at the *second* resume, once the intake no longer routes. **Specify the STATE, not the threshold.** The intake branch fires above **20** blanks (`# BL-202-INTAKE-PREDICATE`) and that constant can legitimately move; a zero-blank fixture is below it whatever its value, while a fixture pinned at "≤20" couples this proof to a number in another script. **Mutation:** break the predicate's assessment half → an assessed project re-prompts for assessment → RED; break its order → an adopted-unassessed fixture with a blank-cell intake gets the intake prompt → RED. The Phase 0 intake write without a recorded data classification refuses → **mutation:** default it → the write succeeds → RED. **Assert on the refusal, not on a landed phase:** the first draft of this proof ended "the fixture lands ≥2 and the shipped ZDR backstop fails the gate", which under D10 can never happen — nothing lands ≥2 — so the mutation had no reachable RED. A fitness finding without a requirement pointer fails the verdict check → RED. The verdict artifact missing its plain half, or its recommendation missing reasoning, fails the two-halves check → RED |
 | **WP12b — Act 4's document half: the D3 writing, the receipt rule, and the page revisions** | The D3 document writing with v1 §8.6 provenance headers and the §7.2 receipt rule, **including `FEATURES.md`, `BUGS.md` and `RELEASE_NOTES.md`** (D3's reach, ruled 2026-08-31) and repeating the retrieve-from-archive invitation at each new file's creation (§7.2); **A2's receipt exemption bound to `adoptedAtCommit`** with archiving-before-rewrite, and the named `adopt_receipt_check` helper; the `.adoption.assessment` merge moves to run after the DOCUMENTS as well as the assessment outputs, which is A2's full statement and is only expressible once documents exist; the v2 revision of `docs/adoption.md` (minus its chooser sections, **which are WP9's** — §4.2) and `docs/scout.md`. **Boundary: no interview, no record schema, no verdict content — WP12a's.** **`CHANGELOG.md` is NOT in D3's ruled set** and this package does not silently adopt it (§8.7a row 17) | **A2, three pins.** A mid-documents interrupted fixture re-offers the Act 3 prompt and re-entry rewrites its own provenance-headed output → **mutation:** write the merge first → the fixture reports finished with documents missing → RED. A document carrying an Act-4 header from a DIFFERENT adoption (mismatched `adoptedAtCommit`) is **refused, not exempted** → **mutation:** key the exemption on header presence → it is overwritten with no archive row → RED. **Mutation:** drop §7.2's provenance exemption → re-entry refuses its own file → RED. An Act 4 write to a pre-existing unarchived path refuses → RED. **The A3 pin lives HERE, not in 12a, and that placement is the split's one real cost:** the strong mutation — have Act 4 write `PRODUCT_MANIFESTO.md` → the assessed fixture lands in the classic prompt and the Phase-0 entry is skipped → RED, **on an INTAKE-COMPLETE fixture with no blank cells** — needs a document writer to mutate, so 12a ships with A3 asserted only by absence (no manifesto path exists to call). Stated rather than left for a reviewer to find |
@@ -2103,15 +2557,15 @@ only, so WP9's stamp changes must add their pins to a PR-blocking suite, not tha
 
 **Deferred by decision (named, scoped, not designed here):**
 
-1. **`## BL-225:` is a precondition, not a package.** Until fixed, every Act 2 run carries the
-   half-staged-tree hazard; §10 sequences it first and this design otherwise leaves its fix to its
-   own entry.
+1. **`## BL-225:` was a precondition, not a package — and both halves are built** (staging PR #368;
+   before-any-write PR #410, 2026-09-14, §8.2a). It stays Open for two residuals recorded there
+   and named in item 17.
 2. **`## BL-226:`** ("moved" claimed where nothing moved) — WP11's notice rewrite touches the same
    strings and should close it in passing; recorded so it is checked rather than assumed.
 3. **The init-parity audit is DELIVERED at §8.7a, and it is worse news than this entry expected.**
-   **33 rows** (32 until WP9b added row 22a); the adoption half measured by execution, the `init.sh` half read from source
-   and acknowledged partial. **Thirteen rows are UNOWNED, one UNSPECIFIED, one PARTIAL**, and the
-   five packages after WP9 close none of the thirteen. Three of them are load-bearing for claims
+   **34 rows** (33 until `## BL-284:`'s finding added row 32 on 2026-09-16; 32 until WP9b added row 22a); the adoption half measured by execution — re-measured 2026-09-16, §13-V27 — the `init.sh` half read from source
+   and acknowledged partial. **Fourteen rows are UNOWNED, one UNSPECIFIED, two PARTIAL**, and the
+   packages after WP9 close none of the fourteen. Three of them are load-bearing for claims
    this document makes elsewhere: `docs/reference/*` (row 18) means **D8 binds
    `messaging-standard.md` inside a project that never receives it**, and rows 19–21
    (`.claude/settings.json`, the `mcpServers.qdrant` declaration, the vendored skills) mean an
@@ -2126,8 +2580,8 @@ only, so WP9's stamp changes must add their pins to a PR-blocking suite, not tha
 
 4a. **Re-adoption, the scaffolded tree, and interrupted runs are REFUSED now; recovery is not
     designed** (A1, A2). A1 refuses on three arms and names the prior archive; it does not roll the
-    tree back. `## BL-225:`'s entry asks for a preflight before any write and its fix so far covers
-    the staging half only, so an interrupted Act 2 still leaves files on disk — the archive's
+    tree back. `## BL-225:`'s before-any-write half is built (§8.2a), so a REFUSED Act 2 leaves nothing; an
+    Act 2 that CRASHES inside the real write phase still leaves files on disk — the archive's
     restore lines are the recovery path, and they are manual. **Three windows were recorded here as A1 does not
     close, and the WP9b build CLOSED TWO OF THEM — the entry is corrected rather than left to
     read as open, which is how a residual list becomes fiction.** (i) *an interrupted run that
@@ -2171,17 +2625,22 @@ only, so WP9's stamp changes must add their pins to a PR-blocking suite, not tha
 10. **That `templates/tool-matrix/` keeps `gitleaks` `"required": true`.** §6.2's "D2 asks nothing
     new" argument rests on it; if the matrix ever demotes it, Act 2 must pin its own requirement
     rather than inherit the demotion. A one-line check in WP10's suite pins the matrix entry.
-11. **That `## BL-242:` merges.** §0.4's branch topology caveat: this document cites a backlog
-    entry not on every branch. If the BL-242 filing were abandoned, this document's §-citations
-    into it dangle and the decision record reverts to conversation — the exact failure mode
-    BL-242 was filed to end.
+    *(Re-verified 2026-09-16: `"required": true` at the `gitleaks` entry, §13-V19; the WP10a suite
+    drives the resolver through the `SOIF_ADOPT_RESOLVER` seam and does not read the shipped
+    matrix, so the pin is still WP10b's.)*
+11. ~~**That `## BL-242:` merges.**~~ — **MERGED**, and on `main` at every v2.1 measurement (§0.4).
+    Kept struck: §0.4's branch topology caveat described a real fork, and this document's
+    §-citations into the entry resolve on the working tree today.
 
 **NOTHING IS AWAITING KARL. The set is EMPTY.** It was three on 2026-08-28; Karl ruled all three
-on 2026-08-31, item 15 was raised the same day and ruled the same day. All four are kept below,
-struck, rather than deleted — a question that was answered is part of this document's record, and
-removing it would hide that the document once got it wrong. **Two of the four were ruled against
-this author's stated recommendation, and both are marked as such**, because a design that quietly
-absorbs the answers it did not predict cannot be audited for the quality of its predictions:
+on 2026-08-31, item 15 was raised the same day and ruled the same day; item 16 was raised on
+2026-09-15, during this amendment's drafting, and ruled on 2026-09-16 — the set was one for a
+single day. All five are kept below, struck, rather than deleted — a question that was answered is
+part of this document's record, and removing it would hide that the document once got it wrong.
+**Two of the five were ruled against this author's stated recommendation, and a third — item 16 —
+stricter than its drafted one on the `personal` arm; all are marked as such**, because a design
+that quietly absorbs the answers it did not predict cannot be audited for the quality of its
+predictions:
 
 12. ~~**`tool-unavailable`'s escape** (§6.4)~~ — **RULED (Karl, 2026-08-31): "Yes on personal, no
     on organizational."** Tier-scoped, like every other rule in D2. **The author's recommendation
@@ -2212,6 +2671,41 @@ absorbs the answers it did not predict cannot be audited for the quality of its 
     rather than tightening, and needs no new mechanism to do it. The principle it establishes —
     severity of *what the framework failed to provide*, not of *what the operator ends up knowing*
     — is the reusable part.
+
+16. ~~**Which tier row `scanned-partial` takes**~~ (§6.1a) — **RULED (Karl, 2026-09-16): *"go with
+    the split."*** At `organizational` a `scanned-partial` result stops with no escape and the
+    refusal prints the unshallow remedy; at `personal` the operator may acknowledge and continue,
+    the acknowledgement RECORDED (scope, commits scanned, date) in §6.3's shape and refused if it
+    cannot be recorded; the findings the partial scan produced are printed either way and the
+    partial scope is stated in those words. Raised on 2026-09-15 while this amendment was drafted,
+    because `## BL-288:` coined the status on 2026-09-12 and no earlier ruling could have named it;
+    ruled the next day. The drafted recommendation had the split with the personal arm as a
+    warning, `scan-failed`'s rung; the ruling put it at `tool-unavailable`'s — a recorded
+    acknowledgement — and §6.1a records the ruling and not the draft. **Nothing of it is built;
+    both arms are WP10b's** (§13-V28).
+
+**Recorded since v2.0 (2026-09-16), not designed here:**
+
+17. **`## BL-225:`'s two residuals**, both recorded on the entry: an adoptee whose `.claude` is a
+    symlink to an absolute path outside the repository has its state files written *there* while
+    the refusal correctly reports the repository untouched (pre-existing — it predates the fix);
+    and the unbounded-write flag is path-list only, so an installer recipe that MODIFIES an adoptee
+    file in place rather than creating one does not raise it (§8.2a).
+18. **`## BL-270:` and `## BL-271:`** — a project adopted before `## BL-268:`'s fix carries
+    `mode: "organizational"`, a word every host driver now refuses, until
+    `upgrade-project.sh --backfill-only` migrates it (`# BL-270-MODE-VOCABULARY-BACKFILL`, on
+    `main` at `0dc57fc`); and `upgrade-project.sh --deployment organizational` never writes `.mode`
+    at all, so a *scaffolded* project upgraded to organizational is verified against the personal
+    bar (§8.3b). Neither is adoption's defect; an adoptee receives every script involved.
+19. **`## BL-273:`** — the remote-URL-to-host inference exists at four shipped sites and
+    `scripts/lib/host.sh` carries none of it; every one of the four ships to the adoptee. Entry
+    only; no fix proposed there or here.
+20. **`## BL-284:`** — §8.7a row 32 (`.claude/tool-preferences.json`, UNOWNED), and with it the
+    re-classification of row 7 to PARTIAL: the adoptee's gate keys its tools-needed block on the
+    file adoption does not write, which is the only reason the matrix adoption also does not ship
+    has never been missed. Its second arm — `fix_superpowers` calling a `claude plugin add` verb
+    that does not exist (`# BL-284-PLUGIN-VERB`) — is `verify-install.sh`'s and not adoption's,
+    named because the adoptee receives the script.
 
 ---
 
@@ -2429,6 +2923,345 @@ not safer. `ADOPT_POC_MODE` is hard-coded `"production"` beside `ADOPT_DEPLOYMEN
 initialisation and is never asked — noted because §6's tiering must **not** acquire it as a second
 input; `## BL-242:`'s derivation reads `deployment` alone.
 
+### §13 — v2.1 addendum: commands actually run for the 2026-09-16 reconciliation
+
+Executed on **2026-09-16** against tree **`01b66e3`** (= `origin/main`, checked out on
+`docs/brownfield-v2.1-reconcile`), working tree `/Users/karl/Documents/Claude Projects/solo-orchestrator`,
+darwin host with `gitleaks` at `/opt/homebrew/bin/gitleaks`. A first attempt on 2026-09-15 measured
+`c7071b2`; the two trees differ in one file (`git diff --stat c7071b2..HEAD` → `solo-orchestrator-backlog.md`
+only, 44 insertions and 4 deletions), and every measurement below was re-taken on the 16th rather
+than carried over. Output trimmed for length, never paraphrased. Re-run them; do not quote them.
+
+**V17 — D1–D10 are byte-identical between the last 2026-08-31 commit and HEAD.** The claim §0.3's
+v2.1 entry is allowed to make only if this returns nothing.
+```
+$ git rev-parse --short HEAD
+01b66e3
+$ git log -1 --until='2026-08-31 23:59:59' --format='%h %ad %s' --date=iso -- solo-orchestrator-backlog.md
+f73dfca 2026-08-31 23:32:44 -0600 docs(bl-242): two claims the branch made about its own tree, refuted by that tree
+$ git merge-base --is-ancestor f73dfca HEAD && echo ancestor
+ancestor
+$ ex() { awk '/^## BL-242:/{f=1} f' | awk 'NR==1{print; next} /^## BL-[0-9]+:/{exit} {print}'; }
+$ git show "f73dfca:solo-orchestrator-backlog.md" | ex > "$S/bl242-0831.md"     # 875 lines
+$ ex < solo-orchestrator-backlog.md                  > "$S/bl242-01b66e3.md"  # 1043 lines
+$ grep -n '^### THE THREE UNOWNED\|^### THE SHAPE OF ADOPTION\|^### Consequences' "$S/bl242-0831.md" "$S/bl242-01b66e3.md" | sed "s#$S/##"
+bl242-0831.md:190:### THE THREE UNOWNED CAPABILITIES — DECIDED (Karl, 2026-08-23; D2 refined 2026-08-25)
+bl242-0831.md:425:### THE SHAPE OF ADOPTION ITSELF — DECIDED (Karl, 2026-08-23)
+bl242-0831.md:668:### Consequences for the unbuilt work packages
+bl242-01b66e3.md:190:### THE THREE UNOWNED CAPABILITIES — DECIDED (Karl, 2026-08-23; D2 refined 2026-08-25)
+bl242-01b66e3.md:425:### THE SHAPE OF ADOPTION ITSELF — DECIDED (Karl, 2026-08-23)
+bl242-01b66e3.md:668:### Consequences for the unbuilt work packages
+$ diff <(sed -n '190,667p' "$S/bl242-0831.md") <(sed -n '190,667p' "$S/bl242-01b66e3.md"); echo rc=$?
+rc=0
+```
+The whole-entry diff (`diff -u … | grep '^[-+]'`) touches five places, none inside those lines: the
+suite count (*Eight suites* → *Nine suites*), two appended residual sections (the resolver's
+URL-in-`auto_install` bucket, found at WP10a's review; the symlink-following write, found at WP9b's),
+the appended *WP9b's build* section, and two corrections inside *WP9's build* (the mechanism
+sentence; 76/eight/32 → 77/nine/33). Read the hunks; do not count them. **A trap in this recipe:**
+run it under `bash`. In `zsh`, `$LAST:solo-orchestrator-backlog.md` parses `:s` as a history
+modifier and the first extract silently comes out EMPTY — the diff then "passes" against nothing.
+Brace the variable (`${LAST}:…`) or use bash.
+
+**V18 — what landed on the adoption surface after the status row was last measured, and which PR
+carried each commit.**
+```
+$ git log 45a749b..HEAD --format='%h %cs %s' -- scripts/lib/adopt scripts/lib/scout scripts/adopt-project.sh
+22b034d 2026-09-15 chore(bl-288): BL-264 → BL-288 — the number was taken on main before this landed
+35a222a 2026-09-15 fix(scout): correct the remedy so it actually widens the refspec
+2a8fafb 2026-09-15 fix(scout): report a shallow clone as a partial secrets scan
+eba7291 2026-09-15 fix(host-drivers): refuse an unknown mode in host_verify_protection
+2613937 2026-09-13 fix(bl-225): the resolver gate had no test any lane could fail — same hole, new code
+bafe463 2026-09-13 fix(bl-225): the derived clear was untested on CI and could still over-claim
+729c77e 2026-09-13 fix(bl-225): the suite was green on macOS and red on Linux — four corrections
+f879621 2026-09-12 fix(bl-225): the oracle was one question and needed two — pre-PR review, block cleared
+8356317 2026-09-12 fix(bl-225): rehearse the write phase on a copy and refuse before the first write
+269ee02 2026-09-08 fix(bl-253): adoption writes poc_mode null for production, as init.sh does
+a8151f7 2026-09-07 fix(bl-251): a scanner already on PATH must not cost a resolver subprocess
+4009790 2026-09-02 feat(bl-242): WP10a — the tool matrix ships a URL where a command is expected
+$ git log 45a749b..HEAD --format=%h -- scripts/lib/adopt scripts/lib/scout scripts/adopt-project.sh | wc -l
+12
+$ git log f73dfca..HEAD --format=%h -- scripts/lib/adopt scripts/lib/scout scripts/adopt-project.sh | wc -l
+17          # + 45a749b (WP9b) and four 2026-09-01 fix(bl-242) commits already in the 2026-09-01 passes
+$ git log --since=2026-09-01 --format=%h -- scripts/lib/adopt scripts/lib/scout scripts/adopt-project.sh | wc -l
+15          # at 07:30 local; the 2026-09-15 attempt got 13 at 21:00 — a bare date takes the current time of day
+$ git log --since='2026-09-01T00:00:00' --format=%h -- scripts/lib/adopt scripts/lib/scout scripts/adopt-project.sh | wc -l
+17
+$ for c in 45a749b 4009790 a8151f7 269ee02 8356317 2613937 eba7291 2a8fafb 22b034d; do
+    printf '%s -> ' "$c"; git log --merges --ancestry-path --format='%h %s' "$c..HEAD" | tail -1 | cut -c1-110; done
+45a749b -> 24dc321 Merge pull request #372 from kraulerson/feat/bl242-wp9b-preflight-approval
+4009790 -> 7df3669 Merge pull request #373 from kraulerson/feat/bl242-wp10a-tool-resolution
+a8151f7 -> 028d70e Merge pull request #375 from kraulerson/fix/bl251-resolver-fast-path
+269ee02 -> d4e1466 Merge pull request #377 from kraulerson/fix/bl253-adoption-poc-mode-parity
+8356317 -> ed85024 Merge pull request #410 from kraulerson/fix/bl225-prewrite-preflight
+2613937 -> ed85024 Merge pull request #410 from kraulerson/fix/bl225-prewrite-preflight
+eba7291 -> c7071b2 Merge pull request #412 from kraulerson/asb/contributions-2026-09-15
+2a8fafb -> c7071b2 Merge pull request #412 from kraulerson/asb/contributions-2026-09-15
+22b034d -> c7071b2 Merge pull request #412 from kraulerson/asb/contributions-2026-09-15
+```
+Every commit above is an ancestor of HEAD (`git merge-base --is-ancestor`). The `%cs` column is the
+COMMITTER date: `eba7291`, `2a8fafb` and `35a222a` were authored 2026-09-12/13 and rebased onto
+`main` on 2026-09-15 inside PR #412, which is also why the `## BL-268:` and `## BL-288:` entries'
+status lines still describe unpushed branches (§13-U(v2.1)). WP10a's merge `7df3669` is dated
+2026-09-04 — the day the status row went stale.
+
+**V19 — the status-row derivations, re-run.**
+```
+$ for f in scripts/adopt-project.sh scripts/lib/adopt/*.sh; do            # (1) §1.2's recipe
+    case "$f" in *adopt-stubs.sh) continue;; esac
+    sed -e 's/^[[:space:]]*#.*$//' -e 's/[[:space:]]#.*$//' "$f"
+  done | grep -ohE '\badopt_stub_[a-z_]+' | sort -u
+adopt_stub_adoption_record
+adopt_stub_assessment
+adopt_stub_framework_script_collisions
+adopt_stub_hooks
+adopt_stub_project_docs
+adopt_stub_provenance_headers
+adopt_stub_secrets_disposition            # | wc -l -> 7
+$ ls scripts/lib/adopt/                                                    # (2)
+adopt-archive.sh adopt-core.sh adopt-evidence.sh adopt-intake.sh adopt-state.sh adopt-stubs.sh adopt-test-debt.sh adopt-tools.sh
+$ git grep -l 'built out and needs' -- .                                   # (2) Karl's chooser sentence
+docs/designs/2026-08-02-brownfield-adoption-v1.md
+docs/designs/2026-08-23-brownfield-adoption-v2.md
+solo-orchestrator-backlog.md
+tests/test-brownfield-wp9-act-boundaries.sh
+$ grep -c 'resolve-tools' scripts/adopt-project.sh scripts/lib/adopt/*.sh  # (3) — RETIRED, see below
+scripts/lib/adopt/adopt-core.sh:1        # a COMMENT
+scripts/lib/adopt/adopt-tools.sh:1       # the path _adopt_resolver_path prints — EXECUTED
+                                         # (all other files: 0)
+$ grep -c 'adopt_resolve_tools "$root" "$report"' scripts/lib/adopt/adopt-state.sh   # (3'), the replacement
+1                                        # … || return 1   # BL-242-RESOLVER-CALL
+$ grep -c 'adopt' scripts/resume.sh                                        # (4)
+0
+$ grep -on 'BL-242-PREFLIGHT-ARM[A-Z0-9-]*' scripts/lib/adopt/adopt-state.sh          # (5)
+239:BL-242-PREFLIGHT-ARM1
+240:BL-242-PREFLIGHT-ARM2
+241:BL-242-PREFLIGHT-ARM3
+512:BL-242-PREFLIGHT-ARM3-INSTALLED
+$ grep -n -A2 '^_adopt_state_order()' scripts/lib/adopt/adopt-state.sh    # (6)
+  printf '%s\n' approval_log   # BL-242-APPROVAL-LOG-FIRST
+  printf '%s\n' phase_state intake manifest   # BF-ADOPT-STATE-ORDER
+$ grep -c 'BL-225-PREWRITE-CALL\|BL-225-WRITE-PHASE-REAL' scripts/lib/adopt/adopt-state.sh   # (7)
+2
+$ grep -n '_adopt_write_phase' scripts/lib/adopt/*.sh scripts/adopt-project.sh | cut -c1-140
+scripts/lib/adopt/adopt-state.sh:1060:# `_adopt_write_phase` is the ONLY place the adoptee's files are written, and it
+scripts/lib/adopt/adopt-state.sh:1069:_adopt_write_phase() {
+scripts/lib/adopt/adopt-state.sh:1169:  _adopt_write_phase "$copy" "$work" "$report" >/dev/null 2>"${SOIF_REHEARSAL_ERR:-/dev/null}" || rc=$
+scripts/lib/adopt/adopt-state.sh:1385:  _adopt_write_phase "$root" "$ADOPT_WORK" "$report" || return 1   # BL-225-WRITE-PHASE-REAL
+                                         # a comment, the definition, the rehearsal call, the real call: two callers
+$ grep -n 'schemaVersion' scripts/lib/scout/scout-report.sh              # (8)
+58:  printf '  "schemaVersion": 2,\n'
+$ grep -n '^ADOPT_POC_MODE=' scripts/lib/adopt/adopt-state.sh            # (9)
+710:ADOPT_POC_MODE=""   # BL-253-POC-MODE
+$ grep -rc 'BL-268-MODE-VOCABULARY' scripts/ init.sh | grep -v ':0'      # (10)
+scripts/host-drivers/github.sh:1
+scripts/host-drivers/bitbucket.sh:1
+scripts/host-drivers/gitlab.sh:1
+scripts/lib/adopt/adopt-state.sh:1       # the translation: [ "$mode" = "organizational" ] && mode="org"
+$ grep -n -A3 '"gitleaks"' templates/tool-matrix/common.json | grep required   # §12 item 10
+192-      "required": true,
+```
+(3) is retired because it stopped measuring what the row said: WP10a added `adopt-tools.sh`, whose
+one hit is the executed path `_adopt_resolver_path` prints, and `adopt_main` now calls
+`adopt_resolve_tools` at `# BL-242-RESOLVER-CALL`. (3') measures the built thing directly. The line
+numbers in (5) and (9) are `grep -n`'s own output, per the house rule; the claims are by marker.
+
+**V20 — the install set is 70, up from 68, and the two newcomers are named and dated.**
+```
+$ bash -c '. scripts/lib/scaffold-shipped-set.sh; soif_parse_shipped_scripts init.sh scripts | wc -l'
+70          # 41 scripts/ + 24 scripts/lib/ + 3 scripts/host-drivers/ + 2 scripts/hooks/
+$ T=$(mktemp -d) && git archive 45a749b init.sh scripts | tar -x -C "$T" \
+    && ( cd "$T" && . scripts/lib/scaffold-shipped-set.sh && soif_parse_shipped_scripts init.sh scripts | sort ) > "$T.set"
+$ wc -l < "$T.set"
+68
+$ diff "$T.set" <(soif_parse_shipped_scripts init.sh scripts | sort)
+0a1
+> scripts/check-changelog.sh
+4a6
+> scripts/check-session-state.sh
+$ git log --format='%h %cs %s' -S'check-changelog.sh' -- init.sh | tail -1
+8fcd204 2026-09-08 fix(bl-254): ship the two governance checks every generated CI already called
+```
+Merged as PR #378 (`c6da463`, 2026-09-08). *(The 2026-09-15 attempt's first run of this over a
+scratch tree holding only `init.sh` returned 65 and listed the three host drivers as "new" — the
+`scripts/host-drivers/*.sh` glob had nothing to match. Run the derivation against a full tree,
+under bash, or it under-counts silently.)*
+
+**V21 — the secrets enumerations are wider, adoption reads the widening, and the remedy ships at five sites.**
+```
+$ sed -n '241,242p' scripts/lib/scout/scout-secrets.sh
+#   secstatus   scanned | scanned-partial | tool-unavailable | scan-failed
+#   secscope    full-history | shallow-history | working-tree-only | (empty when not scanned)
+$ grep -rn 'scanned-partial' scripts/lib/adopt/ | cut -d: -f1,2
+scripts/lib/adopt/adopt-stubs.sh:129   scripts/lib/adopt/adopt-stubs.sh:133
+scripts/lib/adopt/adopt-tools.sh:391   scripts/lib/adopt/adopt-tools.sh:400   scripts/lib/adopt/adopt-tools.sh:404
+scripts/lib/adopt/adopt-tools.sh:516   scripts/lib/adopt/adopt-tools.sh:518
+$ grep -rn 'BL-288-' scripts/ | cut -d: -f1,2
+scripts/lib/adopt/adopt-tools.sh:391   scripts/lib/adopt/adopt-tools.sh:517   scripts/lib/scout/scout-secrets.sh:292
+$ grep -rc "set-branches origin" scripts/ | grep -v ':0'
+scripts/lib/adopt/adopt-stubs.sh:1
+scripts/lib/adopt/adopt-tools.sh:2
+scripts/lib/scout/scout-secrets.sh:1
+scripts/lib/scout/scout-report.sh:1
+```
+Both readers are widened (`# BL-288-RESCAN-PARTIAL`); neither makes a stop/proceed decision — the
+stub prints and returns 0, the re-scan guard treats `scanned-partial` as *scanned*. See §6.1a.
+
+**V22 — WP10a is built; WP10b is not; the file says so itself.**
+`scripts/lib/adopt/adopt-tools.sh`'s header: *"WHAT IT DELIBERATELY DOES NOT DO. It makes no
+stop/proceed decision. §6.1's tier table, §6.3's dispositions and §6.4's tiered escape are WP10b's,
+and a `tool-unavailable` result still completes an adoption here exactly as it did before this
+package."* Read-verified; the suite pins it (V24). `adopt_stub_secrets_disposition` is still called
+from `adopt_main` (V19-(1); `grep -n 'adopt_stub_secrets_disposition' scripts/lib/adopt/adopt-state.sh scripts/adopt-project.sh` → one hit, `adopt-state.sh:1362:  adopt_stub_secrets_disposition "$report"`).
+
+**V23 — WP11 is not built: the install still skips on collision.**
+```
+$ grep -n 'n_collided\|-e "\$dst"' scripts/lib/adopt/adopt-state.sh | cut -c1-140
+108:  local rel src dst n_copied=0 n_collided=0
+125:    if [ -e "$dst" ]; then
+128:      n_collided=$((n_collided + 1))
+145:  adopt_note "Installed $n_copied framework script(s); left $n_collided of your own file(s) untouched."
+154:    if [ "$n_collided" -gt 0 ]; then
+171:  adopt_stub_framework_script_collisions "$n_collided" "$ADOPT_COLLISION_LIST"
+```
+`adopt_install_framework` still appends to `ADOPT_COLLISION_LIST` and `continue`s — the behaviour D1
+reverses at WP11.
+
+**V24 — the seven adoption suites, executed at `01b66e3`.**
+```
+tests/test-brownfield-wp9-act-boundaries.sh          Results: 29 passed, 0 failed
+tests/test-brownfield-wp9b-preflight-approval.sh     Results: 103 passed, 0 failed
+tests/test-brownfield-wp10a-tool-resolution.sh       Results: 54 passed, 0 failed
+tests/test-bl225-prewrite-preflight.sh               Results: 50 passed, 0 failed
+tests/test-bl253-adoption-state-parity.sh            Results: 19 passed, 0 failed
+tests/test-bl268-mode-vocabulary.sh                  Results: 33 passed, 0 failed
+tests/test-bl288-scout-shallow-history-claim.sh      Results: 15 passed, 0 failed, 0 skipped
+```
+All seven exited 0. `gitleaks` was present, so the WP10a suite's host-dependent seam took the
+installed arm; `## BL-251:`'s entry records that its `R1`/`R2` fail on a gitleaks-free host. Not
+run on Linux (§13-U(v2.1)).
+
+**V25 — the suite inventory, and each file's add date (committer date of the adding commit).**
+```
+$ ls tests/ | grep -i 'brownfield\|module-dep\|bl225\|bl288\|bl268\|bl253\|bl251\|bl284\|bl273' | wc -l
+17
+$ ls tests/test-brownfield-wp*.sh | wc -l
+10
+$ for f in …; do git log --follow --diff-filter=A --format='%h %cs' -- "tests/$f" | tail -1; done
+test-bl225-prewrite-preflight.sh          20bf740 2026-09-12
+test-bl225-staging-preflight.sh           dc4b133 2026-08-31
+test-bl253-adoption-state-parity.sh       7ff1e88 2026-09-08
+test-bl268-mode-vocabulary.sh             eba7291 2026-09-15     # authored 2026-09-12
+test-bl284-verify-install-context.sh      b797ffb 2026-09-15
+test-bl288-scout-shallow-history-claim.sh 2a8fafb 2026-09-15     # authored 2026-09-12
+test-brownfield-wp1-scout.sh … wp6        2026-08-03 … 2026-08-10, as §13-V14
+test-brownfield-wp9-act-boundaries.sh     38bde7a 2026-08-31
+test-brownfield-wp9b-preflight-approval.sh 45a749b 2026-09-01
+test-brownfield-wp10a-tool-resolution.sh  4009790 2026-09-02
+test-lint-module-dependencies.sh          ba22106 2026-08-03
+$ grep -n 'suites cover it' solo-orchestrator-backlog.md | cut -c1-160
+13657:Nine suites cover it — the eight `tests/test-brownfield-wp*.sh` files plus
+```
+Ten `tests/test-brownfield-wp*.sh` files now; `## BL-242:` still says nine and eight — a stale
+carrier in the backlog, not corrected here (§13-U(v2.1)).
+
+**V26 — every marker this amendment cites, found in the non-test code surface.** The loop, and the
+number of files each marker occurs in (a count of FILES, printed so the reader can see which
+markers are fence families or multi-site):
+```
+$ for m in <each marker below>; do printf '%-36s %s\n' "$m" \
+    "$(grep -rl -- "# $m" scripts/ init.sh templates/ .github/ evaluation-prompts/ | wc -l | tr -d ' ')"; done
+BL-225-TOUCHED-DISK 5   BL-225-TOUCHED-UNBOUNDED 3   BL-225-REFUSE-DERIVED 1   BL-225-PREWRITE-CALL 1
+BL-225-WRITE-PHASE-REAL 1   BL-225-PREWRITE-REFUSE 1   BL-225-ORACLE-FAIL-CLOSED 1   BL-225-REHEARSAL-NO-HALT 1
+BL-225-REHEARSAL-NO-TRACE 1   BL-225-REFUSE-HONEST 3   BL-225-STAGE-PREFLIGHT 2
+BL-242-PREFLIGHT-ARM1 1   BL-242-PREFLIGHT-ARM2 1   BL-242-PREFLIGHT-ARM3 1   BL-242-PREFLIGHT-ARM3-INSTALLED 1
+BL-242-PREFLIGHT-CALL 1   BL-242-PREFLIGHT-TEMPLATES 1   BL-242-PREFLIGHT-NAME 1   BL-242-EVIDENCE-CALL 1
+BL-242-TIER-QUESTION 1   BL-242-RESOLVER-CALL 2   BL-242-RESOLVER-REFRESH 1   BL-242-RESOLVER-NO-EXEC 1
+BL-242-RESOLVER-VERIFY 1   BL-242-RESOLVER-INSTALL 1   BL-242-SECRETS-RESCAN 1   BL-242-RESCAN-HONEST 1
+BL-242-APPROVAL-LOG-FIRST 1   BL-242-PHASE0-LANDING 1   BL-242-ACT3-HANDOFF 1   BL-242-ORCH-SOURCE 1
+BL-251-FAST-PATH 1   BL-251-FAST-PATH-RESCAN 1   BL-253-POC-MODE 1   BL-253-POC-NULL 1   BL-253-POC-NULL-MANIFEST 1
+BL-268-MODE-VOCABULARY 4   BL-288-RESCAN-PARTIAL 1   BL-288-SHALLOW-SCOPE 1   BL-284-CONTEXT-STATE 1
+BL-284-PLUGIN-VERB 1   BL-233-ATTEST-REFUSE 2   BL-221-ADOPT-TIER-KEYS 1   BL-270-MODE-VOCABULARY-BACKFILL 1
+BF-ADOPT-SHA-REQUIRED 2   BF-ADOPT-STAMP-CALL 1   BF-ADOPT-STATE-ORDER 1   BL-180-ENFORCEMENT-DEFAULT 2
+```
+Every row is non-zero. In full, so the lint has something to check: `# BL-225-TOUCHED-DISK`,
+`# BL-225-TOUCHED-UNBOUNDED`, `# BL-225-REFUSE-DERIVED`, `# BL-225-PREWRITE-CALL`,
+`# BL-225-WRITE-PHASE-REAL`, `# BL-225-PREWRITE-REFUSE`, `# BL-225-ORACLE-FAIL-CLOSED`,
+`# BL-225-REHEARSAL-NO-HALT`, `# BL-225-REHEARSAL-NO-TRACE`, `# BL-225-REFUSE-HONEST`,
+`# BL-225-STAGE-PREFLIGHT`, `# BL-242-PREFLIGHT-ARM1`, `# BL-242-PREFLIGHT-ARM2`,
+`# BL-242-PREFLIGHT-ARM3`, `# BL-242-PREFLIGHT-ARM3-INSTALLED`, `# BL-242-PREFLIGHT-CALL`,
+`# BL-242-PREFLIGHT-TEMPLATES`, `# BL-242-PREFLIGHT-NAME`, `# BL-242-EVIDENCE-CALL`,
+`# BL-242-TIER-QUESTION`, `# BL-242-RESOLVER-CALL`, `# BL-242-RESOLVER-REFRESH`,
+`# BL-242-RESOLVER-NO-EXEC`, `# BL-242-RESOLVER-VERIFY`, `# BL-242-RESOLVER-INSTALL`,
+`# BL-242-SECRETS-RESCAN`, `# BL-242-RESCAN-HONEST`, `# BL-242-APPROVAL-LOG-FIRST`,
+`# BL-242-PHASE0-LANDING`, `# BL-242-ACT3-HANDOFF`, `# BL-242-ORCH-SOURCE`, `# BL-251-FAST-PATH`,
+`# BL-251-FAST-PATH-RESCAN`, `# BL-253-POC-MODE`, `# BL-253-POC-NULL`, `# BL-253-POC-NULL-MANIFEST`,
+`# BL-268-MODE-VOCABULARY`, `# BL-288-RESCAN-PARTIAL`, `# BL-288-SHALLOW-SCOPE`,
+`# BL-284-CONTEXT-STATE`, `# BL-284-PLUGIN-VERB`, `# BL-233-ATTEST-REFUSE`, `# BL-221-ADOPT-TIER-KEYS`,
+`# BL-270-MODE-VOCABULARY-BACKFILL`. `scripts/lint-bl-markers.sh` is the standing check on every
+backticked cite in this file; its result on the amended tree is in §13-U(v2.1).
+
+**V27 — §8.7a's write set, MEASURED BY EXECUTION: a shipped adoption against a hermetic adoptee,
+tree listed before and after.** The fixture is `tests/test-brownfield-wp9b-preflight-approval.sh`'s
+`mk_adoptee` shape (four tracked files, one commit, `core.excludesFile /dev/null`), the report is
+`scripts/scout.sh`'s own over that tree, the answers are the tier question plus four confirmations,
+and the framework root is this checkout. `GITHUB_BASE_REF` unset; run under `bash`.
+```
+tree: 01b66e3   gitleaks: /opt/homebrew/bin/gitleaks
+scout rc=0
+report: {"schemaVersion":2,"status":"scanned","scope":"full-history","findingCount":0}
+adopt rc=0
+before: 4 files   after: 83 files   removed: 0
+total new files: 79  |  under scripts/: 70  |  under .claude/adoption-archive/: 0
+non-scripts/ new paths:
+.claude/adoption/scout-report.json
+.claude/intake-progress.json
+.claude/manifest.json
+.claude/orchestrator-source.json
+.claude/phase-state.json
+.claude/process-state.json
+.claude/test-debt.json
+APPROVAL_LOG.md
+PROJECT_INTAKE.md
+new scripts/ paths vs the install set (soif_parse_shipped_scripts):
+  IDENTICAL to the install set (70 paths)
+.git/hooks delta:
+  commit-msg
+adoptee git after: HEAD moved: yes   status: 0 dirty entries
+adoption commit: chore: adopt p into the Solo Orchestrator framework —  79 files changed, 43833 insertions(+)
+NOT DONE blocks in transcript: 5
+stderr lines: 0
+```
+(`find . -path ./.git -prune -o -type f -print | LC_ALL=C sort` either side, `comm -13` for the new
+set; `.git/hooks` listed separately because the prune hides it.) The nine non-`scripts/` paths are
+the nine §8.7a listed on 2026-09-01, unchanged; the `scripts/` half moved 68 → 70 with V20's two
+files. **No `templates/` is written** — §8.7a row 7. The transcript's five `NOT DONE` blocks name
+their owners as *WP7* (twice), *nobody yet — §10 names no owner* (the stale `adopt_stub_hooks`
+string, §1.2), *WP11 archives them, WP12b writes them (D3)* and *WP12a*; on a clean adoptee the
+collisions stub and the secrets stub are silent, as §1.2 derives. Then the adoptee's own gate:
+```
+$ ( cd "$p" && bash scripts/check-phase-gate.sh > gate.out 2>&1; echo rc=$?; tail -3 gate.out; grep -ci 'matrix\|resolve' gate.out )
+rc=0
+[OK] Adoption stamp present and intact (adopted: 2026-09-16T13:36:23Z)
+
+Phase gates consistent.
+0                           # no 'matrix' or 'resolve' line — the block is keyed on .claude/tool-preferences.json
+```
+
+**V28 — the 2026-09-16 ruling is NOT built, and at `01b66e3` it has no tracked carrier.**
+```
+$ git grep -n -i 'go with the split' -- . ; echo rc=$?
+rc=1
+$ grep -n 'secrets.status' scripts/lib/adopt/*.sh | cut -d: -f1,2
+scripts/lib/adopt/adopt-stubs.sh:124      # adopt_stub_secrets_disposition: reads it, prints, returns 0
+scripts/lib/adopt/adopt-tools.sh:390      # _adopt_rescan_secrets: the scanned|scanned-partial guard
+$ grep -n 'adopt_refuse' scripts/lib/adopt/adopt-tools.sh scripts/lib/adopt/adopt-stubs.sh | grep -c partial
+0
+```
+The only two readers of the status are the ones §6.1a names, and neither reaches a refusal on it.
+The ruling's carriers on this tree are this document (§0.1, §6.1, §6.1a, §12 item 16) and nothing
+else — §13-U(v2.1).
+
 ### §13-U — What was NOT verified by execution here, stated so nobody upgrades it
 
 - **The eight suites' assertion tally ("309 assertions, 0 failed").** BL-242's measurement of
@@ -2450,6 +3283,48 @@ input; `## BL-242:`'s derivation reads `deployment` alone.
 - **BL-242's PR table.** Hand-assembled by that entry from merge inspection, adopted here on its
   authority (§1.1); this document independently verified the *artifacts*, not the PR attribution.
 
+#### §13-U(v2.1) — added 2026-09-16
+
+- **The 2026-09-16 ruling itself.** Recorded from the maintainer's instruction to this amendment,
+  which quoted three words — *"go with the split"* — and stated the ruling's content; no transcript
+  was seen and no tracked file carried it at `01b66e3` (`git grep -n -i 'go with the split'` → rc 1,
+  V28). Until `## BL-242:` or `## BL-288:` records it, this document is its only carrier.
+- **"WP10 is built as two PRs on Karl's call."** `4009790`'s commit message says so; the
+  attribution is the commit's and was not independently verified.
+- **`## BL-242:`'s two WP10a-review residuals** (the URL in `auto_install`; the unpinned root
+  recipe). Read from the entry, which records its own measurements; not re-run.
+- **Three stale carriers of superseded facts, read and NOT corrected here** (each outside this
+  amendment's file scope): `docs/adoption.md` — its summary table files the secrets stop under an
+  unsplit `WP10`, has no tool-resolution row, and its write-order prose says *"77 file(s)"* and
+  *"68 of them"* (V27: 79 and 70); `## BL-242:` — *"Nine suites … the eight"* (V25: ten) and
+  *"**77** files written, 68 under `scripts/`"*; `docs/INDEX.md`'s blurb for this document — *"Half
+  built"* with a list that omits WP9b and WP10a, and *"thirteen unowned rows"* where §8.7a now has
+  fourteen.
+- **Three backlog status lines that lag the tree, reported and NOT corrected here:** `## BL-268:`
+  says *"fix + suite committed on branch `fix/bl268` … Not pushed, no PR"* while `eba7291` is an
+  ancestor of `01b66e3` via PR #412; `## BL-270:` says *"branch `fix/bl270` … Not pushed"* while
+  `0dc57fc` (`# BL-270-MODE-VOCABULARY-BACKFILL`) is on `main`; `## BL-288:` says *"fix prepared on
+  `fix/scout-shallow-history-claim`, not yet raised as a PR"* while `2a8fafb`, `35a222a` and
+  `22b034d` are ancestors via PR #412 (V18).
+- **§8.4a's "nothing written" state** is asserted by `tests/test-bl225-prewrite-preflight.sh`
+  (50/0, V24) on its own crafted `.gitignore` fixtures; this amendment did not drive a refusing
+  fixture by hand. V27 is a completing adoption, not a refused one.
+- **The seven suites ran on this darwin host only**, with `gitleaks` present. Not run on Linux, not
+  run on a gitleaks-free host; `## BL-251:` records what changes on the latter.
+- **Row 7's "unreachable"** is one measurement — the resting-state gate on V27's adoptee printed
+  no matrix line and exited 0 — plus a source read of the block's `[ -f "$TOOL_PREFS" ]` guard.
+  What the adoptee's gate would print at a later phase *with* a `tool-preferences.json` hand-added
+  and no matrix was not exercised.
+- **V25's dates are committer dates**; three suites carry author dates two to three days earlier
+  (rebased at merge). Neither date is "when the suite was written"; both are printed so a reader
+  can pick.
+- **Lints on the amended tree — RUN, all green, recorded here rather than claimed above:**
+  `bash scripts/lint-bl-markers.sh` → *OK: 601 marker token(s) resolve to backlog entries and 939
+  prose citation(s) resolve to live markers* (838 citations before this amendment);
+  `bash scripts/lint-doc-anchors.sh` → *OK: no broken in-document anchors across 112 file(s)*;
+  `bash scripts/run-lints.sh` → *16 lints — 16 passed, 0 failed*, rc 0. These are the checks; they
+  do not read this document's prose for truth, which is what §13's V-blocks are for.
+
 ---
 
 ## Self-review pass (fresh-eyes checklist)
@@ -2458,7 +3333,8 @@ input; `## BL-242:`'s derivation reads `deployment` alone.
   supersession-and-overturning statement in front matter, §0.2 and §4.1 rather than a footnote;
   the plain-English overview in the messaging standard's five-part shape; §0.1's ten decisions
   with Karl's D4 reasoning verbatim; the four acts with the phase-0 landing's load-bearing
-  argument (§3.6); the **tier-scoped** secrets check with all three statuses (§6.1), with
+  argument (§3.6); the **tier-scoped** secrets check with all three statuses (§6.1) *(four statuses since 2026-09-12
+  and five rows since 2026-09-16 — §6.1a)*, with
   both not-scanned statuses ruled and **deliberately different** (§6.1's severity ladder, §6.4) and
   the tier value's source settled by D9 (§6.5); the two new archive classes with the
   receipt rule (§7); WP5's retirement and WP7's content
@@ -2504,7 +3380,8 @@ input; `## BL-242:`'s derivation reads `deployment` alone.
   where a project needs gate-by-gate certification that the assessment record does not subsume.
   (2) §8.7's admission that the skip set is unenumerated — the init-parity audit is scheduled, not
   done, and until it lands this design cannot claim Act 2 is complete. Both are flagged rather
-  than defended.
+  than defended. *(Superseded 2026-09-01: the audit is delivered at §8.7a, and re-measured on
+  2026-09-16 (§13-V27); left as the v2.0 self-review's text.)*
 
 ---
 
@@ -2519,7 +3396,9 @@ part of this document's record. Nothing below is waiting on him; these are the r
    (informed by the first real assessment, unreviewed until then)?
 2. **The re-scan boundary (§6.2).** Act 2 re-runs the secrets scan when the consumed report's
    status is not `scanned`. Should it *always* re-scan — a consumed report can be stale in
-   findings, not just in status — at the cost of doubling the slowest step on large histories?
+   findings, not just in status — at the cost of doubling the slowest step on large histories? *(WP10a built the narrow reading:
+   re-scan only when the consumed status is neither `scanned` nor `scanned-partial` —
+   `# BL-242-SECRETS-RESCAN`, `# BL-288-RESCAN-PARTIAL`. The question stands.)*
 3. **The document-set boundary (§7.2).** The framework-required set is derived from `init.sh`'s
    writers. Is that the right universe, or should the phase gates' *readers* define it — the two
    derivations may not agree, and whichever is chosen, the other is a drift check WP11 could pin.
