@@ -16633,7 +16633,34 @@ suite sits in).
 
 ## BL-261: the contributor hook's SAST arm is PERMANENTLY INERT in the framework repo — it `--config`s a path only `init.sh` creates, and the hook already knows it is not a scaffolded project
 
-**Status:** Open
+**Status:** Closed — fixed 2026-09-16 (`bb6f698`). `scripts/install-contributor-hooks.sh` lays
+`.semgrep/soif-dom-sinks.yml` as a RELATIVE SYMLINK to `templates/semgrep/soif-dom-sinks.yml`
+(`# BL-261-CONTRIB-SEMGREP-CONFIG-BEGIN`/`-END`), gitignored; the hook text is untouched, so the
+`# BL-194-HOOK-SEMGREP-POLICY` parity holds (`tests/test-bl147-ci-template-integrity.sh` 84 / 0).
+Suite `tests/test-bl261-contributor-sast-live.sh` **10 / 0** (RED 3 / 7 against the unmodified
+installer): static pins, two mutants, and three LIVE cases that stage a DOM sink and are BLOCKED.
+**Measured on the fixing commit itself**, the first commit in this repo with an earned receipt:
+`[OK] semgrep: SAST ran on 7 staged file(s) — no ERROR-severity findings.` where every commit
+before it printed `SAST NOT ENFORCED`.
+
+**Fix, as built — the entry's second option, made a symlink so it is not a second copy.** The
+first option (point the framework's hook at `templates/semgrep/`) would have changed the emitted
+`--config` path and with it the ONE policy `## BL-147:` derives and compares against 22 CI
+templates — a two-policy world even if the suite could be taught to pass. The symlink keeps one
+source of truth (`## BL-175:`'s concern), keeps the hook byte-identical, and keeps the loud
+failure: a template that moves dangles the link, semgrep exits 7, and `# BL-112-SAST-NOTRUN`
+fires as before. Two refusals sit with the installer's other preconditions, BEFORE any hook is
+written (`# BL-261-CONTRIB-SEMGREP-PRECONDITIONS`): the template missing (an incomplete checkout —
+it is tracked) and a REGULAR file already at the path (somebody's own work, never overwritten).
+The summary's `SAST (semgrep)  LIVE` line is now a predicate — tool on PATH AND config resolving —
+where it used to test for a directory (`# BL-261-SEMGREP-LIVE-PREDICATE`); INERT names which half
+is missing. Two fixtures were completed rather than the product softened: `tests/test-bl239-
+contributor-hooks.sh` and `tests/test-bl096-cold-start.sh` built framework-shaped roots without
+the template, and BL-239 lays it AFTER `git add -A` because git's own `create mode …
+templates/semgrep/…` summary line matches that suite's arm regex and broke its A1 control.
+
+**Still open, elsewhere:** CI runs no SAST over this repo's own source (the *Note on CI* below);
+that is a separate question this fix does not answer.
 
 **Found:** 2026-09-14, on every commit of `## BL-225:`'s branch. Not new — `## BL-239:`
 already records it in its measured arm-by-arm table (*"SAST (semgrep) | **INERT** |
