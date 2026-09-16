@@ -20544,3 +20544,47 @@ nothing — is not recoverable from the cites and is deliberately not invented h
 
 **To close:** either write the real entry over this placeholder, or fold the number into
 `## BL-275:` and re-point the cites. Not both, and not by deleting the number.
+
+---
+
+## BL-289: the tool matrix's gitleaks floor (8.18.0) predates the `git`/`dir` subcommands Scout runs, and nothing on adoption's path enforces `min_version` at all
+
+**Status:** Open
+
+**Found:** 2026-09-16, by the merged-main adversarial sweep of ADOPT-002-ARCH v2.1 (R-DOC-11),
+while refuting §6.2's "tool resolution makes the scanner guaranteed" against the tree at `7b88c2e`.
+
+**What is measured.**
+- `templates/tool-matrix/common.json`'s `gitleaks` entry says `"min_version": "8.18.0"`
+  (`grep -n -B8 '"min_version": "8.18.0"' templates/tool-matrix/common.json`).
+- `scripts/lib/scout/scout-secrets.sh` invokes the CURRENT subcommands — `_mode="dir"` /
+  `_mode="git"` and then `"$_bin" "$_mode" $_flags -f json …` (`# BL-288-SHALLOW-SCOPE`'s
+  neighbourhood). gitleaks' README dates those to **v8.19.0**, the release that deprecated
+  `detect` and `protect`. On 8.18.x the invocation is an unknown command, the scanner exits
+  non-zero, and Scout reports `scan-failed`.
+- `grep -c min_version scripts/resolve-tools.sh` → **0**. The only reader of the field is
+  `scripts/check-versions.sh` (`MIN_VER=$(echo "$TOOL" | jq -r '.min_version // empty')`), which
+  adoption never calls; `_adopt_tool_present` in `scripts/lib/adopt/adopt-tools.sh` is presence-only
+  (`# BL-251-PROBE-HOST`).
+
+**Consequence under D2's table** (`## BL-242:`, ADOPT-002-ARCH §6.1): a host whose gitleaks is
+≤ 8.18 satisfies tool resolution, fails the scan, and lands every `personal` adoption in the
+`scan-failed` arm — a loud warning that carries on — while `organizational` stops. The safe
+direction holds; the promise "the scanner is guaranteed" does not: it guarantees PRESENCE, not a
+usable version. CI is unaffected — `.github/workflows/tests.yml` pins `GITLEAKS_VERSION: "8.30.1"`
+with a checksum — so nothing red points at this; it is a host-side gap on the adoption path.
+
+**Fix shape (two halves, either alone is not enough).**
+1. Raise the matrix floor to the lowest version that has the subcommands the framework actually
+   runs — ≥ 8.19.0 — and say WHY in the entry, so the next subcommand change re-derives it rather
+   than inheriting a number.
+2. Make adoption's path enforce the floor: either `resolve-tools.sh` reads `min_version` and
+   reports a too-old tool as unresolved (the honest shape — a present-but-unusable scanner is
+   `tool-unavailable`, not `scanned`), or Scout probes the subcommand it is about to run and
+   reports `tool-unavailable` with the version it found. The design's §12 item 10 pins WP10b to
+   one of these; whichever lands first owns it.
+
+**Related:** `## BL-242:` (D2; the resolver's `# BL-242-RESOLVER-*` arms), `## BL-251:` (the
+presence-only probe), `## BL-288:` (the scanner invocation this entry measures), `## BL-235:`
+(`# BL-235-SHIP-PROBE` — the version probe that ships but is not on this path), ADOPT-002-ARCH
+v2.1 §6.2 / §13-V9 / §12 item 10 (the design-side record of the same gap).
