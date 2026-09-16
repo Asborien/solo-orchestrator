@@ -13655,7 +13655,7 @@ draft did.
 | — | CI: the **WP5b and WP6** suites pinned to the `slow-misc` shard | #346 |
 
 Nine suites cover it — the eight `tests/test-brownfield-wp*.sh` files plus
-`tests/test-lint-module-dependencies.sh` for WP0's lint *(2026-09-16: the `wp*` files are **ten**
+`tests/test-lint-module-dependencies.sh` for WP0's lint *(2026-09-16: **eleven** — the `wp*` files are **ten**
 — `wp9b-preflight-approval` and `wp10a-tool-resolution` were added on 2026-09-01 and 2026-09-02
 (committer dates; WP10a merged 2026-09-04 as PR #373);
 ADOPT-002-ARCH v2.1 §13-V25 lists each with its add date)*. Measured 2026-08-23:
@@ -13842,8 +13842,9 @@ Karl, 2026-08-25, resolving the sub-question review raised: *"Keep warn loudly
 for casual personal projects. Organizational projects are always a stop."*
 
 **D2 AMENDED 2026-09-16 — ONE ROW ADDED, RULED BY KARL: *"go with the split."*** `## BL-288:`
-(2026-09-12) gave Scout a fifth `secrets.status`, `scanned-partial` — a shallow clone, where the
-scanner ran over the commits it was shown and no more — and D2's table had no row for it. The
+(2026-09-12) gave Scout a fourth `secrets.status` WORD, `scanned-partial` — a shallow clone, where
+the scanner ran over the commits it was shown and no more — and D2's table had no row for it (the
+row is the table's fifth). The
 row: **organizational STOPS with no escape** and the refusal prints the unshallow remedy;
 **personal may acknowledge-and-continue with the acknowledgement RECORDED**, refused if it cannot
 be recorded (`# BL-233-ATTEST-REFUSE`); findings the partial scan produced are reported at both
@@ -14470,6 +14471,17 @@ NAMES — `auto_install` carries `install_cmd`, `manual_install` carries
 `instructions` — which is a trap for every reader. WP10a reads
 `.install_cmd // .instructions`; a consumer that reads only the first prints
 nothing where the resolver handed it a reference.
+
+### BL-242 residual — the `# BL-242-RESOLVER-NO-EXEC` arm tells the operator to "run adoption again", and `# BL-242-PREFLIGHT-ARM1` refuses a second adoption
+
+Found 2026-09-16 by the adversarial review of the v2.1 follow-up, while checking whether adoption
+REFUSES on an unresolved scanner (it does not — every unresolved arm returns 0 and the run
+completes; `tests/test-brownfield-wp10a-tool-resolution.sh` case X3b pins that). The arm that
+cannot execute an install prints *"Install it yourself: … Then run adoption again to scan this
+project's history"* — but the adoption it belongs to then COMPLETES, stamps the project, and the
+preflight's first arm refuses the re-run it just advised. The remedy that works is the re-scan
+path, not a second adoption; which surface owns the sentence — WP10b's stop (the run would not
+have completed) or a corrected note here — is WP10b's call. Recorded, not fixed.
 
 ### BL-242 residual — adoption follows a SYMLINK out of the project and overwrites its target
 
@@ -18649,7 +18661,7 @@ on a branch carrying only this entry those citations would resolve to nothing.)*
 
 ## BL-270: a project adopted before the mode-vocabulary fix carries a `mode` no reader understands, and nothing shipped could repair it
 
-**Status:** Closed — fix + suite landed on `main` via PR #412 as `0dc57fc` (2026-09-15; the branch commit `836312e` was rebased at merge). This line said *"Not pushed, no PR"* until 2026-09-16.
+**Status:** Closed — fix + suite landed on `main` via PR #412 as `0dc57fc`, `245f245` and `d7debb7` (2026-09-15; the branch commit `836312e` was rebased at merge). This line said *"Not pushed, no PR"* until 2026-09-16.
 
 **Logged:** 2026-09-12. Depends on `## BL-268:`, which fixes the birth path and the readers; this is
 the migration for projects already on disk.
@@ -18807,7 +18819,7 @@ paths must produce the same manifest shape" argument).
 
 ## BL-268: adoption writes the `deployment` vocabulary into the `mode` field, and `host_verify_protection` — the one function that reads it — validates nothing, so an adopted ORGANIZATIONAL project is measured against the personal branch-protection bar and told it passed
 
-**Status:** Closed — fix + suite landed on `main` via PR #412 as `eba7291` (2026-09-15; the branch commit `4ae2d3a` was rebased at merge). This line said *"Not pushed, no PR"* until 2026-09-16, a day after the merge — corrected in the same PR that recorded the `scanned-partial` ruling below.
+**Status:** Closed — fix + suite landed on `main` via PR #412 as `eba7291` (2026-09-15; the branch commit `4ae2d3a` was rebased at merge); residual 1 below was resolved by `## BL-270:` in the same PR. This line said *"Not pushed, no PR"* until 2026-09-16, a day after the merge — corrected in the same PR that recorded the `scanned-partial` ruling below.
 
 **Logged:** 2026-09-12, found by reading the two birth paths against each other.
 
@@ -19001,7 +19013,10 @@ stops growing the moment this lands.
 
 
 **Residuals, open.**
-1. **OPEN — a project adopted before this fix has no supported route back.** Re-running adoption is
+1. **OPEN — a project adopted before this fix has no supported route back.** *(RESOLVED 2026-09-15
+   by `## BL-270:`, landed in the same PR #412: `scripts/upgrade-project.sh --backfill-only`,
+   `# BL-270-MODE-VOCABULARY-BACKFILL`, is that route. Left in place, annotated, because the
+   observation below is still the reason no tooling was proposed HERE.)* Re-running adoption is
    refused at the only entrypoint: `_adopt_preflight_adopted`
    (`scripts/lib/adopt/adopt-state.sh:231`, `# BL-242-PREFLIGHT-ARM1`) rejects on two witnesses —
    "this project has already been adopted — the manifest records it". And re-running the writer
@@ -19756,9 +19771,10 @@ this file), `## BL-084:` (`# BL-084-TIER-KEY`, the sync-sibling trap this avoids
 the markers, the test file and both registrations were renamed to match.
 
 **Status:** Open — fix landed on `main` via PR #412 (`2a8fafb`, `35a222a`, `22b034d`, 2026-09-15); the `--single-branch` residual below stays open, and the tier outcome of `scanned-partial` is now RULED (below) and unbuilt. This line said *"not yet raised as a PR"* until 2026-09-16. Suite
-`tests/test-bl288-scout-shallow-history-claim.sh` **10 / 0** on bash 3.2.57 (macOS) and on 5.2.21 in
-`ubuntu:24.04` as a non-root user, against RED **2 / 8** on unmodified `main` (`ceb450e`); three
-mutants, all killed. Registered in the aggregator and in the `tests.yml` unit lane
+`tests/test-bl288-scout-shallow-history-claim.sh` **15 / 0** on this tree (darwin, 2026-09-16 — the
+S9/S10 extensions below added five cases); it was **10 / 0** when first measured, on bash 3.2.57
+(macOS) and on 5.2.21 in `ubuntu:24.04` as a non-root user, against RED **2 / 8** on unmodified
+`main` (`ceb450e`); three mutants, all killed. Registered in the aggregator and in the `tests.yml` unit lane
 (`lint-tests-registered.sh`: `OK: every test file is registered with an aggregator`).
 
 **The Linux run needed gitleaks installed, and the suite is right to insist.** A first container run

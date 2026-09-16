@@ -404,13 +404,14 @@ it.)*
 
 ```text
 ══ Installing the framework's own scripts
-   Installed 68 framework script(s); left 0 of your own file(s) untouched.
+   Installed 70 framework script(s); left 0 of your own file(s) untouched.
 ```
 
 The set is **derived from `init.sh`'s own copy list** rather than duplicated, so
 an adopted project's script set cannot drift from a scaffolded one's. Measured,
 comparing this adopted project against a project scaffolded by `init.sh` on the
-same tree: **68 scripts each, and the difference in both directions is empty.**
+same tree: **70 scripts each, and the difference in both directions is empty** (measured
+2026-09-16; it was 68 each before `## BL-254:` added two).
 
 The commit-msg hook comes from the same emitters `init.sh` uses. Measured — the
 adopted and the scaffolded project's `.git/hooks/commit-msg` have the **same
@@ -1025,7 +1026,7 @@ not among them. Read them here, in the framework clone you run the driver from.
 | Gates that were skipped actually run and recorded | ✅ By construction — nothing is skipped; the project starts below every gate |
 | Being asked what the project is for, and told whether the stack fits | ❌ The assessment (Act 3) — **not built** (WP12a) |
 | A fitness verdict, a plan, and the reasoning behind both | ❌ The assessment (Act 3) — **not built** (WP12a) |
-| The required secrets scanner resolved — installed, or adoption refused — before anything is decided on the scan | ✅ Tool resolution, and a re-scan after the install — ships (WP10a) |
+| The required secrets scanner resolved before anything reads the scan — installed where the host has a recipe, named for you where it does not — and the scan re-run after an install | ✅ Tool resolution — ships (WP10a). Adoption does **not** refuse when the scanner cannot be resolved; it carries on and the report says nobody looked. The refusal is D2's — WP10b, **not built** |
 | Adoption that can *fail* on a serious finding | ❌ The secrets stop — **not built** (WP10b); the `scanned-partial` arms Karl ruled on 2026-09-16 are WP10b's too |
 | A recorded, non-growing set of untested files | ✅ [Test-debt ledger + ratchet](#the-test-debt-ledger-and-its-ratchet) — ships and works, **but you run it; nothing calls it on commit yet (WP7)** |
 | Your colliding hooks/settings archived with a restore path | ✅ Collision archive — ships |
