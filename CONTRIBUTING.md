@@ -126,6 +126,12 @@ The framework lives in two repositories — both must be cloned for the test sui
    **BL-243 push-time review gate**, which delegates to
    `scripts/check-pr-review.sh` and **refuses a push** when no review verdict is
    on record for the commits being pushed. Re-run any time to refresh all three.
+   It also lays `.semgrep/soif-dom-sinks.yml` as a gitignored symlink to
+   `templates/semgrep/soif-dom-sinks.yml`, so the pre-commit hook's SAST arm
+   resolves its config and RUNS here (over every staged file, with the hook's
+   three configs; the DOM-sink rules themselves scope `*.html`/`*.htm`/`*.vue`) instead of printing
+   `SAST NOT ENFORCED` on every commit (`## BL-261:`); the summary it prints says
+   which arms are LIVE in your checkout.
 
    > **The pre-push hook blocks.** It is the one hook here that stops you rather
    > than warning you. It verifies a RECORD, not that a review happened — see

@@ -181,6 +181,10 @@ else
   # hooks init.sh writes, and refuses without them rather than falling back to
   # something that does nothing.
   cp "$REPO_ROOT/scripts/lib/hook-templates.sh" "$C/scripts/lib/"
+  # BL-261: the installer lays .semgrep/soif-dom-sinks.yml from this tracked
+  # template and refuses a root without it — a real checkout carries it.
+  mkdir -p "$C/templates/semgrep"
+  cp "$REPO_ROOT/templates/semgrep/soif-dom-sinks.yml" "$C/templates/semgrep/"
   cp "$INSTALLER" "$C/scripts/"
   out=$( cd "$C" && bash scripts/install-contributor-hooks.sh 2>&1 ); rc=$?
   hook_is_the_gate=no

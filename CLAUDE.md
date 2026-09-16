@@ -243,13 +243,21 @@ here.
   ```
   git clone https://github.com/kraulerson/claude-dev-framework.git ~/.claude-dev-framework
   ```
-- **Install the gate hook yourself.** Contributors working on the framework
-  install the pre-commit gate manually (init.sh does it for user projects, not
-  here). Per CONTRIBUTING.md:
+- **Install the contributor hooks yourself.** Contributors working on the
+  framework install them with one command (init.sh does it for generated
+  projects, not here). Per CONTRIBUTING.md:
   ```
-  cp scripts/pre-commit-gate.sh .git/hooks/pre-commit
-  chmod +x .git/hooks/pre-commit
+  bash scripts/install-contributor-hooks.sh
   ```
+  It lays `.git/hooks/{pre-commit,commit-msg,pre-push}` from the same emitters
+  init.sh uses and — since `## BL-261:` — `.semgrep/soif-dom-sinks.yml` as a
+  gitignored symlink to the tracked template, so the pre-commit hook's SAST arm
+  RUNS here instead of printing `SAST NOT ENFORCED` on every commit. Its summary
+  says which arms are LIVE in your checkout. **Do NOT `cp
+  scripts/pre-commit-gate.sh .git/hooks/pre-commit`** — that script is a
+  PreToolUse hook that reads JSON on stdin, and as a git hook it allows
+  everything silently (`## BL-239:`; this bullet said to do exactly that until
+  2026-09-16).
 
 ## CANONICAL COMMANDS
 

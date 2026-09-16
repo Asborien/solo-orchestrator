@@ -867,6 +867,9 @@ run_child_suite "tests/test-bl259-tsv-empty-field-shift.sh" \
 run_child_suite "tests/test-bl263-bl264-uat-template-dom.sh" \
   "BL-263/BL-264: UAT scenario text is escaped, and addBug appends without erasing" \
   "BL-263 scenario-escaping tests FAILED (run tests/test-bl263-bl264-uat-template-dom.sh for details)"
+run_child_suite "tests/test-bl261-contributor-sast-live.sh" \
+  "BL-261: the contributor hook's SAST arm resolves its config and RUNS in the framework checkout" \
+  "BL-261 contributor SAST tests FAILED (run tests/test-bl261-contributor-sast-live.sh for details)"
 # BL-284: two verify-install.sh auto-fixers that could never run — has_context()
 # was unsatisfiable on an adopted project, and fix_superpowers ran a CLI verb
 # that does not exist.
