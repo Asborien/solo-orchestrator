@@ -16072,10 +16072,50 @@ COMMENT, the same class as `_build_unit_list_set`'s comment-blind awk in CLAUDE.
 `delta.sh` the same naive grep matches a comment reading `exit 10`. Run the scripts. Compare `# WALK-ISSUE-017-HATCH`, where advertising an escape without its precondition cost a
 walk agent real time.
 
-**#8 — permissions posture. NEEDS KARL'S DECISION, not an implementation.** The review flagged the
-allow-list shape; Karl's 2026-09-09 settings change (bare `Bash` in the allow list, 32 deletion
-shapes in `ask`, four root/home wipes in `deny`) was a deliberate decision, and the second pass
-downgraded the severity accordingly. Do not "fix" this without asking.
+**#8 — permissions posture. DECIDED 2026-09-15 — kept as is, reasoning recorded, CLOSED.** The
+review flagged the allow-list shape; Karl's 2026-09-09 settings change (bare `Bash` in the allow
+list, 32 deletion shapes in `ask`, four root/home wipes in `deny`) was a deliberate decision, and the
+second pass downgraded the severity accordingly. Karl chose to write the reasoning down rather than
+revisit the setting, so it stops resurfacing. Measured before writing, so the record is of the file
+and not of a memory of it:
+
+- **Where it lives.** `.claude/settings.local.json` in this checkout — **untracked, and ignored by
+  Karl's global gitignore** (`~/.config/git/ignore:1`, `**/.claude/settings.local.json`). No commit
+  has ever touched THIS file. (The repo does track a `.claude/settings.json`, since `aa47c24` — it
+  carries PreToolUse hooks only and no permissions block; a draft of this bullet said no settings file
+  was ever committed, which a single `git log --all -- '*settings*'` refutes.) It ships nowhere and
+  governs one machine.
+- **What it is.** `allow` (66 entries): bare `Bash` plus `Bash(*)` plus 41 accumulated per-command
+  `Bash(…)` approvals; 9 `WebFetch(domain:…)` grants; 6 `Read(…)` path grants, several reaching
+  OUTSIDE this repo (`~/.claude/**`, `~/projects/**`, `/tmp/**`, two other projects' hooks) and
+  fenced by NEITHER net below, since both nets are `Bash(…)`-only; 2 `Skill(…)`; `WebSearch`; and
+  the context7/qdrant MCP tools. `deny`: `rm -rf /`, `rm -rf /*`, `rm -rf ~*`,
+  `rm -rf $HOME*`. `ask` (32): every `rm`/`rmdir`/`shred`/`find -delete` shape, `git rm`, `git clean`,
+  `git reset --hard`, `git checkout --`/`.`, `git restore`, branch/tag deletion, force-push,
+  `git push --delete`/`:ref`, stash drop/clear, worktree remove/prune, `update-ref -d`,
+  `filter-branch`, `gc --prune`, `reflog expire`, `gh repo delete`, `gh release delete`.
+- **Why it is acceptable, in Karl's terms.** The operator is the framework's author working on
+  the framework's own repo. Bare `Bash` is not "anything goes": the four denies make the
+  catastrophic wipes unreachable, and the ask list puts a confirmation in front of the destructive
+  shapes that recur in this workflow — not every one: `git commit --amend`, `git rebase`,
+  `git checkout HEAD -- <path>`, shell truncation and `sudo rm` are outside it — which is the set a per-command allow list
+  would otherwise grow to exclude one approval at a time. The alternative the review implied
+  (a granular allow list) costs a prompt on every novel command in a repo whose whole workflow
+  is novel commands, and buys nothing the deny+ask nets do not already buy on this machine.
+- **What it does NOT decide, stated so nobody reads it as a precedent.** This is a
+  personal-machine posture. **It is not the posture generated projects receive**, and the two are
+  not the same: `init.sh` (grep `PERMEOF`) writes every scaffold's `.claude/settings.json` with
+  bare `Bash` in `allow`, a deny list of `rm -rf /`, `rm -rf /*`, `curl * | bash`,
+  `wget * | bash` and `.env` reads — and **no `ask` list at all** — while
+  `docs/cli-setup-addendum.md` § 2 (Auto Mode → Setup) tells operators WITHOUT Auto Mode to
+  configure a granular allow list (`Bash(git *)`, `Bash(npm run *)`, …) with `rm -rf *` and
+  `sudo *` denied. So the shipped block is MORE PERMISSIVE THAN BOTH: no ask net at all, bare
+  `Bash` where the docs grant ten narrow shapes, `WebFetch(domain:*)` the docs never grant, and a
+  deny list weaker than the docs prescribe (two exact `rm -rf` paths, no `sudo`). A draft of this
+  sentence said "narrower than the docs", which is backwards on a security surface. That is a
+  real inconsistency in a shipped surface and it is **not** what lead #8 was about; it is
+  recorded here as an observation for Karl and deliberately not filed as an entry or changed,
+  because "what every generated project should allow by default" is his product decision.
 
 **#9 — `--sync-framework` runs inside the snapshot trap**, so a failure there is attributed to the
 snapshot. The note's second half named `soif_state_update`, **which has never existed on any ref**
