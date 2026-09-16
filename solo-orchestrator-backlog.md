@@ -16638,7 +16638,8 @@ suite sits in).
 (`# BL-261-CONTRIB-SEMGREP-CONFIG-BEGIN`/`-END`), gitignored; the hook text is untouched, so the
 `# BL-194-HOOK-SEMGREP-POLICY` parity holds (`tests/test-bl147-ci-template-integrity.sh` 84 / 0).
 Suite `tests/test-bl261-contributor-sast-live.sh` **10 / 0** (RED 3 / 7 against the unmodified
-installer): static pins, two mutants, and three LIVE cases that stage a DOM sink and are BLOCKED.
+installer): static pins, two mutants, and three LIVE cases — a staged DOM sink BLOCKED, a clean file landing
+with the `[OK]` receipt, and the same sink un-blocked once the laid config is removed.
 **Measured on the fixing commit itself**, the first commit in this repo with an earned receipt:
 `[OK] semgrep: SAST ran on 7 staged file(s) — no ERROR-severity findings.` where every commit
 before it printed `SAST NOT ENFORCED`.

@@ -128,7 +128,8 @@ The framework lives in two repositories — both must be cloned for the test sui
    on record for the commits being pushed. Re-run any time to refresh all three.
    It also lays `.semgrep/soif-dom-sinks.yml` as a gitignored symlink to
    `templates/semgrep/soif-dom-sinks.yml`, so the pre-commit hook's SAST arm
-   resolves its config and scans staged `*.html`/`*.vue` here instead of printing
+   resolves its config and RUNS here (over every staged file, with the hook's
+   three configs; the DOM-sink rules themselves scope `*.html`/`*.htm`/`*.vue`) instead of printing
    `SAST NOT ENFORCED` on every commit (`## BL-261:`); the summary it prints says
    which arms are LIVE in your checkout.
 

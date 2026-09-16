@@ -67,6 +67,14 @@ if [ ! -f "$_sg_src" ]; then
   echo "[FAIL] $_sg_src is missing — it is tracked, so this checkout is incomplete; refusing to install hooks whose SAST arm could not resolve its config." >&2
   exit 1
 fi
+if [ -L "$ROOT/.semgrep" ]; then
+  echo "[FAIL] $ROOT/.semgrep is a symlink — refusing to lay a config through it. Remove it and re-run." >&2
+  exit 1
+fi
+if [ -e "$ROOT/.semgrep" ] && [ ! -d "$ROOT/.semgrep" ]; then
+  echo "[FAIL] $ROOT/.semgrep exists and is not a directory — refusing to touch it. Remove it and re-run." >&2
+  exit 1
+fi
 if [ -e "$_sg_dst" ] && [ ! -L "$_sg_dst" ]; then
   echo "[FAIL] $_sg_dst exists and is NOT a symlink — refusing to overwrite it. Remove it and re-run to link the tracked template." >&2
   exit 1
@@ -163,13 +171,21 @@ else
   echo "       gitleaks        INERT  (not installed — the arm WARNs, never blocks)"
 fi
 # BL-261-SEMGREP-LIVE-PREDICATE — LIVE means the arm can actually FIRE here:
-# the tool is on PATH AND the config the hook names resolves. Either alone is
-# INERT, and the line says which (a directory existing is not a config).
-if command -v semgrep >/dev/null 2>&1 && [ -f "$_sg_dst" ]; then
-  echo "       SAST (semgrep)  LIVE   ($(semgrep --version 2>/dev/null | head -1); config -> templates/semgrep/soif-dom-sinks.yml)"
+# the tool RUNS (answers --version; a shim with a dead interpreter is on PATH
+# and does not) AND the config the hook names resolves. Either alone is INERT,
+# and the line says which (a directory existing is not a config).
+_sg_ver=""
+if command -v semgrep >/dev/null 2>&1; then
+  _sg_ver="$(semgrep --version 2>/dev/null | head -1 || true)"
+fi
+if [ -n "$_sg_ver" ] && [ -f "$_sg_dst" ]; then
+  echo "       SAST (semgrep)  LIVE   ($_sg_ver; config -> templates/semgrep/soif-dom-sinks.yml)"
 elif ! command -v semgrep >/dev/null 2>&1; then
   echo "       SAST (semgrep)  INERT  (semgrep is not installed — the arm WARNs"
   echo "                              'SAST NOT ENFORCED' on every commit, never blocks)"
+elif [ -z "$_sg_ver" ]; then
+  echo "       SAST (semgrep)  INERT  (semgrep is on PATH but does not run — the arm"
+  echo "                              WARNs 'SAST NOT ENFORCED', never blocks)"
 else
   echo "       SAST (semgrep)  INERT  (.semgrep/soif-dom-sinks.yml does not resolve —"
   echo "                              the arm WARNs 'SAST NOT ENFORCED', never blocks)"
@@ -178,7 +194,8 @@ echo "       BL-006 msg gate INERT  (framework repo, not a scaffolded project �
 echo "                              the hook says so itself and allows the commit)"
 echo ""
 echo "     So in the framework repo this is a SECRET-DETECTION gate plus SAST over"
-echo "     the staged markup files the DOM-sink ruleset scopes (*.html, *.vue —"
-echo "     \`## BL-261:\`). It is still not 'the same gates CI runs': the message"
+echo "     EVERY staged file with the hook's three configs; the DOM-sink ruleset's"
+echo "     own rules scope *.html/*.htm/*.vue (\`## BL-261:\`). It is still not 'the"
+echo "     same gates CI runs': the message"
 echo "     gate is inert here and CI runs no SAST over this repo's own source."
 echo "     CI is the authority; see \`## BL-239:\`."

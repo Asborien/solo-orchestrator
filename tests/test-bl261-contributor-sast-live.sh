@@ -132,8 +132,7 @@ if printf '%s\n' "$l2a" | grep -qE 'SAST \(semgrep\) +LIVE' \
 else
   fail_ "L2a" "summary with semgrep on PATH: $(printf '%s\n' "$l2a" | grep -E 'SAST \(semgrep\)' | head -1)"
 fi
-if [ -n "$l2b" ] && printf '%s\n' "$l2b" | grep -qE 'SAST \(semgrep\) +INERT' \
-   && printf '%s\n' "$l2b" | grep -qiE 'not installed'; then
+if [ -n "$l2b" ] && printf '%s\n' "$l2b" | grep -E 'SAST \(semgrep\) +INERT' | grep -qi 'not installed'; then
   pass "L2b: with semgrep OFF the PATH the summary says INERT and names the reason (not installed)"
 elif [ -n "$l2b" ]; then
   fail_ "L2b" "summary without semgrep: $(printf '%s\n' "$l2b" | grep -E 'SAST \(semgrep\)' | head -1)"
@@ -174,10 +173,40 @@ m1_changed=$(_num "$m1_changed")
 m1_parses=0; bash -n "$M1/installer.sh" >/dev/null 2>&1 && m1_parses=1
 m1="$(run_installer "$M1" "$L2/stubbin:$PATH")"
 if [ "$m1_changed" -gt 0 ] && [ "$m1_parses" -eq 1 ] && [ ! -e "$M1/$CFG" ] \
-   && printf '%s\n' "$m1" | grep -qE 'SAST \(semgrep\) +INERT'; then
+   && printf '%s\n' "$m1" | grep -E 'SAST \(semgrep\) +INERT' | grep -q 'does not resolve'; then
   pass "M1: with the laying block deleted ($m1_changed lines) the config is absent and the summary says INERT — L1/L2 measure the laying, not a pre-existing file"
 else
   fail_ "M1" "changed=$m1_changed (0 = mutation never applied) parses=$m1_parses exists=$([ -e "$M1/$CFG" ] && echo 1 || echo 0) summary: $(printf '%s\n' "$m1" | grep -E 'SAST \(semgrep\)' | head -1)"
+fi
+
+echo "=== L7 — tracked template MISSING: refused BEFORE any hook is written, naming the template ==="
+L7="$(newtmp)"; mk_fw "$L7"; rm "$L7/templates/semgrep/soif-dom-sinks.yml"
+l7="$(run_installer "$L7")"
+if [ "$(rc_of "$l7")" != "0" ] && [ ! -e "$L7/.git/hooks/pre-commit" ] && [ ! -e "$L7/.semgrep" ] \
+   && printf '%s\n' "$l7" | grep -qF 'templates/semgrep/soif-dom-sinks.yml'; then
+  pass "L7: with the template missing the installer refuses (rc $(rc_of "$l7")), writes NO hook and NO .semgrep/, and names the template"
+else
+  fail_ "L7" "rc=$(rc_of "$l7") (want non-zero) hook-written=$([ -e "$L7/.git/hooks/pre-commit" ] && echo 1 || echo 0) semgrep-dir=$([ -e "$L7/.semgrep" ] && echo 1 || echo 0) names-template=$(printf '%s\n' "$l7" | grep -cF 'templates/semgrep/soif-dom-sinks.yml')"
+fi
+
+echo "=== L8 — .semgrep is a regular FILE: refused up front, no hook written, no bare mkdir error ==="
+L8="$(newtmp)"; mk_fw "$L8"; printf 'not a dir\n' > "$L8/.semgrep"
+l8="$(run_installer "$L8")"
+if [ "$(rc_of "$l8")" != "0" ] && [ ! -e "$L8/.git/hooks/pre-commit" ] && [ -f "$L8/.semgrep" ] \
+   && printf '%s\n' "$l8" | grep -q '^\[FAIL\].*\.semgrep' && ! printf '%s\n' "$l8" | grep -q '^mkdir:'; then
+  pass "L8: a regular file at .semgrep is refused with a [FAIL] line, no hook written, the file untouched"
+else
+  fail_ "L8" "rc=$(rc_of "$l8") hook-written=$([ -e "$L8/.git/hooks/pre-commit" ] && echo 1 || echo 0) fail-line=$(printf '%s\n' "$l8" | grep -c '^\[FAIL\].*\.semgrep') mkdir-error=$(printf '%s\n' "$l8" | grep -c '^mkdir:')"
+fi
+
+echo "=== L9 — .semgrep is a SYMLINK to a directory outside the checkout: refused, nothing laid there ==="
+L9="$(newtmp)"; mk_fw "$L9"; L9OUT="$(newtmp)"; ln -s "$L9OUT" "$L9/.semgrep"
+l9="$(run_installer "$L9")"
+if [ "$(rc_of "$l9")" != "0" ] && [ ! -e "$L9/.git/hooks/pre-commit" ] && [ -z "$(ls -A "$L9OUT")" ] \
+   && printf '%s\n' "$l9" | grep -q '^\[FAIL\].*\.semgrep'; then
+  pass "L9: a symlinked .semgrep is refused, no hook written, and the foreign directory stays empty"
+else
+  fail_ "L9" "rc=$(rc_of "$l9") hook-written=$([ -e "$L9/.git/hooks/pre-commit" ] && echo 1 || echo 0) foreign-dir-entries=$(ls -A "$L9OUT" | wc -l | tr -d ' ')"
 fi
 
 # ═════════════════════════════════════════════════════════════════════════════
