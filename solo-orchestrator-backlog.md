@@ -20823,7 +20823,22 @@ freshly fetched `origin/main` on the day of submission, not only on the day the 
 collision used a multi-ref `git grep` whose error was swallowed, and a silent failure there reads
 exactly like "free". The sweep that chose BL-298 asserts a known-taken number on `origin/main` and a
 known-taken number on a local ref before it reports anything, and refuses to report at all if either
-control misses. BL-297 was skipped because a sibling branch holds it.
+control misses. BL-297 was skipped because a sibling branch holds it, and BL-298 is the number the
+maintainer assigned on #419.
+
+**What the earlier commits on this branch still say, left as it is rather than rewritten.** Three
+commits predate the renumber. Their SUBJECTS carry no number at all — an earlier note in this entry
+said they did, and that was wrong — but their BODIES name BL-291, including three marker citations
+(BL-291-BACKFILL-ROOT-GUARD, BL-291-HELP-SKIPS-BACKFILL, BL-291-HELP-BEATS-BACKFILL) that no longer
+resolve to anything on this branch and now read as citations of upstream's unrelated BL-291.
+Nothing is amended: the branch has already been rebuilt once, and rewriting messages to tidy a
+citation is how a review trail stops being evidence. The markers in the CODE are all
+`# BL-298-…`, which is what `scripts/lint-bl-markers.sh` checks and what a reader greps.
+
+Those three are written bare here **on purpose**. `lint-bl-markers.sh` enforces any marker prose
+marks as code — backticked or hash-prefixed — so backticking a dead one turns this very paragraph
+red, which is exactly what happened on the first draft of it. `CLAUDE.md` documents the same
+choice for the same reason. Bare is the right form for naming text that is dead by design.
 
 **Root cause.** `find_project_root` returns the EMPTY STRING when no `.claude/phase-state.json` is
 above cwd. `_run_idempotent_backfill` opens with `( cd "$PROJECT_ROOT"`, and its call site is
@@ -20854,18 +20869,29 @@ no-ops and cwd stays the invocation dir"); it was correct when written and stopp
    `.claude/bypass-audit.json`, `.claude/last-checked-commit.txt`, seven under `.claude/skills/`,
    and it rewrote `.claude/manifest.json`. A help flag mutates the project it is run in (**C5**).
    **That exit 0 is the half with a live consumer.** `--backfill-only` is the migration route
-   `## BL-270:` points an already-adopted project at — eleven times in that entry alone — for a
-   project whose `mode` no reader understands. Run it one directory too high, which is the easy
-   mistake when the operator is being told to run a migration rather than to stand somewhere
-   particular, and it reports success for a migration that did not happen, on every bash version.
-   The project stays unmigrated and nothing downstream says otherwise. The maintainer named this
-   consequence on #419, and it is why the version-independent half matters more than the loud one.
+   `## BL-270:` points an already-adopted project at — **twice** in that entry — for a project
+   whose `mode` no reader understands. Run it one directory too high, which is the easy mistake
+   when the operator is being told to run a migration rather than to stand somewhere particular,
+   and **on bash 3.2.57 and 5.2.21** it exits 0 having written **seven** files into whatever
+   directory the operator was standing in, none of them the project's. The project stays
+   unmigrated and nothing downstream says otherwise. On 5.3 and later the same invocation exits 1
+   and writes nothing, so this is the version-dependent boundary again, the other way round from
+   `--help`. The maintainer named this consequence on #419.
 
-   `--backfill-only` from a projectless directory likewise runs the whole function and **exits 0**,
-   reporting success for work it did not do. Its only complaint is one line about the empty path,
-   and WHICH line is host-dependent, not version-dependent: on a host with a CDF clone present it is
-   `[FAIL] cdf-refresh: project_root does not exist:`, and in a bare `ubuntu:24.04` it is
-   `[WARN] CDF refresh script not found at …`. Either way the exit code is 0 (**C7**).
+   An earlier draft of this paragraph said "eleven times" and "on every bash version", and both
+   were wrong. The count came from an `awk '/^## BL-270:/,/^## BL-271:/'` range over a backlog
+   whose entries are **not in numeric order** — BL-271 sits about 1,600 lines ABOVE BL-270, so the
+   range never closed where it was meant to. That is the same defect class as a mutant landing on
+   the wrong arm: an end anchor assumed rather than measured. The counts above are taken between
+   BL-270's header and the next `^## BL-[0-9]+:` header, whichever entry that turns out to be.
+
+   `--backfill-only` from a projectless directory runs the whole function and, **up to bash 5.2**,
+   **exits 0**, reporting success for work it did not do. Its only complaint is one line about the
+   empty path, and WHICH line is host-dependent rather than version-dependent: on a host with a CDF
+   clone present it is `[FAIL] cdf-refresh: project_root does not exist:`, and in a bare
+   `ubuntu:24.04` it is `[WARN] CDF refresh script not found at …`. Neither changes the exit code.
+   C7 pins the refusal on every version, because after this change the invocation is refused before
+   the version split can matter (**C7**).
 2. **bash 5.3 and later only.** The `cd` fails, `set -euo pipefail` kills the run, and `--help`
    exits 1 having printed nothing but bash's diagnostic (**C1**, **C2**, **C3**):
 
@@ -20944,7 +20970,10 @@ Net effect on behaviour: every bash version takes the same path, and `--help` al
 by the mechanism this entry fixes: `_run_sync_framework` and `_run_plan` each `exit 0` inside their
 own dispatch function, and the `--validate-only` block exits earlier still, all before the
 `--- Help ---` block is ever reached. That is a different defect with the same symptom, and it wants
-its own entry and its own suite rather than a wider version of this one.
+its own entry and its own suite rather than a wider version of this one. **It is filed as upstream
+issue kraulerson/solo-orchestrator#426**, so the rows below are a measurement handed over rather
+than a promise held open here; no case in this suite pins them, deliberately, because asserting
+defective behaviour as expected turns green into red the day somebody fixes it.
 
 Measured on bash 3.2.57 from a full checkout at each commit, in a fixture holding two files
 (`.claude/manifest.json` and `.claude/phase-state.json`) and nothing else. "help" is whether the
@@ -21008,14 +21037,26 @@ remediation-line text occurs twice in the file, at the guard and at
 | M3 — the guard's `-d` widened to `-n` | `# BL-298-BACKFILL-ROOT-GUARD` + 14; hits 1→0 | C9 (11/1) |
 | MI — the guard's `-d` widened to `-e` | `# BL-298-BACKFILL-ROOT-GUARD` + 14; hits 1→0 | C9 (11/1) |
 | MG — the refusal's remediation line deleted | `# BL-298-BACKFILL-ROOT-GUARD` + 16; hits 2→1; one line shorter | C6b (11/1) |
-| MB — `&& [ "$SHOW_HELP" != true ]` dropped from the `--backfill-only` short-circuit | `# BL-298-HELP-BEATS-BACKFILL` + 7; hits 1→0; line count unchanged | C10 (11/1) |
+| MB — `&& [ "$SHOW_HELP" != true ]` dropped from the `--backfill-only` short-circuit | `# BL-298-HELP-BEATS-BACKFILL` + 13; hits 1→0; line count unchanged | C10 (11/1) |
+| N5 — the guard's `print_fail` softened to `print_info` | `# BL-298-BACKFILL-ROOT-GUARD` + 15; hits 3→2; line count unchanged | C6b (11/1) |
+| N5b — the guard's `print_info` promoted to `print_fail` | `# BL-298-BACKFILL-ROOT-GUARD` + 16; hits 1→0; line count unchanged | C6b (11/1) |
 
-**MB had to be anchored before it would land, and that is worth recording.** The same eleven-byte
-text `&& [ "$SHOW_HELP" != true ]; then` occurs at two of the three guards. An unanchored
-substitution replaced the FIRST occurrence — the call-site gate, 876 lines away — leaving MB's own
-target untouched. The hit count caught it (1→1, "MUTANT DID NOT LAND") and nothing was reported
-until the substitution was scoped to follow the marker. A harness that only checked "sed ran" would
-have recorded a healthy mutant that never mutated the arm it named.
+**N5 survived a review, and the hole it found was in the assertion, not the guard.** Swapping
+`print_fail` for `print_info` leaves the exit code at 1 and the wording identical, so the suite was
+12/0 against it on all three interpreters while the refusal had quietly become a note — the
+messaging standard's "never soften a block", unpinned. C6b now matches `[FAIL] ` and `[INFO] `
+joined to their messages, which kills N5 and its inverse N5b. The labels are safe to match joined
+because `helpers-core.sh` gates its colours on `[ -t 1 ]` and this suite always captures through a
+command substitution, so `RED` and `NC` are empty.
+
+**MB had to be anchored before it would land, and that is worth recording.** The 34-byte text
+`&& [ "$SHOW_HELP" != true ]; then`, counting its leading space, occurs at two of the three guards,
+882 lines apart at this head. An unanchored substitution replaced the FIRST occurrence — the
+call-site gate — leaving MB's own target untouched. The hit count caught it (1→1, "MUTANT DID NOT
+LAND") and nothing was reported until the substitution was scoped to follow the marker. A harness
+that only checked "sed ran" would have recorded a healthy mutant that never mutated the arm it
+named. The distance and the gap in this paragraph both went stale once between commits, which is
+why every other location in the table is a distance from a marker and not a line number.
 
 **M3, MI and MG each survived a first cut and each is now killed.** The reason the first cut gave
 for M3's survival was wrong, and is recorded here rather than quietly dropped: it claimed a

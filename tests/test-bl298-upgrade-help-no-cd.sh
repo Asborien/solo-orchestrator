@@ -166,13 +166,19 @@ c6_track_outside_project_refuses_by_name() {
     fail_ "C6a" "--track standard outside a project must exit non-zero; output:\n$out"
   fi
 
-  # BOTH lines the refusal owes: the condition and the way out of it. Pinning
-  # only the first leaves the remediation line deletable in silence.
-  if echo "$out" | grep -qF 'No Solo Orchestrator project found.' \
-     && echo "$out" | grep -qF 'Run this script from your project directory (where .claude/phase-state.json lives).'; then
-    pass "C6b: the refusal names the condition and the remedy"
+  # BOTH lines the refusal owes, each WITH ITS SEVERITY. Pinning only the first
+  # leaves the remediation line deletable in silence; pinning the text without
+  # the `[FAIL]` prefix leaves `print_fail` swappable for `print_info`, which
+  # still exits 1 but softens a refusal into a note — the messaging standard's
+  # "never soften a block", and a mutant that survived a review at 12/0.
+  # The labels are safe to match joined: helpers-core.sh gates its colours on
+  # `[ -t 1 ]`, and this suite always captures through a command substitution,
+  # so RED and NC are empty here and `[FAIL] ` is contiguous with the message.
+  if echo "$out" | grep -qF '[FAIL] No Solo Orchestrator project found.' \
+     && echo "$out" | grep -qF '[INFO] Run this script from your project directory (where .claude/phase-state.json lives).'; then
+    pass "C6b: the refusal names the condition and the remedy, each at its own severity"
   else
-    fail_ "C6b" "expected both refusal lines; output:\n$out"
+    fail_ "C6b" "expected both refusal lines with their [FAIL]/[INFO] severities; output:\n$out"
   fi
 
   if echo "$out" | grep -qF "$CD_DIAG"; then
