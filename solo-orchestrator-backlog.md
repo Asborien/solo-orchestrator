@@ -20588,3 +20588,168 @@ with a checksum — so nothing red points at this; it is a host-side gap on the 
 presence-only probe), `## BL-288:` (the scanner invocation this entry measures), `## BL-235:`
 (`# BL-235-SHIP-PROBE` — the version probe that ships but is not on this path), ADOPT-002-ARCH
 v2.1 §6.2 / §13-V9 / §12 item 10 (the design-side record of the same gap).
+
+## BL-291: `_run_idempotent_backfill` runs before the help block and before the project-root check, so `--help` writes into the tree it is run in — and on bash 5.3 it prints no help at all
+
+**Status:** Open — fix proposed in this PR. Upstream issue: kraulerson/solo-orchestrator#419.
+
+**Measured:** 2026-09-17 on `main` at `579b0b0`, from a clean worktree, no local change of any kind.
+
+**Numbering:** `git grep -q -w BL-291 origin/main` → no hit (rc 1), against an `origin` fetched the
+same day. Positive control on the highest existing number, `git grep -q -w BL-289 origin/main` →
+hit, so the sweep is proven able to find a number that is taken. No local ref and no fork branch
+claims BL-291 either.
+
+This entry was BL-290 until it was rebuilt. Four branches were prepared in parallel and every one of
+them swept BL-290 free against `origin/main` on the same day — correctly, because none of the four
+had been pushed. **A sweep against the remote cannot see a number claimed in an unpushed sibling**,
+so the sweep is necessary and not sufficient when work runs in parallel; the numbers have to be
+handed out centrally. The first branch to land keeps BL-290. This one was rebuilt from
+`origin/main` under the new number rather than renumbered on top, so no commit here carries the
+wrong one.
+
+**Root cause.** `find_project_root` returns the EMPTY STRING when no `.claude/phase-state.json` is
+above cwd. `_run_idempotent_backfill` opens with `( cd "$PROJECT_ROOT"`, and its call site is
+guarded only against `--sync-framework` and `--plan` — about 880 lines above the `--- Help ---`
+block and about 990 above `--- Validate project root ---`, the block that already owns the correct
+refusal. Neither is reached on a projectless invocation.
+
+**`cd ""` is version-split, and that is the part that was not known.** Measured on this host and in
+`ubuntu:24.04` on both architectures, starting from a known cwd:
+
+| bash | `cd ""` | cwd after |
+|---|---|---|
+| 3.2.57 (`/bin/bash`, macOS) | rc 0, silent | unchanged |
+| 5.2.21 (`ubuntu:24.04`, amd64 and arm64) | rc 0, silent | unchanged |
+| 5.3.15 (Homebrew, macOS) | rc 1, `cd: null directory` | unchanged |
+
+So `null directory` is bash's own wording, not a value — `PROJECT_ROOT` is empty, never the literal
+string `null` — and bash **5.3** is where a silent no-op became an error. The comment on the BL-174
+gitignore backfill leaned on the old behaviour in as many words ("PROJECT_ROOT is empty so that `cd`
+no-ops and cwd stays the invocation dir"); it was correct when written and stopped being correct at
+5.3. It is corrected by this change rather than deleted.
+
+**Two consequences, only one of them version-dependent.**
+
+1. **Every bash.** The backfill runs rooted at whatever cwd happens to be, before the script has
+   decided there is a project at all. On a minimal fixture (a `.claude/manifest.json` and a
+   `.claude/phase-state.json`, nothing else) `--help` at `579b0b0` wrote **ten** files: `.gitignore`,
+   `.claude/bypass-audit.json`, `.claude/last-checked-commit.txt`, seven under `.claude/skills/`,
+   and it rewrote `.claude/manifest.json`. A help flag mutates the project it is run in (**C5**).
+   `--backfill-only` from a projectless directory likewise runs the whole function and **exits 0**,
+   reporting success for work it did not do. Its only complaint is one line about the empty path,
+   and WHICH line is host-dependent, not version-dependent: on a host with a CDF clone present it is
+   `[FAIL] cdf-refresh: project_root does not exist:`, and in a bare `ubuntu:24.04` it is
+   `[WARN] CDF refresh script not found at …`. Either way the exit code is 0 (**C7**).
+2. **bash 5.3 and later only.** The `cd` fails, `set -euo pipefail` kills the run, and `--help`
+   exits 1 having printed nothing but bash's diagnostic (**C1**, **C2**, **C3**):
+
+       $ bash scripts/upgrade-project.sh --help > /tmp/h.out 2> /tmp/h.err; echo "exit=$?"
+       exit=1
+       $ wc -l < /tmp/h.out
+       0
+       $ cat /tmp/h.err
+       scripts/upgrade-project.sh: line 489: cd: null directory
+
+**Why `main` is green on CI and red here.** `scripts/upgrade-project.sh` is `#!/usr/bin/env bash`,
+so it runs under the first `bash` on PATH — 5.2.21 on an `ubuntu-24.04` runner, 5.3.15 on a
+Homebrew-equipped Mac. Consequence 2 therefore does not reach the runners at all today. It will the
+day they ship 5.3. Consequence 1 reaches every host now.
+
+**What consequence 2 takes down on a bash-5.3 host — two suites, one defect.**
+
+`tests/test-upgrade-to-production-warn.sh` — its `T3` is `out=$("$SCRIPT" --help 2>&1)`. Under the
+suite's own `set -e` that command substitution aborts the file: two passes, then silence, no tally
+line, exit 1.
+
+    BEFORE (579b0b0):  T1 PASS, T2 PASS, then silent abort — no tally line at all, exit 1
+    AFTER:             == Total: 6 | Passed: 6 | Failed: 0 ==, exit 0
+
+`tests/edge-cases-scripts.sh` — its `E18` runs `--track standard` from an empty directory and makes
+two assertions. The exit-code one held either way; the message one asserts
+`no.*project found|not found|FAIL` against output that was only `cd: null directory`.
+
+    BEFORE (579b0b0):  PASS: 73  FAIL: 1  SKIP: 0  TOTAL: 74, exit 1
+                       the one failure is E18's message assertion, nothing else
+    AFTER:             PASS: 74  FAIL: 0  SKIP: 0  TOTAL: 74, exit 0
+
+The two runs differ in exactly one line of output. (Both were run alone; two copies of this suite
+run concurrently interfere and abort each other around E38, which is a property of the harness and
+not of this change.)
+
+**The fix — two guards, two markers.**
+
+- `# BL-291-HELP-SKIPS-BACKFILL` adds `[ "$SHOW_HELP" != true ]` to the call-site gate that already
+  carves out `--sync-framework` and `--plan` for the same read-only reason. `--help` now exits 0
+  with its usage text from a projectless directory (**C1**, **C2**), emits no bash `cd:` diagnostic
+  (**C3**), still exits 0 with its usage text from inside a project (**C4**), and leaves the project
+  tree byte-identical (**C5**).
+- `# BL-291-BACKFILL-ROOT-GUARD` refuses at the top of `_run_idempotent_backfill` when
+  `PROJECT_ROOT` is not a directory, quoting the two lines `--- Validate project root ---` already
+  prints. Note the predicates are deliberately NOT the same: the canonical block tests `-z`, this
+  guard tests `! -d`, so the guard refuses a strict superset and the two share one message for what
+  an operator has to do about it. C9's case is in the part of that superset the canonical block
+  would let through. `--track` from a projectless directory now exits
+  non-zero (**C6a**) naming both the condition and its remedy (**C6b**) with no bash `cd:`
+  diagnostic (**C6c**); a `PROJECT_ROOT` that exists and is not a directory is refused the same way
+  (**C9**), which is what makes `-d` the load-bearing spelling rather than `-n` or `-e`; and
+  `--backfill-only` — the other path that reaches the same function, and the one that used to exit 0
+  — does likewise (**C7**). `--validate-only` exits before the backfill and is untouched (**C8**).
+
+Net effect on behaviour: every bash version now takes the same path, and the two flags that write
+nothing by contract (`--help`, alongside the existing `--plan`) write nothing in fact.
+
+**Suite:** `tests/test-bl291-upgrade-help-no-cd.sh`, eleven cases C1–C9, registered in
+`tests/full-project-test-suite.sh` and in the `tests.yml` unit list (it never invokes `init.sh`).
+
+**The script's interpreter is a suite parameter, because it is the variable the defect turns on.**
+`SOLO_TEST_BASH` selects the bash the suite hands `upgrade-project.sh`; running the suite FILE under
+a different bash measures nothing, since the script carries its own `#!/usr/bin/env bash`. Every row
+below varies the script's interpreter, not the suite's.
+
+| Script's bash | RED (against `main`'s script) | GREEN (after the fix) |
+|---|---|---|
+| 5.3.15, macOS | 3 passed, 8 failed, exit 1 | 11 passed, 0 failed, exit 0 |
+| 3.2.57, `/bin/bash`, macOS | 8 passed, 3 failed, exit 1 | 11 passed, 0 failed, exit 0 |
+| 5.2.21, `ubuntu:24.04` non-root | 8 passed, 3 failed, exit 1 | 11 passed, 0 failed, exit 0 |
+
+**Five of the eleven cases are VACUOUS below bash 5.3 and are recorded as such, not counted.** C1,
+C2, C3, C6b and C6c pass against the unfixed script on 3.2.57 and on 5.2.21, because `cd ""` no-ops
+there and the script reaches the refusal it already had. **Three cases discriminate in every
+environment** — C5, C7 and C9, the version-independent half — so the suite gates on an
+`ubuntu-24.04` runner today rather than only from 5.3. The remaining three (C4, C6a, C8) are
+controls, green against the unfixed script everywhere by design, which is what proves a RED run's
+fixtures are reaching the script at all.
+
+**Mutation proofs.** Each mutant is applied to a copy of `scripts/`, located by distance from its
+own marker, proved landed by the target-hit count falling at an unchanged line count, and
+syntax-checked before the suite runs. Run on bash 5.3.15.
+
+Location is recorded as a DISTANCE BELOW THE MARKER, never as an absolute line, per this repo's
+citation rule — an absolute number here would have gone stale on the very next commit, and a mutant
+that lands on the wrong arm and still "applies" is the failure this column exists to prevent. The
+remediation-line text occurs twice in the file, at the guard and at
+`--- Validate project root ---`; MG's distance is what proves it landed on the guard's copy.
+
+| Mutant | Landed | Killed by |
+|---|---|---|
+| M1 — the guard's predicate → `if false; then` | `# BL-291-BACKFILL-ROOT-GUARD` + 10; hits 1→0; line count unchanged | C6b, C6c, C7, C9 (7/4) |
+| M2 — `&& [ "$SHOW_HELP" != true ]` dropped from the call-site gate | `# BL-291-HELP-SKIPS-BACKFILL` + 7; hits 1→0; line count unchanged | C1, C2, C5 (8/3) |
+| M3 — the guard's `-d` widened to `-n` | `# BL-291-BACKFILL-ROOT-GUARD` + 10; hits 1→0 | C9 (10/1) |
+| MI — the guard's `-d` widened to `-e` | `# BL-291-BACKFILL-ROOT-GUARD` + 10; hits 1→0 | C9 (10/1) |
+| MG — the refusal's remediation line deleted | `# BL-291-BACKFILL-ROOT-GUARD` + 12; hits 2→1; one line shorter | C6b (10/1) |
+
+**M3, MI and MG each survived a first cut and each is now killed.** The reason the first cut gave
+for M3's survival was wrong, and is recorded here rather than quietly dropped: it claimed a
+`PROJECT_ROOT` that is non-empty and not a directory "cannot be produced through the CLI". It can.
+`find_project_root` returns its answer through a command substitution, and that strips trailing
+newlines, so a project directory whose name ends in a newline yields a `PROJECT_ROOT` one byte short
+of the real path. Put an ordinary file at the shortened path and `-n` and `-e` both admit it while
+only `-d` refuses — which is **C9**, and which fails against `main` on every bash version. MG is the
+second half of the same lesson: the entry claimed the guard quotes *two* lines and only one of them
+was asserted, so the remediation line was deletable in silence. C6b now pins both.
+
+**Related:** `## BL-099:` (the factoring that moved this function's body but kept its call site),
+`## BL-109:` (the `--plan` carve-out this one follows), `## BL-174:` (the `.gitignore` backfill whose
+comment recorded the pre-5.3 `cd ""` behaviour), `## BL-177:` (the sibling blocks with no project
+gate at all, still open — this entry narrows their blast radius but does not close them).

@@ -486,6 +486,21 @@ if [ "$BACKFILL_ONLY" != true ]; then _bl015_sentinel_guard; fi
 # --sync-framework path can invoke it AFTER its guards + source-check instead of
 # before them.
 _run_idempotent_backfill() {
+  # BL-291-BACKFILL-ROOT-GUARD: find_project_root returns the EMPTY STRING when
+  # no project is above cwd, and the `cd "$PROJECT_ROOT"` below then depends on
+  # the bash version. Measured: `cd ""` is a silent no-op returning 0 on 3.2.57
+  # and on 5.2.21, and an error ("null directory", rc 1) from 5.3 on. So this
+  # function either ran rooted at whatever cwd happened to be, or killed the
+  # script under `set -e` — ~990 lines above the `--- Validate project root ---`
+  # block that owns this refusal. Refusing here makes both bash versions behave
+  # alike. The message is quoted from that block; the PREDICATE deliberately is
+  # not — it tests `-z`, this tests `! -d`, a strict superset, because the very
+  # next statement is a `cd`.
+  if [ ! -d "$PROJECT_ROOT" ]; then
+    print_fail "No Solo Orchestrator project found."
+    print_info "Run this script from your project directory (where .claude/phase-state.json lives)."
+    exit 1
+  fi
 ( cd "$PROJECT_ROOT"
   # --- Host-aware migration (spec 2026-04-21) ---
   # Projects created before the host-aware gate need the flat CI template
@@ -719,10 +734,13 @@ _run_idempotent_backfill() {
   #
   # GATED on the generated-project marker (.claude/manifest.json), matching the
   # host-field and BL-030 sibling backfills above: the enclosing subshell does
-  # `cd "$PROJECT_ROOT"`, and on a projectless / in-framework invocation
-  # PROJECT_ROOT is empty so that `cd` no-ops and cwd stays the invocation dir
-  # (e.g. the framework repo). Without this gate the block would append its two
-  # lines to the framework's OWN .gitignore. NOTE: not every sibling block in
+  # `cd "$PROJECT_ROOT"`, so without this gate the block would append its two
+  # lines to whatever tree cwd names — the framework's OWN .gitignore, for an
+  # in-framework invocation. This comment used to lean on that as DESIGNED
+  # ("PROJECT_ROOT is empty so that `cd` no-ops"), which holds only up to bash
+  # 5.2 — from 5.3 the same `cd` errors. `# BL-291-BACKFILL-ROOT-GUARD` now
+  # refuses the projectless case on every version, so this gate no longer
+  # carries that weight alone. NOTE: not every sibling block in
   # this function carries such a gate — the vendored-skills sync and the BL-088
   # source-closure copy have NO project gate and do write outside generated
   # projects today; that structural gap is tracked as BL-177.
@@ -842,7 +860,14 @@ _run_idempotent_backfill() {
 # BL-109 S3: --plan ALSO skips it (and never calls it) — --plan is read-only and
 # must write nothing outside its run folder (invariant I1). The backfill mutates
 # the manifest / host config / .claude/skills/, so it cannot run on the plan path.
-if [ "$SYNC_FRAMEWORK" != true ] && [ "$PLAN" != true ]; then
+# BL-291-HELP-SKIPS-BACKFILL: --help is read-only and its block sits ~880 lines
+# below here, so an unconditional backfill reached first — writing .gitignore,
+# .claude/skills/ and the manifest into whatever project cwd was in (ten files
+# on a bare fixture, measured), and on bash 5.3+ dying before printing anything
+# at all. The no-target check just above the help block already carves SHOW_HELP
+# out; this carves it out of the writes too. Same invariant as --plan above:
+# read-only flags write nothing.
+if [ "$SYNC_FRAMEWORK" != true ] && [ "$PLAN" != true ] && [ "$SHOW_HELP" != true ]; then
   _run_idempotent_backfill
 fi
 
