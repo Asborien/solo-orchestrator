@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/test-bl291-upgrade-help-no-cd.sh — BL-291.
+# tests/test-bl298-upgrade-help-no-cd.sh — BL-298.
 #
 # scripts/upgrade-project.sh ran _run_idempotent_backfill unconditionally, ~880
 # lines above the `--- Help ---` block and ~990 above `--- Validate project
@@ -13,9 +13,9 @@
 # whatever cwd happened to be, or killed the script under `set -euo pipefail`.
 #
 # Three guards, three markers:
-#   # BL-291-HELP-SKIPS-BACKFILL   — the call-site gate (C1, C2, C3, C5)
-#   # BL-291-BACKFILL-ROOT-GUARD   — the refusal inside the function (C6, C7, C9)
-#   # BL-291-HELP-BEATS-BACKFILL   — the --backfill-only short-circuit (C10)
+#   # BL-298-HELP-SKIPS-BACKFILL   — the call-site gate (C1, C2, C3, C5)
+#   # BL-298-BACKFILL-ROOT-GUARD   — the refusal inside the function (C6, C7, C9)
+#   # BL-298-HELP-BEATS-BACKFILL   — the --backfill-only short-circuit (C10)
 #
 # C4, C6a and C8 are controls: all three pass against the unfixed script in every
 # environment, so their green in a RED run proves the fixtures reach the script
@@ -27,7 +27,7 @@
 # SCOPE. These guards cover the two flag paths whose writes this entry measures.
 # `--sync-framework --help` and `--plan --help` also swallow help and write, at
 # `main` and here alike, from their own dispatch functions — a different
-# mechanism, out of scope, measured and disclosed in the `## BL-291:` entry
+# mechanism, out of scope, measured and disclosed in the `## BL-298:` entry
 # under "Not fixed here". Do not read a green run as covering them.
 set -euo pipefail
 
@@ -36,12 +36,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SCRIPT="${SOLO_UPGRADE_SCRIPT:-$REPO_ROOT/scripts/upgrade-project.sh}"
 # The SCRIPT's interpreter, not this suite's. `cd ""` is a silent no-op up to
 # bash 5.2 and an error from 5.3, so which bash runs upgrade-project.sh decides
-# what half of BL-291 is observable. Selectable so the split can be measured:
+# what half of BL-298 is observable. Selectable so the split can be measured:
 # SOLO_TEST_BASH=/bin/bash exercises 3.2.57 on this host. Running THIS FILE under
 # a different bash proves nothing about that — the script has its own.
 SH="${SOLO_TEST_BASH:-bash}"
 
-echo "== tests/test-bl291-upgrade-help-no-cd.sh =="
+echo "== tests/test-bl298-upgrade-help-no-cd.sh =="
 
 PASSED=0
 FAILED=0
@@ -242,7 +242,7 @@ c9_root_that_is_not_a_directory() {
 # C10 — --help combined with another flag is still --help. `--backfill-only
 # --help` skipped the backfill via the call-site gate and then fell into the
 # --backfill-only short-circuit, which refreshes CDF assets and exits 0 without
-# printing a line of help. Pins `# BL-291-HELP-BEATS-BACKFILL`: help text, exit
+# printing a line of help. Pins `# BL-298-HELP-BEATS-BACKFILL`: help text, exit
 # 0, and a byte-identical project tree.
 # ────────────────────────────────────────────────────────────────────
 c10_backfill_only_plus_help_is_help() {

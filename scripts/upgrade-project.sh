@@ -486,7 +486,7 @@ if [ "$BACKFILL_ONLY" != true ]; then _bl015_sentinel_guard; fi
 # --sync-framework path can invoke it AFTER its guards + source-check instead of
 # before them.
 _run_idempotent_backfill() {
-  # BL-291-BACKFILL-ROOT-GUARD: find_project_root returns the EMPTY STRING when
+  # BL-298-BACKFILL-ROOT-GUARD: find_project_root returns the EMPTY STRING when
   # no project is above cwd, and the `cd "$PROJECT_ROOT"` below then depends on
   # the bash version. Measured: `cd ""` is a silent no-op returning 0 on 3.2.57
   # and on 5.2.21, and an error ("null directory", rc 1) from 5.3 on. So this
@@ -742,7 +742,7 @@ _run_idempotent_backfill() {
   # lines to whatever tree cwd names — the framework's OWN .gitignore, for an
   # in-framework invocation. This comment used to lean on that as DESIGNED
   # ("PROJECT_ROOT is empty so that `cd` no-ops"), which holds only up to bash
-  # 5.2 — from 5.3 the same `cd` errors. `# BL-291-BACKFILL-ROOT-GUARD` now
+  # 5.2 — from 5.3 the same `cd` errors. `# BL-298-BACKFILL-ROOT-GUARD` now
   # refuses the projectless case on every version, so this gate no longer
   # carries that weight alone. NOTE: not every sibling block in
   # this function carries such a gate — the vendored-skills sync and the BL-088
@@ -864,7 +864,7 @@ _run_idempotent_backfill() {
 # BL-109 S3: --plan ALSO skips it (and never calls it) — --plan is read-only and
 # must write nothing outside its run folder (invariant I1). The backfill mutates
 # the manifest / host config / .claude/skills/, so it cannot run on the plan path.
-# BL-291-HELP-SKIPS-BACKFILL: --help is read-only and its block sits ~880 lines
+# BL-298-HELP-SKIPS-BACKFILL: --help is read-only and its block sits ~880 lines
 # below here, so an unconditional backfill reached first — writing .gitignore,
 # .claude/skills/ and the manifest into whatever project cwd was in (ten files
 # on a bare fixture, measured), and on bash 5.3+ dying before printing anything
@@ -1740,19 +1740,19 @@ fi
 # --backfill-only short-circuits here — no track / deployment / POC
 # transition follows.
 #
-# BL-291-HELP-BEATS-BACKFILL: --help wins over --backfill-only, the same way it
+# BL-298-HELP-BEATS-BACKFILL: --help wins over --backfill-only, the same way it
 # already wins over the no-target check below. Without this, `--backfill-only
 # --help` fell through to the CDF refresh, wrote into the project and exited 0
 # having printed no help at all — the one read-only flag silently doing the most
 # work. Third of the places SHOW_HELP is honoured before the help block; the
-# others are the no-target check and `# BL-291-HELP-SKIPS-BACKFILL`.
+# others are the no-target check and `# BL-298-HELP-SKIPS-BACKFILL`.
 #
 # NOT the last, and an earlier version of this comment said it was. `_run_plan`
 # and `_run_sync_framework` each `exit 0` inside their own dispatch function
 # without consulting SHOW_HELP, so `--plan --help` and `--sync-framework --help`
 # still print no help and still write — 4 and 116 files respectively, measured,
-# identically at 579b0b0 and here. Different mechanism, untouched by BL-291,
-# tabulated in the `## BL-291:` entry under "Not fixed here".
+# identically at 579b0b0 and here. Different mechanism, untouched by BL-298,
+# tabulated in the `## BL-298:` entry under "Not fixed here".
 if [ "$BACKFILL_ONLY" = true ] && [ "$SHOW_HELP" != true ]; then
   # BL-001: --backfill-only refreshes CDF assets too, parallel to the manifest
   # backfills above. Consistent with --backfill-only's existing semantics (a

@@ -942,9 +942,9 @@ run_child_suite "tests/test-bl278-sentinel-root.sh" \
 run_child_suite "tests/test-bl280-bug-gate-unmeasured-source.sh" \
   "BL-280: the Phase 2→3 bug gate must not read an unmeasured source as zero bugs" \
   "BL-280 bug-gate tests FAILED (run tests/test-bl280-bug-gate-unmeasured-source.sh for details)"
-run_child_suite "tests/test-bl291-upgrade-help-no-cd.sh" \
-  "BL-291: --help prints help and writes nothing; the backfill refuses an absent project by name" \
-  "BL-291 upgrade-help tests FAILED (run tests/test-bl291-upgrade-help-no-cd.sh for details)"
+run_child_suite "tests/test-bl298-upgrade-help-no-cd.sh" \
+  "BL-298: --help prints help and writes nothing; the backfill refuses an absent project by name" \
+  "BL-298 upgrade-help tests FAILED (run tests/test-bl298-upgrade-help-no-cd.sh for details)"
 
 # ----------------------------------------------------------------
 # TEST 0g: INTAKE WIZARD + RECONFIGURE FIELD HANDLERS
