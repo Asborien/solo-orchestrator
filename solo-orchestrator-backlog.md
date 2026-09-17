@@ -20677,10 +20677,14 @@ The two runs differ in exactly one line of output. (Both were run alone; two cop
 run concurrently interfere and abort each other around E38, which is a property of the harness and
 not of this change.)
 
-**The fix — three guards, three markers.** `SHOW_HELP` has to be honoured in three places before
-the help block is reached. One of the three was already there: the no-target check immediately above
-the help block carves `SHOW_HELP` out for exactly this reason. The other two are new, and the second
-of them was found by the reviewer, not by the report — see the note below the table.
+**The fix — three guards, three markers.** Two are new and one was already there: the no-target
+check immediately above the help block carves `SHOW_HELP` out for exactly this reason. The second
+new one was found by the reviewer, not by the report — see the note below the table.
+
+**This does not close the class, and an earlier draft of this entry said it did.** The commit
+message of the second commit on this branch claims `# BL-291-HELP-BEATS-BACKFILL` is "the third and
+last" place `SHOW_HELP` must be honoured. That is false, it was refuted by the reviewer, and the
+correction is left here rather than rewritten out of the history. See "Not fixed here" below.
 
 - `# BL-291-HELP-SKIPS-BACKFILL` adds `[ "$SHOW_HELP" != true ]` to the call-site gate that already
   carves out `--sync-framework` and `--plan` for the same read-only reason. `--help` now exits 0
@@ -20707,9 +20711,38 @@ of them was found by the reviewer, not by the report — see the note below the 
   `579b0b0`). The read-only flag was doing the most work of any path in the script. It now prints
   help, exits 0 and leaves the tree byte-identical (**C10**).
 
-Net effect on behaviour: every bash version takes the same path, and every flag that writes nothing
-by contract — `--help`, `--validate-only` and the existing `--plan`, **in every combination tested**
-— writes nothing in fact.
+Net effect on behaviour: every bash version takes the same path, and `--help` alone or with
+`--backfill-only` prints help, exits 0 and writes nothing.
+
+**Not fixed here — measured, not assumed.** Three more invocations swallow help. All three behave
+**identically at `579b0b0` and at this branch's head**, so none is a regression and none is caused
+by the mechanism this entry fixes: `_run_sync_framework` and `_run_plan` each `exit 0` inside their
+own dispatch function, and the `--validate-only` block exits earlier still, all before the
+`--- Help ---` block is ever reached. That is a different defect with the same symptom, and it wants
+its own entry and its own suite rather than a wider version of this one.
+
+Measured on bash 3.2.57 from a full checkout at each commit, in a fixture holding two files
+(`.claude/manifest.json` and `.claude/phase-state.json`) and nothing else. "help" is whether the
+usage heading was printed at all; "files" is the fixture's file count before and after.
+
+| invocation | at `579b0b0` | at this head |
+|---|---|---|
+| `--help` | rc 0, help, 2 → 12 | rc 0, help, 2 → 2 |
+| `--backfill-only --help` | rc 0, **no help**, 2 → 48 | rc 0, help, 2 → 2 |
+| `--sync-framework --help` | rc 0, **no help**, 2 → 118 | rc 0, **no help**, 2 → 118 |
+| `--plan --help` | rc 0, **no help**, 2 → 6 | rc 0, **no help**, 2 → 6 |
+| `--validate-only --track standard --help` | rc 0, **no help**, 2 → 2 | rc 0, **no help**, 2 → 2 |
+
+`--sync-framework --help` writes **116 files** into the project, more than twice the case this entry
+fixes, and it is untouched here. `--validate-only --track standard --help` writes nothing, so it
+breaks no contract about writing; it prints resolved JSON instead of help, which is a question about
+flag precedence rather than a defect of this class.
+
+**Read the middle column before trusting the first measurement of any of these.** A first pass ran
+the `579b0b0` side from a detached copy of `scripts/` rather than a full checkout, which made
+`ORCHESTRATOR_ROOT` point at a tree with no `init.sh` and turned `--sync-framework --help` into
+`rc 2` — a harness artefact that reads exactly like a regression this branch had introduced. It had
+not. Both columns above are full checkouts.
 
 **Suite:** `tests/test-bl291-upgrade-help-no-cd.sh`, twelve cases C1–C10, registered in
 `tests/full-project-test-suite.sh` and in the `tests.yml` unit list (it never invokes `init.sh`).

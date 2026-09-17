@@ -12,15 +12,23 @@
 # ("null directory", rc 1) from 5.3 on. So the function either ran rooted at
 # whatever cwd happened to be, or killed the script under `set -euo pipefail`.
 #
-# Two guards, two markers:
+# Three guards, three markers:
 #   # BL-291-HELP-SKIPS-BACKFILL   — the call-site gate (C1, C2, C3, C5)
 #   # BL-291-BACKFILL-ROOT-GUARD   — the refusal inside the function (C6, C7, C9)
+#   # BL-291-HELP-BEATS-BACKFILL   — the --backfill-only short-circuit (C10)
 #
 # C4, C6a and C8 are controls: all three pass against the unfixed script in every
 # environment, so their green in a RED run proves the fixtures reach the script
 # rather than being broken. C1, C2, C3, C6b and C6c are VACUOUS below bash 5.3 —
-# they pass against the unfixed script there. C5, C7 and C9 discriminate on every
-# version, and are what makes this suite gate on an ubuntu-24.04 runner today.
+# they pass against the unfixed script there. C5, C7, C9 and C10 discriminate on
+# every version, and are what makes this suite gate on an ubuntu-24.04 runner
+# today.
+#
+# SCOPE. These guards cover the two flag paths whose writes this entry measures.
+# `--sync-framework --help` and `--plan --help` also swallow help and write, at
+# `main` and here alike, from their own dispatch functions — a different
+# mechanism, out of scope, measured and disclosed in the `## BL-291:` entry
+# under "Not fixed here". Do not read a green run as covering them.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

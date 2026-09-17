@@ -1744,9 +1744,15 @@ fi
 # already wins over the no-target check below. Without this, `--backfill-only
 # --help` fell through to the CDF refresh, wrote into the project and exited 0
 # having printed no help at all — the one read-only flag silently doing the most
-# work. Third of the three places SHOW_HELP has to be honoured before the help
-# block is reached; the other two are the no-target check and
-# `# BL-291-HELP-SKIPS-BACKFILL`.
+# work. Third of the places SHOW_HELP is honoured before the help block; the
+# others are the no-target check and `# BL-291-HELP-SKIPS-BACKFILL`.
+#
+# NOT the last, and an earlier version of this comment said it was. `_run_plan`
+# and `_run_sync_framework` each `exit 0` inside their own dispatch function
+# without consulting SHOW_HELP, so `--plan --help` and `--sync-framework --help`
+# still print no help and still write — 4 and 116 files respectively, measured,
+# identically at 579b0b0 and here. Different mechanism, untouched by BL-291,
+# tabulated in the `## BL-291:` entry under "Not fixed here".
 if [ "$BACKFILL_ONLY" = true ] && [ "$SHOW_HELP" != true ]; then
   # BL-001: --backfill-only refreshes CDF assets too, parallel to the manifest
   # backfills above. Consistent with --backfill-only's existing semantics (a
