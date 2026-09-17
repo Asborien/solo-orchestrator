@@ -20802,20 +20802,28 @@ and are WP9c's since v2.2; row 33 (this) stays UNOWNED.
 
 **Status:** Open — fix proposed in this PR. Upstream issue: kraulerson/solo-orchestrator#419.
 
-**Measured:** 2026-09-17 on `main` at `579b0b0`, from a clean worktree, no local change of any kind.
+**Measured:** 2026-09-17 on `main` at `363e48d`, from a clean worktree, no local change of any kind.
 
 **Numbering:** `git grep -q -w BL-298 origin/main` → no hit (rc 1), against an `origin` fetched the
-same day. Positive control on the highest existing number, `git grep -q -w BL-289 origin/main` →
-hit, so the sweep is proven able to find a number that is taken. No local ref and no fork branch
-claims BL-298 either.
+same day, at `363e48d`. Positive control on the highest existing number, `git grep -q -w BL-296
+origin/main` → hit, so the sweep is proven able to find a number that is taken. No local ref and no
+fork branch claims BL-298 either, each swept the same way with its own control.
 
-This entry was BL-290 until it was rebuilt. Four branches were prepared in parallel and every one of
-them swept BL-290 free against `origin/main` on the same day — correctly, because none of the four
-had been pushed. **A sweep against the remote cannot see a number claimed in an unpushed sibling**,
-so the sweep is necessary and not sufficient when work runs in parallel; the numbers have to be
-handed out centrally. The first branch to land keeps BL-290. This one was rebuilt from
-`origin/main` under the new number rather than renumbered on top, so no commit here carries the
-wrong one.
+**This entry lost its number twice, and both losses have the same cause.** It was BL-290 first:
+four branches were prepared in parallel and every one of them swept BL-290 free against
+`origin/main` on the same day — correctly, because none of the four had been pushed. It was BL-291
+next, and upstream landed its own BL-291 in #425 while this branch was in review. **A sweep against
+the remote cannot see a number that is claimed but not yet pushed**, whoever holds the claim, so the
+sweep is necessary and not sufficient whenever anything is in flight.
+
+Three things follow, and they are the transferable part of this paragraph. Numbers are handed out
+centrally when work runs in parallel, not swept for independently. The sweep is re-run against a
+freshly fetched `origin/main` on the day of submission, not only on the day the branch is cut. And
+**a sweep needs its own positive control inside the loop**: the pass that missed the second
+collision used a multi-ref `git grep` whose error was swallowed, and a silent failure there reads
+exactly like "free". The sweep that chose BL-298 asserts a known-taken number on `origin/main` and a
+known-taken number on a local ref before it reports anything, and refuses to report at all if either
+control misses. BL-297 was skipped because a sibling branch holds it.
 
 **Root cause.** `find_project_root` returns the EMPTY STRING when no `.claude/phase-state.json` is
 above cwd. `_run_idempotent_backfill` opens with `( cd "$PROJECT_ROOT"`, and its call site is
@@ -20842,9 +20850,17 @@ no-ops and cwd stays the invocation dir"); it was correct when written and stopp
 
 1. **Every bash.** The backfill runs rooted at whatever cwd happens to be, before the script has
    decided there is a project at all. On a minimal fixture (a `.claude/manifest.json` and a
-   `.claude/phase-state.json`, nothing else) `--help` at `579b0b0` wrote **ten** files: `.gitignore`,
+   `.claude/phase-state.json`, nothing else) `--help` at `363e48d` wrote **ten** files: `.gitignore`,
    `.claude/bypass-audit.json`, `.claude/last-checked-commit.txt`, seven under `.claude/skills/`,
    and it rewrote `.claude/manifest.json`. A help flag mutates the project it is run in (**C5**).
+   **That exit 0 is the half with a live consumer.** `--backfill-only` is the migration route
+   `## BL-270:` points an already-adopted project at — eleven times in that entry alone — for a
+   project whose `mode` no reader understands. Run it one directory too high, which is the easy
+   mistake when the operator is being told to run a migration rather than to stand somewhere
+   particular, and it reports success for a migration that did not happen, on every bash version.
+   The project stays unmigrated and nothing downstream says otherwise. The maintainer named this
+   consequence on #419, and it is why the version-independent half matters more than the loud one.
+
    `--backfill-only` from a projectless directory likewise runs the whole function and **exits 0**,
    reporting success for work it did not do. Its only complaint is one line about the empty path,
    and WHICH line is host-dependent, not version-dependent: on a host with a CDF clone present it is
@@ -20871,14 +20887,14 @@ day they ship 5.3. Consequence 1 reaches every host now.
 suite's own `set -e` that command substitution aborts the file: two passes, then silence, no tally
 line, exit 1.
 
-    BEFORE (579b0b0):  T1 PASS, T2 PASS, then silent abort — no tally line at all, exit 1
+    BEFORE (363e48d):  T1 PASS, T2 PASS, then silent abort — no tally line at all, exit 1
     AFTER:             == Total: 6 | Passed: 6 | Failed: 0 ==, exit 0
 
 `tests/edge-cases-scripts.sh` — its `E18` runs `--track standard` from an empty directory and makes
 two assertions. The exit-code one held either way; the message one asserts
 `no.*project found|not found|FAIL` against output that was only `cd: null directory`.
 
-    BEFORE (579b0b0):  PASS: 73  FAIL: 1  SKIP: 0  TOTAL: 74, exit 1
+    BEFORE (363e48d):  PASS: 73  FAIL: 1  SKIP: 0  TOTAL: 74, exit 1
                        the one failure is E18's message assertion, nothing else
     AFTER:             PASS: 74  FAIL: 0  SKIP: 0  TOTAL: 74, exit 0
 
@@ -20917,14 +20933,14 @@ correction is left here rather than rewritten out of the history. See "Not fixed
   With only the first two guards, `--backfill-only --help` skipped the backfill and then fell into
   the short-circuit, which refreshes CDF assets and exits 0 having printed no help at all: measured
   on bash 3.2.57 in a bare fixture, **36 files written, exit 0, zero lines of help** (46 files at
-  `579b0b0`). The read-only flag was doing the most work of any path in the script. It now prints
+  `363e48d`). The read-only flag was doing the most work of any path in the script. It now prints
   help, exits 0 and leaves the tree byte-identical (**C10**).
 
 Net effect on behaviour: every bash version takes the same path, and `--help` alone or with
 `--backfill-only` prints help, exits 0 and writes nothing.
 
 **Not fixed here — measured, not assumed.** Three more invocations swallow help. All three behave
-**identically at `579b0b0` and at this branch's head**, so none is a regression and none is caused
+**identically at `363e48d` and at this branch's head**, so none is a regression and none is caused
 by the mechanism this entry fixes: `_run_sync_framework` and `_run_plan` each `exit 0` inside their
 own dispatch function, and the `--validate-only` block exits earlier still, all before the
 `--- Help ---` block is ever reached. That is a different defect with the same symptom, and it wants
@@ -20934,7 +20950,7 @@ Measured on bash 3.2.57 from a full checkout at each commit, in a fixture holdin
 (`.claude/manifest.json` and `.claude/phase-state.json`) and nothing else. "help" is whether the
 usage heading was printed at all; "files" is the fixture's file count before and after.
 
-| invocation | at `579b0b0` | at this head |
+| invocation | at `363e48d` | at this head |
 |---|---|---|
 | `--help` | rc 0, help, 2 → 12 | rc 0, help, 2 → 2 |
 | `--backfill-only --help` | rc 0, **no help**, 2 → 48 | rc 0, help, 2 → 2 |
@@ -20948,7 +20964,7 @@ breaks no contract about writing; it prints resolved JSON instead of help, which
 flag precedence rather than a defect of this class.
 
 **Read the middle column before trusting the first measurement of any of these.** A first pass ran
-the `579b0b0` side from a detached copy of `scripts/` rather than a full checkout, which made
+the `363e48d` side from a detached copy of `scripts/` rather than a full checkout, which made
 `ORCHESTRATOR_ROOT` point at a tree with no `init.sh` and turned `--sync-framework --help` into
 `rc 2` — a harness artefact that reads exactly like a regression this branch had introduced. It had
 not. Both columns above are full checkouts.
