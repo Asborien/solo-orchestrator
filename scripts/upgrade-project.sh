@@ -491,11 +491,15 @@ _run_idempotent_backfill() {
   # the bash version. Measured: `cd ""` is a silent no-op returning 0 on 3.2.57
   # and on 5.2.21, and an error ("null directory", rc 1) from 5.3 on. So this
   # function either ran rooted at whatever cwd happened to be, or killed the
-  # script under `set -e` — ~990 lines above the `--- Validate project root ---`
-  # block that owns this refusal. Refusing here makes both bash versions behave
-  # alike. The message is quoted from that block; the PREDICATE deliberately is
-  # not — it tests `-z`, this tests `! -d`, a strict superset, because the very
-  # next statement is a `cd`.
+  # script under `set -e` — and this function's CALL SITE sits ~990 lines above
+  # the `--- Validate project root ---` block that owns this refusal, so that
+  # block was never reached either way. Refusing here makes both bash versions
+  # behave alike.
+  #
+  # SYNC SIBLING: the two message lines below are a verbatim copy of that
+  # block's. The PREDICATE deliberately is not — it tests `-z`, this tests
+  # `! -d`, a strict superset, because the very next statement is a `cd`.
+  # Reword one copy and reword both; only this copy is pinned, by C6b.
   if [ ! -d "$PROJECT_ROOT" ]; then
     print_fail "No Solo Orchestrator project found."
     print_info "Run this script from your project directory (where .claude/phase-state.json lives)."
@@ -1735,7 +1739,15 @@ fi
 
 # --backfill-only short-circuits here — no track / deployment / POC
 # transition follows.
-if [ "$BACKFILL_ONLY" = true ]; then
+#
+# BL-291-HELP-BEATS-BACKFILL: --help wins over --backfill-only, the same way it
+# already wins over the no-target check below. Without this, `--backfill-only
+# --help` fell through to the CDF refresh, wrote into the project and exited 0
+# having printed no help at all — the one read-only flag silently doing the most
+# work. Third of the three places SHOW_HELP has to be honoured before the help
+# block is reached; the other two are the no-target check and
+# `# BL-291-HELP-SKIPS-BACKFILL`.
+if [ "$BACKFILL_ONLY" = true ] && [ "$SHOW_HELP" != true ]; then
   # BL-001: --backfill-only refreshes CDF assets too, parallel to the manifest
   # backfills above. Consistent with --backfill-only's existing semantics (a
   # deliberate operator-invoked migration that does not consult the BL-015

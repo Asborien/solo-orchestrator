@@ -191,11 +191,6 @@ c7_backfill_only_outside_project_refuses_by_name() {
 }
 
 # ────────────────────────────────────────────────────────────────────
-# C8 — CONTROL. --validate-only exits before the backfill at the parent commit
-# and must keep doing so. Green here in a RED run is what proves the harness
-# reaches the script at all.
-# ────────────────────────────────────────────────────────────────────
-# ────────────────────────────────────────────────────────────────────
 # C9 — PROJECT_ROOT non-empty and NOT a directory. `find_project_root` echoes
 # its answer through a command substitution, which strips trailing newlines, so
 # a project directory whose name ENDS IN A NEWLINE yields a PROJECT_ROOT one
@@ -235,6 +230,34 @@ c9_root_that_is_not_a_directory() {
   fi
 }
 
+# ────────────────────────────────────────────────────────────────────
+# C10 — --help combined with another flag is still --help. `--backfill-only
+# --help` skipped the backfill via the call-site gate and then fell into the
+# --backfill-only short-circuit, which refreshes CDF assets and exits 0 without
+# printing a line of help. Pins `# BL-291-HELP-BEATS-BACKFILL`: help text, exit
+# 0, and a byte-identical project tree.
+# ────────────────────────────────────────────────────────────────────
+c10_backfill_only_plus_help_is_help() {
+  local out rc=0 before after
+  setup_project
+  before="$(fingerprint "$PROJ")"
+  out=$( cd "$PROJ" && "$SH" "$SCRIPT" --backfill-only --help </dev/null 2>&1 ) || rc=$?
+  after="$(fingerprint "$PROJ")"
+
+  if [ "$rc" -eq 0 ] \
+     && echo "$out" | grep -q 'Solo Orchestrator — Project Upgrade' \
+     && [ "$before" = "$after" ]; then
+    pass "C10: --backfill-only --help prints help, exits 0, writes nothing"
+  else
+    fail_ "C10" "rc=$rc; tree changed: $([ "$before" = "$after" ] && echo no || echo yes); output:\n$out"
+  fi
+}
+
+# ────────────────────────────────────────────────────────────────────
+# C8 — CONTROL. --validate-only exits before the backfill at the parent commit
+# and must keep doing so. Green here in a RED run is what proves the harness
+# reaches the script at all.
+# ────────────────────────────────────────────────────────────────────
 c8_validate_only_unaffected() {
   local out rc=0
   out=$( cd "$EMPTY_DIR" && "$SH" "$SCRIPT" --validate-only --track standard </dev/null 2>&1 ) || rc=$?
@@ -252,6 +275,7 @@ c5_help_mutates_nothing
 c6_track_outside_project_refuses_by_name
 c7_backfill_only_outside_project_refuses_by_name
 c9_root_that_is_not_a_directory
+c10_backfill_only_plus_help_is_help
 c8_validate_only_unaffected
 
 echo ""

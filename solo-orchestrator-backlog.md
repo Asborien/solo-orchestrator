@@ -20677,7 +20677,10 @@ The two runs differ in exactly one line of output. (Both were run alone; two cop
 run concurrently interfere and abort each other around E38, which is a property of the harness and
 not of this change.)
 
-**The fix — two guards, two markers.**
+**The fix — three guards, three markers.** `SHOW_HELP` has to be honoured in three places before
+the help block is reached. One of the three was already there: the no-target check immediately above
+the help block carves `SHOW_HELP` out for exactly this reason. The other two are new, and the second
+of them was found by the reviewer, not by the report — see the note below the table.
 
 - `# BL-291-HELP-SKIPS-BACKFILL` adds `[ "$SHOW_HELP" != true ]` to the call-site gate that already
   carves out `--sync-framework` and `--plan` for the same read-only reason. `--help` now exits 0
@@ -20695,11 +20698,20 @@ not of this change.)
   (**C9**), which is what makes `-d` the load-bearing spelling rather than `-n` or `-e`; and
   `--backfill-only` — the other path that reaches the same function, and the one that used to exit 0
   — does likewise (**C7**). `--validate-only` exits before the backfill and is untouched (**C8**).
+- `# BL-291-HELP-BEATS-BACKFILL` adds the same test to the `--backfill-only` short-circuit.
+  **This one was found by the adversarial reviewer, after the first two were written**, and it is
+  the reason the summary sentence below is scoped the way it is rather than the way it first read.
+  With only the first two guards, `--backfill-only --help` skipped the backfill and then fell into
+  the short-circuit, which refreshes CDF assets and exits 0 having printed no help at all: measured
+  on bash 3.2.57 in a bare fixture, **36 files written, exit 0, zero lines of help** (46 files at
+  `579b0b0`). The read-only flag was doing the most work of any path in the script. It now prints
+  help, exits 0 and leaves the tree byte-identical (**C10**).
 
-Net effect on behaviour: every bash version now takes the same path, and the two flags that write
-nothing by contract (`--help`, alongside the existing `--plan`) write nothing in fact.
+Net effect on behaviour: every bash version takes the same path, and every flag that writes nothing
+by contract — `--help`, `--validate-only` and the existing `--plan`, **in every combination tested**
+— writes nothing in fact.
 
-**Suite:** `tests/test-bl291-upgrade-help-no-cd.sh`, eleven cases C1–C9, registered in
+**Suite:** `tests/test-bl291-upgrade-help-no-cd.sh`, twelve cases C1–C10, registered in
 `tests/full-project-test-suite.sh` and in the `tests.yml` unit list (it never invokes `init.sh`).
 
 **The script's interpreter is a suite parameter, because it is the variable the defect turns on.**
@@ -20709,14 +20721,14 @@ below varies the script's interpreter, not the suite's.
 
 | Script's bash | RED (against `main`'s script) | GREEN (after the fix) |
 |---|---|---|
-| 5.3.15, macOS | 3 passed, 8 failed, exit 1 | 11 passed, 0 failed, exit 0 |
-| 3.2.57, `/bin/bash`, macOS | 8 passed, 3 failed, exit 1 | 11 passed, 0 failed, exit 0 |
-| 5.2.21, `ubuntu:24.04` non-root | 8 passed, 3 failed, exit 1 | 11 passed, 0 failed, exit 0 |
+| 5.3.15, macOS | 3 passed, 9 failed, exit 1 | 12 passed, 0 failed, exit 0 |
+| 3.2.57, `/bin/bash`, macOS | 8 passed, 4 failed, exit 1 | 12 passed, 0 failed, exit 0 |
+| 5.2.21, `ubuntu:24.04` non-root | 8 passed, 4 failed, exit 1 | 12 passed, 0 failed, exit 0 |
 
-**Five of the eleven cases are VACUOUS below bash 5.3 and are recorded as such, not counted.** C1,
+**Five of the twelve cases are VACUOUS below bash 5.3 and are recorded as such, not counted.** C1,
 C2, C3, C6b and C6c pass against the unfixed script on 3.2.57 and on 5.2.21, because `cd ""` no-ops
-there and the script reaches the refusal it already had. **Three cases discriminate in every
-environment** — C5, C7 and C9, the version-independent half — so the suite gates on an
+there and the script reaches the refusal it already had. **Four cases discriminate in every
+environment** — C5, C7, C9 and C10, the version-independent half — so the suite gates on an
 `ubuntu-24.04` runner today rather than only from 5.3. The remaining three (C4, C6a, C8) are
 controls, green against the unfixed script everywhere by design, which is what proves a RED run's
 fixtures are reaching the script at all.
@@ -20733,11 +20745,19 @@ remediation-line text occurs twice in the file, at the guard and at
 
 | Mutant | Landed | Killed by |
 |---|---|---|
-| M1 — the guard's predicate → `if false; then` | `# BL-291-BACKFILL-ROOT-GUARD` + 10; hits 1→0; line count unchanged | C6b, C6c, C7, C9 (7/4) |
-| M2 — `&& [ "$SHOW_HELP" != true ]` dropped from the call-site gate | `# BL-291-HELP-SKIPS-BACKFILL` + 7; hits 1→0; line count unchanged | C1, C2, C5 (8/3) |
-| M3 — the guard's `-d` widened to `-n` | `# BL-291-BACKFILL-ROOT-GUARD` + 10; hits 1→0 | C9 (10/1) |
-| MI — the guard's `-d` widened to `-e` | `# BL-291-BACKFILL-ROOT-GUARD` + 10; hits 1→0 | C9 (10/1) |
-| MG — the refusal's remediation line deleted | `# BL-291-BACKFILL-ROOT-GUARD` + 12; hits 2→1; one line shorter | C6b (10/1) |
+| M1 — the guard's predicate → `if false; then` | `# BL-291-BACKFILL-ROOT-GUARD` + 14; hits 1→0; line count unchanged | C6b, C6c, C7, C9 (8/4) |
+| M2 — `&& [ "$SHOW_HELP" != true ]` dropped from the call-site gate | `# BL-291-HELP-SKIPS-BACKFILL` + 7; hits 1→0; line count unchanged | C1, C2, C5, C10 (8/4) |
+| M3 — the guard's `-d` widened to `-n` | `# BL-291-BACKFILL-ROOT-GUARD` + 14; hits 1→0 | C9 (11/1) |
+| MI — the guard's `-d` widened to `-e` | `# BL-291-BACKFILL-ROOT-GUARD` + 14; hits 1→0 | C9 (11/1) |
+| MG — the refusal's remediation line deleted | `# BL-291-BACKFILL-ROOT-GUARD` + 16; hits 2→1; one line shorter | C6b (11/1) |
+| MB — `&& [ "$SHOW_HELP" != true ]` dropped from the `--backfill-only` short-circuit | `# BL-291-HELP-BEATS-BACKFILL` + 7; hits 1→0; line count unchanged | C10 (11/1) |
+
+**MB had to be anchored before it would land, and that is worth recording.** The same eleven-byte
+text `&& [ "$SHOW_HELP" != true ]; then` occurs at two of the three guards. An unanchored
+substitution replaced the FIRST occurrence — the call-site gate, 876 lines away — leaving MB's own
+target untouched. The hit count caught it (1→1, "MUTANT DID NOT LAND") and nothing was reported
+until the substitution was scoped to follow the marker. A harness that only checked "sed ran" would
+have recorded a healthy mutant that never mutated the arm it named.
 
 **M3, MI and MG each survived a first cut and each is now killed.** The reason the first cut gave
 for M3's survival was wrong, and is recorded here rather than quietly dropped: it claimed a
