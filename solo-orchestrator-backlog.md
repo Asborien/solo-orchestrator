@@ -21015,7 +21015,14 @@ below varies the script's interpreter, not the suite's.
 |---|---|---|
 | 5.3.15, macOS | 3 passed, 9 failed, exit 1 | 12 passed, 0 failed, exit 0 |
 | 3.2.57, `/bin/bash`, macOS | 8 passed, 4 failed, exit 1 | 12 passed, 0 failed, exit 0 |
-| 5.2.21, `ubuntu:24.04` non-root | 8 passed, 4 failed, exit 1 | 12 passed, 0 failed, exit 0 |
+| 5.2.21, `ubuntu:24.04` non-root, **`git` and `jq` installed** | 8 passed, 4 failed, exit 1 | 12 passed, 0 failed, exit 0 |
+
+**That row needs `jq`, and the bare image has none.** With `git` only it reads **11 passed, 1
+failed**: C8 comes back rc 127 on `jq: command not found`, because `--validate-only` resolves its
+flags through `jq` before it prints anything. That is the image, not a regression, and the row is
+labelled so nobody reads the bare-image figure as one. The lane this suite actually runs in is
+`ubuntu-latest`, whose image ships `jq` and whose workflow asserts `jq --version`; `CLAUDE.md`'s own
+container recipe installs `jq git` for the same reason.
 
 **Five of the twelve cases are VACUOUS below bash 5.3 and are recorded as such, not counted.** C1,
 C2, C3, C6b and C6c pass against the unfixed script on 3.2.57 and on 5.2.21, because `cd ""` no-ops
@@ -21025,28 +21032,44 @@ environment** — C5, C7, C9 and C10, the version-independent half — so the su
 controls, green against the unfixed script everywhere by design, which is what proves a RED run's
 fixtures are reaching the script at all.
 
-**Mutation proofs.** Each mutant is applied to a copy of `scripts/`, located by distance from its
-own marker, proved landed by the target-hit count falling at an unchanged line count, and
-syntax-checked before the suite runs. Run on bash 5.3.15.
+**Mutation proofs.** Each mutant is applied to a copy of `scripts/`, located by the first occurrence
+of a literal below its own marker, proved landed by the target-hit count falling at a stated line
+count, and syntax-checked before the suite runs. Run on bash 5.3.15.
 
-Location is recorded as a DISTANCE BELOW THE MARKER, never as an absolute line, per this repo's
-citation rule — an absolute number here would have gone stale on the very next commit, and a mutant
-that lands on the wrong arm and still "applies" is the failure this column exists to prevent. The
-remediation-line text occurs twice in the file, at the guard and at
-`--- Validate project root ---`; MG's distance is what proves it landed on the guard's copy.
+**Location is the target's LITERAL TEXT, and the first occurrence of it below the named marker.**
+Not an absolute line, and — since this cut — not a distance either. A distance is only as fresh as
+the comment block above it: the previous version of this table gave distances measured before a
+later commit added one sentence to each of two guard comments, and six of the ten rows were one
+line out. A reader reproducing them landed on a comment. Literal text plus "first below this
+marker" is stable under any edit that does not change the target itself, and it is what a reader
+greps anyway. Two targets appear twice in the file — the remediation line also sits in
+`--- Validate project root ---`, and `    exit 1` occurs twenty times — which is why the marker,
+not the text alone, decides which occurrence is meant.
 
-| Mutant | Landed | Killed by |
-|---|---|---|
-| M1 — the guard's predicate → `if false; then` | `# BL-298-BACKFILL-ROOT-GUARD` + 14; hits 1→0; line count unchanged | C6b, C6c, C7, C9 (8/4) |
-| M2 — `&& [ "$SHOW_HELP" != true ]` dropped from the call-site gate | `# BL-298-HELP-SKIPS-BACKFILL` + 7; hits 1→0; line count unchanged | C1, C2, C5, C10 (8/4) |
-| M3 — the guard's `-d` widened to `-n` | `# BL-298-BACKFILL-ROOT-GUARD` + 14; hits 1→0 | C9 (11/1) |
-| MI — the guard's `-d` widened to `-e` | `# BL-298-BACKFILL-ROOT-GUARD` + 14; hits 1→0 | C9 (11/1) |
-| MG — the refusal's remediation line deleted | `# BL-298-BACKFILL-ROOT-GUARD` + 16; hits 2→1; one line shorter | C6b (11/1) |
-| MB — `&& [ "$SHOW_HELP" != true ]` dropped from the `--backfill-only` short-circuit | `# BL-298-HELP-BEATS-BACKFILL` + 13; hits 1→0; line count unchanged | C10 (11/1) |
-| N5 — the guard's `print_fail` softened to `print_info` | `# BL-298-BACKFILL-ROOT-GUARD` + 15; hits 3→2; line count unchanged | C6b (11/1) |
-| N5b — the guard's `print_info` promoted to `print_fail` | `# BL-298-BACKFILL-ROOT-GUARD` + 17; hits 1→0; line count unchanged | C6b (11/1) |
-| Z1 — the guard's `exit 1` changed to `exit 2` | `# BL-298-BACKFILL-ROOT-GUARD` + 18; `    exit 1` hits 20→19; line count unchanged | C6a, C7, C9 (9/3) |
-| Z2 — the condition message softened by appending " This is only a note." | `# BL-298-BACKFILL-ROOT-GUARD` + 16; hits 3→2; line count unchanged | C6b (11/1) |
+Landing is proved by an INVARIANT, not by a count: the target literal's occurrence count in the
+file falls by **exactly one**, the line count moves by the stated amount, and `bash -n` stays clean.
+The absolute counts are left out on purpose — `print_fail "No Solo Orchestrator project found."`
+occurs three or four times depending on whether you count the leading indent, and `    exit 1`
+twenty or twenty-nine times on the same question. A number that depends on how the reader greps is
+not a proof.
+
+| Mutant | Marker, and the literal it changes | Landed | Killed by |
+|---|---|---|---|
+| M1 — predicate → `if false; then` | ROOT-GUARD · `if [ ! -d "$PROJECT_ROOT" ]; then` | hits −1; lines unchanged | C6b, C6c, C7, C9 (8/4) |
+| M3 — `-d` widened to `-n` | ROOT-GUARD · same predicate line | hits −1; lines unchanged | C9 (11/1) |
+| MI — `-d` widened to `-e` | ROOT-GUARD · same predicate line | hits −1; lines unchanged | C9 (11/1) |
+| N5 — `print_fail` softened to `print_info` | ROOT-GUARD · `print_fail "No Solo Orchestrator project found."` | hits −1; lines unchanged | C6b (11/1) |
+| Z2 — that message appended with " This is only a note." | ROOT-GUARD · same `print_fail` line | hits −1; lines unchanged | C6b (11/1) |
+| MG — remediation line deleted | ROOT-GUARD · `print_info "Run this script from your project directory …"` | hits −1; one line shorter | C6b (11/1) |
+| N5b — `print_info` promoted to `print_fail` | ROOT-GUARD · same `print_info` line | hits −1; lines unchanged | C6b (11/1) |
+| Z1 — `exit 1` changed to `exit 2` | ROOT-GUARD · the first `    exit 1` below it | hits −1; lines unchanged | C6a, C7, C9 (9/3) |
+| M2 — `&& [ "$SHOW_HELP" != true ]` dropped | HELP-SKIPS-BACKFILL · `if [ "$SYNC_FRAMEWORK" != true ] && [ "$PLAN" != true ] && [ "$SHOW_HELP" != true ]; then` | hits −1; lines unchanged | C1, C2, C5, C10 (8/4) |
+| MB — the same clause dropped | HELP-BEATS-BACKFILL · `if [ "$BACKFILL_ONLY" = true ] && [ "$SHOW_HELP" != true ]; then` | hits −1; lines unchanged | C10 (11/1) |
+
+Markers in full: `# BL-298-BACKFILL-ROOT-GUARD`, `# BL-298-HELP-SKIPS-BACKFILL`,
+`# BL-298-HELP-BEATS-BACKFILL`. Rows are grouped by the line they change, which also shows at a
+glance that N5 and Z2 attack one line two ways, as do MG and N5b — the previous table gave those
+four pairs four different distances, two of them wrong.
 
 **Z1 and Z2 both survived a review at 12/0, and each found a hole in an assertion rather than in a
 guard.** Z2 passed because `grep -qF` is a substring match, so appending to a refusal leaves it
@@ -21055,10 +21078,12 @@ for the code the canonical block actually uses; all three ask for 1 now.
 
 **Z1 also caught a weakness in the mutation harness itself, which is recorded because the harness is
 part of the evidence.** Its location check searches for the FIRST occurrence of the target text in
-the file, and `    exit 1` occurs twenty times — the first is 265 lines from the marker. The
-substitution was correctly anchored to follow the marker, but the check could not see that and
-**refused to report rather than reporting a distance it had not verified**, which is the right
-failure. Z1's distance above was then taken from the first `    exit 1` BELOW the marker.
+the whole file, and `    exit 1` occurs many times over — the first is hundreds of lines above the
+guard. The substitution was correctly anchored to follow the marker, but the check could not see
+that and **refused to report rather than reporting a location it had not verified**, which is the
+right failure and the reason Z1 is verified separately. It is also the argument for the column
+above: a location that means "the first occurrence below THIS marker" cannot be got wrong the way a
+bare distance or a bare literal can.
 
 **N5 survived a review, and the hole it found was in the assertion, not the guard.** Swapping
 `print_fail` for `print_info` leaves the exit code at 1 and the wording identical, so the suite was

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # tests/test-bl298-upgrade-help-no-cd.sh — BL-298.
 #
-# scripts/upgrade-project.sh ran _run_idempotent_backfill unconditionally, ~880
-# lines above the `--- Help ---` block and ~990 above `--- Validate project
+# scripts/upgrade-project.sh ran _run_idempotent_backfill unconditionally, far
+# above the `--- Help ---` block and further still above `--- Validate project
 # root ---` — the block that already owned the right refusal. The function opens
 # with `( cd "$PROJECT_ROOT"`, and find_project_root returns the EMPTY STRING
-# when no .claude/phase-state.json is above cwd.
+# when no .claude/phase-state.json is above cwd. (No line distances here either:
+# this header was the one place the branch still carried what the entry said it
+# had removed, and the numbers it carried were already two commits stale.)
 #
 # `cd ""` is version-split, and that decides which half of the defect shows.
 # Measured: a silent no-op returning 0 on bash 3.2.57 and 5.2.21, an error

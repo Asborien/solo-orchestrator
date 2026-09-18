@@ -501,6 +501,15 @@ _run_idempotent_backfill() {
   # block's. The PREDICATE deliberately is not — it tests `-z`, this tests
   # `! -d`, a strict superset, because the very next statement is a `cd`.
   # Reword one copy and reword both; only this copy is pinned, by C6b.
+  #
+  # That block is now DEFENSIVE ONLY for an empty root, and this guard is why.
+  # Measured by changing its `exit 1` to a sentinel: no projectless invocation
+  # returns the sentinel — bare, --backfill-only, --plan, --sync-framework and
+  # --to-production all come back rc 1 from HERE instead. It is kept rather than
+  # deleted because deleting a working refusal to tidy a duplicate is a wider
+  # change than this defect asks for, and it still covers any future caller that
+  # reaches it with an empty root by another route. One line removes it for a
+  # maintainer who would rather not carry the pair.
   if [ ! -d "$PROJECT_ROOT" ]; then
     print_fail "No Solo Orchestrator project found."
     print_info "Run this script from your project directory (where .claude/phase-state.json lives)."
