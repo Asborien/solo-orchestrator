@@ -160,10 +160,10 @@ c6_track_outside_project_refuses_by_name() {
   local out rc=0
   out=$( cd "$EMPTY_DIR" && "$SH" "$SCRIPT" --track standard </dev/null 2>&1 ) || rc=$?
 
-  if [ "$rc" -ne 0 ]; then
-    pass "C6a: --track standard outside a project exits non-zero (rc=$rc)"
+  if [ "$rc" -eq 1 ]; then
+    pass "C6a: --track standard outside a project exits 1, the canonical refusal code (rc=$rc)"
   else
-    fail_ "C6a" "--track standard outside a project must exit non-zero; output:\n$out"
+    fail_ "C6a" "--track standard outside a project must exit 1; output:\n$out"
   fi
 
   # BOTH lines the refusal owes, each WITH ITS SEVERITY. Pinning only the first
@@ -172,10 +172,14 @@ c6_track_outside_project_refuses_by_name() {
   # still exits 1 but softens a refusal into a note — the messaging standard's
   # "never soften a block", and a mutant that survived a review at 12/0.
   # The labels are safe to match joined: helpers-core.sh gates its colours on
-  # `[ -t 1 ]`, and this suite always captures through a command substitution,
-  # so RED and NC are empty here and `[FAIL] ` is contiguous with the message.
-  if echo "$out" | grep -qF '[FAIL] No Solo Orchestrator project found.' \
-     && echo "$out" | grep -qF '[INFO] Run this script from your project directory (where .claude/phase-state.json lives).'; then
+  # `[ -t 1 ]`, and no case here gives the script a tty — every one captures
+  # through a command substitution or discards to /dev/null — so RED and NC are
+  # empty and `[FAIL] ` is contiguous with the message.
+  # -qxF, not -qF: a substring match still passes when the line is APPENDED to
+  # ("… project found. This is only a note."), which is the same softening the
+  # severity prefix is here to prevent. Whole-line or it is not pinned.
+  if echo "$out" | grep -qxF '[FAIL] No Solo Orchestrator project found.' \
+     && echo "$out" | grep -qxF '[INFO] Run this script from your project directory (where .claude/phase-state.json lives).'; then
     pass "C6b: the refusal names the condition and the remedy, each at its own severity"
   else
     fail_ "C6b" "expected both refusal lines with their [FAIL]/[INFO] severities; output:\n$out"
@@ -195,7 +199,7 @@ c7_backfill_only_outside_project_refuses_by_name() {
   local out rc=0
   out=$( cd "$EMPTY_DIR" && "$SH" "$SCRIPT" --backfill-only </dev/null 2>&1 ) || rc=$?
 
-  if [ "$rc" -ne 0 ] \
+  if [ "$rc" -eq 1 ] \
      && echo "$out" | grep -qF 'No Solo Orchestrator project found.' \
      && ! echo "$out" | grep -qF "$CD_DIAG"; then
     pass "C7: --backfill-only outside a project refuses by name, no cd diagnostic"
@@ -235,7 +239,7 @@ c9_root_that_is_not_a_directory() {
 
   out=$( cd "$nl_dir" && "$SH" "$SCRIPT" --track standard </dev/null 2>&1 ) || rc=$?
 
-  if [ "$rc" -ne 0 ] \
+  if [ "$rc" -eq 1 ] \
      && echo "$out" | grep -qF 'No Solo Orchestrator project found.' \
      && ! echo "$out" | grep -qF "$CD_DIAG"; then
     pass "C9: a PROJECT_ROOT that exists but is not a directory is refused by name"

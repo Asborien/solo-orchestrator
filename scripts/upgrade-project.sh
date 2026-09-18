@@ -491,10 +491,11 @@ _run_idempotent_backfill() {
   # the bash version. Measured: `cd ""` is a silent no-op returning 0 on 3.2.57
   # and on 5.2.21, and an error ("null directory", rc 1) from 5.3 on. So this
   # function either ran rooted at whatever cwd happened to be, or killed the
-  # script under `set -e` — and this function's CALL SITE sits ~990 lines above
-  # the `--- Validate project root ---` block that owns this refusal, so that
-  # block was never reached either way. Refusing here makes both bash versions
-  # behave alike.
+  # script under `set -e` — and this function's CALL SITE runs long before the
+  # `--- Validate project root ---` block that owns this refusal, so that block
+  # was never reached either way. Refusing here makes both bash versions behave
+  # alike. (No line distance is quoted on purpose: two earlier drafts of this
+  # comment carried one and both went stale within a commit or two.)
   #
   # SYNC SIBLING: the two message lines below are a verbatim copy of that
   # block's. The PREDICATE deliberately is not — it tests `-z`, this tests
@@ -864,13 +865,14 @@ _run_idempotent_backfill() {
 # BL-109 S3: --plan ALSO skips it (and never calls it) — --plan is read-only and
 # must write nothing outside its run folder (invariant I1). The backfill mutates
 # the manifest / host config / .claude/skills/, so it cannot run on the plan path.
-# BL-298-HELP-SKIPS-BACKFILL: --help is read-only and its block sits ~880 lines
-# below here, so an unconditional backfill reached first — writing .gitignore,
-# .claude/skills/ and the manifest into whatever project cwd was in (ten files
-# on a bare fixture, measured), and on bash 5.3+ dying before printing anything
-# at all. The no-target check just above the help block already carves SHOW_HELP
-# out; this carves it out of the writes too. Same invariant as --plan above:
-# read-only flags write nothing.
+# BL-298-HELP-SKIPS-BACKFILL: --help is read-only and its `--- Help ---` block
+# is far below here, so an unconditional backfill reached first — writing
+# .gitignore, .claude/skills/ and the manifest into whatever project cwd was in
+# (ten files on a bare fixture, measured), and on bash 5.3+ dying before
+# printing anything at all. The no-target check just above the help block
+# already carves SHOW_HELP out; this carves it out of the writes too. Same
+# invariant as --plan above: read-only flags write nothing. (No line distance
+# quoted: the one that used to be here went stale between two commits.)
 if [ "$SYNC_FRAMEWORK" != true ] && [ "$PLAN" != true ] && [ "$SHOW_HELP" != true ]; then
   _run_idempotent_backfill
 fi

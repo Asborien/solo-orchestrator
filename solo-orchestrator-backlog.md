@@ -20842,9 +20842,14 @@ choice for the same reason. Bare is the right form for naming text that is dead 
 
 **Root cause.** `find_project_root` returns the EMPTY STRING when no `.claude/phase-state.json` is
 above cwd. `_run_idempotent_backfill` opens with `( cd "$PROJECT_ROOT"`, and its call site is
-guarded only against `--sync-framework` and `--plan` — about 880 lines above the `--- Help ---`
-block and about 990 above `--- Validate project root ---`, the block that already owns the correct
-refusal. Neither is reached on a projectless invocation.
+guarded only against `--sync-framework` and `--plan`. That call site runs long before the
+`--- Help ---` block and longer still before `--- Validate project root ---`, the block that already
+owns the correct refusal. Neither is reached on a projectless invocation.
+
+No line distance is quoted for that, deliberately, and it used to be. Two drafts of this entry and
+two of the guard comments carried one, and every one of them went stale within a commit or two of
+being written — the same class as a mutant located by absolute line rather than by distance from its
+marker. Both blocks are named; `grep` finds them.
 
 **`cd ""` is version-split, and that is the part that was not known.** Measured on this host and in
 `ubuntu:24.04` on both architectures, starting from a known cwd:
@@ -21039,15 +21044,38 @@ remediation-line text occurs twice in the file, at the guard and at
 | MG — the refusal's remediation line deleted | `# BL-298-BACKFILL-ROOT-GUARD` + 16; hits 2→1; one line shorter | C6b (11/1) |
 | MB — `&& [ "$SHOW_HELP" != true ]` dropped from the `--backfill-only` short-circuit | `# BL-298-HELP-BEATS-BACKFILL` + 13; hits 1→0; line count unchanged | C10 (11/1) |
 | N5 — the guard's `print_fail` softened to `print_info` | `# BL-298-BACKFILL-ROOT-GUARD` + 15; hits 3→2; line count unchanged | C6b (11/1) |
-| N5b — the guard's `print_info` promoted to `print_fail` | `# BL-298-BACKFILL-ROOT-GUARD` + 16; hits 1→0; line count unchanged | C6b (11/1) |
+| N5b — the guard's `print_info` promoted to `print_fail` | `# BL-298-BACKFILL-ROOT-GUARD` + 17; hits 1→0; line count unchanged | C6b (11/1) |
+| Z1 — the guard's `exit 1` changed to `exit 2` | `# BL-298-BACKFILL-ROOT-GUARD` + 18; `    exit 1` hits 20→19; line count unchanged | C6a, C7, C9 (9/3) |
+| Z2 — the condition message softened by appending " This is only a note." | `# BL-298-BACKFILL-ROOT-GUARD` + 16; hits 3→2; line count unchanged | C6b (11/1) |
+
+**Z1 and Z2 both survived a review at 12/0, and each found a hole in an assertion rather than in a
+guard.** Z2 passed because `grep -qF` is a substring match, so appending to a refusal leaves it
+matching; C6b is whole-line now. Z1 passed because three cases asked for a non-zero exit rather than
+for the code the canonical block actually uses; all three ask for 1 now.
+
+**Z1 also caught a weakness in the mutation harness itself, which is recorded because the harness is
+part of the evidence.** Its location check searches for the FIRST occurrence of the target text in
+the file, and `    exit 1` occurs twenty times — the first is 265 lines from the marker. The
+substitution was correctly anchored to follow the marker, but the check could not see that and
+**refused to report rather than reporting a distance it had not verified**, which is the right
+failure. Z1's distance above was then taken from the first `    exit 1` BELOW the marker.
 
 **N5 survived a review, and the hole it found was in the assertion, not the guard.** Swapping
 `print_fail` for `print_info` leaves the exit code at 1 and the wording identical, so the suite was
 12/0 against it on all three interpreters while the refusal had quietly become a note — the
 messaging standard's "never soften a block", unpinned. C6b now matches `[FAIL] ` and `[INFO] `
-joined to their messages, which kills N5 and its inverse N5b. The labels are safe to match joined
-because `helpers-core.sh` gates its colours on `[ -t 1 ]` and this suite always captures through a
-command substitution, so `RED` and `NC` are empty.
+joined to their messages, which kills N5 and its inverse N5b. The match is **whole-line** (`-qxF`,
+not `-qF`): a substring match still passes when the line is appended to — "… project found. This is
+only a note." — which is the same softening the prefix is there to prevent, and a mutant of exactly
+that shape survived at 12/0 before the change. The labels are safe to match joined because
+`helpers-core.sh` gates its colours on `[ -t 1 ]` and no case in this suite gives the script a tty:
+each one captures through a command substitution or discards to `/dev/null`, so `RED` and `NC` are
+empty. (An earlier draft said "always captures through a command substitution"; C5 discards
+instead. The conclusion holds, the absolute did not.)
+
+**Every refusal case now asserts exit code 1 exactly, not merely non-zero.** `exit 1` → `exit 2` in
+the guard survived at 12/0 while C6a, C7 and C9 asked only for non-zero. One is the code the
+canonical `--- Validate project root ---` block uses, so it is the code this guard owes.
 
 **MB had to be anchored before it would land, and that is worth recording.** The 34-byte text
 `&& [ "$SHOW_HELP" != true ]; then`, counting its leading space, occurs at two of the three guards,
