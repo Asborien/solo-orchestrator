@@ -502,14 +502,21 @@ _run_idempotent_backfill() {
   # `! -d`, a strict superset, because the very next statement is a `cd`.
   # Reword one copy and reword both; only this copy is pinned, by C6b.
   #
-  # That block is now DEFENSIVE ONLY for an empty root, and this guard is why.
-  # Measured by changing its `exit 1` to a sentinel: no projectless invocation
-  # returns the sentinel — bare, --backfill-only, --plan, --sync-framework and
-  # --to-production all come back rc 1 from HERE instead. It is kept rather than
-  # deleted because deleting a working refusal to tidy a duplicate is a wider
-  # change than this defect asks for, and it still covers any future caller that
-  # reaches it with an empty root by another route. One line removes it for a
-  # maintainer who would rather not carry the pair.
+  # That block is now DEFENSIVE ONLY for an empty root. Measured twice, with a
+  # sentinel exit code in each place in turn, because the two checks tell
+  # different stories:
+  #   • sentinel in the canonical block — no projectless invocation returns it.
+  #   • sentinel HERE — bare, --backfill-only and --to-production return it, so
+  #     those three are refused by this guard; --plan and --sync-framework come
+  #     back rc 1 WITHOUT reaching it, because `_run_plan` and
+  #     `_run_sync_framework` each test `-z "$PROJECT_ROOT"` inside their own
+  #     dispatch function, earlier than this.
+  # So nothing reaches the canonical block with an empty root any more, but the
+  # credit is split: two paths never did. It is kept rather than deleted because
+  # deleting a working refusal to tidy a duplicate is a wider change than this
+  # defect asks for, and it still covers any future caller that reaches it with
+  # an empty root by another route. One line removes it for a maintainer who
+  # would rather not carry the pair.
   if [ ! -d "$PROJECT_ROOT" ]; then
     print_fail "No Solo Orchestrator project found."
     print_info "Run this script from your project directory (where .claude/phase-state.json lives)."
