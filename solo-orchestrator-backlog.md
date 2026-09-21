@@ -20878,10 +20878,27 @@ and are WP9c's since v2.2; row 33 (this) stays UNOWNED.
 
 **Status:** Open — fix proposed in this PR. Upstream issue: kraulerson/solo-orchestrator#419.
 
-**Measured:** 2026-09-17 on `main` at `363e48d`, from a clean worktree, no local change of any kind.
+**Measured:** 2026-09-17 on `main` at `363e48d` (blob identical at `ba262e3`), from a clean worktree, no local change of any kind.
+
+**Which `main` each figure is against.** `main` moved twice while this was in review, to `363e48d`
+and then to `ba262e3`; the branch merged each in turn, never rebased. Figures re-run at `ba262e3`
+say `ba262e3` and nothing else. Figures first taken at `363e48d` and not re-run there say
+**"blob identical at `ba262e3`"**, and that phrase means exactly one thing: `git rev-parse` gives
+the same blob hash for that file at both commits, so the bytes measured are the bytes now on
+`main`. It is not a guess that the behaviour is unchanged; it is the observation that the file is
+unchanged. `scripts/upgrade-project.sh`, `tests/edge-cases-scripts.sh` and
+`tests/test-upgrade-to-production-warn.sh` are all identical across the two.
+
+Re-run at `ba262e3`, from a full checkout, and reproduced to the case: the numbering sweep; the
+suite's RED tallies under 5.3.15 and 3.2.57; the `test-upgrade-to-production-warn.sh` BEFORE
+figure; the `edge-cases-scripts.sh` BEFORE figure (2026-09-19, under bash 5.3.15, `PASS: 73`,
+`FAIL: 1`, the one failure E18's message assertion); and the five-row "Not fixed here" table.
+Measured at `363e48d` and not re-run: the ten files `--help` wrote, the 46 files
+`--backfill-only --help` wrote, and the container RED row. Everything measured at this branch's
+head was measured after the `ba262e3` merge.
 
 **Numbering:** `git grep -q -w BL-298 origin/main` → no hit (rc 1), against an `origin` fetched the
-same day, at `363e48d`. Positive control on the highest existing number, `git grep -q -w BL-296
+same day, at `ba262e3`. Positive control on the highest existing number, `git grep -q -w BL-296
 origin/main` → hit, so the sweep is proven able to find a number that is taken. No local ref and no
 fork branch claims BL-298 either, each swept the same way with its own control.
 
@@ -20946,7 +20963,7 @@ no-ops and cwd stays the invocation dir"); it was correct when written and stopp
 
 1. **Every bash.** The backfill runs rooted at whatever cwd happens to be, before the script has
    decided there is a project at all. On a minimal fixture (a `.claude/manifest.json` and a
-   `.claude/phase-state.json`, nothing else) `--help` at `363e48d` wrote **ten** files: `.gitignore`,
+   `.claude/phase-state.json`, nothing else) `--help` at `363e48d`, blob identical at `ba262e3`, wrote **ten** files: `.gitignore`,
    `.claude/bypass-audit.json`, `.claude/last-checked-commit.txt`, seven under `.claude/skills/`,
    and it rewrote `.claude/manifest.json`. A help flag mutates the project it is run in (**C5**).
    **That exit 0 is the half with a live consumer.** `--backfill-only` is the migration route
@@ -20994,14 +21011,14 @@ day they ship 5.3. Consequence 1 reaches every host now.
 suite's own `set -e` that command substitution aborts the file: two passes, then silence, no tally
 line, exit 1.
 
-    BEFORE (363e48d):  T1 PASS, T2 PASS, then silent abort — no tally line at all, exit 1
+    BEFORE (ba262e3):  T1 PASS, T2 PASS, then silent abort — no tally line at all, exit 1
     AFTER:             == Total: 6 | Passed: 6 | Failed: 0 ==, exit 0
 
 `tests/edge-cases-scripts.sh` — its `E18` runs `--track standard` from an empty directory and makes
 two assertions. The exit-code one held either way; the message one asserts
 `no.*project found|not found|FAIL` against output that was only `cd: null directory`.
 
-    BEFORE (363e48d):  PASS: 73  FAIL: 1  SKIP: 0  TOTAL: 74, exit 1
+    BEFORE (ba262e3):  PASS: 73  FAIL: 1  SKIP: 0  TOTAL: 74, exit 1
                        the one failure is E18's message assertion, nothing else
     AFTER:             PASS: 74  FAIL: 0  SKIP: 0  TOTAL: 74, exit 0
 
@@ -21040,14 +21057,14 @@ correction is left here rather than rewritten out of the history. See "Not fixed
   With only the first two guards, `--backfill-only --help` skipped the backfill and then fell into
   the short-circuit, which refreshes CDF assets and exits 0 having printed no help at all: measured
   on bash 3.2.57 in a bare fixture, **36 files written, exit 0, zero lines of help** (46 files at
-  `363e48d`). The read-only flag was doing the most work of any path in the script. It now prints
+  `363e48d`, blob identical at `ba262e3`). The read-only flag was doing the most work of any path in the script. It now prints
   help, exits 0 and leaves the tree byte-identical (**C10**).
 
 Net effect on behaviour: every bash version takes the same path, and `--help` alone or with
 `--backfill-only` prints help, exits 0 and writes nothing.
 
 **Not fixed here — measured, not assumed.** Three more invocations swallow help. All three behave
-**identically at `363e48d` and at this branch's head**, so none is a regression and none is caused
+**identically at `ba262e3` and at this branch's head**, so none is a regression and none is caused
 by the mechanism this entry fixes: `_run_sync_framework` and `_run_plan` each `exit 0` inside their
 own dispatch function, and the `--validate-only` block exits earlier still, all before the
 `--- Help ---` block is ever reached. That is a different defect with the same symptom, and it wants
@@ -21060,7 +21077,7 @@ Measured on bash 3.2.57 from a full checkout at each commit, in a fixture holdin
 (`.claude/manifest.json` and `.claude/phase-state.json`) and nothing else. "help" is whether the
 usage heading was printed at all; "files" is the fixture's file count before and after.
 
-| invocation | at `363e48d` | at this head |
+| invocation | at `ba262e3` | at this head |
 |---|---|---|
 | `--help` | rc 0, help, 2 → 12 | rc 0, help, 2 → 2 |
 | `--backfill-only --help` | rc 0, **no help**, 2 → 48 | rc 0, help, 2 → 2 |
@@ -21073,8 +21090,8 @@ fixes, and it is untouched here. `--validate-only --track standard --help` write
 breaks no contract about writing; it prints resolved JSON instead of help, which is a question about
 flag precedence rather than a defect of this class.
 
-**Read the middle column before trusting the first measurement of any of these.** A first pass ran
-the `363e48d` side from a detached copy of `scripts/` rather than a full checkout, which made
+**Read the middle column before trusting the first measurement of any of these.** A first pass, made
+while `main` stood at `363e48d`, ran the `main` side from a detached copy of `scripts/` rather than a full checkout, which made
 `ORCHESTRATOR_ROOT` point at a tree with no `init.sh` and turned `--sync-framework --help` into
 `rc 2` — a harness artefact that reads exactly like a regression this branch had introduced. It had
 not. Both columns above are full checkouts.
@@ -21087,11 +21104,15 @@ not. Both columns above are full checkouts.
 a different bash measures nothing, since the script carries its own `#!/usr/bin/env bash`. Every row
 below varies the script's interpreter, not the suite's.
 
-| Script's bash | RED (against `main`'s script) | GREEN (after the fix) |
+| Script's bash | RED (against the unfixed script) | GREEN (after the fix) |
 |---|---|---|
 | 5.3.15, macOS | 3 passed, 9 failed, exit 1 | 12 passed, 0 failed, exit 0 |
 | 3.2.57, `/bin/bash`, macOS | 8 passed, 4 failed, exit 1 | 12 passed, 0 failed, exit 0 |
 | 5.2.21, `ubuntu:24.04` non-root, **`git` and `jq` installed** | 8 passed, 4 failed, exit 1 | 12 passed, 0 failed, exit 0 |
+
+The two macOS RED rows were re-run with `SOLO_UPGRADE_SCRIPT` pointing at a full checkout of
+`ba262e3`. The container row was measured against a full checkout of `363e48d`, blob identical at
+`ba262e3`, and has not been re-run since.
 
 **That row needs `jq`, and the bare image has none.** With `git` only it reads **11 passed, 1
 failed**: C8 comes back rc 127 on `jq: command not found`, because `--validate-only` resolves its
