@@ -20897,10 +20897,13 @@ Measured at `363e48d` and not re-run: the ten files `--help` wrote, the 46 files
 `--backfill-only --help` wrote, and the container RED row. Everything measured at this branch's
 head was measured after the `ba262e3` merge.
 
-**Numbering:** `git grep -q -w BL-298 origin/main` → no hit (rc 1), against an `origin` fetched the
-same day, at `ba262e3`. Positive control on the highest existing number, `git grep -q -w BL-296
+**Numbering:** `git grep -q -w BL-298 origin/main` → no hit (rc 1), against an `origin` fetched
+2026-09-19, at `ba262e3`. Positive control on the highest existing number, `git grep -q -w BL-296
 origin/main` → hit, so the sweep is proven able to find a number that is taken. No local ref and no
-fork branch claims BL-298 either, each swept the same way with its own control.
+fork branch claims BL-298 as its own entry either, each swept the same way with its own control. A
+word-grep of the local refs does hit two sibling branches, once each: their entries carry the same
+numbering block this one does, naming BL-297 to BL-302 against their issues, and a mention in that
+block is not a claim. The sweep reads the hit, not only the count.
 
 **This entry lost its number twice, and both losses have the same cause.** It was BL-290 first:
 four branches were prepared in parallel and every one of them swept BL-290 free against
