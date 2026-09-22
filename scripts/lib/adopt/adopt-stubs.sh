@@ -116,38 +116,17 @@ adopt_stub_framework_script_collisions() {
 
 # §6.3 — per-finding secrets disposition. Scout already reported the findings
 # (redacted); deciding what to do about each one is not WP4's.
-adopt_stub_secrets_disposition() {
-  local report="$1"
-  local n
-  n="$(adopt_int "$(adopt_report_read "$report" '.secrets.findingCount // 0')")"
-  local status
-  status="$(adopt_report_read "$report" '.secrets.status // ""')"
-  # OWNER CORRECTED AT WP6. §6.3's per-finding disposition of the project's
-  # HISTORY is a different surface from §7.3's archive scan, which WP6 did
-  # build, and §10 assigns §6.3 to no work package at all. Naming WP6 here now
-  # that WP6 has landed would read as "already done".
-  # BL-288: `scanned-partial` is the one non-`scanned` status where a tool DID
-  # run, so it gets its own sentence. The old wording — "did not run a secrets
-  # tool" — would have been false here, and false in the direction that makes
-  # an operator discount the warning.
-  if [ "$status" = "scanned-partial" ]; then
-    adopt_stub_notice "the secrets disposition" "unassigned — §10 gives §6.3 to no work package" \
-      "The scan ran but could only read part of this project's history (a shallow clone), so its"
-    adopt_note "result is not a statement about your history. Run 'git remote set-branches origin '*' && git fetch --unshallow' and re-scan"
-    adopt_note "before you treat this repository as free of committed credentials."
-    return 0
-  fi
-  if [ "$status" != "scanned" ]; then
-    adopt_stub_notice "the secrets disposition" "unassigned — §10 gives §6.3 to no work package" \
-      "The scan did not run a secrets tool, so this adoption knows nothing about credentials in your history."
-    return 0
-  fi
-  [ "$n" -gt 0 ] || return 0
-  adopt_stub_notice "the secrets disposition" "unassigned — §10 gives §6.3 to no work package" \
-    "The scan found $n secret-shaped finding(s) in this repository's history. Each one needs a"
-  adopt_note "recorded decision and this build does not collect one. Read"
-  adopt_note ".claude/adoption/scout-report.json's secrets section before you trust this repo."
-}
+# adopt_stub_secrets_disposition — RETIRED 2026-09-19 by WP10b/2.
+#
+# The secrets disposition is no longer a stub. `adopt_secrets_decide` in
+# `scripts/lib/adopt/adopt-secrets.sh` implements §6.1's ten-cell tier table,
+# and the driver calls it at step 3 (`# BL-242-SECRETS-DECIDE-CALL`) on a scan
+# this run performed (`# BL-242-SECRETS-STOP-CALL`).
+#
+# THE NAME IS LEFT HERE AS A HEADSTONE rather than deleted silently, because
+# `## BL-242:`'s own derivation of "what is still unbuilt" counts the
+# `adopt_stub_*` functions that are actually CALLED, and a reader following an
+# older handoff to this file should find out where the behaviour went.
 
 # WP7 — the Adoption Record, the audit rows, and the CI carve-out.
 #
@@ -199,8 +178,9 @@ adopt_stub_project_docs() {
     "CLAUDE.md, the document templates and the reference docs are NOT written. The scripts and the"
   adopt_note "state are here, so the gates work; the reading material an agent picks up at the start"
   adopt_note "of a session is not, and a CLAUDE.md you already have would be a collision, not a gap."
-  adopt_note "WP6's archive covers your AI-layer settings and your git hooks; documents are neither"
-  adopt_note "YET — D3 makes them a fourth archive class, and WP11 is where that lands."
+  adopt_note "Your framework documents ARE archived now — WP11 shipped D3's `document` class, so"
+  adopt_note "each one you already owned is in the adoption archive with a restore line. What is"
+  adopt_note "not built is the WRITING of the new ones (WP12b), which is what this notice is about."
 }
 
 # WP7 — §8.6's provenance headers on reconstructed documents.
