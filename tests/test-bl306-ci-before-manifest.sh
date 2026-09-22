@@ -38,15 +38,33 @@
 #       governance step's own guard names the manifest (the fix must not
 #       turn a Phase-0 tree into an unscanned one)
 #   T4  a shell evaluation of the guards: over an EMPTY fixture every
-#       toolchain step skips and the notice runs; with the census sample
-#       file present every toolchain step runs and the notice skips.
+#       toolchain step skips and the notice runs; with the first census
+#       sample file present every toolchain step runs and the notice skips.
 #       This evaluates the `hashFiles(<patterns>) != ''` / `== ''` forms the
 #       templates carry, and nothing else — `act` is not available here, so
 #       the workflow itself is not executed; the assertion is on the
 #       rendered YAML plus this evaluation of its conditions.
+#   T5  past Phase 1 a missing manifest FAILS, it does not skip green: the
+#       notice step's `run:` script is extracted and EXECUTED under
+#       `bash -e -o pipefail` (the runner's fail-fast shell) against four
+#       fixtures — `.claude/phase-state.json` at current_phase 3 and 2
+#       (rc 1, `::error::`), at current_phase 1 (rc 0, `::notice::`), and
+#       no phase-state at all (rc 0, `::notice::`). A review of the first
+#       cut found the gap: a Poetry or Pipenv project (the framework's own
+#       Python guidance) has no requirements.txt, and on a Phase 3 tree
+#       every toolchain step skipped and the check went green — "a check
+#       that cannot run must not pass".
+#   T6  one case per language: every manifest name in the census, placed
+#       ALONE in a fixture, enables every toolchain step and skips the
+#       notice. The census carries the manifests the harness itself
+#       recognises (process-checklist.sh's lockfile list and the platform
+#       modules' lockfile notes), so a compliant project is never
+#       "manifest absent".
 # MUTANTS (on a mirror of templates/, never the real tree): remove one
-# guard, invert one guard, guard the secret scan, delete the notice step.
-# Each proves it landed (changed-line count) and names the case that fails.
+# guard, invert one guard, guard the secret scan, delete the notice step,
+# delete the phase check's `exit 1`, drop one manifest name from every
+# guard of one template. Each proves it landed (changed-line count) and
+# names the case that fails.
 #
 # WHY `other.yml` IS OUT: its toolchain steps are TODO comments and its
 # dependency-audit step exits 1 by design until the operator configures a
@@ -55,7 +73,8 @@
 # The census below is the SPEC, in bl254's documented-census idiom — it is
 # not derived from the templates, because a manifest read off the file it
 # is meant to check would agree with itself. Row format:
-#   <lang>|<hashFiles argument list, verbatim>|<sample file T4 creates>
+#   <lang>|<hashFiles argument list, verbatim>|<sample files, one per pattern, space-separated>
+# The first sample is what T4 uses; T6 uses each in turn.
 #
 # REGISTRATION: content-pin only — no init.sh on any executed line, not an
 # aggregator -> BOTH tests/full-project-test-suite.sh and the tests.yml
@@ -88,17 +107,18 @@ count_in() { local n=""; n=$(grep -cF -- "$2" "$1" 2>/dev/null); _num "$n"; }
 CENSUS_FILE="$TOPTMP/census.txt"
 cat > "$CENSUS_FILE" <<'EOF'
 typescript|'package.json'|package.json
-python|'requirements.txt'|requirements.txt
-java|'**/*.gradle*'|build.gradle.kts
-kotlin|'**/*.gradle*'|build.gradle.kts
+python|'requirements.txt', 'pyproject.toml', 'Pipfile'|requirements.txt pyproject.toml Pipfile
+java|'**/*.gradle*', '**/pom.xml'|build.gradle.kts pom.xml
+kotlin|'**/*.gradle*', '**/pom.xml'|build.gradle.kts pom.xml
 go|'go.mod'|go.mod
 rust|'Cargo.toml'|Cargo.toml
-csharp|'**/*.sln', '**/*.csproj'|App.csproj
+csharp|'**/*.sln', '**/*.csproj'|App.sln App.csproj
 dart|'pubspec.yaml'|pubspec.yaml
 swift|'Package.swift'|Package.swift
 EOF
-census_args()   { awk -F'|' -v l="$1" '$1==l {print $2; exit}' "$CENSUS_FILE"; }
-census_sample() { awk -F'|' -v l="$1" '$1==l {print $3; exit}' "$CENSUS_FILE"; }
+census_args()    { awk -F'|' -v l="$1" '$1==l {print $2; exit}' "$CENSUS_FILE"; }
+census_samples() { awk -F'|' -v l="$1" '$1==l {print $3; exit}' "$CENSUS_FILE"; }
+census_sample()  { local s=""; s="$(census_samples "$1")"; printf '%s\n' "${s%% *}"; }
 
 # template_list <github-templates-dir> — the ONE derivation every case uses:
 # regular *.yml files directly in the directory, sorted, dotfiles excluded.
@@ -130,6 +150,34 @@ steps_of() {
     injob && /::notice::/ { note = 1 }
     END { flush() }
   ' "$1"
+}
+
+# notice_script <template> <want-skip-cond> — the `run: |` block of the step
+# whose `if:` is <want-skip-cond>, de-indented (the block sits at indent 10),
+# so T5 can EXECUTE it. Empty output if the step or its block is absent.
+notice_script() {
+  awk -v want="$2" '
+    BEGIN { instep = 0; inrun = 0 }
+    /^      - / { instep = 0; inrun = 0 }
+    /^        if:[[:space:]]/ { c = $0; sub(/^        if:[[:space:]]*/, "", c); if (c == want) instep = 1 }
+    instep && /^        run:[[:space:]]*\|[[:space:]]*$/ { inrun = 1; next }
+    instep && inrun && /^          / { line = $0; sub(/^          /, "", line); print line; next }
+    instep && inrun && /^[[:space:]]*$/ { next }
+    instep && inrun { inrun = 0 }
+  ' "$1"
+}
+
+# run_notice <script-file> <fixture-root> — executes the notice script the way
+# the runner does (`bash -e -o pipefail`, cwd = the checked-out tree); prints
+# "<rc> <annotation kind>", the kind being error, notice, or none.
+run_notice() {
+  local rc=0 out="" kind="none"
+  out="$(cd "$2" && bash -e -o pipefail "$1" 2>&1)" || rc=$?
+  case "$out" in
+    *"::error::"*)  kind="error" ;;
+    *"::notice::"*) kind="notice" ;;
+  esac
+  printf '%s %s\n' "$rc" "$kind"
 }
 
 # manifest_gaps <github-templates-dir> — one line per violation:
@@ -226,7 +274,7 @@ eval_guard() {
 
 # simulate <template> <lang> <root> — prints "<tool_run> <tool_skip> <notice_verdict> <unknown>"
 simulate() {
-  local f="$1" lang="$2" root="$3" args="" want_skip="" steps="" name cond note v
+  local f="$1" lang="$2" root="$3" args="" want_skip="" steps="" name="" cond="" note="" v=""
   local tr=0 ts=0 nv="absent" unk=0
   args="$(census_args "$lang")"
   want_skip="hashFiles($args) == ''"
@@ -345,6 +393,73 @@ else
   fail_ "T4" "guard evaluation disagrees with the intent:$t4_bad"
 fi
 
+# T5 — the notice step EXECUTED: past Phase 1 it fails, before it notices.
+# mk_phase_fixture <dir> <phase|none>
+mk_phase_fixture() {
+  mkdir -p "$1/.claude" || return 1
+  [ "$2" = "none" ] && return 0
+  printf '{\n  "current_phase": %s,\n  "phase_gates": {}\n}\n' "$2" > "$1/.claude/phase-state.json"
+}
+# t5_check <template> <lang> — prints violations, one per line
+t5_check() {
+  local f="$1" lang="$2" args="" want_skip="" script="" fx="" v=""
+  args="$(census_args "$lang")"
+  want_skip="hashFiles($args) == ''"
+  script="$TOPTMP/notice.$lang.$$.sh"
+  notice_script "$f" "$want_skip" > "$script"
+  if [ ! -s "$script" ]; then
+    printf '%s: no run: | block on the notice step\n' "$lang.yml"; return
+  fi
+  if [ "$(count_in "$script" 'current_phase')" -lt 1 ] || [ "$(count_in "$script" 'exit 1')" -lt 1 ]; then
+    printf '%s: notice script does not read current_phase and exit 1\n' "$lang.yml"
+  fi
+  fx="$(newtmp)"; mk_phase_fixture "$fx" 3
+  v="$(run_notice "$script" "$fx")"
+  [ "$v" = "1 error" ] || printf '%s: at current_phase 3 expected "1 error", got "%s"\n' "$lang.yml" "$v"
+  fx="$(newtmp)"; mk_phase_fixture "$fx" 2
+  v="$(run_notice "$script" "$fx")"
+  [ "$v" = "1 error" ] || printf '%s: at current_phase 2 expected "1 error", got "%s"\n' "$lang.yml" "$v"
+  fx="$(newtmp)"; mk_phase_fixture "$fx" 1
+  v="$(run_notice "$script" "$fx")"
+  [ "$v" = "0 notice" ] || printf '%s: at current_phase 1 expected "0 notice", got "%s"\n' "$lang.yml" "$v"
+  fx="$(newtmp)"; mk_phase_fixture "$fx" none
+  v="$(run_notice "$script" "$fx")"
+  [ "$v" = "0 notice" ] || printf '%s: with no phase-state.json expected "0 notice", got "%s"\n' "$lang.yml" "$v"
+}
+t5_bad="$TOPTMP/t5.txt"; : > "$t5_bad"
+while IFS= read -r f; do
+  lang="${f##*/}"; lang="${lang%.yml}"
+  [ "$lang" = "other" ] && continue
+  [ -n "$(census_args "$lang")" ] || continue
+  t5_check "$f" "$lang" >> "$t5_bad"
+done < "$GH_LIST"
+if [ ! -s "$t5_bad" ]; then
+  pass "T5 — executed: every notice step exits 1 with ::error:: at current_phase 2 and 3, and exits 0 with ::notice:: at phase 1 or with no phase-state ($n_lang templates, 4 fixtures each)"
+else
+  fail_ "T5" "$(grep -c . "$t5_bad") violation(s): $(head -3 "$t5_bad" | tr '\n' ';' | cut -c1-240)"
+fi
+
+# T6 — one case per language: each census manifest name ALONE enables the toolchain.
+while IFS= read -r f; do
+  lang="${f##*/}"; lang="${lang%.yml}"
+  [ "$lang" = "other" ] && continue
+  [ -n "$(census_args "$lang")" ] || continue
+  t6_bad=""; t6_n=0
+  for sample in $(census_samples "$lang"); do
+    M="$(newtmp)"; : > "$M/$sample"
+    set -- $(simulate "$f" "$lang" "$M")
+    t6_n=$((t6_n + 1))
+    if [ "$2" -ne 0 ] || [ "$1" -lt 3 ] || [ "$3" != "skip" ] || [ "$4" -ne 0 ]; then
+      t6_bad="$t6_bad $sample(run=$1,skip=$2,notice=$3,unknown=$4)"
+    fi
+  done
+  if [ -z "$t6_bad" ]; then
+    pass "T6-$lang — each of $t6_n manifest name(s) alone enables every toolchain step and skips the notice"
+  else
+    fail_ "T6-$lang" "a recognised manifest alone still skips the toolchain:$t6_bad"
+  fi
+done < "$GH_LIST"
+
 echo "=== MT — mutation proofs on a mirror ==="
 
 # MT1 — remove the guard from the setup-node step in typescript.yml: T2 must name it.
@@ -451,6 +566,65 @@ else
       pass "MT4 (MUTATION) — with rust.yml's notice step deleted, T1 counts zero and names the file"
     else
       fail_ "MT4 (MUTATION)" "deleting the notice step changed nothing — T1 is not counting what it claims to"
+    fi
+  fi
+fi
+
+# MT5 — delete the phase check's `exit 1` from python.yml's notice step: T5
+# must see rc 0 at phase 3 (the green-nobody-reads regression restored).
+MT5="$(newtmp)/fw"
+if ! mk_mirror "$MT5"; then
+  fail_ "MT5 setup" "could not mirror the framework"
+else
+  tgt="$MT5/templates/pipelines/ci/github/python.yml"
+  before="$(mktemp "$TOPTMP/mt5.XXXXXX")"; cp "$tgt" "$before"
+  awk '
+    /^        if: hashFiles\(.*\) == ..$/ { innotice = 1 }
+    /^      - / { innotice = 0 }
+    innotice && /^            exit 1$/ { innotice = 0; next }
+    { print }
+  ' "$before" > "$tgt"
+  if [ "$(_changed_lines "$before" "$tgt")" -ne 1 ]; then
+    fail_ "MT5 setup" "the mutation did not remove exactly one line — python.yml's notice step has no exit 1 at the expected indent"
+  else
+    t5_check "$tgt" python > "$TOPTMP/mt5.bad"
+    if [ "$(count_in "$TOPTMP/mt5.bad" 'at current_phase 3 expected "1 error", got "0 error"')" -ge 1 ]; then
+      pass "MT5 (MUTATION) — with the exit 1 deleted, T5 executes the notice at phase 3 and sees rc 0 — the regression is caught"
+    else
+      fail_ "MT5 (MUTATION)" "deleting exit 1 changed nothing T5 can see: $(head -2 "$TOPTMP/mt5.bad" | tr '\n' ';')"
+    fi
+  fi
+fi
+
+# MT6 — drop one recognised manifest name ('pyproject.toml') from EVERY guard
+# of python.yml, self-consistently: T2 (guard-wrong against the census), T1
+# (notice-manifest) and T6-python (pyproject.toml alone skips) must all fire.
+MT6="$(newtmp)/fw"
+if ! mk_mirror "$MT6"; then
+  fail_ "MT6 setup" "could not mirror the framework"
+else
+  tgt="$MT6/templates/pipelines/ci/github/python.yml"
+  before="$(mktemp "$TOPTMP/mt6.XXXXXX")"; cp "$tgt" "$before"
+  sed "s#hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile')#hashFiles('requirements.txt', 'Pipfile')#" "$before" > "$tgt"
+  n_ch="$(_changed_lines "$before" "$tgt")"
+  if [ "$n_ch" -lt 18 ]; then
+    fail_ "MT6 setup" "the mutation changed $n_ch line(s), expected >=18 (9 guards, before and after) — python.yml's guards are not in the census shape"
+  elif [ "$(count_in "$tgt" "'pyproject.toml'")" -ne 0 ]; then
+    fail_ "MT6 setup" "'pyproject.toml' still present in the mutant"
+  else
+    manifest_gaps "$MT6/templates/pipelines/ci/github" > "$TOPTMP/mt6.gaps"
+    M6="$(newtmp)"; : > "$M6/pyproject.toml"
+    set -- $(simulate "$tgt" python "$M6")
+    # The mutant's notice no longer matches the census condition, so the
+    # simulator counts it among the toolchain (run=1); the eight real
+    # toolchain steps must be the ones that SKIP on a pyproject.toml-only
+    # tree — that skip is the regression, and it is what T6-python asserts.
+    if [ "$(count_in "$TOPTMP/mt6.gaps" 'python.yml: guard-wrong: ')" -ge 1 ] \
+       && [ "$(count_in "$TOPTMP/mt6.gaps" 'python.yml: notice-manifest: ')" -ge 1 ] \
+       && [ "$2" -ge 3 ]; then
+      pass "MT6 (MUTATION) — with pyproject.toml dropped from every python.yml guard, T2 and T1 name the drift and a pyproject.toml-only tree skips $2 toolchain steps again"
+    else
+      fail_ "MT6 (MUTATION)" "dropping a manifest name was not caught: gaps=$(grep -c . "$TOPTMP/mt6.gaps") sim=run=$1,skip=$2,notice=$3"
     fi
   fi
 fi

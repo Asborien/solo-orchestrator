@@ -21076,19 +21076,32 @@ behind `setup-java` `cache: 'gradle'` (which hashes `**/*.gradle*` for its key),
 
 **Fix (`# BL-306-MANIFEST-GUARD`, one per template).** The template's own idiom, already on its
 three governance steps since `## BL-147:`: every step that needs the manifest carries
-`if: hashFiles('<manifest>') != ''`, and one new step immediately after checkout, guarded `== ''`,
-prints a `::notice::` naming what was skipped, why, and that secret detection and governance still
-run. Manifests: `package.json`, `requirements.txt`, `**/*.gradle*` (java, kotlin), `go.mod`,
-`Cargo.toml`, `'**/*.sln', '**/*.csproj'`, `pubspec.yaml`, `Package.swift`. Guarded: the toolchain
-setup action, install/restore, build, test, lint, format, the dependency audits, the licence check
-and the lockfile-integrity step — 62 steps across 9 templates, 136 added lines, nothing deleted or
-reordered. NOT guarded, deliberately: checkout, `Security - Secret detection (gitleaks)` (a Phase-0
-tree with a leaked credential must still be scanned — `## BL-151:`), and every `Governance -` step
-(their own `hashFiles('APPROVAL_LOG.md')` / `phase-state.json` guards are untouched). Once the
-manifest exists every guard is true and the job behaves exactly as before; a `package.json`
-committed without its lockfile still fails setup-node loudly, which is the right verdict under the
-Construction Rules' pin-and-commit-the-lockfile rule. `other.yml` is out: its toolchain steps are
+`if: hashFiles('<manifests>') != ''`, and one new step immediately after checkout, guarded `== ''`,
+reads `current_phase` from `.claude/phase-state.json` and then either FAILS (`::error::`, exit 1)
+when the phase is 2 or more — a check that cannot run must not pass — or prints a `::notice::`
+naming what was skipped, why, and that secret detection and governance still run. The manifest
+lists are the ones the framework itself recognises (`process-checklist.sh`'s lockfile list under
+`project_scaffolded`, and the platform modules' lockfile notes): `package.json`;
+`requirements.txt, pyproject.toml, Pipfile` (a Poetry or Pipenv tree, which is what
+`docs/platform-modules/web.md`'s Python lockfile note prescribes, has no `requirements.txt`);
+`**/*.gradle*, **/pom.xml` (java, kotlin); `go.mod`; `Cargo.toml`; `**/*.sln, **/*.csproj`;
+`pubspec.yaml`; `Package.swift`. Guarded: the toolchain setup action, install/restore, build, test,
+lint, format, the dependency audits, the licence check and the lockfile-integrity step — 62 steps
+across 9 templates, nothing deleted or reordered. NOT guarded, deliberately: checkout,
+`Security - Secret detection (gitleaks)` (a Phase-0 tree with a leaked credential must still be
+scanned — `## BL-151:`), and every `Governance -` step (their own `hashFiles('APPROVAL_LOG.md')` /
+`phase-state.json` guards are untouched). Once a recognised manifest exists every guard is true and
+the job behaves exactly as before: a `package.json` committed without its lockfile still fails
+setup-node loudly, and a Poetry or Maven tree still fails the `pip install -r requirements.txt` or
+`./gradlew` step loudly until the operator adapts it — both are the right verdict, a red the
+operator must act on rather than a green nobody reads. `other.yml` is out: its toolchain steps are
 TODO comments and its dependency-audit step exits 1 by design until a scanner is configured.
+
+Why the phase rule: the first cut skipped green on a Phase 3 Poetry tree (review finding R-306-1),
+turning a loud red into a silent pass — the regression class the change exists to avoid. The
+phase read is `grep -o` over the committed JSON with `|| true`, because `run:` steps execute under
+`bash -e` (workflow-syntax reference: bash and sh enforce fail-fast with `set -e`), so a Phase 0
+tree with no `phase-state.json` yet must not fail the notice step itself.
 
 Why step-level `hashFiles` rather than a job split: `hashFiles` reads the checked-out workspace, so
 it is a step-context function and a job-level `if:` cannot see the tree. Why guard the setup action
@@ -21101,23 +21114,35 @@ without a census row fails and nothing can be added unguarded. T1 — exactly on
 step per template. T2 — every toolchain step guarded on the census manifest (62). T3 — checkout,
 gitleaks and governance NOT guarded on it. T4 — a shell evaluation of the two condition shapes the
 templates carry, `hashFiles(...) != ''` and `== ''`, over an empty fixture (all 62 skip, notice
-runs) and over one holding the census sample file (all 62 run, notice skips). `act` is not installed
-on this host, so the workflow itself is not executed; T4 evaluates only those two shapes and the
-header says so. Four mutants on a mirror of `templates/`, each proving it landed by changed-line
-count: drop the setup-node guard (T2 names the step), invert one go.yml guard (T1 counts two skip
-steps and names Build), guard the gitleaks step (T3 refuses), delete rust.yml's notice step (T1
-counts zero). Registered in `tests/full-project-test-suite.sh` and the `tests.yml` unit list.
+runs) and over one holding the first census sample file (all 62 run, notice skips). `act` is not
+installed on this host, so the workflow itself is not executed; T4 evaluates only those two shapes
+and the header says so. T5 — the notice step's `run:` script is extracted and EXECUTED under
+`bash -e -o pipefail` against four fixtures per template: `current_phase` 3 and 2 (rc 1,
+`::error::`), 1 (rc 0, `::notice::`), and no `phase-state.json` (rc 0, `::notice::`). T6 — one
+case per language: each manifest name in the census, alone in a fixture, enables every toolchain
+step and skips the notice. Six mutants on a mirror of `templates/`, each proving it landed by
+changed-line count: drop the setup-node guard (T2 names the step), invert one go.yml guard (T1
+counts two skip steps and names Build), guard the gitleaks step (T3 refuses), delete rust.yml's
+notice step (T1 counts zero), delete the `exit 1` from python.yml's phase check (T5 executes it at
+phase 3 and sees rc 0), drop `pyproject.toml` from every python.yml guard (T2 and T1 name the drift
+and a pyproject-only tree skips all eight toolchain steps again). Registered in
+`tests/full-project-test-suite.sh` and the `tests.yml` unit list.
 
 **Evidence.**
-- RED at `f8841de`, before the fix, identical under `/bin/bash` 3.2.57 and Homebrew bash 5.3.15:
-  `Results: 4 passed, 6 failed` — T0 and T3 pass as controls; T1 fails `9 notice violation(s)`, T2
-  fails `71 guard violation(s)`, T4 fails with every toolchain step evaluating `run` on the empty
-  fixture.
-- GREEN after: `Results: 10 passed, 0 failed` under both shells, and under bash 5.2.21 in
-  `ubuntu:24.04` as a non-root user (mawk 1.3.4). All ten templates parse (PyYAML 6.0.3).
-- External mutant, outside the suite: the setup-node guard removed from a copy of typescript.yml
-  (cksum 4007748106 → 1560107544, guard count 9 → 8); suite `7 passed, 3 failed`, T2 naming
-  `typescript.yml: guard-missing: actions/setup-node@…` and T4 reporting
+- RED at `f8841de`, before the first cut, identical under `/bin/bash` 3.2.57 and Homebrew bash
+  5.3.15: `Results: 4 passed, 6 failed` — T0 (two assertions), T3 and MT3 pass as controls (MT3
+  passes at base because the weakening it plants, a guard on the secret scan, is refused regardless
+  of the fix); T1 fails `9 notice violation(s)`, T2 fails `71 guard violation(s)`, T4 fails with
+  every toolchain step evaluating `run` on the empty fixture.
+- RED for the second cut at `1dd146f` (the first cut committed), both shells: `Results: 13 passed,
+  9 failed` — T5 finds no script to execute in any template, T6 fails for python, java and kotlin
+  while the six single-manifest languages pass as controls, T1/T2/T4 report the widened census, and
+  MT5/MT6 cannot land.
+- GREEN after the second cut: `Results: 22 passed, 0 failed` under both shells, and under bash
+  5.2.21 in `ubuntu:24.04` as a non-root user (mawk 1.3.4). All ten templates parse (PyYAML 6.0.3).
+- External mutant, outside the suite, first cut: the setup-node guard removed from a copy of
+  typescript.yml (cksum 4007748106 → 1560107544, guard count 9 → 8); suite `7 passed, 3 failed`,
+  T2 naming `typescript.yml: guard-missing: actions/setup-node@…` and T4 reporting
   `typescript(empty:run=1,skip=8,…)`.
 
 **Residual — same class, other hosts, deliberately not in this change.** `ci/gitlab/*.yml` runs
@@ -21125,7 +21150,9 @@ counts zero). Registered in `tests/full-project-test-suite.sh` and the `tests.ym
 job-level `rules: - exists: [package.json]`, which drops the job rather than skipping steps and
 prints no notice. `ci/bitbucket/*.yml` has no file-existence condition at all; the guard would be a
 shell test at the top of each `script`. Both are different mechanisms needing their own suites and
-belong in their own change; recorded here so the class stays visible.
+belong in their own change; recorded here so the class stays visible. Also by design: a Swift
+tree built from an Xcode project without `Package.swift`, past Phase 1, fails the notice step
+loudly — the template assumes Swift Package Manager, as it did before this change.
 
 **Related:** `## BL-147:` (the `hashFiles('APPROVAL_LOG.md')` governance guards this reuses),
 `## BL-151:` (why the secret scan stays unconditional), `## BL-160:` (the false-FAIL doctrine — a
