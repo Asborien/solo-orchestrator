@@ -21026,9 +21026,9 @@ vacuity floor — the same class one surface over).
 
 ---
 
-## BL-306: the generated GitHub CI is red on every pull request before Phase 2 — `actions/setup-node` with `cache: 'npm'` fails "Dependencies lock file is not found" on a tree that has no `package.json` yet, and every language template has the same shape
+## BL-307: the generated GitHub CI is red on every pull request before Phase 2 — `actions/setup-node` with `cache: 'npm'` fails "Dependencies lock file is not found" on a tree that has no `package.json` yet, and every language template has the same shape
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/bl306-ci-before-lockfile`, NOT yet submitted.
+**Status:** Open — reproduction + fix BUILT on branch `fix/bl307-ci-before-lockfile`, NOT yet submitted.
 
 **Found:** 2026-09-22, on the first pull requests of an organisational project born from `init.sh` at
 `f8841de` — the intake, the manifesto, the pre-Phase-0 precondition rows. Every one carried a red
@@ -21074,7 +21074,7 @@ behind `setup-java` `cache: 'gradle'` (which hashes `**/*.gradle*` for its key),
   `**/gradle-wrapper.properties`, `buildSrc/**/Versions.kt`, `buildSrc/**/Dependencies.kt`,
   `gradle/*.versions.toml`, `**/versions.properties`.
 
-**Fix (`# BL-306-MANIFEST-GUARD`, one per template).** The template's own idiom, already on its
+**Fix (`# BL-307-MANIFEST-GUARD`, one per template).** The template's own idiom, already on its
 three governance steps since `## BL-147:`: every step that needs the manifest carries
 `if: hashFiles('<manifests>') != ''`, and one new step immediately after checkout, guarded `== ''`,
 reads `current_phase` from `.claude/phase-state.json` and then either FAILS (`::error::`, exit 1)
@@ -21108,7 +21108,7 @@ it is a step-context function and a job-level `if:` cannot see the tree. Why gua
 rather than drop `cache:`: the `package-manager-cache` default above, and no toolchain is worth
 installing on a tree with nothing to build.
 
-**Suite:** `tests/test-bl306-ci-before-manifest.sh`. T0 — the template list is derived once
+**Suite:** `tests/test-bl307-ci-before-manifest.sh`. T0 — the template list is derived once
 (`template_list`) and must be in bijection with a nine-row census, so a new language template
 without a census row fails and nothing can be added unguarded. T1 — exactly one `::notice::` skip
 step per template. T2 — every toolchain step guarded on the census manifest (62). T3 — checkout,

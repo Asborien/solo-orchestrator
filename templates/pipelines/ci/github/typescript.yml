@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # BL-306-MANIFEST-GUARD: a Phase 0/1 project has no package.json yet, and
+      # BL-307-MANIFEST-GUARD: a Phase 0/1 project has no package.json yet, and
       # setup-node's cache input fails hard without a lockfile ("Dependencies lock
       # file is not found"). Every step that needs the manifest is guarded on it;
       # this notice says what was skipped. Once package.json exists every guard
