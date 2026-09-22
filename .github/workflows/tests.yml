@@ -587,6 +587,8 @@ jobs:
             tests/test-brownfield-wp9d-window-rehearsal.sh
             tests/test-brownfield-wp10b-own-scan.sh
             tests/test-brownfield-wp10b-decision-table.sh
+            tests/test-bl289-gitleaks-version-floor.sh
+            tests/test-brownfield-wp11-archive-classes.sh
             tests/test-bl307-ci-before-manifest.sh
           )
 
