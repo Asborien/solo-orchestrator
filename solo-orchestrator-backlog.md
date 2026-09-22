@@ -20880,9 +20880,10 @@ and are WP9c's since v2.2; row 33 (this) stays UNOWNED.
 
 **Measured:** 2026-09-17 on `main` at `363e48d` (blob identical at `ba262e3`), from a clean worktree, no local change of any kind.
 
-**Which `main` each figure is against.** `main` moved twice while this was in review, to `363e48d`
-and then to `ba262e3`; the branch merged each in turn, never rebased. Figures re-run at `ba262e3`
-say `ba262e3` and nothing else. Figures first taken at `363e48d` and not re-run there say
+**Which `main` each figure is against.** `main` moved while this was in review, and the branch
+merged it in with a sign-off each time it moved, never rebased; the merge commits as of this commit
+are `255c279`, `2d9002c` and `8163729`. The figures are against `363e48d` and `ba262e3`. Figures
+re-run at `ba262e3` say `ba262e3` and nothing else. Figures first taken at `363e48d` and not re-run there say
 **"blob identical at `ba262e3`"**, and that phrase means exactly one thing: `git rev-parse` gives
 the same blob hash for that file at both commits, so the bytes measured are the bytes now on
 `main`. It is not a guess that the behaviour is unchanged; it is the observation that the file is
