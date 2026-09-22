@@ -16,7 +16,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # BL-306-MANIFEST-GUARD: a Phase 0/1 project has no Gradle build file yet,
+      # and setup-java's cache input hashes **/*.gradle* to build its key. Every
+      # step that needs the manifest is guarded on it; this notice says what was
+      # skipped. Once a build file exists every guard is true and nothing is weakened.
+      - name: Toolchain skipped - no Gradle build file yet (Phase 0/1)
+        if: hashFiles('**/*.gradle*') == ''
+        run: echo "::notice::No *.gradle or *.gradle.kts file in this tree - build, test, lint and dependency-audit steps are skipped until Phase 2 scaffolding commits one. Secret detection and governance checks still run."
+
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5 (v5.6.0)
+        if: hashFiles('**/*.gradle*') != ''
         with:
           distribution: 'temurin'
           # Current LTS — update when next LTS releases
@@ -24,12 +33,15 @@ jobs:
           cache: 'gradle'
 
       - name: Build
+        if: hashFiles('**/*.gradle*') != ''
         run: ./gradlew build
 
       - name: Test
+        if: hashFiles('**/*.gradle*') != ''
         run: ./gradlew test
 
       - name: Lint
+        if: hashFiles('**/*.gradle*') != ''
         run: ./gradlew detekt
         continue-on-error: true
         # Requires detekt Gradle plugin. Add to build.gradle.kts:
@@ -48,11 +60,13 @@ jobs:
           ./gitleaks git --redact --exit-code 1
 
       - name: Security - Dependency audit
+        if: hashFiles('**/*.gradle*') != ''
         run: ./gradlew dependencyCheckAnalyze
         # Requires OWASP dependency-check plugin. Add to build.gradle.kts:
         #   plugins { id("org.owasp.dependencycheck") version "9.+" }
 
       - name: Security - License check
+        if: hashFiles('**/*.gradle*') != ''
         run: ./gradlew checkLicense
         # Requires a license plugin. Add to build.gradle.kts:
         #   plugins { id("com.github.jk1.dependency-license-report") version "2.+" }

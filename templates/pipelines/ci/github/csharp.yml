@@ -16,18 +16,30 @@ jobs:
         with:
           fetch-depth: 0
 
+      # BL-306-MANIFEST-GUARD: a Phase 0/1 project has no solution or project
+      # file yet, and `dotnet restore` fails without one (MSB1003). Every step
+      # that needs the manifest is guarded on it; this notice says what was
+      # skipped. Once a .sln or .csproj exists every guard is true and nothing is weakened.
+      - name: Toolchain skipped - no .sln or .csproj yet (Phase 0/1)
+        if: hashFiles('**/*.sln', '**/*.csproj') == ''
+        run: echo "::notice::No .sln or .csproj in this tree - restore, build, test and dependency-audit steps are skipped until Phase 2 scaffolding commits one. Secret detection and governance checks still run."
+
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6 (v6.0.0)
+        if: hashFiles('**/*.sln', '**/*.csproj') != ''
         with:
           # Current LTS — update when next LTS releases
           dotnet-version: '8.0.x'
 
       - name: Restore dependencies
+        if: hashFiles('**/*.sln', '**/*.csproj') != ''
         run: dotnet restore
 
       - name: Build
+        if: hashFiles('**/*.sln', '**/*.csproj') != ''
         run: dotnet build --no-restore --configuration Release
 
       - name: Test
+        if: hashFiles('**/*.sln', '**/*.csproj') != ''
         run: dotnet test --no-build --configuration Release --verbosity normal
 
       - name: Security - Secret detection (gitleaks)
@@ -43,11 +55,13 @@ jobs:
           ./gitleaks git --redact --exit-code 1
 
       - name: Security - Dependency audit
+        if: hashFiles('**/*.sln', '**/*.csproj') != ''
         run: |
           dotnet list package --vulnerable --include-transitive 2>&1 | tee vulnerability-report.txt
           ! grep -q "has the following vulnerable packages" vulnerability-report.txt
 
       - name: Security - License check
+        if: hashFiles('**/*.sln', '**/*.csproj') != ''
         run: |
           dotnet tool install --global dotnet-project-licenses
           dotnet-project-licenses --input . --fail-on "GPL-2.0-only;GPL-3.0-only;AGPL-3.0-only;LGPL-2.0-only;LGPL-2.1-only;LGPL-3.0-only;SSPL-1.0;EUPL-1.1;EUPL-1.2"

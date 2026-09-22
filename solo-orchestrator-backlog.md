@@ -21023,3 +21023,111 @@ touched by a step required to leave no trace.
 **Related:** `## BL-225:` (T9's owner, and the residual list this belongs beside), `## BL-242:`
 (WP10b/1's `> "$out"` exclusion and the refusal that warrants it), `## BL-233:` (residual 15, the
 vacuity floor — the same class one surface over).
+
+---
+
+## BL-306: the generated GitHub CI is red on every pull request before Phase 2 — `actions/setup-node` with `cache: 'npm'` fails "Dependencies lock file is not found" on a tree that has no `package.json` yet, and every language template has the same shape
+
+**Status:** Open — reproduction + fix BUILT on branch `fix/bl306-ci-before-lockfile`, NOT yet submitted.
+
+**Found:** 2026-09-22, on the first pull requests of an organisational project born from `init.sh` at
+`f8841de` — the intake, the manifesto, the pre-Phase-0 precondition rows. Every one carried a red
+`test` check the operator could do nothing about.
+
+**Measured symptom.** That project's run 35673962692 (`pull_request`, 2026-09-22T00:57Z), job
+`test`: the step `Run actions/setup-node@8207627…` failed and no `run:` step executed. Verbatim:
+
+```
+##[error]Dependencies lock file is not found in /home/runner/work/<project>/<project>. Supported file patterns: package-lock.json,npm-shrinkwrap.json,yarn.lock
+```
+
+The `sast` job in the same run was green. The install half fails the same way one step later:
+`npm ci` in an empty directory (npm 11.9.0, this Mac) reports `npm error code EUSAGE` /
+`The npm ci command can only install with an existing package-lock.json`.
+
+**Cause.** `templates/pipelines/ci/github/typescript.yml` — copied verbatim into
+`.github/workflows/ci.yml` by `generate_ci` in `init.sh` — opens its `test` job with
+`actions/setup-node` carrying `cache: 'npm'`, then `npm ci`, `npm run build`, `npm run lint`,
+`npm test`, two `npm audit` arms, `npx license-checker` and `npm audit signatures`. Every one
+assumes `package.json` and its lockfile are committed. The framework produces neither until Phase 2
+initialisation, so between `init.sh` and the first Build Loop every push and pull request is red for
+a reason the operator cannot act on — and a red check nobody can clear teaches them to ignore CI,
+which is `## BL-160:`'s false-FAIL doctrine one phase earlier. The other eight language templates
+have the same shape behind their own first step: `pip install -r requirements.txt`, `./gradlew build`
+behind `setup-java` `cache: 'gradle'` (which hashes `**/*.gradle*` for its key), `go build ./...`,
+`cargo build`, `dotnet restore`, `flutter pub get`, `swift package resolve`.
+
+**What the documentation says (Context7, 2026-09-22).**
+- `actions/setup-node` (`/actions/setup-node`): the `cache` input defaults to `''`, disabled; when
+  set, the action searches the workspace root for `package-lock.json` / `yarn.lock` and hashes it
+  for the key; its errors page lists "Lock File Not Found" as the outcome when cache is enabled and
+  no lock file is present; `docs/advanced-usage.md` says outright *"If you choose not to use a
+  lockfile, you must disable caching because the cache feature requires a lockfile to generate
+  unique cache keys"*. Since v5 `package-manager-cache` defaults to `true`, so caching can switch
+  itself on from `package.json`'s `packageManager` field with `cache` unset — which is why the guard
+  below sits on the whole step, not on the input.
+- GitHub Actions expressions reference (`/websites/github_en_actions`): `hashFiles(path)` takes one
+  or more comma-separated glob patterns relative to `GITHUB_WORKSPACE` and *"if no files match the
+  provided patterns, the function returns an empty string"*; `jobs.<job_id>.steps[*].if` prevents a
+  step from running unless the condition is met.
+- `actions/setup-java` (`/actions/setup-java`): the gradle cache pattern set is `**/*.gradle*`,
+  `**/gradle-wrapper.properties`, `buildSrc/**/Versions.kt`, `buildSrc/**/Dependencies.kt`,
+  `gradle/*.versions.toml`, `**/versions.properties`.
+
+**Fix (`# BL-306-MANIFEST-GUARD`, one per template).** The template's own idiom, already on its
+three governance steps since `## BL-147:`: every step that needs the manifest carries
+`if: hashFiles('<manifest>') != ''`, and one new step immediately after checkout, guarded `== ''`,
+prints a `::notice::` naming what was skipped, why, and that secret detection and governance still
+run. Manifests: `package.json`, `requirements.txt`, `**/*.gradle*` (java, kotlin), `go.mod`,
+`Cargo.toml`, `'**/*.sln', '**/*.csproj'`, `pubspec.yaml`, `Package.swift`. Guarded: the toolchain
+setup action, install/restore, build, test, lint, format, the dependency audits, the licence check
+and the lockfile-integrity step — 62 steps across 9 templates, 136 added lines, nothing deleted or
+reordered. NOT guarded, deliberately: checkout, `Security - Secret detection (gitleaks)` (a Phase-0
+tree with a leaked credential must still be scanned — `## BL-151:`), and every `Governance -` step
+(their own `hashFiles('APPROVAL_LOG.md')` / `phase-state.json` guards are untouched). Once the
+manifest exists every guard is true and the job behaves exactly as before; a `package.json`
+committed without its lockfile still fails setup-node loudly, which is the right verdict under the
+Construction Rules' pin-and-commit-the-lockfile rule. `other.yml` is out: its toolchain steps are
+TODO comments and its dependency-audit step exits 1 by design until a scanner is configured.
+
+Why step-level `hashFiles` rather than a job split: `hashFiles` reads the checked-out workspace, so
+it is a step-context function and a job-level `if:` cannot see the tree. Why guard the setup action
+rather than drop `cache:`: the `package-manager-cache` default above, and no toolchain is worth
+installing on a tree with nothing to build.
+
+**Suite:** `tests/test-bl306-ci-before-manifest.sh`. T0 — the template list is derived once
+(`template_list`) and must be in bijection with a nine-row census, so a new language template
+without a census row fails and nothing can be added unguarded. T1 — exactly one `::notice::` skip
+step per template. T2 — every toolchain step guarded on the census manifest (62). T3 — checkout,
+gitleaks and governance NOT guarded on it. T4 — a shell evaluation of the two condition shapes the
+templates carry, `hashFiles(...) != ''` and `== ''`, over an empty fixture (all 62 skip, notice
+runs) and over one holding the census sample file (all 62 run, notice skips). `act` is not installed
+on this host, so the workflow itself is not executed; T4 evaluates only those two shapes and the
+header says so. Four mutants on a mirror of `templates/`, each proving it landed by changed-line
+count: drop the setup-node guard (T2 names the step), invert one go.yml guard (T1 counts two skip
+steps and names Build), guard the gitleaks step (T3 refuses), delete rust.yml's notice step (T1
+counts zero). Registered in `tests/full-project-test-suite.sh` and the `tests.yml` unit list.
+
+**Evidence.**
+- RED at `f8841de`, before the fix, identical under `/bin/bash` 3.2.57 and Homebrew bash 5.3.15:
+  `Results: 4 passed, 6 failed` — T0 and T3 pass as controls; T1 fails `9 notice violation(s)`, T2
+  fails `71 guard violation(s)`, T4 fails with every toolchain step evaluating `run` on the empty
+  fixture.
+- GREEN after: `Results: 10 passed, 0 failed` under both shells, and under bash 5.2.21 in
+  `ubuntu:24.04` as a non-root user (mawk 1.3.4). All ten templates parse (PyYAML 6.0.3).
+- External mutant, outside the suite: the setup-node guard removed from a copy of typescript.yml
+  (cksum 4007748106 → 1560107544, guard count 9 → 8); suite `7 passed, 3 failed`, T2 naming
+  `typescript.yml: guard-missing: actions/setup-node@…` and T4 reporting
+  `typescript(empty:run=1,skip=8,…)`.
+
+**Residual — same class, other hosts, deliberately not in this change.** `ci/gitlab/*.yml` runs
+`npm ci` (and each language's install) in `before_script` / `script`; the documented guard there is
+job-level `rules: - exists: [package.json]`, which drops the job rather than skipping steps and
+prints no notice. `ci/bitbucket/*.yml` has no file-existence condition at all; the guard would be a
+shell test at the top of each `script`. Both are different mechanisms needing their own suites and
+belong in their own change; recorded here so the class stays visible.
+
+**Related:** `## BL-147:` (the `hashFiles('APPROVAL_LOG.md')` governance guards this reuses),
+`## BL-151:` (why the secret scan stays unconditional), `## BL-160:` (the false-FAIL doctrine — a
+permanently red lane teaches operators to ignore CI), `## BL-254:` (the mirror-mutant suite shape
+this follows), `## BL-287:` (`generate_ci` copies the per-host template verbatim).

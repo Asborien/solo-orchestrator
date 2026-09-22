@@ -16,17 +16,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      # BL-306-MANIFEST-GUARD: a Phase 0/1 project has no go.mod yet, and
+      # `go build ./...` fails without one. Every step that needs the manifest
+      # is guarded on it; this notice says what was skipped. Once go.mod exists
+      # every guard is true and nothing is weakened.
+      - name: Toolchain skipped - no go.mod yet (Phase 0/1)
+        if: hashFiles('go.mod') == ''
+        run: echo "::notice::No go.mod in this tree - build, test, lint and dependency-audit steps are skipped until Phase 2 scaffolding commits one. Secret detection and governance checks still run."
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7 (v7.0.0)
+        if: hashFiles('go.mod') != ''
         with:
           go-version: 'stable'
 
       - name: Build
+        if: hashFiles('go.mod') != ''
         run: go build ./...
 
       - name: Test
+        if: hashFiles('go.mod') != ''
         run: go test -race -coverprofile=coverage.out ./...
 
       - name: Lint
+        if: hashFiles('go.mod') != ''
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9 (v9.3.0)
         with:
           version: latest
@@ -44,11 +56,13 @@ jobs:
           ./gitleaks git --redact --exit-code 1
 
       - name: Security - Dependency audit
+        if: hashFiles('go.mod') != ''
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
       - name: Security - License check
+        if: hashFiles('go.mod') != ''
         run: |
           go install github.com/google/go-licenses@latest
           go-licenses check ./... --disallowed_types=restricted
