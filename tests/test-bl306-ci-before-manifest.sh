@@ -46,7 +46,8 @@
 #       rendered YAML plus this evaluation of its conditions.
 #   T5  past Phase 1 a missing manifest FAILS, it does not skip green: the
 #       notice step's `run:` script is extracted and EXECUTED under
-#       `bash -e -o pipefail` (the runner's fail-fast shell) against four
+#       `"$BASH" -e -o pipefail` (the runner's fail-fast options, under the
+#       interpreter this suite itself runs under) against four
 #       fixtures — `.claude/phase-state.json` at current_phase 3 and 2
 #       (rc 1, `::error::`), at current_phase 1 (rc 0, `::notice::`), and
 #       no phase-state at all (rc 0, `::notice::`). A review of the first
@@ -168,11 +169,13 @@ notice_script() {
 }
 
 # run_notice <script-file> <fixture-root> — executes the notice script the way
-# the runner does (`bash -e -o pipefail`, cwd = the checked-out tree); prints
-# "<rc> <annotation kind>", the kind being error, notice, or none.
+# the runner does (`-e -o pipefail`, cwd = the checked-out tree) under THIS
+# suite's interpreter (`$BASH`), so the version the suite is run with is the
+# version the subject runs under — PATH bash would silently be another one.
+# Prints "<rc> <annotation kind>", the kind being error, notice, or none.
 run_notice() {
   local rc=0 out="" kind="none"
-  out="$(cd "$2" && bash -e -o pipefail "$1" 2>&1)" || rc=$?
+  out="$(cd "$2" && "$BASH" -e -o pipefail "$1" 2>&1)" || rc=$?
   case "$out" in
     *"::error::"*)  kind="error" ;;
     *"::notice::"*) kind="notice" ;;
