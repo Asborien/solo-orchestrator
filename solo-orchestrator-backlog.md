@@ -14688,6 +14688,27 @@ count the findings lacking a fingerprint and refuse when that count is non-zero,
 all-missing case the current two-armed grep handles — and changing it belongs with a case that can
 drive a partial-fingerprint section rather than bolted onto the commit that added the first guard.
 
+**Residuals from WP11's pre-PR review (2026-09-22), recorded rather than fixed.**
+(1) **The restore line is now `@sh`-quoted, but nothing pins it.** A path with a space — which the
+inventory accepts — produced `cp …/beta gamma/SKILL.md …` and failed `Not a directory`. Fixed in the
+same commit; no case drives a restore over a spaced path, so a regression would be silent.
+(2) **I20's planned-path matching is spelling-dependent.** Unit-probed: a planned path given
+ABSOLUTELY, or a DANGLING symlink, slips past the `[ -e ]` test and is not required to have a row.
+Unreachable today — every `adopt_record_write` call site passes a relative path, enumerated — but the
+invariant's promise is that a FUTURE writer is caught, and a future writer recording an absolute path
+defeats it in silence. Fix shape: refuse a non-relative planned path rather than skipping it, and use
+`[ -e … ] || [ -L … ]`.
+(3) **The `n_copied -eq 0` tripwire's inner `n_collided > 0` arm is now unreachable** — framework-wins
+means a collision either refuses at the receipt check or falls through to a copy, so
+`n_collided > 0` implies `n_copied > 0`. The design said to delete the tripwire; it was kept and one
+comment on `_adopt_preflight_prior_archive` still cites its message as measured behaviour.
+(4) **`pending-act-4`, `kept-by-rule` and `removed-for-phase-0` are not emitted**, and
+`PRODUCT_MANIFESTO.md` is not removed from its path — the disposition vocabulary WP11's cell names
+beyond `replaced`/`kept`. WP12b is the consumer; recorded before it starts.
+(5) **Pre-existing, unrelated to WP11 but emitted on every adoption run:**
+`adopt-state.sh: line …: adopt_record_written: command not found` — a typo for `adopt_record_write`,
+present on `main`, meaning `ADOPT_WRITE_SET_REL` never enters the staging ledger.
+
 ## BL-248: `adopt_evidence_deploy_lane` reads rung 4's evidence without consulting `.satisfied`, so a project with NO deploy lane is told "Points to: built out"
 
 **Logged:** 2026-09-01, by round-4 adversarial review of the BL-242 WP9a branch.
@@ -20593,7 +20614,58 @@ nothing — is not recoverable from the cites and is deliberately not invented h
 
 ## BL-289: the tool matrix's gitleaks floor (8.18.0) predates the `git`/`dir` subcommands Scout runs, and nothing on adoption's path enforces `min_version` at all
 
-**Status:** Open
+**Status:** Closed — shipped 2026-09-21 (PR pending; WP10b/3). The matrix floor is **8.19.0**, and
+`scout_secrets_scan` enforces it at `SCOUT-SECRETS-VERSION-FLOOR`: a gitleaks below the floor, or one
+whose version cannot be read, reports **`tool-unavailable`** rather than `scan-failed`, with a note
+naming both the version found and the version required.
+
+**THE STATUS WORD IS THE WHOLE FIX, not the version bump.** §6.1's table splits the two at `personal`:
+`scan-failed` WARNS AND CARRIES ON with no acknowledgement, while `tool-unavailable` STOPS until an
+acceptance is recorded. A contributor on 8.18.x was therefore adopting personal projects on a cheerful
+warning where the design requires a signed acceptance. Raising `min_version` alone would have changed
+nothing — nothing on adoption's path reads it, which is what this entry was filed to say.
+
+**Scope, ruled by Karl 2026-09-19:** gitleaks only. Twelve other tools declare a `min_version` that
+nothing enforces; turning enforcement on for all of them is a core change to `resolve-tools.sh` with
+`init.sh` as a second consumer, and it would start refusing setups that pass today. Recorded as
+`## BL-306:` rather than folded in here.
+
+**The floor is spelled twice and the duplication is PINNED.** Scout sources nothing (M5) and must work
+pointed at any project from anywhere, so it cannot read the framework's matrix at runtime;
+`tests/test-bl289-gitleaks-version-floor.sh` F1 asserts the matrix value and Scout's constant are the
+same string, so a drift is a red test rather than a silent split between what
+`check-versions.sh` reports and what actually refuses a scan.
+
+**Three drafts of the guard, each refuted by measurement rather than by reasoning.** (1) It read the
+RAW version string while the comparison read the stripped one, so a legitimate `v8.30.1` tag was
+refused as unreadable. (2) It then required the WHOLE stripped string to be numeric-dotted, which
+refused `9.9.9-fake` — a shape a source build really produces — and
+`tests/test-brownfield-wp2-scout-sections.sh` G10 caught it at 52/1. (3) A draft also extracted the
+leading `N(.N)*` prefix; measured, that is REDUNDANT, because awk's `+0` coercion already reads
+`9.9.9-fake`'s last field as 9, so its mutant survived and it was dropped rather than kept as
+decoration.
+
+**WHAT SHIPPED, AND WHAT IT DELIBERATELY DOES NOT DO.** Strip the leading non-digit run, refuse an
+empty result, compare with awk. There is NO end anchor: `9abc` strips to `9abc`, reads as major 9 and
+MEETS the floor. That is an ACCEPTED RESIDUAL, not a fix — the false-refusal risk is concrete (source
+builds exist) and `9abc` is a string no gitleaks emits. An earlier draft of this paragraph said the
+guard was "anchored at both ends" and that `9abc` is refused; it is not, the code's own comment says
+so, and the pre-PR review caught the record claiming a security check stricter than the one that
+shipped.
+
+**Proofs:** 6 cases, 6 mutants, every one dies — skip the floor check (F2, F3), report `scan-failed`
+instead of `tool-unavailable` (F2), lower the matrix back to 8.18.0 (F1, F4), drift Scout's own
+constant below the matrix (F1, F2, F3), flip the comparison direction (F2, F3, F4), skip the
+unreadable-version guard (F5), drop the leading-non-digit strip (F4, F5). The fixtures drive a stub
+`gitleaks` through `SCOUT_GITLEAKS_BIN`, because a proof that depended on the version a contributor
+happens to have installed would prove nothing.
+
+**One behaviour this changes for a minority install path, recorded rather than discovered later.**
+Upstream leaves `Version` unstamped unless the build stamps it, so a gitleaks installed with
+`go install` or a plain `go build` reports the literal string *"version is set by build process"* —
+no digits, therefore `tool-unavailable`, therefore a personal adoption stops for a signed acceptance
+even though the binary works. The documented source path is `make build`, which stamps `v8.30.1` and
+is handled correctly; the refusal names the remedy, and F5 pins the string.
 
 **Found:** 2026-09-16, by the merged-main adversarial sweep of ADOPT-002-ARCH v2.1 (R-DOC-11),
 while refuting §6.2's "tool resolution makes the scanner guaranteed" against the tree at `7b88c2e`.
@@ -20753,9 +20825,18 @@ this is the likely path for any brownfield project with lint-staged, prettier, c
 
 ## BL-292: Act 2 overwrites an adoptee's own tracked `PROJECT_INTAKE.md` and `.claude/intake-progress.json` at rc 0 — no archive directory, no MANIFEST row, no sentence
 
-**Status:** Open — owner WP11 (ADOPT-002-ARCH v2.2 §7.2's `document` and `state` archive classes and
-the I20 loop): both paths join `adopt_archive_inventory`, are archived with a restore line, and are
-disclosed path by path. Not built.
+**Status:** Closed — shipped 2026-09-22 (WP11; PR pending). `adopt_archive_inventory` now emits a
+`document` class from `_adopt_document_set` (`# BL-242-DOCUMENT-SET`) and a `state` class from
+`_adopt_state_set` (`# BL-242-STATE-SET`), so all three paths Act 2 writes over —
+`PROJECT_INTAKE.md`, `.claude/intake-progress.json`, `.claude/orchestrator-source.json` — are
+archived with a MANIFEST row, a restore line and a sentence naming them.
+
+**AND THE INVARIANT, WHICH IS THE PART THAT MATTERS MORE THAN THE THREE ROWS.** This entry was three
+writers added over time, none with an archive row, and nothing noticed for months — the defect was
+not that somebody chose wrongly but that choosing wrongly had no consequence. I20
+(`# BL-242-OVERWRITE-INVENTORY`) now gives it one: between the rehearsal and the first real write,
+the rehearsal's planned set ∩ the paths that already exist must be a subset of the inventory, or the
+run BLOCKS naming each path. A fourth writer added without a row is caught by its author.
 
 **Found:** 2026-09-17 by execution (ADOPT-002-ARCH v2.2 §13-V34).
 
@@ -20776,10 +20857,19 @@ does not hold for these two files.
 
 ## BL-293: on a case-insensitive filesystem a case-variant collision is reported under the framework's spelling — "yours, kept: scripts/validate.sh" for an index that holds `scripts/Validate.sh`
 
-**Status:** Open — LATENT today (skip-on-collision keeps the operator's bytes); becomes a silent
-misattribution under framework-wins. Owner WP11 (ADOPT-002-ARCH v2.2 §7.2, A8): the collision
-inventory matches against `git ls-files` case-insensitively and discloses a case-variant collision by
-the operator's spelling. Not built.
+**Status:** Open — NO LONGER LATENT as of WP11 (2026-09-22), and that is a change in kind rather
+than in likelihood. This entry was filed while `adopt_install_framework` SKIPPED collisions, which
+kept the operator's bytes and made a misattributed path cosmetic. WP11 ships D1 framework-wins: the
+colliding file is now archived and REPLACED. On a case-insensitive filesystem `[ -e "$dst" ]` answers
+for either spelling, so a project tracking `scripts/Validate.sh` has it replaced while the archive
+row, the notice and the index all say `scripts/validate.sh` — the operator is told the wrong path for
+a file that really was taken.
+
+The case-folding half of WP11's cell — match the install set against `git ls-files`
+case-insensitively and disclose by the operator's spelling, which the design names as a marker this
+entry deliberately does NOT cite because the marker does not exist yet — is NOT BUILT. It is the
+one part of that cell deliberately left, because it needs a case-insensitive filesystem to prove and
+the suite must skip elsewhere; filing it here rather than shipping an unproven guard.
 
 **Found:** 2026-09-17 by execution (ADOPT-002-ARCH v2.2 §13-V34), macOS, `core.ignorecase = true`.
 
@@ -21023,6 +21113,40 @@ touched by a step required to leave no trace.
 **Related:** `## BL-225:` (T9's owner, and the residual list this belongs beside), `## BL-242:`
 (WP10b/1's `> "$out"` exclusion and the refusal that warrants it), `## BL-233:` (residual 15, the
 vacuity floor — the same class one surface over).
+
+---
+
+## BL-306: fourteen tools declare a `min_version` that nothing enforces
+
+**Status:** Open — split out of `## BL-289:` on 2026-09-21 by Karl's scope ruling (gitleaks only, for
+now), so that the enforcement question for the rest is decided on its own terms rather than carried in
+on the back of a secrets fix.
+
+**What is measured** (2026-09-21, `templates/tool-matrix/common.json`, derived not transcribed —
+`jq -r '[.tools[] | select(.min_version != null)] | length'`): **15** tools declare a `min_version` —
+Git, jq, Node.js, Colima, Semgrep, gitleaks, Snyk CLI, Claude Code, Python 3, Rust, Go, .NET SDK, Java (Eclipse Temurin), Flutter SDK, Swift (Xcode).
+gitleaks is now enforced by `SCOUT-SECRETS-VERSION-FLOOR`, in Scout rather than in the resolver, so
+**14 remain declared and unchecked**. `grep -c min_version scripts/resolve-tools.sh` → **0**; the only
+production reader is `scripts/check-versions.sh`, an advisory report adoption never calls. (Six
+further tools carry `min_version: null` and are not counted here — Docker, GPG, Development
+Guardrails, Superpowers, Context7 MCP, Qdrant MCP. A first draft of this entry said "twelve" in its
+title, "thirteen" in its body and then listed fifteen names; the list was right and both counts were
+invented, which is what CLAUDE.md's "never round a number you did not derive" is about.)
+
+**Why this was NOT folded into `## BL-289:`.** Enforcement for the rest belongs in
+`scripts/resolve-tools.sh`, which `init.sh` also consumes — so it is a core change reviewed as such,
+not an adoption-local one. And it changes behaviour for existing users: a setup that passes today
+starts being refused the moment the field is honoured. That is a decision about who gets turned away,
+not a bug fix.
+
+**What a build here owes.** A per-tool decision about what a below-floor tool MEANS — for gitleaks it
+is `tool-unavailable`, but for a below-floor Go or Java the honest answer is probably a refusal at
+resolution rather than a status word — plus a migration position for hosts that currently pass.
+
+**Related:** `## BL-289:` (the gitleaks half, closed), `## BL-242:` (the driver), `## BL-251:`
+(`# BL-251-PROBE-HOST`, the presence-only probe).
+
+---
 
 ## BL-308: every project born from init.sh fails its first pull request at the generated CI's gitleaks step — a vendored `scripts/check-gate.sh` declaration reads as a generic API key
 
