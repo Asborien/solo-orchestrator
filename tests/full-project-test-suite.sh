@@ -894,6 +894,12 @@ run_child_suite "tests/test-bl296-hook-roster-unconditional.sh" \
 run_child_suite "tests/test-brownfield-wp7-adoption-record.sh" \
   "WP7/1: the Adoption Record and its eight-clause structural contract" \
   "WP7 Adoption Record tests FAILED (run tests/test-brownfield-wp7-adoption-record.sh for details)"
+run_child_suite "tests/test-brownfield-wp7b-commit-hook.sh" \
+  "WP7/3: the commit-time scanners on the adoption path" \
+  "WP7/3 commit-hook tests FAILED (run tests/test-brownfield-wp7b-commit-hook.sh for details)"
+run_child_suite "tests/test-brownfield-dispositions-template.sh" \
+  "BL-242: the secrets stop prints a dispositions template an operator can fill" \
+  "dispositions-template tests FAILED (run tests/test-brownfield-dispositions-template.sh for details)"
 # BL-312: concurrent tracker invocations shared one temp name and landed a
 # 0-byte ledger, which the MCP session gate then refused on every Write.
 run_child_suite "tests/test-bl312-tool-usage-concurrent.sh" \
