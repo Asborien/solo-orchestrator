@@ -21388,3 +21388,79 @@ for the 4.0 trap: **assign at the declaration**, applied to code you are already
 
 **Related:** `## BL-242:` (the package that surfaced it).
 
+---
+
+## BL-312: concurrent `track-tool-usage.sh` invocations share one temp name, land a 0-byte ledger, and the MCP session gate then refuses every Write and Edit
+
+**Status:** Fixed — `tests/test-bl312-tool-usage-concurrent.sh`, 11 cases, 11/0 under `/bin/bash`
+3.2.57 and bash 5.3.15.
+
+**Found:** 2026-09-22 in practice, on a project where several sessions and subagents shared one
+checkout. `.claude/tool-usage.json` sat at 0 bytes with its mtime advancing on every hook event, and
+`scripts/session-mcp-gate.sh` refused every Write and Edit with "requirements not met" even after
+successful qdrant-find and context7 calls.
+
+**The defect.** Every ledger write in `scripts/track-tool-usage.sh` went
+`jq … "$TOOL_USAGE" > "$TOOL_USAGE.tmp" && mv "$TOOL_USAGE.tmp" "$TOOL_USAGE"`: fourteen sites at
+`f790e09`, one temp NAME shared by every invocation, and no lock. Two invocations at once truncate
+each other's half-written temp and the `mv` lands it. Once the ledger is empty it stays empty,
+because `jq` on an empty input exits 0 and prints nothing, so every later write lands another empty
+file. The seed was a bare `cat > "$TOOL_USAGE"`, so a reader could also see it half-written.
+
+**Measured on `main` at `f790e09`** (the suite run against main's tracker, `/bin/bash` 3.2.57):
+
+```
+  [PASS] C0: control, 12 sequential invocations record 12 call rows on a parseable ledger
+  [FAIL] C1 —  round 1: parses=0 calls=0/12 …; round 2: parses=0 calls=0/12 …; round 3: parses=0 calls=0/12 …
+  [FAIL] C2 —  round 1: 590 bad sightings; round 2: 229 bad sightings; round 3: 577 bad sightings;
+  [FAIL] C3 —  round 1: parses=0 commits=0/12; round 2: parses=1 commits=1/12; round 3: parses=0 commits=0/12;
+  [FAIL] C5 —  round 1: parses=0 calls=0/12 …  (all three rounds)
+  [FAIL] C6 —  round 1: parses=0 bad=227 calls=0 …  (all three rounds)
+```
+
+Twelve concurrent events end with an unparseable ledger in every round (C1). The control shows the
+fixture counts correctly when the same twelve run one at a time (C0).
+
+**The fix.** Each write now goes through `_tt_update`. It takes a mkdir lock beside the ledger, the
+same pattern and 3 s budget as `_tt_record_accumulation`'s lock on `process-state.json`. It then
+writes through its own `mktemp` in the same directory (`# BL-312-UNIQUE-TMP`) and lands it with `mv`,
+which is atomic within one filesystem. The pins:
+
+- Every call row survives a concurrent burst, `mcp_requirements` is kept, and the find flags are set (C1).
+- A reader polling through the burst never sees an empty or unparseable ledger (C2).
+- The commit counter's read and write happen under one lock hold, so no commit is lost (C3).
+- No temp or lock debris is left (C4).
+- The seed is taken under the lock, re-checked inside it and landed by `mv` (`# BL-312-SEED-LOCK`),
+  so a burst with no ledger records every call and still seeds no `mcp_requirements`, as
+  `## BL-233:` requires (C5).
+- A lock still held when the budget runs out is taken to be stale, because SIGKILL skips the EXIT
+  trap. It is broken once (`# BL-312-BREAK-STALE`), so one write past it records its call and clears
+  it (C7).
+- If breaking the lock races, the write goes ahead unlocked. It may lose an update, but the unique
+  temp keeps the ledger whole throughout (C6).
+
+**Mutants** (each lands at one end-of-line marker site, changes two diff lines and parses under
+`bash -n`):
+
+| mutant | killed by | survivors, measured |
+|---|---|---|
+| M1 unique temp back to `"$TOOL_USAGE.tmp"` | C6 (e.g. `parses=0 bad=30132`) | C0 to C5 and C7 pass with M1 applied; only the lock-miss path writes unlocked |
+| M2 lock never taken | C1 (`calls=2/12`) and C3 | — |
+| M4 stale lock never broken | C7 (`lock=held`) | — |
+
+**Residuals, disclosed.**
+- Skipping the seed lock survived six C5 rounds and is not in the suite. Every process in a burst
+  passes the seed check before any of them appends, so a second seed cannot land over a first
+  writer's row unless one process pauses mid-seed. The lock closes that window by construction.
+- C6 and M1 are probabilistic by nature. M1 was killed in round 1 or 2 of 6 on every run so far.
+- `mktemp` creates mode 0600, so the ledger is now 0600 after its first write, where the redirect
+  gave 0644 under the umask. `_tt_record_accumulation` already does the same to `process-state.json`.
+- An EMPTY ledger left by the old code is not repaired: the tracker still re-creates only a MISSING
+  one, and the gate still says "requirements not met" rather than "ledger unreadable". Both are
+  separate changes.
+- `scripts/session-test-gate-check.sh` writes the ledger at SessionStart without this lock. It runs
+  once per session start, not per tool call.
+
+**Related:** `## BL-233:` (the outcome ledger this writes, and the no-requirements seed rule),
+`## BL-236:` (the ledger's untracked status).
+

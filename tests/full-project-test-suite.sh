@@ -894,6 +894,11 @@ run_child_suite "tests/test-bl296-hook-roster-unconditional.sh" \
 run_child_suite "tests/test-brownfield-wp7-adoption-record.sh" \
   "WP7/1: the Adoption Record and its eight-clause structural contract" \
   "WP7 Adoption Record tests FAILED (run tests/test-brownfield-wp7-adoption-record.sh for details)"
+# BL-312: concurrent tracker invocations shared one temp name and landed a
+# 0-byte ledger, which the MCP session gate then refused on every Write.
+run_child_suite "tests/test-bl312-tool-usage-concurrent.sh" \
+  "BL-312: concurrent writers never truncate the tool-usage ledger or lose a call row" \
+  "BL-312 concurrent ledger tests FAILED (run tests/test-bl312-tool-usage-concurrent.sh for details)"
 # BL-284: two verify-install.sh auto-fixers that could never run — has_context()
 # was unsatisfiable on an adopted project, and fix_superpowers ran a CLI verb
 # that does not exist.
