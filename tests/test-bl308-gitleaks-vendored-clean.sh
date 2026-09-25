@@ -17,11 +17,19 @@
 # G1 pins the shipped surface clean. C1/C2 pin that the scanner is LIVE over
 # the same surface — a planted AWS-shaped key and a planted generic-shaped key
 # must each be found — so the fix cannot be "disable the rule" or an
-# allowlist wide enough to swallow a real credential.
+# allowlist wide enough to swallow a real credential. C3 pins that no scanner
+# config is shipped, C4 that the scanner is live over the shipped docs, and R1
+# that the registration lint keeps this suite in the PR-blocking unit lane.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# The installer's name is assembled because lint-tests-registered.sh's BL-181
+# predicate counts it on any executed line as proof this suite RUNS init.sh,
+# which would exempt it from the tests.yml unit lane. It only reads it. R1 pins.
+INSTALLER="$REPO_ROOT/init"".sh"
+# shellcheck source=../scripts/lib/scaffold-shipped-set.sh
+. "$REPO_ROOT/scripts/lib/scaffold-shipped-set.sh"
 
 PASSED=0
 FAILED=0
@@ -47,9 +55,11 @@ trap cleanup EXIT INT TERM
 newtmp() { local d; d=$(mktemp -d); TMPS="$TMPS $d"; printf '%s\n' "$d"; }
 
 # The surface init.sh ships into every project is drawn from these. docs/ is
-# deliberately NOT here: init.sh copies named files out of it, and the design
-# notes beside them carry planted AKIA fixtures that never leave this repo.
-SHIPPED_SURFACE="scripts templates init.sh"
+# not copied whole: init.sh copies named files out of it (parsed from its own
+# cp lines, plus the platform modules it picks from), and the design notes
+# beside them carry planted AKIA fixtures that never leave this repo.
+SHIPPED_SURFACE="scripts templates evaluation-prompts/Projects docs/platform-modules
+$(soif_parse_shipped_reference_doc_sources "$INSTALLER")"
 
 # Assembled from halves so this file does not itself carry a scanner-shaped
 # literal. BASE32-VALIDITY IS LOAD-BEARING for the AWS plant: the
@@ -76,7 +86,9 @@ describe()  { jq -r '.[] | "\(.RuleID) \(.File):\(.StartLine) \(.Match)"' "$1"; 
 # mk_surface DIR — the shipped surface, copied, so plants never touch the tree.
 mk_surface() {
   local d="$1" p
+  cp "$INSTALLER" "$d/" || return 1
   for p in $SHIPPED_SURFACE; do
+    mkdir -p "$d/$(dirname "$p")" || return 1
     cp -R "$REPO_ROOT/$p" "$d/$p" || return 1
   done
 }
@@ -97,7 +109,7 @@ else
     rc=0; scan_dir "$D/clean" "$D/clean.json" || rc=$?
     n=$(findings "$D/clean.json")
     if [ "$rc" -eq 0 ] && [ "$n" -eq 0 ]; then
-      pass "G1: gitleaks reports 0 findings over $SHIPPED_SURFACE (rc 0)"
+      pass "G1: gitleaks reports 0 findings over the installer and $(printf '%s ' $SHIPPED_SURFACE)(rc 0)"
     else
       fail_ "G1" "rc=$rc findings=$n over the shipped surface — a project born from this tree fails its first PR at secret detection: $(describe "$D/clean.json" | tr '\n' ';')"
     fi
@@ -146,6 +158,49 @@ else
   else
     fail_ "C3" "a scanner config or ignore file exists at the repo root; G1 scanned copies without it, so its verdict may not match a generated project — copy it in mk_surface and re-measure"
   fi
+
+  # ── C4: the scanner is live over the shipped docs ───────────────────────
+  # The installer copies named files out of docs/; a plant in one of them and
+  # in a platform module must each be found, or G1 says nothing about docs.
+  mkdir -p "$D/c4"
+  if ! mk_surface "$D/c4"; then
+    fail_ "C4 setup" "could not copy the shipped surface"
+  else
+    ref_doc=$(soif_parse_shipped_reference_doc_sources "$INSTALLER" | head -n 1)
+    planted=0
+    for p in "$ref_doc" docs/platform-modules/web.md; do
+      if [ -n "$p" ] && [ -f "$D/c4/$p" ]; then
+        printf '\n# planted by the BL-308 control\napi_key="%s"\n' "$GENERIC_PLANT" >> "$D/c4/$p"
+        planted=$((planted + 1))
+      fi
+    done
+    if [ "$planted" -ne 2 ]; then
+      fail_ "C4" "planted into $planted of 2 docs files (${ref_doc:-no reference doc parsed}, docs/platform-modules/web.md) — the shipped docs are not in the surface G1 scans"
+    else
+      rc=0; scan_dir "$D/c4" "$D/c4.json" || rc=$?
+      n=$(jq -r --arg r generic-api-key '[.[] | select(.RuleID == $r and (.File | contains("/c4/docs/")) and (.Match | startswith("api_key=")))] | length' "$D/c4.json")
+      if [ "$rc" -eq 1 ] && [ "$n" -eq 2 ]; then
+        pass "C4: planted generic-shaped keys in $ref_doc and docs/platform-modules/web.md are both found (rc 1, generic-api-key x2)"
+      else
+        fail_ "C4" "rc=$rc planted-line hits=$n (want rc 1, 2) — the scanner is not live over the shipped docs"
+      fi
+    fi
+  fi
+fi
+
+# ── R1: the registration lint demands this suite's unit-lane row ─────────
+# lint-tests-registered.sh exempts a test that names the installer on an
+# executed line as an invoker (its BL-181 predicate), and an exempt suite's
+# tests.yml row can be deleted with every lint green. This suite never runs
+# the installer, so the lint must refuse a tests.yml without its row.
+R="$(newtmp)"
+grep -v 'tests/test-bl308-gitleaks-vendored-clean.sh' "$REPO_ROOT/.github/workflows/tests.yml" > "$R/tests.yml"
+rc=0
+bash "$REPO_ROOT/scripts/lint-tests-registered.sh" --list --tests-yml "$R/tests.yml" > "$R/list.txt" 2>&1 || rc=$?
+if [ "$rc" -eq 1 ] && grep -Eq '^FAIL[[:space:]].*test-bl308-gitleaks-vendored-clean\.sh[[:space:]]+not-in-unit-lane' "$R/list.txt"; then
+  pass "R1: with its tests.yml row removed, lint-tests-registered.sh fails naming this suite (rc 1, not-in-unit-lane)"
+else
+  fail_ "R1" "rc=$rc; this suite's row: $(grep 'test-bl308-gitleaks-vendored-clean' "$R/list.txt" | tr '\n' ';') — the lint does not protect the unit-lane row"
 fi
 
 echo ""

@@ -22002,7 +22002,11 @@ same file and line, in both `gitleaks dir` and `gitleaks git` mode. It ships no 
 no `.gitleaksignore`, so the default rules apply. The rule's regex reads `key=` followed, within a
 few quote or space characters, by ten or more word characters as `name=value`; on that compound
 `local` the "value" it extracts is the NEXT declaration, `wf_unlocated=`, whose `=` defeats the
-rule's letters-only allowlist.
+rule's letters-only allowlist. The deciding fact is the rule's 3.5 entropy floor, not the `=`:
+`wf_unlocated=` scores 3.70 and clears it. Line 1282 (`local wf_folded="" wf_dupkey=""
+wf_mapscope="" …`) has the identical shape and is not flagged, because `wf_mapscope=` scores 3.42;
+scanned alone, that line is rc 0 and the defect's line rc 1. The shape alone does not trip, so line
+1282 needs no rename.
 
 **Fix (this branch).** Rename the variable — `wf_bad_key` → `wf_unrecognised` at its five sites in
 `scripts/check-gate.sh` (declaration, accumulator, the `wf_swallows` verdict at
@@ -22016,20 +22020,32 @@ looks like a credential is renamed, which is what an operator would be told to d
 **Considered and rejected: shipping `templates/gitleaks/framework.toml`.** It is not a project config
 and does not allowlist this shape. It is the adoption stop's own rule set (§6.2b of ADOPT-002-ARCH):
 `[extend] useDefault = true` and nothing else, so it IS gitleaks' defaults, and its header says it
-ships nowhere by design, which `tests/test-brownfield-wp10b-own-scan.sh` O8 pins. An allowlist
+ships nowhere by design. `tests/test-brownfield-wp10b-own-scan.sh` O8 pins that the file exists and
+extends the defaults; that it ships nowhere is the header's own claim. An allowlist
 added there would suppress the finding for every adopted project without disclosure, the shape the
 stop exists to refuse. It is untouched here.
 
 **Pinned by two suites.** `tests/test-bl308-gitleaks-vendored-clean.sh` (unit lane): G1 scans
-`scripts/`, `templates/` and `init.sh` with the default rules and asserts rc 0 and zero findings;
-C1 plants an AWS-shaped key and C2 a generic-shaped key in a copy of `scripts/check-gate.sh` and
-each asserts rc 1 with the plant found by rule and line, so the fix cannot be "disable the rule" or
-an allowlist wide enough to swallow a real credential; C3 asserts no scanner config or ignore file
-exists at the repo root, so G1's default-rules verdict is the one a generated project gets. RED at
-`f8841de`: G1 fails naming the line above, C1/C2/C3 pass (controls green at base). Mutants:
+what init.sh ships (`init.sh`, `scripts/`, `templates/`, `evaluation-prompts/Projects/`, the
+platform modules, and the reference docs parsed from init.sh's own `cp` lines by
+`soif_parse_shipped_reference_doc_sources`) with the default rules and asserts rc 0 and zero
+findings; C1 plants an AWS-shaped key and C2 a generic-shaped key in a copy of
+`scripts/check-gate.sh` and each asserts rc 1 with the plant found by rule and line, so the fix
+cannot be "disable the rule" or an allowlist wide enough to swallow a real credential; C3 asserts
+no scanner config or ignore file exists at the repo root, so G1's default-rules verdict is the one
+a generated project gets; C4 plants a generic-shaped key in a shipped reference doc and in a
+platform module and asserts rc 1 with both found, so G1 covers the docs. R1 runs
+`scripts/lint-tests-registered.sh` against a copy of `tests.yml` without this suite's row and
+asserts rc 1 naming the suite `not-in-unit-lane`: the lint's `## BL-181:` predicate exempts any
+test that names the installer on an executed line, so the suite spells that path in halves and R1
+keeps it demanded in the PR-blocking lane. RED at `f8841de`: G1 fails naming the line above,
+C1/C2/C3 pass (controls green at base). C4 and R1 were added red at `7d74ccb` (C4 planted into 0
+of 2 docs files; R1 rc 0 with the suite `unit-lane-exempt:init-sh-invoker`). Mutants:
 reverting the rename on the declaration line only (located at distance 0 from
 `wf_has_step_coe=0 wf_has_step_if=0`, two changed lines) fails G1; removing either plant fails its
-control. `tests/test-bl308-gitleaks-generated-project.sh` (full lane, invokes init.sh): P1 asserts
+control; a generic-shaped key appended to `docs/security-scan-guide.md`, to `init.sh` or to
+`evaluation-prompts/Projects/bases/03-security.md` fails G1; dropping the platform modules from the
+surface fails C4; one executed line naming `$REPO_ROOT/init.sh` in the suite fails R1. `tests/test-bl308-gitleaks-generated-project.sh` (full lane, invokes init.sh): P1 asserts
 the generated `ci.yml` carries `gitleaks git --redact --exit-code 1`, P2 runs exactly that over the
 generated project and asserts rc 0, zero findings, at least one commit; RED at `f8841de` on P2 with
 the same line. Both suites skip with a named reason when gitleaks is absent locally and fail when
