@@ -22035,7 +22035,8 @@ for the 4.0 trap: **assign at the declaration**, applied to code you are already
 
 ## BL-312: concurrent `track-tool-usage.sh` invocations share one temp name, land a 0-byte ledger, and the MCP session gate then refuses every Write and Edit
 
-**Status:** Fixed — `tests/test-bl312-tool-usage-concurrent.sh`, 34 cases, 34/0 under `/bin/bash`
+**Status:** Open — reproduction and fix in the pull request that files this entry.
+`tests/test-bl312-tool-usage-concurrent.sh`, 34 cases, 34/0 under `/bin/bash`
 3.2.57 and bash 5.3.15, and `tests/test-session-test-gate-check-merge.sh` 12/0 on both. Round two answered an adversarial review that blocked round one: the gate
 wrote the same ledger with no lock, and the breaker broke live locks under contention. Round three
 answers the review that blocked round two: the lock loop spun forever when `mkdir` failed for any

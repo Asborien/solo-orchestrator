@@ -268,7 +268,7 @@ cp "$HOOK" "$TMP/nolib/scripts/session-test-gate-check.sh"
 run_hook_at "$TMP/nolib/scripts/session-test-gate-check.sh" "startup"
 nl_q=$(jq -r '.qdrant_find_succeeded // false' "$PROJ/.claude/tool-usage.json" 2>/dev/null)
 nl_gate=$(run_mcp_gate)
-nl_denied=no; printf '%s' "$nl_gate" | grep -q '"permissionDecision": "deny"' && nl_denied=yes
+nl_denied=no; grep -q '"permissionDecision": "deny"' <<<"$nl_gate" && nl_denied=yes
 if [ "$nl_q" != "true" ] && [ "$nl_denied" = "yes" ]; then
   pass "T5d: with the ledger lib absent, the startup leaves no inherited qdrant_find_succeeded=true behind, and session-mcp-gate.sh DENIES the first Write"
 else
