@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # BL-307-MANIFEST-GUARD: a Phase 0/1 project has no build file yet, and
+      # BL-311-MANIFEST-GUARD: a Phase 0/1 project has no build file yet, and
       # setup-java's cache input hashes **/*.gradle* to build its key. Every step
       # that needs the manifest is guarded on the build files the framework
       # recognises (*.gradle, *.gradle.kts, pom.xml); this notice says what was
