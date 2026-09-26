@@ -31,8 +31,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALLER="$REPO_ROOT/init"".sh"
 # shellcheck source=../scripts/lib/scaffold-shipped-set.sh
 . "$REPO_ROOT/scripts/lib/scaffold-shipped-set.sh"
-# shellcheck source=test-helpers/path-without-tool.sh
-. "$SCRIPT_DIR/test-helpers/path-without-tool.sh"
 
 PASSED=0
 FAILED=0
@@ -56,6 +54,31 @@ TMPS=""
 cleanup() { [ -n "$TMPS" ] && rm -rf $TMPS; return 0; }
 trap cleanup EXIT INT TERM
 newtmp() { local d; d=$(mktemp -d); TMPS="$TMPS $d"; printf '%s\n' "$d"; }
+
+# The PATH mirror from tests/test-bl112-commit-enforcement.sh, for gitleaks: each
+# PATH entry holding it becomes a directory of symlinks to everything else in it.
+build_nogitleaks_path() {
+  local mirrors="$1" n=0 d np="" entry base
+  mkdir -p "$mirrors"
+  printf '%s' "$PATH" | tr ':' '\n' > "$mirrors/.pathlist"
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    if [ -x "$d/gitleaks" ]; then
+      n=$((n + 1))
+      mkdir -p "$mirrors/$n"
+      for entry in "$d"/*; do
+        [ -e "$entry" ] || continue           # bash 3.2 has no nullglob
+        base="${entry##*/}"
+        [ "$base" = "gitleaks" ] && continue
+        ln -sf "$entry" "$mirrors/$n/$base" 2>/dev/null || true
+      done
+      np="${np:+$np:}$mirrors/$n"
+    else
+      np="${np:+$np:}$d"
+    fi
+  done < "$mirrors/.pathlist"
+  printf '%s\n' "$np"
+}
 
 # The surface init.sh ships into every project is drawn from these. docs/ is
 # not copied whole: init.sh copies named files out of it (parsed from its own
@@ -215,7 +238,8 @@ fi
 # shadowed off PATH; the child skips these cases so it does not recurse.
 if [ -z "${BL308_POSTURE_CHILD:-}" ]; then
   A="$(newtmp)"
-  np=$(path_without_tool gitleaks "$A") || np=""
+  np=$(build_nogitleaks_path "$A/mirrors") || np=""
+  # A fresh shell answers, so this one's command hash cannot.
   if [ -z "$np" ] || env PATH="$np" "$BASH" -c 'command -v gitleaks' >/dev/null 2>&1; then
     fail_ "A1/A2 setup" "could not build a PATH without gitleaks, so the absent posture cannot be measured"
   else
