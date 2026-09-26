@@ -21024,9 +21024,9 @@ same file).
 
 ## BL-280: the Phase 2→3 bug gate treats an unmeasured GitHub as zero bugs — an absent SEV label, and a repo `gh` cannot even resolve, both read as "no bugs" and clear the gate
 
-**Status:** Closed — 2026-09-26 reconciliation: fixed on main via PR #412 (`b4c20a5`, suite `7dd6657`, review hardening `f6ebc86`); `tests/test-bl280-bug-gate-unmeasured-source.sh` 21 passed / 0 failed, rc 0, on `c3f3d9e`. Both arms are fixed; the >1000-issue count residual and the two maintainer judgements under "What this entry does NOT decide" (block vs warn; plumbing `bug_tracker`) remain undecided and unfiled.
+**Status:** Open — 2026-09-26 reconciliation: **both unmeasured-source arms landed on `main` via PR #412** (`b4c20a5`, suite `7dd6657`, review hardening `f6ebc86`); `tests/test-bl280-bug-gate-unmeasured-source.sh` 21 passed / 0 failed, rc 0, on `c3f3d9e`. **Stays Open for what is not filed anywhere else:** the `--limit 1000` cap still understates a larger open-issue count, and the two maintainer judgements under "What this entry does NOT decide" — block vs warn on an unmeasured source, and plumbing `bug_tracker` (written by init.sh and the wizard, read by nothing) — are undecided.
 
-**Original status (pre-close, kept for audit trail):** Open — reproduction + fix BUILT on branch `fix/bl280`, NOT yet submitted.
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — reproduction + fix BUILT on branch `fix/bl280`, NOT yet submitted.
 `# BL-280-SEV-LABEL-PROBE` distinguishes "this label does not exist" from "zero open issues"
 with one bounded `gh api repos/{owner}/{repo}/labels/<name>` per label; `# BL-280-NO-SEV-VOCAB`
 stops `gh auth status` alone from establishing a bug-tracking SOURCE; `# BL-280-PARTIAL-VOCAB`
