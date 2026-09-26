@@ -67,6 +67,22 @@ TOOL_USAGE=".claude/tool-usage.json"
 PROCESS_STATE=".claude/process-state.json"
 ATTEST_JSONL=".claude/mcp-attestations.jsonl"
 
+# BL-312: the two mcp_gate_satisfied writes below run on every Write and Edit,
+# so they share track-tool-usage.sh's locked, unique-temp writer. Through a
+# shared "$TOOL_USAGE.tmp" with no lock, twelve concurrent checks landed a
+# 0-byte ledger and the next Write was denied. The writes are a record only,
+# never the decision, so a missing lib skips them and changes no answer. The
+# trap matters: Claude Code cancels a pending hook, and without it a signalled
+# gate leaves its lock and temp behind. Builtins only, and sourcing the lib
+# runs no external command: this runs before the empty-PATH arm below.
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+[ "$SCRIPT_DIR" = "${BASH_SOURCE[0]}" ] && SCRIPT_DIR=.
+LW_READY=0
+if [ -f "$SCRIPT_DIR/lib/ledger-write.sh" ]; then
+  # shellcheck source=scripts/lib/ledger-write.sh
+  . "$SCRIPT_DIR/lib/ledger-write.sh" && _lw_traps && LW_READY=1   # BL-312-GATE-TRAP
+fi
+
 # THE ESCAPE IS LAUNCH-TIME, and the hint must say so rather than implying a
 # retry. A PreToolUse hook inherits the environment Claude Code started with,
 # and unlike BL-072's TDD escape — which rides the `git commit` command line, so
@@ -280,12 +296,12 @@ fi
 
 # ── Allow ───────────────────────────────────────────────────────────────────
 if [ -z "$BLOCK_REASON" ]; then
-  if command -v jq >/dev/null 2>&1 && [ -f "$TOOL_USAGE" ]; then
+  if [ "$LW_READY" = "1" ] && command -v jq >/dev/null 2>&1 && [ -f "$TOOL_USAGE" ]; then
     # The UPWARD half of the re-derivation. Nothing else in the framework reads
     # this field, so deleting this line changes no decision and no other test —
     # which is exactly why it needs its own assertion (D2) and its own mutant
     # (M12) rather than three prose claims that it happens.
-    jq '.mcp_gate_satisfied = true' "$TOOL_USAGE" > "$TOOL_USAGE.tmp" 2>/dev/null && mv "$TOOL_USAGE.tmp" "$TOOL_USAGE" 2>/dev/null  # BL-233-LATCH-RECORD-UP
+    _lw_update '.mcp_gate_satisfied = true'  # BL-233-LATCH-RECORD-UP
   fi
   exit 0
 fi
@@ -294,8 +310,8 @@ BLOCK_REASON="${BLOCK_REASON% }"
 
 # Re-derive the recorded flag DOWNWARD too, so a stale `true` left by an
 # earlier derivation (or written by hand) never survives a run that blocked.
-if command -v jq >/dev/null 2>&1 && [ -f "$TOOL_USAGE" ]; then
-  jq '.mcp_gate_satisfied = false' "$TOOL_USAGE" > "$TOOL_USAGE.tmp" 2>/dev/null && mv "$TOOL_USAGE.tmp" "$TOOL_USAGE" 2>/dev/null
+if [ "$LW_READY" = "1" ] && command -v jq >/dev/null 2>&1 && [ -f "$TOOL_USAGE" ]; then
+  _lw_update '.mcp_gate_satisfied = false'
 fi
 
 # ── The attested escape (BL-072's shape) ────────────────────────────────────

@@ -57,59 +57,15 @@ set +e
 
 TOOL_USAGE=".claude/tool-usage.json"
 
-# ── BL-312: one ledger writer at a time, never through a shared temp name ───
-# Every write used to go `jq … > "$TOOL_USAGE.tmp" && mv`. Two invocations at
-# once (two sessions, or subagents, on one project) truncated each other's
-# half-written temp and the mv landed it: a 0-byte ledger, which jq then
-# re-lands empty on every later write, and session-mcp-gate.sh fails closed on
-# every Write and Edit. Each write now takes the same mkdir lock pattern and
-# 3s budget as _tt_record_accumulation below, and writes through its own
-# mktemp beside the ledger so the mv is atomic. A lock still held when the
-# budget runs out is taken to be stale (SIGKILL skips every trap) and broken
-# once; if that races, the write goes ahead unlocked and may lose an update,
-# but the unique temp still keeps the ledger whole.
-TT_LOCK="$TOOL_USAGE.lockdir"
-TT_LOCKED=0
-_tt_lock() {
-  local attempts=0
-  TT_LOCKED=0
-  while ! mkdir "$TT_LOCK" 2>/dev/null; do   # BL-312-LOCK
-    attempts=$((attempts + 1))
-    if [ "$attempts" -ge 30 ]; then
-      rmdir "$TT_LOCK" 2>/dev/null   # BL-312-BREAK-STALE
-      mkdir "$TT_LOCK" 2>/dev/null && TT_LOCKED=1
-      return 0
-    fi
-    sleep 0.1
-  done
-  TT_LOCKED=1
-}
-_tt_unlock() {
-  [ "$TT_LOCKED" = "1" ] && rmdir "$TT_LOCK" 2>/dev/null
-  TT_LOCKED=0
-}
-trap '_tt_unlock' EXIT INT TERM
-
-# _tt_write JQ_ARGS… — apply a jq filter to the ledger. Caller holds the lock.
-_tt_write() {
-  local tmp
-  tmp=$(mktemp "$TOOL_USAGE.XXXXXX" 2>/dev/null)   # BL-312-UNIQUE-TMP
-  [ -n "$tmp" ] || return 1
-  if jq "$@" "$TOOL_USAGE" > "$tmp" 2>/dev/null && mv "$tmp" "$TOOL_USAGE" 2>/dev/null; then
-    return 0
-  fi
-  rm -f "$tmp"
-  return 1
-}
-
-_tt_update() {
-  local rc
-  _tt_lock
-  _tt_write "$@"
-  rc=$?
-  _tt_unlock
-  return "$rc"
-}
+# BL-312: every ledger write goes through the locked, unique-temp writer that
+# session-mcp-gate.sh shares. Without it this hook cannot write the ledger at
+# all, and verify-install reports the lib missing.
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+[ "$SCRIPT_DIR" = "${BASH_SOURCE[0]}" ] && SCRIPT_DIR=.
+[ -f "$SCRIPT_DIR/lib/ledger-write.sh" ] || exit 0
+# shellcheck source=scripts/lib/ledger-write.sh
+. "$SCRIPT_DIR/lib/ledger-write.sh"
+_lw_traps
 
 # ── argv: --event <name> ────────────────────────────────────────────────────
 # Unknown arguments are ignored rather than fatal — an argv this hook does not
@@ -176,11 +132,11 @@ case "$TOOL_NAME" in
     BASH_CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
     if echo "$BASH_CMD" | grep -qE '^\s*git\s+commit' 2>/dev/null; then
       if [ -f "$TOOL_USAGE" ] && command -v jq &>/dev/null; then
-        _tt_lock
+        _lw_lock
         CURRENT=$(jq -r '.commits_since_last_context7 // 0' "$TOOL_USAGE" 2>/dev/null)
         case "$CURRENT" in ''|*[!0-9]*) CURRENT=0 ;; esac
-        _tt_write ".commits_since_last_context7 = $((CURRENT + 1))"
-        _tt_unlock
+        _lw_write ".commits_since_last_context7 = $((CURRENT + 1))"
+        _lw_unlock
       fi
     fi
     exit 0
@@ -200,15 +156,22 @@ esac
 #
 # BL-312: seeded under the lock, re-checked inside it, and landed by mv, so two
 # first writers cannot both seed and a reader never sees a half-written seed.
+# A ledger that exists but is EMPTY or UNPARSEABLE is reseeded the same way:
+# every write on it would otherwise fail, and the gate would refuse every
+# Write and Edit for the rest of the session. The seed carries no requirements,
+# so the gate stays closed until the outcomes are recorded again.
+_ledger_unusable() {
+  [ ! -f "$TOOL_USAGE" ] && return 0
+  command -v jq &>/dev/null || return 1
+  jq -e 'type == "object"' "$TOOL_USAGE" >/dev/null 2>&1 && return 1
+  return 0
+}
 CREATED_LEDGER=0
-if [ ! -f "$TOOL_USAGE" ]; then
+if _ledger_unusable; then
   mkdir -p .claude
-  _tt_lock   # BL-312-SEED-LOCK
-  SEED_TMP=""
-  [ ! -f "$TOOL_USAGE" ] && SEED_TMP=$(mktemp "$TOOL_USAGE.XXXXXX" 2>/dev/null)
-  if [ -n "$SEED_TMP" ]; then
-    CREATED_LEDGER=1
-    cat > "$SEED_TMP" << 'EOF'
+  _lw_lock   # BL-312-SEED-LOCK
+  if _ledger_unusable; then
+    _lw_land cat << 'EOF' && CREATED_LEDGER=1
 {
   "session_id": null,
   "calls": [],
@@ -226,9 +189,8 @@ if [ ! -f "$TOOL_USAGE" ]; then
   "mcp_gate_satisfied": false
 }
 EOF
-    mv "$SEED_TMP" "$TOOL_USAGE" 2>/dev/null || { rm -f "$SEED_TMP"; CREATED_LEDGER=0; }
   fi
-  _tt_unlock
+  _lw_unlock
 fi
 
 command -v jq &>/dev/null || exit 0
@@ -238,7 +200,7 @@ command -v jq &>/dev/null || exit 0
 # derived requirements this hook has no business deleting). If the heredoc ever
 # drifts back to shipping a permissive object, this strips it. Mutating this
 # line into a re-seed is BL-231's "tracker re-seed" row, verbatim.
-[ "$CREATED_LEDGER" = "1" ] && _tt_update 'del(.mcp_requirements)'  # BL-233-NO-REQ-RESEED
+[ "$CREATED_LEDGER" = "1" ] && _lw_update 'del(.mcp_requirements)'  # BL-233-NO-REQ-RESEED
 
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -314,11 +276,11 @@ esac  # BL-233-C7-QUERYDOCS
 # absent — before BL-233 this hook was registered on PostToolUse only, so a
 # failed call produced no row at all and the framework could not tell a broken
 # server from an idle one.
-_tt_update --arg tool "$TOOL_NAME" --arg ts "$TIMESTAMP" --arg ev "$EVENT" --arg oc "$OUTCOME" --argjson empty "$IS_EMPTY" \
+_lw_update --arg tool "$TOOL_NAME" --arg ts "$TIMESTAMP" --arg ev "$EVENT" --arg oc "$OUTCOME" --argjson empty "$IS_EMPTY" \
   '.calls += [{"tool": $tool, "timestamp": $ts, "event": $ev, "outcome": $oc, "empty_result": ($empty == 1)}]'
 
 if [ "$OUTCOME" = "failure" ] && [ -n "$TOOL_ERROR" ]; then
-  _tt_update --arg err "$TOOL_ERROR" --arg tool "$TOOL_NAME" \
+  _lw_update --arg err "$TOOL_ERROR" --arg tool "$TOOL_NAME" \
     '.last_mcp_error = $err | .last_mcp_error_tool = $tool'
 fi
 
@@ -384,42 +346,42 @@ if echo "$TOOL_NAME" | grep -q "context7" 2>/dev/null; then
   # context7_called stays name-derived on purpose: it is the OBSERVABILITY
   # field ("a Context7 tool was invoked"), kept for the reminder/validate
   # surfaces. It is no longer what the gate reads.
-  _tt_update '.context7_called = true'
+  _lw_update '.context7_called = true'
 
   if [ "$C7KIND" = "query" ] && [ "$OUTCOME" = "success" ]; then
     # A real documentation read. This is the only thing that satisfies the
     # Context7 requirement, and the only thing that may reset the commit-time
     # staleness counter — an ID lookup used to silence that nudge too.
-    _tt_update '.context7_query_docs_succeeded = true | .commits_since_last_context7 = 0'
+    _lw_update '.context7_query_docs_succeeded = true | .commits_since_last_context7 = 0'
   elif [ "$C7KIND" = "resolve" ]; then
-    _tt_update '.context7_resolve_only_count = ((.context7_resolve_only_count // 0) + 1)'
+    _lw_update '.context7_resolve_only_count = ((.context7_resolve_only_count // 0) + 1)'
   fi
 fi
 
 # ── Qdrant ──────────────────────────────────────────────────────────────────
 if echo "$TOOL_NAME" | grep -q "qdrant" 2>/dev/null; then
   if echo "$TOOL_NAME" | grep -q "find" 2>/dev/null; then
-    _tt_update '.qdrant_find_called = true'
+    _lw_update '.qdrant_find_called = true'
     if [ "$OUTCOME" = "success" ]; then  # BL-233-QDRANT-SUCCESS
-      _tt_update --argjson empty "$IS_EMPTY" \
+      _lw_update --argjson empty "$IS_EMPTY" \
         '.qdrant_find_succeeded = true
          | .qdrant_find_empty = ($empty == 1)
          | .qdrant_find_empty_count = ((.qdrant_find_empty_count // 0) + $empty)'
     elif [ "$OUTCOME" = "interrupted" ]; then
-      _tt_update '.qdrant_find_interrupted = ((.qdrant_find_interrupted // 0) + 1)'
+      _lw_update '.qdrant_find_interrupted = ((.qdrant_find_interrupted // 0) + 1)'
     else
       # Only a real failed round trip counts toward the evidence the gate uses
       # to call the server unreachable.
-      _tt_update '.qdrant_find_failed = ((.qdrant_find_failed // 0) + 1)'
+      _lw_update '.qdrant_find_failed = ((.qdrant_find_failed // 0) + 1)'
     fi
   elif echo "$TOOL_NAME" | grep -q "store" 2>/dev/null; then
-    _tt_update '.qdrant_store_called = true'
+    _lw_update '.qdrant_store_called = true'
     if [ "$OUTCOME" = "success" ]; then   # BL-233-WPB-ACCUM-WRITE
-      _tt_update '.qdrant_store_succeeded = true'
+      _lw_update '.qdrant_store_succeeded = true'
       # The session-scoped flag above and the durable record below answer two
       # different questions. Only the durable one crosses a phase boundary.
       if ! _tt_record_accumulation "$TIMESTAMP"; then
-        _tt_update '.qdrant_store_record_failed = ((.qdrant_store_record_failed // 0) + 1)'
+        _lw_update '.qdrant_store_record_failed = ((.qdrant_store_record_failed // 0) + 1)'
       fi
     fi
   fi
