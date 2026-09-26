@@ -921,6 +921,9 @@ run_child_suite "tests/test-brownfield-wp12c-production-exemption.sh" \
 run_child_suite "tests/test-brownfield-wp9c-session-layer.sh" \
   "WP9c: the Claude Code session layer an adopted project receives" \
   "WP9c session-layer tests FAILED (run tests/test-brownfield-wp9c-session-layer.sh for details)"
+run_child_suite "tests/test-bl296-adopt-guardrails.sh" \
+  "BL-296 row 33: the Development Guardrails on the adoption path" \
+  "BL-296 adoption-Guardrails tests FAILED (run tests/test-bl296-adopt-guardrails.sh for details)"
 # BL-312: concurrent tracker invocations shared one temp name and landed a
 # 0-byte ledger, which the MCP session gate then refused on every Write.
 run_child_suite "tests/test-bl312-tool-usage-concurrent.sh" \
