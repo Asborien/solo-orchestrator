@@ -18964,7 +18964,9 @@ one entry by a shared defect class — the precedent for this entry's shape), `#
 
 ## BL-265: `intake-wizard.sh` names a jq KEYWORD as a function parameter, so the intake appendix's Project Context table renders with zero rows on every jq since 1.5
 
-**Status:** Open — fix + suite committed on branch `fix/bl265` at `8f2eecb`. Not pushed, no PR.
+**Status:** Open — 2026-09-26 reconciliation: **the rename half landed on `main` via PR #412** (`141eef5`); `tests/test-bl265-jq-reserved-label.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — `render_intake_file || true` is unchanged at all three call sites on `main`, so jq's exit status is still not checked (the second half of `## BUG-010:` defect (3)'s prescribed fix).
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl265` at `8f2eecb`. Not pushed, no PR.
 
 **THIS IS THE FIX FOR `## BUG-010:` DEFECT (3), WHICH THE MAINTAINER FILED ON 2026-09-01.** He
 diagnosed it, named `label` as the reserved keyword, and prescribed the same one-word rename — down to
@@ -19136,7 +19138,9 @@ branch, so on a branch carrying only this entry those citations would resolve to
 
 ## BL-266: typing `pause` files the UNFINISHED intake section under `completed_sections`, and `--resume` then skips it permanently — with no message either way
 
-**Status:** Open — fix + suite committed on branch `fix/bl266` at `b3b781f`. Not pushed, no PR.
+**Status:** Open — 2026-09-26 reconciliation: **the pause fix landed on `main` via PR #412** (`41c7bc2`, then `2fa9887` dropping the resume-point block); `tests/test-bl266-paused-section-marked-complete.sh` 10 passed / 0 failed, rc 0, on `c3f3d9e`. The first residual below (the `115` arithmetic without a pause) is fixed by `## BL-281:` (`eb15bc0`, same PR). **Still open: the second residual** — `load_progress()` still subscripts `data['project_name']` etc. with no `.get` on `main` (`## BUG-010:` defect (1)).
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl266` at `b3b781f`. Not pushed, no PR.
 
 **Logged:** 2026-09-12, reproduced live while filling in a downstream adoption's intake.
 
@@ -19304,7 +19308,9 @@ on a branch carrying only this entry those citations would resolve to nothing.)*
 
 ## BL-267: the wizard's own `?` help key is recorded as the answer at 81 of its prompts, because only one of the two prompt helpers handles it
 
-**Status:** Open — fix + suite committed on branch `fix/bl267` at `1989933`. Not pushed, no PR.
+**Status:** Open — 2026-09-26 reconciliation: **the `prompt_input` fix landed on `main` via PR #412** (`78f20b9`, suite hardened by `ee7a9f4` and `51ee606`); `tests/test-bl267-bare-question-mark.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — on `main`, `prompt_choice` still answers `?` with "Invalid choice", and neither `prompt_choice` nor `prompt_with_suggestions` checks `read`'s exit status (the EOF hang, `## BUG-010:` defect (2)).
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl267` at `1989933`. Not pushed, no PR.
 
 **Logged:** 2026-09-12, observed on `one_time_budget` and `users_12mo` in a downstream adoption's
 `.claude/intake-progress.json`, both stored as the literal string `?`.
@@ -19848,7 +19854,9 @@ that makes a verification result load-bearing).
 
 ## BL-281: `intake-wizard.sh --resume` after a CLEAN finish of Section 11.5 runs nothing, prints "Intake Complete!", and never runs Sections 12 and 13 — the resume point is `115 + 1`
 
-**Status:** Open — fix + suite built on branch `fix/bl281`, not yet checked in, not pushed, no PR. The
+**Status:** Closed — 2026-09-26 reconciliation: fixed on main via PR #412 (`eb15bc0`, suite `6b15a92`); `tests/test-bl281-resume-after-115.sh` 19 passed / 0 failed, rc 0, on `c3f3d9e`. The items under "Left to the maintainer" are unchanged: the interactive resume path is not driven end to end, an unknown `last_section` restarts from the top rather than refusing, and `## BUG-010:` defect (1) is still open there.
+
+**Original status (pre-close, kept for audit trail):** Open — fix + suite built on branch `fix/bl281`, not yet checked in, not pushed, no PR. The
 operator verifies and submits.
 
 **Logged:** 2026-09-14, from a downstream adoption's intake: the operator finished Section 11.5 cleanly,
@@ -19982,7 +19990,9 @@ each lands on its own branch.
 **Renumbered BL-261 → BL-286 on merge (2026-09-15):** BL-261 was taken on `main` before this landed;
 the marker, the test file and both registrations were renamed to match.
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/bl286`, NOT yet submitted.
+**Status:** Open — 2026-09-26 reconciliation: **the reader half landed on `main` via PR #412** (`e6be06e`, suite `f6c240d`, review hardening `f6ebc86`); `tests/test-bl286-integration-branch.sh` 17 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the keyless case** ("What this does NOT fix" below) — on `main` nothing writes `integration_branch` (`scripts/pre-commit-gate.sh` is the only file under `init.sh`, `scripts/` and `templates/` that names it), so a wrong-trunk project with no key is still exempted.
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — reproduction + fix BUILT on branch `fix/bl286`, NOT yet submitted.
 `# BL-286-INTEGRATION-BRANCH`: `_tdd_triggers` reads the project's own integration branch from
 `integration_branch` in the project manifest and resolves the branch axis against that, falling back to
 today's literal `main` when the key is absent. Suite `tests/test-bl286-integration-branch.sh` **15 / 0**
@@ -20282,7 +20292,9 @@ script's documented CLI surface and its implemented CLI surface disagreed).
 **Renumbered BL-262 → BL-287 on merge (2026-09-15):** BL-262 was taken on `main` before this landed;
 the markers, the test file and both registrations were renamed to match.
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/reconfigure-ci-host`, NOT yet submitted.
+**Status:** Open — 2026-09-26 reconciliation: **the CI half landed on `main` via PR #412** (`37fa9e7`, renumbered by `15caa8a`); `tests/test-bl287-reconfigure-ci-host.sh` 14 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the release-arm residual below** — both `release_src` sites in `scripts/reconfigure-project.sh` on `main` still build `templates/pipelines/release/<platform>.yml` with no host segment; and the refuse-vs-infer question for an absent host is still undecided.
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — reproduction + fix BUILT on branch `fix/reconfigure-ci-host`, NOT yet submitted.
 `# BL-287-RECONFIG-CI-HOST`: the `language` arm resolves the recorded host from the project manifest,
 reads the template from `templates/pipelines/ci/<host>/<lang>.yml`, and takes the destination from the
 shared resolver (`# BL-229-HOST-PIPELINE-PATHS`) rather than minting a fourth copy of the mapping. An
@@ -21012,7 +21024,9 @@ same file).
 
 ## BL-280: the Phase 2→3 bug gate treats an unmeasured GitHub as zero bugs — an absent SEV label, and a repo `gh` cannot even resolve, both read as "no bugs" and clear the gate
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/bl280`, NOT yet submitted.
+**Status:** Open — 2026-09-26 reconciliation: **both unmeasured-source arms landed on `main` via PR #412** (`b4c20a5`, suite `7dd6657`, review hardening `f6ebc86`); `tests/test-bl280-bug-gate-unmeasured-source.sh` 21 passed / 0 failed, rc 0, on `c3f3d9e`. **Stays Open for what is not filed anywhere else:** the `--limit 1000` cap still understates a larger open-issue count, and the two maintainer judgements under "What this entry does NOT decide" — block vs warn on an unmeasured source, and plumbing `bug_tracker` (written by init.sh and the wizard, read by nothing) — are undecided.
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — reproduction + fix BUILT on branch `fix/bl280`, NOT yet submitted.
 `# BL-280-SEV-LABEL-PROBE` distinguishes "this label does not exist" from "zero open issues"
 with one bounded `gh api repos/{owner}/{repo}/labels/<name>` per label; `# BL-280-NO-SEV-VOCAB`
 stops `gh auth status` alone from establishing a bug-tracking SOURCE; `# BL-280-PARTIAL-VOCAB`
