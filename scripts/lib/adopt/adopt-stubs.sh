@@ -60,13 +60,12 @@ adopt_stub_notice() {
 # It is announced rather than started because Act 3 is a Claude Code session,
 # not a shell step. The one honest thing this driver can do about it is name it
 # and point at the script that generates the first message.
-adopt_stub_assessment() {
-  adopt_stub_notice "the assessment (Act 3) — the requirements interview, the fitness verdict and the plan" "WP12a" \
-    "Adoption has surveyed, installed and recorded. What it has NOT done is ask you what this"
-  adopt_note "project is for, judge whether the technology fits those answers, or write you a plan."
-  adopt_note "Until that ships, PROJECT_INTAKE.md carries the cells the scan could fill and leaves"
-  adopt_note "the rest blank, and the Phase 0 questions are asked the ordinary way instead."
-}
+# adopt_stub_assessment — RETIRED 2026-09-24 by WP12a. The assessment is
+# built: Act 2 writes the prompt (`# BL-242-ASSESSMENT-PROMPT`), resume.sh
+# prints it (`# BL-242-RESUME-ASSESSMENT`), a Claude Code session conducts it,
+# and `adopt-project.sh --act4` records it (`# BL-242-ACT4-FINISH`). The run
+# now ends with `adopt_act3_next`, which names the step instead. The name is
+# left as a headstone, like the others in this file.
 
 # WP5b — the test-debt ledger and its ratchet (§5.4) — RETIRED, NOT DELETED IN
 # SPIRIT. The stub that used to live here said "existing untested files are not
@@ -150,12 +149,11 @@ adopt_stub_framework_script_collisions() {
 # `adopt_stub_*` functions that are actually CALLED, and a reader following an
 # older handoff to this file should find out where the behaviour went.
 #
-# WHAT OF WP7 IS STILL OUT: the CI carve-out and the `adoption` audit row.
-# `secrets_disposition` is UNOWNED, not WP7's — `adopt_audit_event`'s own
-# header says so, and that header is the live list. An earlier draft of this
-# paragraph assigned it to WP7 while the same commit's `docs/adoption.md`
-# correctly called it unowned; two records of one fact disagreeing is the shape
-# this file exists to prevent.
+# WHAT OF WP7 IS STILL OUT: the provenance-header lint. The CI carve-out ships
+# (`# BL-242-CI-AUDIT`, `# BL-242-CI-STAGE`) and the `adoption` and
+# `secrets_disposition` audit rows are written since 2026-09-24
+# (`# BL-242-ADOPTION-EVENT`, `# BL-242-DISPOSITIONS-EVENT`); `adopt_audit_event`'s
+# own header is the live list of which events have an emitter.
 
 # adopt_stub_hooks — RETIRED 2026-09-23 by WP7/3.
 #
@@ -177,38 +175,20 @@ adopt_stub_framework_script_collisions() {
 # CALLED, and a reader following an older handoff should find out where the
 # behaviour went.
 
-# The adoptee's own framework DOCUMENTS — CLAUDE.md, the generated templates,
-# docs/reference/, the .gitignore additions. Every one of them is a path an
-# adoptee may already occupy (a CLAUDE.md especially), which makes writing them
-# §7's collision question and therefore WP6's, not this package's. Named here
-# because the absence is not cosmetic: CLAUDE.md is what a downstream agent
-# reads at kickoff, so an adopted project without it starts every session
-# without its orientation.
+# adopt_stub_project_docs — RETIRED 2026-09-24 by WP12b.
 #
-# OWNER CORRECTED AT WP6, for the same reason as the secrets stub above. WP6
-# built §7's collision ARCHIVE — the AI-layer surfaces and the git hooks. It
-# does not write the adoptee's framework DOCUMENTS, and §10-WP6's scope row
-# does not ask it to. Leaving "WP6" here after WP6 landed would announce a
-# delivered owner for undelivered work, which is the one thing an honest stub
-# must not do.
-adopt_stub_project_docs() {
-  adopt_stub_notice "your project's framework documents" "WP11 archives them, WP12b writes them (D3)" \
-    "CLAUDE.md, the document templates and the reference docs are NOT written. The scripts and the"
-  adopt_note "state are here, so the gates work; the reading material an agent picks up at the start"
-  adopt_note "of a session is not, and a CLAUDE.md you already have would be a collision, not a gap."
-  # NO BACKTICKS IN A DOUBLE-QUOTED ARGUMENT. `document` was command
-  # substitution, so this line ran `document`, printed
-  # `adopt-stubs.sh: line 190: document: command not found` to stderr on every
-  # adoption, and told the operator "WP11 shipped D3's  class".
-  adopt_note "Your framework documents ARE archived now — WP11 shipped D3's document class, so"
-  adopt_note "each one you already owned is in the adoption archive with a restore line. What is"
-  adopt_note "not built is the WRITING of the new ones (WP12b), which is what this notice is about."
-}
+# The framework documents are written now: `adopt_write_framework_docs`
+# (`# BL-242-DOCS-STAGE`, scripts/lib/adopt/adopt-docs.sh) renders CLAUDE.md
+# through the renderer `init.sh` uses, copies the six document templates, lays
+# down the reference guides where absent, and names every original it replaced
+# with an invitation to retrieve content from the archive — D3's informing
+# half. What is NOT built is D3's "adapt or merge" half, which is judgement and
+# belongs to the assessment (Act 3), and the `.gitignore` additions `init.sh`
+# makes.
+#
+# THE NAME IS LEFT AS A HEADSTONE, like the ones above it.
 
-# WP7 — §8.6's provenance headers on reconstructed documents.
-adopt_stub_provenance_headers() {
-  adopt_stub_notice "the provenance headers on reconstructed documents" "WP7" \
-    "PROJECT_INTAKE.md records where each answer came from, but it carries no machine-readable"
-  adopt_note "provenance header. A near-miss header is worse than none: WP7 ships a lint for the"
-  adopt_note "real one, and a lint cannot tell a near-miss from the genuine article."
-}
+# adopt_stub_provenance_headers — RETIRED 2026-09-25 by WP7. PROJECT_INTAKE.md
+# opens with §8.6's header (`# BL-242-PROVENANCE-HEADER`), checked where it is
+# written (`# BL-242-PROVENANCE-WRITE-CHECK`) and again by the Act 4 finisher
+# (`# BL-242-PROVENANCE-ACT4-CHECK`). A headstone, like the others here.

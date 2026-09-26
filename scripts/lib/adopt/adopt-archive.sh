@@ -558,15 +558,16 @@ adopt_archive_scan() {
 # because one enum member is one five-surface change and five members is five.
 # The five events the design names are:
 #
-#   adoption               the adoption itself                    (WP7 owns it)
-#   blocker_acceptance     every accepted blocker                 (WP5 owns it)
-#   secrets_disposition    every `accepted risk` disposition      (unowned)
+#   adoption               the adoption itself                    `# BL-242-ADOPTION-EVENT`
+#   blocker_acceptance     every accepted blocker                 NONE — WP5 is RETIRED
+#   secrets_disposition    every accepted risk and every          `# BL-242-DISPOSITIONS-EVENT`
+#                          acknowledgement (§6.3)
 #   collision_archive      every collision archive                THIS PACKAGE
 #   collision_re_add       every re-add                           THIS PACKAGE
 #
-# The two this package owns are emitted; the other three have no emitter yet
-# and this comment says so rather than leaving a reader to infer that adoption
-# records everything already.
+# Four are emitted. `blocker_acceptance` never will be: it belonged to v1's
+# certification pass, which v2 retired with nothing left to accept, and this
+# comment says so rather than leaving a reader to infer an emitter is pending.
 #
 # `enforcement_level_at_event` IS "n/a" AND THAT IS A DECISION. The documented
 # enum admits it, and the alternative is worse: reading the tier here would
@@ -802,6 +803,25 @@ adopt_archive_write() {
       # was gone.
       PROJECT_INTAKE.md|.claude/intake-progress.json|.claude/orchestrator-source.json)
                              dispo="replaced" ;;
+      # WP12b writes these (`# BL-242-DOCS-STAGE`) — except where the path is
+      # read-only, which `_adopt_doc_put` leaves alone. The same rule as the
+      # hook arm above, for the same reason: a restore line against a file
+      # nobody touched is a false audit record. A SYMLINK is left alone too, and
+      # unlike a hook one DOES reach this loop — the inventory's `-f` follows
+      # it — and `-w` answers for the TARGET, so it has to be asked first.
+      # Measured: a symlinked FEATURES.md read `replaced` while it sat untouched.
+      # WP9c: settings.json is COMPOSED — theirs kept, the framework's rules
+      # unioned in and its hooks added (`# BL-242-SESSION-COMPOSE`). The four
+      # vendored skills are framework-wins at their own paths. A symlink or an
+      # unwritable file is left alone by that stage, so it stays `kept`.
+      .claude/settings.json)
+        if [ ! -L "$root/$rel" ] && ! adopt_path_under_link "$root" "$rel" && [ -w "$root/$rel" ] \
+           && jq -e 'type == "object" and ((.permissions == null) or ((.permissions | type) == "object")) and ((.hooks == null) or ((.hooks | type) == "object"))' "$root/$rel" >/dev/null 2>&1; then dispo="composed"; else dispo="kept"; fi ;;   # BL-242-ARCHIVE-DISPO-SESSION
+      .claude/skills/session-handoff/SKILL.md|.claude/skills/sweep-triage/SKILL.md|.claude/skills/zoom-out/SKILL.md|.claude/skills/grill-with-docs/SKILL.md)
+        if [ ! -L "$root/$rel" ] && ! adopt_path_under_link "$root" "$rel" && [ -w "$root/$rel" ]; then dispo="replaced"; else dispo="kept"; fi ;;
+      CLAUDE.md|FEATURES.md|BUGS.md|RELEASE_NOTES.md|docs/INDEX.md|docs/IDENTIFIERS.md|docs/archive/README.md)
+        # …and so is one inside a symlinked FOLDER (`# BL-242-PARENT-LINK`).
+        if [ ! -L "$root/$rel" ] && ! adopt_path_under_link "$root" "$rel" && [ -w "$root/$rel" ]; then dispo="replaced"; else dispo="kept"; fi ;;   # BL-242-ARCHIVE-DISPO-DOCS
       *)                     dispo="kept" ;;
     esac
 
@@ -937,7 +957,7 @@ STAGEABLE
     # ledgers before the append and routes them all into the failure arm below.
     # The guard lives in the appender because six files call it and two of them
     # already announce its rc; a guard here would have fixed one caller.
-    _adopt_record_if_stageable "$root" ".claude/bypass-audit.json"
+    _adopt_stage_ledger_once "$root"
   else
     adopt_blank
     adopt_say "   THE ARCHIVE HAPPENED. THE AUDIT ROW FOR IT could not be recorded."
@@ -949,6 +969,15 @@ STAGEABLE
     adopt_note "  jq . .claude/bypass-audit.json"
   fi
   return 0
+}
+
+# _adopt_stage_ledger_once ROOT — record the audit ledger for staging, at most
+# once per run. Three stages append to it; asked three times, an ignored ledger
+# printed "Your .gitignore excludes …" once per stage (review).
+_adopt_stage_ledger_once() {                            # BL-242-LEDGER-STAGE-ONCE
+  [ "${ADOPT_LEDGER_STAGED:-}" = "${ADOPT_WRITTEN_LEDGER:-}:$1" ] && return 0
+  ADOPT_LEDGER_STAGED="${ADOPT_WRITTEN_LEDGER:-}:$1"
+  _adopt_record_if_stageable "$1" ".claude/bypass-audit.json"
 }
 
 # _adopt_record_if_stageable ROOT REL — record REL for staging unless the

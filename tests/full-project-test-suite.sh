@@ -900,6 +900,27 @@ run_child_suite "tests/test-brownfield-wp7b-commit-hook.sh" \
 run_child_suite "tests/test-brownfield-dispositions-template.sh" \
   "BL-242: the secrets stop prints a dispositions template an operator can fill" \
   "dispositions-template tests FAILED (run tests/test-brownfield-dispositions-template.sh for details)"
+run_child_suite "tests/test-brownfield-wp12b-framework-docs.sh" \
+  "WP12b: the framework documents an adopted project receives" \
+  "WP12b framework-docs tests FAILED (run tests/test-brownfield-wp12b-framework-docs.sh for details)"
+run_child_suite "tests/test-brownfield-wp7d-audit-rows.sh" \
+  "WP7: the audit rows and the secrets-dispositions join table" \
+  "WP7 audit-row tests FAILED (run tests/test-brownfield-wp7d-audit-rows.sh for details)"
+run_child_suite "tests/test-brownfield-wp7e-ci-carveout.sh" \
+  "WP7: the CI carve-out — their pipelines read, never changed; the framework's CI at its own name" \
+  "WP7 CI carve-out tests FAILED (run tests/test-brownfield-wp7e-ci-carveout.sh for details)"
+run_child_suite "tests/test-brownfield-wp12a-assessment.sh" \
+  "WP12a: the assessment prompt and the Act 4 finisher" \
+  "WP12a assessment tests FAILED (run tests/test-brownfield-wp12a-assessment.sh for details)"
+run_child_suite "tests/test-brownfield-wp7f-provenance.sh" \
+  "WP7: the provenance header on the reconstructed intake, and its exact check" \
+  "WP7 provenance tests FAILED (run tests/test-brownfield-wp7f-provenance.sh for details)"
+run_child_suite "tests/test-brownfield-wp12c-production-exemption.sh" \
+  "WP12c: the adopted-in-production exemption for hotfix work below phase 4" \
+  "WP12c exemption tests FAILED (run tests/test-brownfield-wp12c-production-exemption.sh for details)"
+run_child_suite "tests/test-brownfield-wp9c-session-layer.sh" \
+  "WP9c: the Claude Code session layer an adopted project receives" \
+  "WP9c session-layer tests FAILED (run tests/test-brownfield-wp9c-session-layer.sh for details)"
 # BL-312: concurrent tracker invocations shared one temp name and landed a
 # 0-byte ledger, which the MCP session gate then refused on every Write.
 run_child_suite "tests/test-bl312-tool-usage-concurrent.sh" \

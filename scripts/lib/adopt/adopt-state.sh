@@ -50,11 +50,29 @@
 # failure mode.
 _adopt_state_order() {
   printf '%s\n' approval_log   # BL-242-APPROVAL-LOG-FIRST
-  printf '%s\n' phase_state intake manifest   # BF-ADOPT-STATE-ORDER
+  # `dispositions` — §6.3's two records — AFTER `intake` and BEFORE `manifest`
+  # (the marker on the line below): inside the loop so the rehearsal covers them
+  # (its audit rows land in the COPY's ledger and are discarded with it), and
+  # before the stamp so an acceptance that cannot be recorded blocks the run
+  # before the project reads as adopted. On the §8.4 line, not a line of its
+  # own, because that line is a single-site mutation anchor.
+  printf '%s\n' phase_state intake dispositions manifest   # BL-242-DISPOSITIONS-ORDER # BF-ADOPT-STATE-ORDER
   # AFTER `manifest` AND NOT BEFORE IT. The Adoption Record names the commit
   # this project was adopted at, and it takes that value from the stamp rather
   # than from a second `git rev-parse HEAD` — one fact, one source. The stamp
   # is written by the `manifest` stage, so the record cannot precede it.
+  # AFTER `manifest` so the documents are written under a stamped adoption, and
+  # BEFORE `adoption_record` so the record is still the last word in the log.
+  # Inside the loop, not after it, because this loop is what the pre-write
+  # rehearsal replays: a document written outside it would be the one write I20
+  # never checked against the archive.
+  printf '%s\n' framework_docs   # BL-242-DOCS-STAGE-ORDER
+  # The framework's CI, at its own name (§7.4), before the record that names it.
+  printf '%s\n' ci   # BL-242-CI-STAGE-ORDER
+  # The Claude Code session layer (§10-WP9c): settings, hook roster, skills, MCP.
+  printf '%s\n' session_layer   # BL-242-SESSION-STAGE-ORDER
+  # The prompt resume.sh prints for the assessment; it needs the stamp's commit.
+  printf '%s\n' assessment_prompt   # BL-242-ASSESSMENT-PROMPT-ORDER
   printf '%s\n' adoption_record   # BL-242-RECORD-STAGE
   printf '%s\n' write_set   # BL-242-WRITE-SET — LAST: it records what every stage before it wrote
 }
@@ -153,6 +171,14 @@ _adopt_overwrite_inventory_check() {
     # Only paths that EXISTED before this run can be overwritten; a path the
     # run creates has nothing to archive.
     [ -e "$root/$rel" ] || continue
+    # THE AUDIT LEDGER IS APPENDED TO, NEVER REPLACED. `bypass_audit_append`
+    # refuses anything but a single JSON array and writes `. + [$row]`, so every
+    # row the operator already had survives — there is nothing an archive copy
+    # would give back. Treating the append as an overwrite blocked EVERY
+    # adoption of a project that already carried a ledger, once the `adoption`
+    # row made the ledger a planned write on every run (review of WP7's audit
+    # rows, measured: `[]` in place, rc 1 "would be replaced with no copy kept").
+    case "$rel" in .claude/bypass-audit.json) continue ;; esac   # BL-242-I20-LEDGER-APPEND
     # `--` so a path beginning with a dash is a pattern, not an option: without
     # it grep exits 2 and prints usage to stderr. It fails CLOSED either way
     # (exit 2 reads as no-match, so the run blocks), but noisily and for the
@@ -1086,7 +1112,6 @@ adopt_write_intake() {
   # the stamp's scannerReportSha256 is the hash of exactly this file, so the
   # record and its evidence cannot drift apart.
   cat "$report" | adopt_write_file "$root" ".claude/adoption/scout-report.json" || return 1
-  adopt_stub_provenance_headers
   return 0
 }
 
@@ -1607,7 +1632,6 @@ adopt_install_hooks() {
     nomark) printf '%s\n' '#!/usr/bin/env bash' > "$hooks/commit-msg" 2>/dev/null || :
             chmod +x "$hooks/commit-msg" 2>/dev/null || : ;;
   esac
-  adopt_stub_project_docs
   return 0
 }
 
@@ -1752,7 +1776,12 @@ _adopt_write_phase() {
       approval_log) adopt_write_approval_log "$root" || return 1 ;;   # BL-242-APPROVAL-LOG-WRITE
       phase_state) adopt_write_phase_state "$root" || return 1 ;;
       intake)      adopt_write_intake "$root" "$report" || return 1 ;;
+      dispositions) adopt_write_dispositions "$root" "$report" || return 1 ;;   # BL-242-DISPOSITIONS-STAGE
       manifest)    adopt_write_manifest "$root" "$report" || return 1 ;;
+      framework_docs) adopt_write_framework_docs "$root" || return 1 ;;   # BL-242-DOCS-STAGE
+      ci)          adopt_write_ci "$root" "$report" || return 1 ;;   # BL-242-CI-STAGE
+      session_layer) adopt_write_session_layer "$root" "$report" || return 1 ;;   # BL-242-SESSION-STAGE
+      assessment_prompt) adopt_write_assessment_prompt "$root" || return 1 ;;
       adoption_record) adopt_write_adoption_record "$root" "$report" || return 1 ;;   # BL-242-RECORD-STAGE
       write_set)   adopt_write_write_set "$root" || return 1 ;;   # BL-242-WRITE-SET
       *)           adopt_refuse "unknown state stage '$stage'"; return 1 ;;
@@ -2118,6 +2147,12 @@ adopt_main() {
   report="$ADOPT_WORK/secrets-report.json"
   adopt_secrets_decide "$report" || return 1   # BL-242-SECRETS-DECIDE-CALL
 
+  # THE CI AUDIT AND ITS QUESTIONS, BEFORE THE INTAKE. Read-only; its answers
+  # are held for the record. Here rather than after the intake so its questions
+  # sit at a FIXED position in the run: the intake's count depends on what the
+  # environment has installed (PR #446 measured one more on the ubuntu runner).
+  adopt_ci_audit "$root" || return 1   # BL-242-CI-AUDIT-CALL
+
   adopt_run_reverse_intake "$report" || return 1
 
   # WP5b. Was adopt_stub_test_debt_ledger; it is a real measurement now.
@@ -2215,10 +2250,10 @@ adopt_main() {
     adopt_note "  NOT run on commit. The reason is printed above, under 'Turning the gates on'."
     adopt_note "  The adoption itself landed; this step did not."
     adopt_blank
-    adopt_stub_assessment
+    adopt_act3_next
     return 1
   fi
-  adopt_stub_assessment
+  adopt_act3_next
   return $rc
 }
 

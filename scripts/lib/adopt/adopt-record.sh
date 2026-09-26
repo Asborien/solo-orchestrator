@@ -74,7 +74,7 @@
 # Three §8.6 content rows have no source in this build and the record says so
 # by name rather than omitting them: the assessment's findings and verdict and
 # the interview's answers (WP12a — Act 3 is a Claude Code session and has not
-# run), the in-production declaration and the exemptions used under it (WP12c),
+# run), the in-production declaration and the exemptions used under it,
 # and whether the commit-msg gate is LIVE. That last one is not a gap in this
 # module — `adopt_install_hooks` runs AFTER the adoption commit, deliberately,
 # so at the moment this record is written the answer is genuinely not known.
@@ -470,6 +470,7 @@ _adopt_rec_render() {
     printf '\n'
     printf '%s\n' '    bash /path/to/solo-orchestrator/scripts/adopt-project.sh --re-add <your path>'
     printf '\n'
+    _adopt_rec_ci   # BL-242-RECORD-CI
     printf '%s\n\n' "### What else this run measured"
     printf '%s\n' "    | Field | Value |"
     printf '%s\n' "    |---|---|"
@@ -484,20 +485,109 @@ _adopt_rec_render() {
     printf '%s\n' "this record is written the answer is not yet known. The run itself checks it and"
     printf '%s\n' "says so on screen."
     printf '\n'
-    printf '%s\n\n' "### What this record does not say, and who owes it"
-    printf '%s\n' "Three things belong in a complete record and are absent because nothing in this"
-    printf '%s\n' "build produces them. They are named rather than omitted, so that a reader does not"
-    printf '%s\n' "read their absence as a measurement that came back empty:"
+    printf '%s\n\n' "### What this record does not say, and where it will be"
+    printf '%s\n' "This record is written once, at adoption, before the assessment. Three things a"
+    printf '%s\n' "complete account needs come later, and are named here rather than omitted, so that"
+    printf '%s\n' "a reader does not read their absence as a measurement that came back empty:"
     printf '\n'
-    printf '%s\n' "- **The assessment — its findings, its fitness verdict and the plan (WP12a).** No"
-    printf '%s\n' "  one has yet been asked what this project is for. That conversation happens in a"
-    printf '%s\n' "  Claude Code session, not in the adoption script, and it has not happened."
-    printf '%s\n' "- **The recorded interview answers (WP12a).** PROJECT_INTAKE.md carries the cells"
-    printf '%s\n' "  the survey could fill and leaves the judgement cells blank."
-    printf '%s\n' "- **The in-production declaration and any exemption used under it (WP12c).** No"
-    printf '%s\n' "  such exemption can exist yet, because nothing can grant one."
+    printf '%s\n' "- **The assessment — its findings, its fitness verdict and the plan.** Written by"
+    printf '%s\n' "  the assessment conversation to .claude/adoption/assessment-record.json and"
+    printf '%s\n' "  .claude/adoption/verdict.md, and merged into .claude/manifest.json by the finisher."
+    printf '%s\n' "- **The interview answers.** Written by the finisher into .claude/intake-progress.json;"
+    printf '%s\n' "  until then PROJECT_INTAKE.md leaves the judgement cells blank."
+    printf '%s\n' "- **Whether the project is in production, and any delta opened because of it.** The"
+    printf '%s\n' "  answer is in .claude/manifest.json once assessed; each delta opened below phase 4"
+    printf '%s\n' "  under that exemption is recorded in its delta record and in"
+    printf '%s\n' "  .claude/process-state.json (adoption_exemptions)."
     printf '\n'
   } > "$out"
+}
+
+# _adopt_dispositions_accepted REPORT FILE — the ONE filter, printing the join
+# table's JSON on stdout. `adopt_write_dispositions` writes it and the Adoption
+# Record renders from it, so the two committed records cannot disagree — they
+# did, in review: the record printed every row the operator supplied while the
+# table held only the accepted one, and an empty `by` shifted the record's
+# columns left under a tab IFS.
+#
+# A FILE BOUND TO ANOTHER SCAN CONTRIBUTES NOTHING. §6.3: a file whose
+# `scan.head` or `scan.commitsScanned` is not this scan's is stale. The
+# organizational validator already refuses one; on a personal run nothing did,
+# and its accepted risks were filed under THIS scan's block. A file with no
+# `scan` block is not bound to anything and is treated the same way.
+_adopt_dispositions_accepted() {                       # BL-242-DISPOSITIONS-FILTER
+  local report="$1" f="$2" rsha
+  rsha=""
+  command -v adopt_sha256 >/dev/null 2>&1 && rsha="$(adopt_sha256 "$report")"
+  if [ -n "$f" ] && [ -f "$f" ] && jq -e 'type == "object"' "$f" >/dev/null 2>&1; then
+    jq -n --slurpfile r "$report" --slurpfile d "$f" --arg rsha "$rsha" "$(_adopt_dispositions_jq)"
+  else
+    jq -n --slurpfile r "$report" --argjson d '[{}]' --arg rsha "$rsha" "$(_adopt_dispositions_jq)"
+  fi
+}
+_adopt_dispositions_jq() {
+  cat <<'JQ'
+    def trimmed: (. // "") | tostring | gsub("^\\s+|\\s+$"; "");
+    def isoday: (type == "string") and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+      and ((try ((. + "T00:00:00Z") | fromdateiso8601 | todate | .[0:10]) catch "") == .);
+    def complete: ((.by | trimmed) != "") and ((.reason | trimmed) != "") and ((.date // "") | isoday);
+    ($r[0].secrets // {}) as $s
+    | ([$s.findings[]?.fingerprint | select(. != null)]) as $fps
+    | (($d[0].scan // {}) as $b
+       | ($b.head // "") == ($s.head // "") and ($b.head // "") != ""
+         and (($b.commitsScanned // null) | tostring) == (($s.commitsScanned // null) | tostring)) as $bound
+    | { schemaVersion: 1,
+        scan: { head: ($s.head // null), commitsScanned: ($s.commitsScanned // null),
+                scope: ($s.scope // null), status: ($s.status // null), reportSha256: $rsha },
+        dispositions: (if $bound then [ ($d[0].dispositions // [])[]?
+          | select(type == "object")
+          | select((.fingerprint // "") as $fp | $fps | index($fp))
+          | select((.disposition // "") | IN("rotated", "false-alarm", "accepted-risk"))
+          | select(complete)
+          | { fingerprint: (.fingerprint | tostring), disposition, by: (.by | trimmed),
+              reason: (.reason | trimmed), date }
+            + (if .disposition == "rotated" and ((.rotatedOn // "") | isoday)
+               then {rotatedOn} else {} end) ] else [] end),
+        acknowledgements: (if $bound then [ ($d[0].acknowledgements // [])[]?
+          | select(type == "object")
+          | select((.kind // "") == ($s.status // "") and ((.kind // "") | IN("tool-unavailable", "scanned-partial")))
+          | select(complete)
+          | { kind, by: (.by | trimmed), reason: (.reason | trimmed), date,
+              scope: ($s.scope // null), commitsScanned: ($s.commitsScanned // null), head: ($s.head // null) } ] else [] end) }
+JQ
+}
+
+# _adopt_rec_ci — §7.4's record: the framework's CI file, and what the
+# operator decided about each CI file of theirs the audit flagged. Their
+# workflows were read and never changed; this says so.
+_adopt_rec_ci() {
+  local ci="${ADOPT_CI_INSTALLED:-}" f="${ADOPT_CI_DECISIONS:-}"
+  printf '%s\n\n' "### Your CI"
+  printf '%s\n' "Your CI files were read and not changed. The framework's own CI, where one was"
+  printf '%s\n' "installed, is a separate file beside them."
+  printf '\n'
+  printf '%s\n' "    | Field | Value |"
+  printf '%s\n' "    |---|---|"
+  _adopt_rec_row "Framework CI" "$(_adopt_rec_or "$ci" "not recorded")"
+  printf '\n'
+  if [ -n "$f" ] && [ -s "$f" ]; then
+    printf '%s\n' "These CI files of yours matched a known way around the framework's checks, or"
+    printf '%s\n' "could not be read at all. What you decided about each is recorded here;"
+    printf '%s\n' "\"retire\" is your intention, and adoption did not carry it out."
+    printf '\n'
+    printf '%s\n' "    | Your file | What it matched | Your decision |"
+    printf '%s\n' "    |---|---|---|"
+    # Loop names of its own: `rules` is a local of the caller, `_adopt_rec_render`.
+    local _cr _cm _cd
+    while IFS="$(printf '\t')" read -r _cr _cm _cd; do
+      [ -n "$_cr" ] && _adopt_rec_row "$_cr" "$_cm" "$_cd"
+    done < "$f"
+    printf '\n'
+  else
+    printf '%s\n' "No CI file of yours matched a known way around the framework's checks. That is a"
+    printf '%s\n' "search for known spellings, not a proof."
+    printf '\n'
+  fi
 }
 
 # _adopt_rec_dispositions REPORT — the findings and their recorded outcomes.
@@ -551,14 +641,24 @@ _adopt_rec_dispositions() {
       # validator now requires to be a real calendar day. It is labelled
       # "Decided on" because the record's prose may not contain the word this
       # column is about (clause 6).
+      # FROM THE FILTERED TABLE, the same one `adopt_write_dispositions`
+      # commits (`# BL-242-DISPOSITIONS-FILTER`) — never the raw file. Rendered
+      # from the file, the record printed an unsigned row and a row for a
+      # fingerprint this scan never produced while the table held neither.
       _ok=1
+      _adopt_dispositions_accepted "$report" "$f" > "$ADOPT_WORK/record-table.json" 2>/dev/null || _ok=0
       jq -r '.dispositions[]? | [(.fingerprint // "?"), (.disposition // "?"), (.by // "?"), (.date // "?"), (.reason // "?")] | map(tostring) | @tsv' \
-        "$f" > "$ADOPT_WORK/record-dispositions.tsv" 2>/dev/null || _ok=0
+        "$ADOPT_WORK/record-table.json" > "$ADOPT_WORK/record-dispositions.tsv" 2>/dev/null || _ok=0
       printf '%s\n\n' "### What was decided about them"
       if [ "$_ok" -eq 0 ]; then
         printf '%s\n' "The dispositions file could not be read as a list of decisions. Nothing is"
         printf '%s\n' "recorded here, and that is a failure to read the file rather than a finding that"
         printf '%s\n' "nothing was decided — the file is still where you left it."
+        printf '\n'
+      elif [ ! -s "$ADOPT_WORK/record-dispositions.tsv" ]; then
+        printf '%s\n' "The dispositions file supplied carries no complete decision about a finding of"
+        printf '%s\n' "THIS scan — it is bound to another scan, or no row has a name, a reason and a"
+        printf '%s\n' "real calendar day — so no outcome is recorded against any finding above."
         printf '\n'
       else
         printf '%s\n' "    | Fingerprint | Outcome | Decided by | Decided on | Reason |"
@@ -591,13 +691,14 @@ _adopt_rec_dispositions() {
   local st
   st="$(adopt_report_read "$report" '.secrets.status // ""')"
   _ok=1
+  _adopt_dispositions_accepted "$report" "$f" > "$ADOPT_WORK/record-table.json" 2>/dev/null || _ok=0
   jq -r --arg st "$st" '
       def trimmed: (. // "") | gsub("^\\s+|\\s+$"; "");
       def isoday: (type == "string") and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$") and ((try ((. + "T00:00:00Z") | fromdateiso8601 | todate | .[0:10]) catch "") == .);
       .acknowledgements[]?
       | select((.kind // "") == $st and (.by | trimmed) != "" and (.reason | trimmed) != "" and ((.date // "") | isoday))
       | [(.kind // "?"), (.by // "?"), (.date // "?"), (.reason // "?")] | map(tostring) | @tsv' \
-    "$f" > "$ADOPT_WORK/record-dispositions.tsv" 2>/dev/null || _ok=0
+    "$ADOPT_WORK/record-table.json" > "$ADOPT_WORK/record-dispositions.tsv" 2>/dev/null || _ok=0
   if [ "$_ok" -eq 0 ]; then
     printf '%s\n\n' "### Acknowledgements"
     printf '%s\n' "The acknowledgements in that file could not be read. Nothing is recorded here."
@@ -683,5 +784,32 @@ adopt_write_adoption_record() {                       # BL-242-RECORD-WRITE
   fi
   adopt_note "The Adoption Record is in APPROVAL_LOG.md — what was scanned, what was found,"
   adopt_note "what was archived, and what this build does not yet know."
+  # ── THE `adoption` EVENT (§8.9) ───────────────────────────────────────────
+  # One `adoption_event` row with `details.event: "adoption"`, the first of the
+  # five events and the one that names the act itself: the tier, the commit it
+  # was adopted at (from the stamp, the record's own source), where the
+  # archive is, and what the scan said. It DEGRADES LOUDLY rather than
+  # refusing, for the collision row's reason: the Adoption Record just above it
+  # and the stamp are the primary records, so a lost row thins the trail
+  # without invalidating the act — but it must never be lost quietly.
+  local _ev
+  _ev="$(jq -n --arg tier "${ADOPT_DEPLOYMENT:-}" \
+            --arg at "$(soif_adoption_read "$root/.claude/manifest.json" '.adoption.adoptedAtCommit // ""' 2>/dev/null)" \
+            --arg arc "${ADOPT_ARCHIVE_DIR:-}" \
+            --arg st "$(adopt_report_read "$report" '.secrets.status // ""')" \
+            --argjson n "$(adopt_int "$(adopt_report_read "$report" '.secrets.findingCount // 0')")" \
+            '{deployment: $tier, adoptedAtCommit: $at, archiveDir: (if $arc == "" then null else $arc end),
+              secretsScanStatus: $st, findingCount: $n, landedPhase: 0}' 2>/dev/null)"
+  if [ -n "$_ev" ] && adopt_audit_event "$root" "adoption" "$_ev"; then   # BL-242-ADOPTION-EVENT
+    if ! grep -qxF ".claude/bypass-audit.json" "${ADOPT_WRITTEN_LEDGER:-/dev/null}" 2>/dev/null; then
+      _adopt_stage_ledger_once "$root"
+    fi
+  else
+    adopt_say "   THE ADOPTION HAPPENED. ITS AUDIT ROW could not be recorded."
+    adopt_note "The Adoption Record above and the stamp in .claude/manifest.json are the primary"
+    adopt_note "records and are not in doubt. The line in .claude/bypass-audit.json that would let"
+    adopt_note "someone find this adoption from the audit trail is missing — check the ledger:"
+    adopt_note "  jq . .claude/bypass-audit.json"
+  fi
   return 0
 }

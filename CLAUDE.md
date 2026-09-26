@@ -14,7 +14,9 @@ here.
 - The README "Quick Start" **no longer carries a kickoff prompt of its own**
   (BL-202 residual 2). It points at `bash scripts/resume.sh` — the single
   state-aware first-message generator, whose three branches are the intake
-  prompt, `PROJECT_INTAKE.md` § 13 verbatim, and the classic resume prompt.
+  prompt, `PROJECT_INTAKE.md` § 13 verbatim, and the classic resume prompt —
+  plus, checked before them, the assessment prompt for an adopted project not
+  yet assessed (`# BL-242-RESUME-ASSESSMENT`, which prints a file adoption wrote).
   That script and everything its output names (`CLAUDE.md`,
   `PROJECT_INTAKE.md`, `docs/reference/…`, `.claude/phase-state.json`) exist
   **in generated projects only**; the README says so in as many words, because
@@ -378,7 +380,7 @@ here.
   HOUSE RULES).
   - **Adding a test is still a ONE-LINE edit** — append it to the canonical
     array. The lane is sharded (matrix `shard: [lint-sweep, lint-scan, sast,
-    slow-misc, rest]`), but only the measured long poles are pinned to a
+    slow-misc, adopt, commit-hooks, rest]`), but only the measured long poles are pinned to a
     shard by the `pin_*` arrays; `rest` is the COMPLEMENT, so a new entry
     lands there automatically.
   - **Never write the literal array-opening token (`tests`+`=`+`(`) anywhere

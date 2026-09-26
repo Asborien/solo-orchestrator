@@ -13705,7 +13705,7 @@ the operative one.
 | the Adoption Record, the audit rows and the CI carve-out | **WP7** | always |
 | the provenance headers on reconstructed documents | **WP7** | always |
 | the commit-time scanners (the fallback pre-commit hook) | **WP7** — see below | always |
-| your project's framework documents | ~~nobody~~ → **WP11 + WP12b** (D3; string corrected in WP9a) | always |
+| ~~your project's framework documents~~ | ~~nobody~~ → **WP11 + WP12b** (D3; string corrected in WP9a) — **SHIPPED, stub retired 2026-09-24** | ~~always~~ |
 | installing the framework's version of *N* colliding script(s) | **nobody** | only when N > 0 |
 | the secrets disposition | **nobody** | when the scan found something — **and unconditionally when it did not RUN** |
 
@@ -15076,6 +15076,323 @@ The validator checks that a person and a reason were GIVEN, not that they are go
 is not a shell predicate's job, and the record shows exactly what was written.
 
 ---
+
+### WP12b's build (2026-09-24) — an adopted project gets a CLAUDE.md, and the stub is retired
+
+**What was missing:** an adopted project had working gates and no `CLAUDE.md` — the file an agent
+reads at the start of every session — and `adopt_stub_project_docs` said so on every run.
+
+**What ships** (`scripts/lib/adopt/adopt-docs.sh`, the `framework_docs` stage — `# BL-242-DOCS-STAGE`,
+ordered by `# BL-242-DOCS-STAGE-ORDER` after `manifest` and before `adoption_record`, inside the
+write phase so the pre-write rehearsal replays it and I20 checks it against the archive):
+
+- `CLAUDE.md` rendered through `soif_render_claude_md`, the renderer `init.sh` uses
+  (`scripts/lib/render-project-docs.sh` is now in the driver's core loop). Name from the adoption;
+  the description is a placeholder (the intake stage writes it empty); platform/track/language whitelisted
+  (`_adopt_doc_value`) because the renderer puts them into a sed replacement unescaped, and the tier
+  passed through, so an organizational adoption gets the branch-protection section.
+- the six templates `init.sh` copies (`# BL-242-DOCS-SET`), and the eight reference guides only
+  where absent (`# BL-242-DOCS-REFERENCE`).
+- `_adopt_doc_put` (`# BL-242-DOCS-PUT`) — the hook guard's rule applied to documents: a symlink
+  or a read-only file is left alone and named; everything else is written beside the path and
+  renamed over it, so a hardlink's other name keeps the operator's content.
+- D3's informing half: every replaced document is NAMED with the archive's location and an explicit
+  "nothing was merged — copy across anything you want to keep".
+- the archive's MANIFEST says `replaced` for those documents, `kept` for a read-only or symlinked
+  one (`# BL-242-ARCHIVE-DISPO-DOCS`). Measured before the fix: a symlinked `FEATURES.md` read
+  `replaced` while it sat untouched — the inventory's `-f` follows the link and `-w` answers for
+  the target.
+
+**Pinned by** `tests/test-brownfield-wp12b-framework-docs.sh` (D1–D10, two real adoptions), ten
+mutants all killed. Re-aimed: wp4 `S1`/`W1`, wp7 `A10`, wp7b `B9` (called-stub set now **three**:
+assessment, framework_script_collisions, provenance_headers), wp9 `H1`, wp11 `E6` (its `kept`
+control moved from `CLAUDE.md` to `PROJECT_BIBLE.md`).
+
+**Review round (one, adversarial, 2026-09-24) — verdict `block`, fixed:**
+- **R-WP12b-1 (block): a symlinked FOLDER was written through.** `_adopt_doc_put` checked the file
+  with `-L` and never the folders above it, so with `docs -> /elsewhere/docs` (absolute) the stage
+  overwrote the shared folder's `INDEX.md` — during the pre-write REHEARSAL, whose `tar` copy keeps
+  an absolute link absolute — and the rehearsal's archive copy was deleted with its directory. The
+  run then refused ("check-ignore exited 128") saying "nothing was written". Reproduced here: rc 1,
+  the shared file's first line `# Documentation Index`. Fixed by `adopt_path_under_link`
+  (`# BL-242-PARENT-LINK`, adopt-core.sh) in the writer and the MANIFEST disposition; re-measured
+  rc 0 with the shared file intact. D11 pins it; three mutants killed.
+- R-WP12b-2 (minor): an in-repo `docs -> site/docs` link refused adoption outright. Same fix;
+  re-measured rc 0, `site/docs/INDEX.md` untouched.
+- R-WP12b-3 (minor, not reachable — the intake stage rewrites the fields first): a value carrying a
+  newline passed the whitelist, because `grep` matches if ANY line does, and the renderer's sed ran
+  the second line as a command (`w FILE` measured). Control characters now fall back; D12 pins it.
+  The case's first cut passed with the guard deleted — its hand-written JSON was invalid, so jq
+  read nothing and the fallback fired for the wrong reason.
+- R-WP12b-4 (docs): track renders the intake's `full`, not `undecided`; corrected.
+
+**Residuals, recorded not fixed:**
+- **Stack-level (from the review):** the pre-write rehearsal copies the project with `tar`, which
+  keeps absolute symlinks absolute, so ANY writer whose path crosses one writes to the real target
+  during the rehearsal. The documents stage is guarded now; the other writers are not audited for it.
+- D3's *adapt or merge* half is not built — adapting prose is judgement, and belongs to the
+  assessment (WP12a). The operator is told so.
+- the `.gitignore` lines `init.sh` adds are not written by adoption.
+- a SYMLINKED document is still archived (the inventory's `-f` follows it) and its MANIFEST restore
+  line `cp`s through the link. Adoption never touched the target, so the line restores what was
+  already there — unless the shared target changed since, when it would revert it.
+- `PROJECT_BIBLE.md` / `PRODUCT_MANIFESTO.md` are not written; they are phase outputs, as in
+  `init.sh`.
+
+### WP7's audit rows and §6.3's join table (2026-09-24) — what adoption writes down about itself
+
+**What was missing:** §8.9 names five `adoption_event` events; two had emitters
+(`collision_archive`, `collision_re_add`). `adoption` was WP7's and unbuilt;
+`secrets_disposition` was unowned, and WP10b validated dispositions and acknowledgements without
+writing either of §6.3's two records — the committed join table and the per-acceptance audit row.
+
+**What ships:**
+- a `dispositions` stage (`# BL-242-DISPOSITIONS-STAGE`, `adopt_write_dispositions` in
+  adopt-secrets.sh), on the `# BF-ADOPT-STATE-ORDER` line between `intake` and `manifest`, which
+  writes `.claude/adoption/secrets-dispositions.json` — the scan block (head, commits read, scope,
+  status, sha256 of the committed `scout-report.json`) plus the dispositions and acknowledgements
+  THIS RUN ACCEPTED, even at zero findings — and one `secrets_disposition` row per accepted risk and
+  per acknowledgement (`# BL-242-DISPOSITIONS-EVENT`). A row the ledger refuses BLOCKS the run; the
+  rehearsal meets it first, so nothing is written.
+- the `adoption` row (`# BL-242-ADOPTION-EVENT`, end of the record stage): tier, adoptedAtCommit,
+  archive dir, scan status, finding count, landed phase. It degrades loudly rather than refusing,
+  for the collision row's reason — the record and stamp are the primary records.
+- `blocker_acceptance` is declared never-to-be-emitted (WP5 retired) in `adopt_audit_event`'s header.
+- **Found while measuring, fixed:** a block raised INSIDE the rehearsal printed the COPY's
+  write-state — "80 file(s) were already written into this project" — directly beneath the real
+  run's "nothing was written to your project". `adopt_refuse` now prints the cause only while
+  rehearsing (`# BL-242-REHEARSAL-CAUSE-ONLY`). The remedy moved into the block message, since
+  the rehearsal discards stdout.
+
+**Review round (one, adversarial) — verdict `block`, fixed:**
+- **R-1 (major, regression):** a project that already carried `.claude/bypass-audit.json` could not
+  be adopted at all — the now-unconditional `adoption` row made the ledger a planned write, and I20
+  counted the append as an overwrite with no archive copy. Reproduced (`[]` in place → rc 1, "would
+  be replaced with no copy kept"). I20 now exempts the ledger (`# BL-242-I20-LEDGER-APPEND`): the
+  appender keeps every prior row. R10 pins it.
+- **R-2 (major):** the two records committed together disagreed — the Adoption Record rendered the
+  operator's raw file (an unsigned row, a fingerprint from outside the scan, columns shifted by an
+  empty `by`) while the join table held only the accepted row. One filter now serves both
+  (`# BL-242-DISPOSITIONS-FILTER`, adopt-record.sh), and the record renders from its output.
+- **R-3 (major):** the out-of-scan and unsigned-acknowledgement filters had no test that noticed
+  their removal. R9 and R6 now carry those rows and check all three records.
+- **R-4 (minor, §6.3):** a file bound to ANOTHER scan had its accepted risks filed under this one
+  on a personal run. The filter now drops every row of a file whose `scan.head` or
+  `scan.commitsScanned` is not this scan's; R11 pins it, with a guard that its fingerprint is real.
+- R-5: `--help` still said the file is not written; corrected. R-6: the ledger is recorded for
+  staging once per run (`# BL-242-LEDGER-STAGE-ONCE`); a named dispositions file unreadable at write
+  time now blocks instead of recording nothing; the order marker is a real marker.
+
+**Pinned by** `tests/test-brownfield-wp7d-audit-rows.sh` (R1–R11), sixteen mutants killed.
+
+**Residuals:** §6.3's interactive fallback and its default read of an existing
+`.claude/adoption/secrets-dispositions.json` are not built (a re-adoption is refused at step 0, so
+the default read has no caller today); the vanished-finding report likewise.
+
+### WP7's CI carve-out (2026-09-24) — their pipelines read, never changed; the framework's CI at its own name
+
+**What ships** (`scripts/lib/adopt/adopt-ci.sh`, v1 §7.4 carried unchanged by v2 §7.4):
+- `adopt_ci_audit` (`# BL-242-CI-AUDIT`, called at `# BL-242-CI-AUDIT-CALL` after the secrets
+  decision and BEFORE the intake, so its questions sit at a fixed position — the intake's count
+  varies with the environment, which PR #446 measured on the runner) reads every CI file for four
+  shapes (`# BL-242-CI-RULES`: auto-merge, force-push/history rewrite, check-skipping,
+  deploy-on-push), reports a line NUMBER and never the line's text, and asks keep-or-retire once per
+  flagged file. An unanswered question refuses before any write.
+- the `ci` write stage (`# BL-242-CI-STAGE`, after `framework_docs`, before `adoption_record`)
+  installs `init.sh`'s language template at a framework-owned name (`# BL-242-CI-DEST`): GitHub
+  `.github/workflows/solo-gates.yml` (runs), GitLab `.gitlab-ci-solo.yml` (runs once the operator
+  adds the printed `include`), Bitbucket `bitbucket-pipelines.solo.yml` (cannot run — the operator
+  copies steps). Host `other` gets none, as in `init.sh`. A file already at the framework's name is
+  left alone and named; writes go through `_adopt_doc_put`, so a symlinked folder is not written
+  through.
+- the Adoption Record's **Your CI** section (`# BL-242-RECORD-CI`).
+
+**Review round (one, adversarial) — verdict `major_concerns`, fixed:**
+- **R-1 (major):** macOS awk under a UTF-8 locale aborted on a non-UTF-8 byte, `2>/dev/null` hid it,
+  and a workflow with a Latin-1 comment and a force-push read as CLEAN — committed into the Adoption
+  Record as "No CI file of yours matched". Reproduced (rc 2, no output). The detector now runs under
+  `LC_ALL=C`, its rc is read, and an unread file is reported and recorded as unread
+  (`# BL-242-CI-UNREADABLE`) — never clean. C10 pins both halves.
+- **R-2 (major):** three mutants survived — printing the line's text (C2's marker sat on a line no rule
+  reported), `|| true` on the question (C8 only saw rc), and a plain `cp` through a symlinked folder.
+  The marker moved onto a reported line; C8 names the question AND asserts the intake never started;
+  C9 adds the symlinked `.github/workflows`.
+- **R-3:** GitLab merges an included file into theirs; the templates set pipeline-wide `image`,
+  `variables`, `cache`, `stages` and jobs `test`/`lint`. The run and the guide now warn before the
+  include. **R-4:** Bitbucket CAN share configuration (Premium, an exported `*pipelines.yml`); the
+  wording said it could not, and is corrected. **R-5:** `gh pr merge --admin` is now its own rule,
+  and `--auto`'s description is accurate. Nits: file order is byte order (`LC_COLLATE=C`), the
+  record's loop no longer shadows a caller's local.
+
+**Pinned by** `tests/test-brownfield-wp7e-ci-carveout.sh` (C1–C10), fifteen mutants killed.
+
+**Residuals:** the detector is a net of known spellings, not a parser — the deploy rule's trigger
+test is per FILE (a manual trigger anywhere clears it), `if: always()` also fires on legitimate
+fail-closed jobs, and `|| true`/`--mirror`/GitLab and Bitbucket deploys are not spelled; a file
+already named `solo-gates.yml` is not audited; keep-or-retire records no reason (v1 §7.4 said "with
+its reason"); the framework's GitLab template is not rewritten to merge safely; `scripts/verify-install.sh`
+still keys `CI pipeline exists` on the canonical path (v1 §7.4's false-pass note), so on an adopted
+GitLab/Bitbucket project it reports THEIR pipeline as the framework's; the release pipeline
+(`generate_release`) is not laid down by adoption.
+
+### WP12a's build (2026-09-24) — the assessment: a Claude Code conversation, then a shell finisher
+
+**What ships:**
+- **Act 2 writes the prompt** (`# BL-242-ASSESSMENT-PROMPT`, stage `assessment_prompt`):
+  `.claude/adoption/assessment-prompt.md` — the five axes, *in production*, the operations block,
+  fitness judged only against stated requirements, the verdict's two halves, the record's schema with
+  this project's `adoptedAtCommit` filled in, the wizard keys, and the finisher command.
+- **`resume.sh`'s adoption branch** (`# BL-242-RESUME-ASSESSMENT`), checked before the BL-202
+  branches: adopted and no `.adoption.assessment` → print that file. **DEVIATION FROM v2.2 A6,
+  recorded here:** the design had resume.sh render the prompt itself and dropped the Act-2-written
+  brief. resume.sh is CORE, the prompt must name the finisher (`adopt-project.sh`), and
+  `lint-module-dependencies.sh` forbids a core file to name it with an allowlist whose cardinality
+  must be 0 (§3.1). So the module writes the words and the core reads a state file.
+- **The finisher** `adopt-project.sh --act4 --root .` (`adopt_act4_finish`, `# BL-242-ACT4-FINISH`,
+  in `scripts/lib/adopt/adopt-act4.sh` — NOT the design's `adopt-finish.sh`, because `--finish`
+  already exists and two finishers one name apart invite the wrong one), order as data
+  (`# BL-242-ACT4-ORDER`): `validate_record` (§8.3's refusals + D8's two halves, all before any
+  write) → `classification` (THROUGH `adopt_persist_phase1_artifacts` — A7's hand-off, at last
+  called) → `prefill_intake` (wizard keys into `.claude/intake-progress.json`; refuses with no
+  classification on record) → `verdict` → `documents` → `merge` (LAST; `soif_adoption_assess`,
+  `# BL-242-ASSESS-MERGE`, a new one-call-site core writer that records once and never moves the
+  phase) and an `assessment` adoption_event row.
+- `adopt_stub_assessment` is retired; Act 2 ends with `adopt_act3_next` (`# BL-242-ACT3-NEXT`).
+- **Measured end to end:** a real adoption, a hand-written record, the finisher (a bad
+  `requirementRef` refused with nothing written; the fixed record accepted), the suggested commit
+  landing through the adoptee's own hooks at rc 0, and the next `resume.sh` printing the project's
+  Phase 0 prompt.
+
+**Review round (one, adversarial) — verdict `block`, fixed:**
+- **R-1 (block):** `(.interview.inProduction // null) | type` read `false` as missing — jq's `//`
+  replaces false too — so NO project not in production could finish. Types are read directly; K10.
+- **R-2 (block):** `--act4` kept no ledger, so a refusal after the classification write printed "did
+  not begin … nothing was written" over a modified process-state.json. The finisher now opens a
+  ledger, and the preconditions a later stage needed (the intake file is one JSON object) moved into
+  `validate_record`, before any write. K10 pins the honest message.
+- **R-3 (major):** an EMPTY record passed (jq exits 0 on no input), a classification ARRAY passed
+  (`index` does subarray search), a non-list `findings` skipped the requirementRef check, and answer
+  keys the gates read (`project_name`, `repo_visibility`) could be rewritten. Now: exactly one JSON
+  object; typed checks throughout; requirementRef by exact membership; an answer-key ALLOWLIST
+  (`ADOPT_ACT4_ANSWER_KEYS`, `# BL-242-ACT4-ANSWER-KEYS`) that the prompt lists verbatim.
+- **R-4 (major):** eight mutants survived K3; K3 now carries each refusal. **R-6:** the prompt asked
+  about ZDR only for pii/financial/health/regulated while the Phase 1→2 gate requires it for all but
+  `public` — the suite's own record would have failed that gate. The finisher now refuses what the
+  gate would (`# BL-242-ACT4-REFUSE-ZDR`) and the prompt asks for it. **R-5:** the resume branch now
+  fires at phase 0 only — an adoptee that moved on unassessed kept being told "before starting
+  Phase 0" even at phase 4; K11. **R-7:** the verdict grammar is spelled out in the prompt.
+
+**Pinned by** `tests/test-brownfield-wp12a-assessment.sh` (K1–K11), twenty-nine mutants killed; wp9 R1
+flipped as §10-WP12a said (R1 now reads an assessed copy; R1b pins the assessment prompt), wp9 H1,
+wp4 W1/S1, wp7 A10, wp12b D8 and wp7b B9 (called stubs now **two**) re-aimed.
+
+**Residuals:** the `accessibility` → `accessibility_target` rename in `_scout_prefill_table` (M14) is
+not done — the prompt steers the model to `accessibility_target`, and the Act 2 A7 row keeps its
+old key; the model's judgement is not suite-provable (§12 item 8) — only the record is; the
+finisher does not commit, by design; `evaluators` is checked to be a list and nothing more;
+`soif_adoption_assess` writes through a fixed `$manifest.tmp` with no lock, as the stamp writer does
+(one session runs it).
+
+### WP7's provenance header (2026-09-25) — the reconstructed intake says what it is
+
+**What ships:** `PROJECT_INTAKE.md` opens with v1 §8.6's fenced header
+(`adopt_provenance_header`, `# BL-242-PROVENANCE-HEADER`, written at `# BL-242-PROVENANCE-WRITE`)
+naming the date, the driver, the pre-adoption commit and the status sentence. The exact checker
+(`adopt_provenance_errors`, `# BL-242-PROVENANCE-CHECK`) runs where the file is written
+(`# BL-242-PROVENANCE-WRITE-CHECK`) and again in the Act 4 finisher
+(`# BL-242-PROVENANCE-ACT4-CHECK`), because the assessment conversation edits the file; the prompt
+tells the model to keep the header. `adopt_stub_provenance_headers` is retired — the run now prints
+no NOT-DONE block at all unless a framework script collides (the one stub still called).
+As with the Adoption Record, the "lint" is a suite, not a `scripts/lint-*.sh`: a core lint may not
+source the module.
+
+**Review round (one, adversarial) — verdict `block`, fixed:** the check verified SHAPE only —
+2026-02-30, 9999-99-99 and a made-up SHA all passed while the guide said "a real date" and "a
+commit"; it now checks the calendar day (the dispositions validator's `isoday`) and, where the
+caller knows it, that the header's commit prefixes the real one. The finisher's refusal told the
+operator to fix the RECORD for a defect in the intake, and gave no way back; it now names the file
+and prints `git show <adoption commit>:PROJECT_INTAKE.md | sed -n 1,6p`. An editor's re-save (CRLF,
+a byte-order mark, trailing space) was reported as a different defect; it is now tolerated. The
+write-time check was unpinned; the `SOIF_ADOPT_PROVENANCE_FAULT=noend` seam and V6 pin it. The guide
+now also names BL-296 row 33 (the Development Guardrails install) as unowned.
+
+**Pinned by** `tests/test-brownfield-wp7f-provenance.sh` (V1–V6), fifteen mutants killed (the
+not-first-content arm is pinned by its REASON: without it the file is still rejected, but as "line 1
+… is not reconstructed-at" and "more than four fields", which sends the operator elsewhere).
+
+**Still designed and unbuilt after this:** WP9c (session settings, hooks, MCP declaration, skills)
+and WP12c (the in-production delta exemption).
+
+### WP12c's build (2026-09-25) — the adopted-in-production exemption (R2)
+
+**What ships**, in exactly the three readers §10-WP12c names and no phase gate:
+- `scripts/delta.sh`: `_delta_adopted_in_production` (`# DELTA-OPEN-ERA-EXEMPTION`) —
+  `.adoption.adopted == true and .adoption.assessment.inProduction == true`, `== true` and nothing
+  looser (absent means never asked) — lets `--open` pass `# DELTA-OPEN-ERA-GUARD` below phase 4.
+  The delta record gets `exemption: "adopted-in-production"` (`# DELTA-OPEN-EXEMPTION-RECORD`),
+  `.claude/process-state.json` gets an `.adoption_exemptions[]` row (`# DELTA-OPEN-EXEMPTION-STATE`),
+  the run says which exemption opened it, and the hotfix retro is booked as at phase 4.
+- `scripts/resume.sh`: `# DELTA-RESUME-EXEMPTION`, before the BL-202 branches — with an OPEN
+  exempt delta, the resume-that-work prompt outranks the Phase 0 entry; with none, nothing, and the
+  post-release greeting never fires below phase 4.
+- `scripts/validate.sh`: an INFO (`# DELTA-ERA-EXEMPTION-INFO`) instead of "one of the two records is
+  wrong" when the open delta carries the exemption and the state still qualifies.
+- The delta design's §10.1 is amended by reference; the Adoption Record names where the in-production
+  answer and any exemption live (it is written before either exists).
+
+**Pinned by** `tests/test-brownfield-wp12c-production-exemption.sh` (E1–E7), ten mutants killed —
+including greeting-below-phase-4, which needed a fixture where the BL-202 branches FALL THROUGH (a
+manifesto exists) to be reachable at all. Both boundary lints green.
+
+**Review round (one, adversarial; a first reviewer stalled past an hour and was stopped, a narrower
+one reported) — `major_concerns`, fixed:** a mutant reading the predicate as truthy
+(`.adopted and .inProduction`) survived, so E2 gained a fixture with `"true"` and `1`; the predicate's
+three copies now carry a SYNC SIBLINGS line (the `# BL-084-TIER-KEY` convention); delta.sh's "the only
+write" comment was corrected for the new process-state write.
+**Residuals:** after an exempt delta CLOSES below phase 4, `resume.sh` no longer shows the hotfix
+write-up still owed (its flag needs an open delta) — `delta.sh --status` and `cut-release.sh` still
+do; a hand-edited manifest with a duplicate key or two JSON documents can satisfy the predicate
+(`jq -e` judges the last); the process-state row is a separate write from the delta record.
+
+### WP9c's build (2026-09-25) — the Claude Code session layer, from the code init.sh uses
+
+**What ships:**
+- **The extraction.** `init.sh`'s language rules, permissions heredoc and hook-roster block move
+  VERBATIM into a new core lib, `scripts/lib/claude-settings.sh` (`soif_claude_lang_rules`,
+  `soif_claude_settings_json`, `soif_register_hook_roster`, `soif_vendored_skills`); `init.sh` calls
+  them, the `# BL-296-ROSTER-UNCONDITIONAL` call still outside `framework_valid`. Measured
+  byte-identical before the change was kept: the old inline code and the lib produced the same
+  `settings.json`, roster included, for all eleven language arms.
+- **The adoption stage** `session_layer` (`adopt_write_session_layer`, `# BL-242-SESSION-STAGE`,
+  scripts/lib/adopt/adopt-session.sh): `settings.json` written when absent, COMPOSED when present
+  (`# BL-242-SESSION-COMPOSE` — theirs kept, the framework's `allow`/`deny` unioned in, hooks added
+  where absent; archive disposition `composed`, `# BL-242-ARCHIVE-DISPO-SESSION`); the roster
+  registered in `adoption` mode, which leaves the bypass detector's PostToolUse arm OFF while
+  `## BL-277:` is open (`# BL-242-SETTINGS-BL277`); the four vendored skills, framework-wins; the
+  Qdrant MCP declaration under init.sh's predicate (`SOIF_ADOPT_QDRANT` test seam) — found while
+  measuring: `settings.local.json` is in Claude Code's global git excludes, so recording it for
+  staging made the preflight refuse the whole adoption; it is written machine-local, as init.sh does,
+  and the requirement goes into the committed manifest.
+- The intake's §13 "WHAT YOU DO NOT HAVE" names the Platform Module (chosen in the assessment) instead
+  of the guides adoption now writes.
+
+**Review:** two reviewers stalled past their bounds and were stopped; a tightly scoped third
+confirmed greenfield unchanged (old inline vs lib byte-identical across 12 languages and 8 roster
+starting states, idempotent re-runs included) — `minor_concerns`, three nits fixed. The session's own
+probes found two defects, fixed: a `settings.json` with a string `permissions` refused the WHOLE
+adoption, and one with an array `hooks` composed the rules, failed the roster silently and printed
+that the hooks were registered. A shape the framework cannot compose into is now left alone and said
+(`# BL-242-SESSION-COMPOSABLE`), and "registered" is printed only on a receipt
+(`# BL-242-SESSION-ROSTER-RECEIPT`); L8 pins it.
+
+**Pinned by** `tests/test-brownfield-wp9c-session-layer.sh` (L1–L8), nine mutants killed; L2 is the
+parity-by-derivation pin — the adoptee's (event, script) set equals init.sh's function's, minus
+exactly the one BL-277 pair. Re-aimed: bl296 R2/R3 and bl233 H3 read the lib; the stage-order
+literals in wp4/wp7/wp12b.
+
+**Residuals:** the `docs/reference/*` list is still spelled in adopt-docs.sh rather than derived from
+init.sh's `cp` lines (§10-WP9c(1)'s shared parser); the four skill paths are spelled again in the
+archive's disposition arm; BL-296 row 33 (the Development Guardrails install) remains unowned.
 
 ## BL-248: `adopt_evidence_deploy_lane` reads rung 4's evidence without consulting `.satisfied`, so a project with NO deploy lane is told "Points to: built out"
 

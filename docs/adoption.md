@@ -6,19 +6,21 @@ pipeline, and its own habits. It puts that project under the framework at
 **phase 0**, archives anything of yours it has to replace, and commits exactly
 the files it wrote.
 
-> **What ships, and what does not.** Adoption itself works end to end: Scout's
-> survey, the tier question, the credential scan and its tier-scoped stop, the
-> reverse intake, the state writes and adoption stamp, the collision archive
-> with `--re-add`, the test-debt ledger, the **Adoption Record**, and the
-> **commit-time scanners**. Three things are designed and **not built**: the
-> *assessment* (the requirements interview, the fitness verdict and the plan —
-> Act 3, a Claude Code session), the *framework documents* an adopted project
-> should receive (a `CLAUDE.md` among them), and the *CI carve-out*. The run
-> prints a labelled `NOT DONE` block, naming its owner, for the assessment and
-> the documents — and for the provenance headers on reconstructed documents. It
-> prints **none** for the CI carve-out, because nothing in the run touches your
-> pipelines at all: adoption neither installs framework CI nor records a
-> decision about yours. See [What is not built yet](#what-is-not-built-yet).
+> **What ships, and what does not.** Adoption works end to end: Scout's survey,
+> the tier question, the credential scan and its tier-scoped stop, the reverse
+> intake, the state writes and adoption stamp, the collision archive with
+> `--re-add`, the test-debt ledger, the **Adoption Record** and the audit rows,
+> the **commit-time scanners**, the **framework documents** (a rendered
+> `CLAUDE.md` among them), the **Claude Code session layer** (the framework's
+> permissions, session hooks and skills, composed into any settings you had),
+> the **CI carve-out** (the framework's CI at its own filename; yours read for
+> risky patterns, never changed), the **assessment** (a Claude Code conversation
+> that `scripts/resume.sh` starts, and a finisher that records it), the
+> **provenance header** on the reconstructed intake, and the **in-production
+> exemption** (an adopted project the assessment records as in production may
+> open a hotfix delta below phase 4, and keeps its retro). Every designed work
+> package ships; two gaps with no owner yet are listed under
+> [What is not built yet](#what-is-not-built-yet).
 
 Everything on this page is output that was observed, pasted as it printed.
 
@@ -118,8 +120,16 @@ a stop, or a halt); `2` bad usage.
 bash scripts/resume.sh
 ```
 
-It prints the first message to paste into Claude Code; the ordinary Phase 0
-questions start there. From your next commit on, the message gates and the
+It prints the **assessment prompt** — paste it into Claude Code. That session
+asks you what the project is for, gives a verdict with its reasoning, and runs
+the finisher that records it ([The assessment](#the-assessment--act-3-and-act-4--ships-wp12a)).
+Run `resume.sh` again afterwards and it opens Phase 0; the agent reads the
+`CLAUDE.md` adoption wrote. If you
+already had a `CLAUDE.md`, `BUGS.md` or the like, the run named each one it
+replaced — the framework's version is in place and yours is in the archive,
+**not merged** until the assessment conversation folds in what is worth keeping
+(or you copy it across yourself —
+[The framework documents](#the-framework-documents--ship-wp12b)). From your next commit on, the message gates and the
 commit-time scanners run. Your replaced files are in
 `.claude/adoption-archive/<timestamp>/`, each with a restore line in its
 `MANIFEST.md` — and one command puts any of them back:
@@ -426,9 +436,12 @@ coerced:
 
 ## What gets written, and in what order
 
-### The order is `APPROVAL_LOG.md` → `phase-state.json` → intake → `manifest.json` → the Adoption Record → the write set
+### The order is `APPROVAL_LOG.md` → `phase-state.json` → intake → the secrets dispositions → `manifest.json` → the framework documents → the Adoption Record → the write set
 
-The last two are ordered by what they read, not by taste. The **Adoption
+The secrets dispositions come before `manifest.json`, so an acceptance that
+cannot be recorded stops the run before the project reads as adopted. The framework documents follow `manifest.json` so they are written under a
+stamped adoption, and precede the record so the record stays the last thing in
+the log. The last two are ordered by what they read, not by taste. The **Adoption
 Record** names the commit this project was adopted at and takes that value from
 the adoption *stamp*, which the `manifest.json` stage writes — one fact, one
 source, rather than a second `git rev-parse HEAD` that could disagree. The
@@ -945,33 +958,81 @@ the ledger are real; the *automatic* part is not.
 
 ## What is not built yet
 
-This is the honest half of the page. Everything below is **designed and not
-built**. The driver prints a labelled block for each one during the run, naming
-the work package that owns it — the text below is what it actually printed.
+This section started as the list of what was designed and not built; all of
+it now ships, and each subsection says so in its heading.
 
-### The assessment — Act 3 — WP12a
+Two gaps have no owning package yet:
 
-```text
-NOT DONE — the assessment (Act 3) — the requirements interview, the fitness verdict and the plan
-   Owner: WP12a. This build does not do it, and does not pretend to.
-   Adoption has surveyed, installed and recorded. What it has NOT done is ask you what this
-   project is for, judge whether the technology fits those answers, or write you a plan.
-   Until that ships, PROJECT_INTAKE.md carries the cells the scan could fill and leaves
-   the rest blank, and the Phase 0 questions are asked the ordinary way instead.
-```
+- **The Development Guardrails for Claude Code are not installed.** `init.sh`
+  clones and runs that companion framework (`~/.claude-dev-framework`) for a new
+  project, which is where its Claude Code rules and hooks come from; adoption
+  never runs it. Ruled in on 2026-09-18 (`## BL-296:`, row 33) and not yet
+  designed.
+- **A file of yours sitting where a framework *script* goes is left alone**, so
+  the framework's version of that script is not installed; the run names it.
 
-This is the largest gap. The assessment is where a person is actually asked what
-this project is for — how many people use it, whether it needs high availability,
-whether it is internet-facing, what scale it needs, how sensitive its data is —
-and where the framework says, **with its reasoning shown**, whether the
-technology fits those answers or whether this ought to be rebuilt. The plan comes
-out of the same conversation.
+### The assessment — Act 3 and Act 4 — SHIPS (WP12a)
 
-**Today, none of that runs.** What you get from adoption is a project correctly
-under the framework at phase 0, with a survey on disk and an intake half filled.
-The Phase 0 questions still get asked — by the ordinary flow, starting from
-`bash scripts/resume.sh` — so nothing is skipped; what is missing is the
-judgement layer on top.
+The assessment is where you are asked what this project is for, and where the
+framework says, **with its reasoning shown**, whether the technology fits those
+answers. It is split in two, because half of it is judgement and half is fact:
+
+1. **Act 3 — a Claude Code conversation.** When adoption finishes it prints
+   *Next: the assessment (Act 3)*. Run `bash scripts/resume.sh`: on an adopted
+   project that has not been assessed it prints the **assessment prompt**
+   (adoption wrote it to `.claude/adoption/assessment-prompt.md`). Paste it into
+   Claude Code. The session reads the survey, the intake and your archived
+   documents, then **asks you** — it does not infer — how many people use the
+   project, whether it needs high availability, whether it is internet-facing,
+   what growth it must handle, how sensitive its data is (one of `public`,
+   `internal`, `confidential`, `pii`, `financial`, `health`, `regulated`), and
+   whether it is in production today. It judges fitness **only against those
+   answers** — every finding names the answer it is relative to — and writes a
+   verdict (`keep` or `rebuild`), a plan, the record
+   `.claude/adoption/assessment-record.json`, and folds what is worth keeping
+   from your archived documents into the framework's.
+2. **Act 4 — the finisher, a shell command** the session runs for you:
+
+   ```bash
+   bash "$(jq -r .source_dir .claude/orchestrator-source.json)/scripts/adopt-project.sh" --act4 --root .
+   ```
+
+   It **checks the record before it writes anything**, and refuses — naming
+   each reason — when the file is not exactly one JSON object, a finding names
+   no requirement, the commit is not the one this project was adopted at,
+   *in production* is not a plain true/false, the data classification is not
+   one of the seven, a classification other than `public` has neither a ZDR
+   attestation nor a written reason (the Phase 1→2 gate would block it later),
+   an interview answer uses a key outside the ten the prompt lists, or the
+   verdict lacks its technical account or its `## Plain English` half with a
+   `Recommendation:` and a `Reason:`. If it stops after it has written
+   something, it says what. Measured:
+
+   ```text
+   [REFUSED] the assessment record was not accepted, and nothing was written
+             The assessment finisher did not begin. Nothing was committed and nothing was written.
+             - fitness finding F1 names no interview axis in requirementRef — a finding is relative to a stated requirement (§5.3)
+             Fix .claude/adoption/assessment-record.json (or the verdict), then run this again.
+   ```
+
+   When the record passes, it records the data classification where the phase
+   gate reads it, writes the interview answers into the intake under the intake
+   wizard's own keys, and merges the assessment into `.claude/manifest.json` —
+   **once**; a second run is refused. It never moves the phase and never writes
+   `PRODUCT_MANIFESTO.md`, and it does not commit: it prints what to commit.
+
+**If the project is in production, a live incident does not wait for phase 4.**
+The assessment records the answer, and an adopted project recorded as in
+production may open a hotfix delta below phase 4 (`scripts/delta.sh --open`).
+The delta record and `.claude/process-state.json` both record that the
+exemption was used, the hotfix still owes its write-up, `validate.sh` reports
+it as an INFO rather than a mismatch, and no phase gate reads it. A project not
+in production — or assessed before the question existed — is refused as before.
+
+**Either verdict continues from phase 0.** After the assessment, `resume.sh`
+opens Phase 0 — measured on a real adoption, the committed assessment passes the
+project's own commit checks and the next `resume.sh` prints the project's
+Phase 0 prompt.
 
 ### The certification pass — RETIRED, not deferred
 
@@ -1104,36 +1165,139 @@ hooks, which are the most important thing the archive holds.
 
 #### Still not built by this package
 
-```text
-NOT DONE — your project's framework documents
-   Owner: WP11 archives them, WP12b writes them (D3). This build does not do it, and does not pretend to.
-   CLAUDE.md, the document templates and the reference docs are NOT written. The scripts and the
-   state are here, so the gates work; the reading material an agent picks up at the start
-   of a session is not, and a CLAUDE.md you already have would be a collision, not a gap.
-   WP6's archive covers your AI-layer settings and your git hooks; documents are neither
-   YET — D3 makes them a fourth archive class, and WP11 is where that lands.
-```
-
-So an adopted project has working gates and **no `CLAUDE.md`** — the file an
-agent reads at the start of every session. Write one by hand, or copy
-`templates/generated/claude-md.tmpl` from the framework clone and fill it in.
-
-The other gap is the **replacement** half for framework-script collisions: a
+The framework documents, which this section used to list here, ship now — see
+[The framework documents](#the-framework-documents--ship-wp12b). The remaining gap is the **replacement** half for framework-script collisions: a
 file of yours sitting where a framework *script* would go is still left alone
 and still not replaced, so the framework's version of it is not installed. That
 class is deliberately outside the archive — swapping out a `scripts/validate.sh`
 your own build may call is a decision nobody has made yet — and the run names
 it with its own `NOT DONE` block.
 
-### The CI carve-out and the provenance headers — WP7
+### The audit rows and the dispositions record — SHIP (WP7)
+
+Every adoption commits two records of what it decided, beside the Adoption
+Record:
+
+- **`.claude/adoption/secrets-dispositions.json`** — the scan this adoption
+  answered (the commit it read, how many commits, full or shallow, the status,
+  and the sha256 of the committed `scout-report.json`) and the dispositions and
+  acknowledgements **this run accepted**. It is written even when the scan found
+  nothing: *we scanned, at this commit, and found nothing* is worth keeping.
+  Fingerprints, rule ids and line numbers only — never a value. A row in your
+  `--dispositions` file that this run did not accept (an acknowledgement for a
+  scan that was complete, a disposition with no name or no real date, a
+  fingerprint this scan did not find) is not copied in — and neither is
+  anything from a file bound to a different scan (its `scan.head` or
+  `scan.commitsScanned` is not this one's). The Adoption Record's table of
+  decisions is rendered from the same filtered set, so the two agree.
+- **A ledger you already have is appended to, never replaced**; every row in it
+  survives.
+- **`.claude/bypass-audit.json`** gains `adoption_event` rows: one
+  `adoption` row naming the tier, the commit it was adopted at and what the
+  scan said, and one `secrets_disposition` row per **accepted risk** and per
+  **acknowledgement**. `rotated` and `false-alarm` accept no risk and write no
+  row.
+
+Measured on a clean personal adoption:
 
 ```text
-NOT DONE — the provenance headers on reconstructed documents
-   Owner: WP7. This build does not do it, and does not pretend to.
-   PROJECT_INTAKE.md records where each answer came from, but it carries no machine-readable
-   provenance header. A near-miss header is worse than none: WP7 ships a lint for the
-   real one, and a lint cannot tell a near-miss from the genuine article.
+$ jq . .claude/adoption/secrets-dispositions.json
+{
+  "schemaVersion": 1,
+  "scan": {
+    "head": "da3a7756c1f67adf7607b0cd8cd501f2613812ff",
+    "commitsScanned": 1,
+    "scope": "full-history",
+    "status": "scanned",
+    "reportSha256": "cb3a24fb491e9388d85f2cf3a751355039eefda6a8b07ff82d5c309bb64e272c"
+  },
+  "dispositions": [],
+  "acknowledgements": []
+}
+$ jq -c '.[] | select(.details.event=="adoption") | .details' .claude/bypass-audit.json
+{"deployment":"personal","adoptedAtCommit":"da3a7756c1f67adf7607b0cd8cd501f2613812ff","archiveDir":null,"secretsScanStatus":"scanned","findingCount":0,"landedPhase":0,"event":"adoption"}
 ```
+
+**An accepted risk that cannot be recorded stops the run.** If the ledger will
+not take the row — most often because `.claude/bypass-audit.json` is not valid
+JSON — adoption prints `[BLOCKED] an accepted risk could not be recorded in
+.claude/bypass-audit.json` with the command that checks the ledger, exits 1,
+and writes nothing, because the rehearsal hits it before the first real write: an acceptance that leaves no trace is not one it
+will act on. The `adoption` row is different: the Adoption Record and the stamp
+are the primary records of the act, so a ledger that refuses that row is
+reported loudly and left out of the commit, and the adoption stands.
+
+### The framework documents — SHIP (WP12b)
+
+Adoption writes the documents `init.sh` gives a new project at the same moment,
+from the same sources:
+
+| Written | From |
+|---|---|
+| `CLAUDE.md` | rendered by the renderer `init.sh` uses, with your project's name, the tier you chose (an organizational adoption gets the branch-protection section), the track the intake recorded (`full` today), `undecided` for platform and language, and a placeholder description — the assessment asks for both |
+| `FEATURES.md`, `BUGS.md`, `RELEASE_NOTES.md`, `docs/INDEX.md`, `docs/IDENTIFIERS.md`, `docs/archive/README.md` | the framework's templates, copied |
+| `docs/reference/*.md` — the eight guides | copied **only where absent**; a guide you already have there is left alone |
+
+Measured on a project that owned a `CLAUDE.md` and a `BUGS.md`, and had
+`FEATURES.md` as a symlink:
+
+```text
+══ The framework's documents
+   Wrote the framework's documents — CLAUDE.md, FEATURES.md, BUGS.md, RELEASE_NOTES.md,
+   docs/INDEX.md, docs/IDENTIFIERS.md, docs/archive/README.md and the guides in
+   docs/reference/ — except any listed below as left alone, and any guide you already had.
+   These replaced documents of yours:
+     CLAUDE.md
+     BUGS.md
+   Your originals are in .claude/adoption-archive/2026-09-24T16-22-37Z-37767, each with a restore line in its
+   MANIFEST.md. Nothing in them was merged into the new files — copy across anything you
+   want to keep, or leave it for the assessment conversation to fold in.
+   These were LEFT ALONE, so the framework's version of each is NOT in place:
+     FEATURES.md — a symlink; writing through it could overwrite a file elsewhere
+```
+
+**Nothing of yours is merged in.** Adapting your prose into the framework's
+documents is judgement, and judgement belongs to the assessment (Act 3), which
+is not built. What adoption does is archive every original, name each one it
+replaced, and tell you where it is. Until you copy content across, the agent
+reads the framework's `CLAUDE.md`, not your notes.
+
+**What it will not write over:**
+
+- **a symlink, or anything inside a symlinked folder** (`docs -> /somewhere/else`)
+  — writing through it could change files outside the project; the MANIFEST row
+  says `kept`;
+- **a read-only file** — left as it is, MANIFEST row `kept`;
+- **a hardlink** is replaced by writing beside the path and renaming, so the
+  other name keeps your content.
+
+Anything left alone is named in the run, under *LEFT ALONE*, so the framework's
+version is missing there by your file system's choice, not silently. Not
+written: `PROJECT_BIBLE.md` and `PRODUCT_MANIFESTO.md` (phase outputs — `init.sh`
+does not write them either) and the `.gitignore` lines `init.sh` adds.
+
+### The Adoption Record, the audit rows and the provenance header — WP7
+
+**The provenance header ships.** `PROJECT_INTAKE.md` — the one document adoption
+reconstructs from what already existed — opens with a fenced comment that says
+so, invisible when rendered and exact when checked:
+
+```text
+<!-- SOIF-PROVENANCE-BEGIN
+reconstructed-at: 2026-09-25
+reconstructed-by: scripts/adopt-project.sh
+source: existing codebase at 0f7afd202f02 + adoption survey
+status: describes work completed BEFORE adoption; not a pre-build specification
+SOIF-PROVENANCE-END -->
+```
+
+The documents adoption writes that describe what is **coming** — `CLAUDE.md`,
+`FEATURES.md` and the rest — carry none. A near-miss header is worse than none,
+so the check is exact: the fence lines, four fields in this order, a real date,
+a commit, the status sentence word for word, and first in the file. It runs when
+the file is written and again in the assessment finisher, because the
+assessment conversation edits `PROJECT_INTAKE.md`; a header it broke stops the
+finisher before anything is recorded.
 
 **The Adoption Record used to be on this list and is not any more.** The driver
 no longer prints a `NOT DONE` block for it: it appends the record to the end of
@@ -1141,13 +1305,11 @@ your `APPROVAL_LOG.md` during the run, and refuses rather than writing one that
 its own eight-clause contract rejects. See
 [The Adoption Record](#the-adoption-record).
 
-What is still WP7's on that surface is narrower than it was. §8.9 names five
-`adoption_event` rows; two of them — **collision archive** and **re-add** — are
-emitted today, and two — the **adoption** row and the **`accepted-risk` secrets
-disposition** row — are not. The fifth, **blocker acceptance**, is attributed in
-the emitter's header to a work package that has since been RETIRED, and nothing
-in the v2 design reassigns it; whether it still has a subject at all is an open
-question rather than a scheduled build. **The emitter's own header in
+§8.9 names five `adoption_event` rows. Four are emitted — **collision
+archive**, **re-add**, **adoption** and **secrets disposition** (see
+[The audit rows](#the-audit-rows-and-the-dispositions-record--ship-wp7)). The
+fifth, **blocker acceptance**, belonged to the retired certification pass and
+will not be emitted. **The emitter's own header in
 `scripts/lib/adopt/adopt-archive.sh` is the live list** — it names each row and
 its owner, and it is maintained with the code. Prefer it to this paragraph.
 
@@ -1187,10 +1349,86 @@ declaration — it **names in its own text** rather than leaving out, so that a
 reader finding those fields absent does not read the absence as a measurement
 that came back empty.
 
-The **CI carve-out** does not exist. Nothing installs framework CI as its own
-files, and nothing records a keep-or-retire decision about your pipelines.
-Scout's SDLC findings are the only part of that surface that ships, and they are
-report-only.
+The **CI carve-out** ships — see
+[The CI carve-out](#the-ci-carve-out--ships-wp7) below.
+
+### The Claude Code session layer — SHIPS (WP9c)
+
+A scaffolded project gets its Claude Code session layer from `init.sh`; an
+adopted one now gets the same one, from the same code
+(`scripts/lib/claude-settings.sh`, which `init.sh` calls too):
+
+- **`.claude/settings.json`** — the framework's permissions for the project's
+  language, and its session hooks: the version, test-gate, freshness, intake and
+  cadence checks at session start, the commit gate and the MCP gate before a
+  tool runs, tool tracking after it, the Qdrant reminder and the bypass
+  detector at session end. **If you already have a `settings.json` it is
+  composed, not replaced**: every key, rule and hook of yours stays, the
+  framework's rules are added to `allow` and `deny`, and its hooks are added
+  where absent. Your original is in the archive, recorded as `composed`. A
+  symlinked `settings.json` is left alone and the run says so.
+- **One difference from a new project, on purpose:** the bypass detector's
+  per-tool hook is not registered on an adopted project while `## BL-277:` is
+  open; its end-of-session hook is.
+- **The four vendored skills** — `session-handoff`, `sweep-triage`, `zoom-out`,
+  `grill-with-docs` — in `.claude/skills/`. A copy of yours at one of those
+  names is archived and replaced; any other skill of yours is untouched.
+- **The Qdrant MCP declaration**, only where `init.sh` would write one (a
+  registered Qdrant server, or a running container with `uvx`):
+  `.claude/settings.local.json` with this project's collection — machine-local
+  and not committed, as in a new project — and the requirement recorded in
+  `.claude/manifest.json`, which is.
+
+### The CI carve-out — SHIPS (WP7)
+
+**Your pipelines are read, never changed.** Adoption reads every CI file you
+have — `.github/workflows/*.yml`, `.gitlab-ci.yml`, `bitbucket-pipelines.yml` —
+for four ways a pipeline can let code around the framework's checks:
+
+| Finding | What it looks for |
+|---|---|
+| auto-merge | `gh pr merge … --auto`, auto-merge actions — changes merge with nobody deciding |
+| admin merge | `gh pr merge … --admin` — merges past checks that have not passed |
+| force-push or history rewrite | `git push --force`, `filter-repo`, `filter-branch` |
+| a failing step is allowed to pass, or a job runs regardless | `continue-on-error: true`, `allow_failure: true`, `if: always()` (which also fires on legitimate fail-closed jobs — read it, then decide) |
+| deploys on a branch push | a deploy in a workflow triggered by a branch push, with no tag, release or manual trigger |
+
+It is a search for known spellings, not a parser, and the run says so. It
+misses what it has no spelling for (`|| true`, a `--mirror` push, a deploy in a
+file that also has a manual trigger), and a file it **cannot read** is reported
+as unread and recorded that way — never as clean. It
+reports a **line number**, never the line — a workflow can carry a credential.
+For each file with a finding it asks once, **before anything is written**:
+*keep* it as it is, or *retire* it. Your answer goes into the Adoption Record;
+"retire" is your intention, and adoption does not carry it out. A file with no
+finding asks nothing. Measured:
+
+```text
+══ Your CI — read, not changed
+
+   .github/workflows/release.yml — the framework cannot vouch for what this lets through:
+     line 10  a failing step is allowed to pass — a red check can come out green
+     line 6  deploys on a branch push — code can reach production without the release phase
+Keep .github/workflows/release.yml as it is, or will you retire it?
+   1) Keep it — it stays exactly as it is
+   2) Retire it — I will remove or change it myself
+```
+
+**The framework's CI is installed as its own file**, from the template `init.sh`
+uses for the project's language, and **never at the canonical path**. On GitLab
+and Bitbucket the canonical file is your whole pipeline, and replacing it would
+take your deploy offline:
+
+| Host | Framework CI | Runs? |
+|---|---|---|
+| GitHub | `.github/workflows/solo-gates.yml` | Yes, from your next push — GitHub runs every workflow. It may fail on code that predates adoption; that is a finding, not a breakage. |
+| GitLab | `.gitlab-ci-solo.yml` | **Not until you add** `include: - local: '.gitlab-ci-solo.yml'` to your `.gitlab-ci.yml`. The run prints the lines — and a warning: GitLab **merges** an included file into yours, and this one sets `image`, `variables`, `cache` and `stages` pipeline-wide and defines jobs named `test` and `lint`. Check those against your file first. |
+| Bitbucket | `bitbucket-pipelines.solo.yml` | **No.** Bitbucket runs only `bitbucket-pipelines.yml`. Sharing a configuration file needs Bitbucket Premium and an exported file whose name ends in `pipelines.yml`, which this is not; copy the steps you want into yours. |
+| none found | nothing | `init.sh` lays no CI down for host `other` either; supply your own. |
+
+A file already at the framework's name is yours: left alone, and the run says
+so. The Adoption Record's **Your CI** section names the framework's file (or why
+none was installed) and your decision for each flagged file.
 
 ### The commit-time scanners — SHIP (WP7/3)
 
@@ -1319,21 +1557,22 @@ not among them. Read them here, in the framework clone you run the driver from.
 | An adoption stamp, and loud detection when it is lost | ✅ Ships and works |
 | Test-first ordering enforced from adoption day forward | ✅ Ships and works |
 | Gates that were skipped actually run and recorded | ✅ By construction — nothing is skipped; the project starts below every gate |
-| Being asked what the project is for, and told whether the stack fits | ❌ The assessment (Act 3) — **not built** (WP12a) |
-| A fitness verdict, a plan, and the reasoning behind both | ❌ The assessment (Act 3) — **not built** (WP12a) |
-| The required secrets scanner resolved before anything reads the scan — installed where the host has a recipe, named for you where it does not — and the scan re-run after an install | ✅ Tool resolution — ships (WP10a). Adoption does **not** refuse when the scanner cannot be resolved; it carries on and the report says nobody looked. The refusal is D2's — WP10b, **not built** |
-| Adoption that can *fail* on a serious finding | ❌ The secrets stop — **not built** (WP10b); the `scanned-partial` arms Karl ruled on 2026-09-16 are WP10b's too |
+| Being asked what the project is for, and told whether the stack fits | ✅ [The assessment](#the-assessment--act-3-and-act-4--ships-wp12a) — a Claude Code conversation, then the finisher |
+| A fitness verdict, a plan, and the reasoning behind both | ✅ Written by the assessment conversation; checked (two halves, a reason) and recorded by the finisher |
+| The required secrets scanner resolved before anything reads the scan — installed where the host has a recipe, named for you where it does not — and the scan re-run after an install | ✅ Tool resolution — ships (WP10a). When the scanner still cannot be resolved, the tier-scoped stop below decides |
+| Adoption that can *fail* on a serious finding | ✅ The secrets stop — ships (WP10b): an organizational adoption stops on a finding, an unscanned tree or a partial scan; a personal one continues only on a recorded acknowledgement. [If it stops](#4-if-it-stops) |
 | A recorded, non-growing set of untested files | ✅ [Test-debt ledger + ratchet](#the-test-debt-ledger-and-its-ratchet) — ships and works; the commit-time hook that would invoke the ratchet automatically now exists, and wiring the ratchet INTO it is still unbuilt |
 | Your colliding hooks/settings archived with a restore path | ✅ Collision archive — ships |
 | Plain disclosure of what was archived, path by path | ✅ Ships |
 | Putting one of your own files back, warned and recorded | ✅ `--re-add`, ships |
 | Adoption refusing to commit a *recognised* secret out of your hooks | ✅ Ships — the archive is scanned before staging and a match is withheld. **A mitigation, not a guarantee** — see below |
 | Adoption never committing a file your `.gitignore` excludes | ✅ Ships — the **original's** ignore status decides, not the archive copy's |
-| Framework CI installed beside yours, with a recorded keep-or-retire | ❌ CI carve-out — **not built** |
+| Framework CI installed beside yours, with a recorded keep-or-retire | ✅ [The CI carve-out](#the-ci-carve-out--ships-wp7) — ships; on GitLab it runs once you add one `include`, on Bitbucket you copy its steps |
+| An audit trail of the adoption and of every risk accepted during it | ✅ [The audit rows and the dispositions record](#the-audit-rows-and-the-dispositions-record--ship-wp7) — ships |
 | A readable record of how this project entered the framework | ✅ [The Adoption Record](#the-adoption-record) — ships, at the end of `APPROVAL_LOG.md`, with its eight-clause contract checked before it is written |
 | Secret scanning, SAST and migration checks on every commit | ✅ [The commit-time scanners](#the-commit-time-scanners--ship-wp73) — ships; measured admitting a compliant commit and blocking a non-compliant one by exit code |
 | The framework's version of a colliding `scripts/*.sh` installed | ❌ Replacement half — **not built**, and unassigned |
-| A `CLAUDE.md` in the adopted project | ❌ **Not built** — WP11 archives yours, WP12b writes the framework's (D3) |
+| A `CLAUDE.md` in the adopted project | ✅ [The framework documents](#the-framework-documents--ship-wp12b) — ships; yours is archived and named, not merged in |
 | The manifest's tier keys, so enforcement cannot be downgraded | ✅ Ships — `## BL-221:` closed; the tier question is their only source |
 
 ---
