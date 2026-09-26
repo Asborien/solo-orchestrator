@@ -8,11 +8,14 @@
 # then runs `gitleaks git --redact --exit-code 1` over the project's history,
 # which is the step every generated ci.yml carries (`# BL-151` in
 # templates/pipelines/ci/github/*.yml). Invokes init.sh, so it lives in the
-# full lane only.
+# full lane only. P1/P2 pin the scan; A1/A2 pin the gitleaks-absent posture
+# by re-running this file without gitleaks, which exits before init.sh runs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=test-helpers/path-without-tool.sh
+. "$SCRIPT_DIR/test-helpers/path-without-tool.sh"
 
 PASSED=0
 FAILED=0
@@ -85,6 +88,34 @@ else
     fi
   fi
 fi
+
+# ── A1/A2: the gitleaks-absent posture (## BL-288:) ──────────────────────
+# With gitleaks off PATH this suite must skip while CI is unset and fail its
+# setup while CI is set. Each case re-runs this file as a child with gitleaks
+# shadowed off PATH; the child skips these cases so it does not recurse.
+if [ -z "${BL308_POSTURE_CHILD:-}" ]; then
+  A="$(newtmp)"
+  np=$(path_without_tool gitleaks "$A") || np=""
+  if [ -z "$np" ] || env PATH="$np" "$BASH" -c 'command -v gitleaks' >/dev/null 2>&1; then
+    fail_ "A1/A2 setup" "could not build a PATH without gitleaks, so the absent posture cannot be measured"
+  else
+    rc=0
+    env -u CI PATH="$np" BL308_POSTURE_CHILD=1 "$BASH" "$SCRIPT_DIR/${0##*/}" > "$A/a1.txt" 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ] && grep -q '^  \[SKIP\] the whole suite' "$A/a1.txt" && ! grep -q '^  \[FAIL\]' "$A/a1.txt"; then
+      pass "A1: gitleaks absent, CI unset — the suite skips with a named reason (rc 0)"
+    else
+      fail_ "A1" "rc=$rc (want 0 with one [SKIP] and no [FAIL]): $(tr '\n' ';' < "$A/a1.txt")"
+    fi
+    rc=0
+    env CI=1 PATH="$np" BL308_POSTURE_CHILD=1 "$BASH" "$SCRIPT_DIR/${0##*/}" > "$A/a2.txt" 2>&1 || rc=$?
+    if [ "$rc" -eq 1 ] && grep -q '^  \[FAIL\] setup' "$A/a2.txt"; then
+      pass "A2: gitleaks absent, CI set — the suite fails at setup (rc 1)"
+    else
+      fail_ "A2" "rc=$rc (want 1 with [FAIL] setup) — a CI run without gitleaks would be credited with a scan that never ran: $(tr '\n' ';' < "$A/a2.txt")"
+    fi
+  fi
+fi
+
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed, $SKIPPED skipped"

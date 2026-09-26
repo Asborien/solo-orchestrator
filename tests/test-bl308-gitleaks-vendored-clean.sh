@@ -20,6 +20,7 @@
 # allowlist wide enough to swallow a real credential. C3 pins that no scanner
 # config is shipped, C4 that the scanner is live over the shipped docs, and R1
 # that the registration lint keeps this suite in the PR-blocking unit lane.
+# A1/A2 pin the gitleaks-absent posture by re-running this file without it.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -30,6 +31,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 INSTALLER="$REPO_ROOT/init"".sh"
 # shellcheck source=../scripts/lib/scaffold-shipped-set.sh
 . "$REPO_ROOT/scripts/lib/scaffold-shipped-set.sh"
+# shellcheck source=test-helpers/path-without-tool.sh
+. "$SCRIPT_DIR/test-helpers/path-without-tool.sh"
 
 PASSED=0
 FAILED=0
@@ -193,15 +196,46 @@ fi
 # executed line as an invoker (its BL-181 predicate), and an exempt suite's
 # tests.yml row can be deleted with every lint green. This suite never runs
 # the installer, so the lint must refuse a tests.yml without its row.
-R="$(newtmp)"
-grep -v 'tests/test-bl308-gitleaks-vendored-clean.sh' "$REPO_ROOT/.github/workflows/tests.yml" > "$R/tests.yml"
-rc=0
-bash "$REPO_ROOT/scripts/lint-tests-registered.sh" --list --tests-yml "$R/tests.yml" > "$R/list.txt" 2>&1 || rc=$?
-if [ "$rc" -eq 1 ] && grep -Eq '^FAIL[[:space:]].*test-bl308-gitleaks-vendored-clean\.sh[[:space:]]+not-in-unit-lane' "$R/list.txt"; then
-  pass "R1: with its tests.yml row removed, lint-tests-registered.sh fails naming this suite (rc 1, not-in-unit-lane)"
-else
-  fail_ "R1" "rc=$rc; this suite's row: $(grep 'test-bl308-gitleaks-vendored-clean' "$R/list.txt" | tr '\n' ';') — the lint does not protect the unit-lane row"
+# The posture child below skips it: it measures only the skip or setup failure.
+if [ -z "${BL308_POSTURE_CHILD:-}" ]; then
+  R="$(newtmp)"
+  grep -v 'tests/test-bl308-gitleaks-vendored-clean.sh' "$REPO_ROOT/.github/workflows/tests.yml" > "$R/tests.yml"
+  rc=0
+  bash "$REPO_ROOT/scripts/lint-tests-registered.sh" --list --tests-yml "$R/tests.yml" > "$R/list.txt" 2>&1 || rc=$?
+  if [ "$rc" -eq 1 ] && grep -Eq '^FAIL[[:space:]].*test-bl308-gitleaks-vendored-clean\.sh[[:space:]]+not-in-unit-lane' "$R/list.txt"; then
+    pass "R1: with its tests.yml row removed, lint-tests-registered.sh fails naming this suite (rc 1, not-in-unit-lane)"
+  else
+    fail_ "R1" "rc=$rc; this suite's row: $(grep 'test-bl308-gitleaks-vendored-clean' "$R/list.txt" | tr '\n' ';') — the lint does not protect the unit-lane row"
+  fi
 fi
+
+# ── A1/A2: the gitleaks-absent posture (## BL-288:) ──────────────────────
+# With gitleaks off PATH this suite must skip while CI is unset and fail its
+# setup while CI is set. Each case re-runs this file as a child with gitleaks
+# shadowed off PATH; the child skips these cases so it does not recurse.
+if [ -z "${BL308_POSTURE_CHILD:-}" ]; then
+  A="$(newtmp)"
+  np=$(path_without_tool gitleaks "$A") || np=""
+  if [ -z "$np" ] || env PATH="$np" "$BASH" -c 'command -v gitleaks' >/dev/null 2>&1; then
+    fail_ "A1/A2 setup" "could not build a PATH without gitleaks, so the absent posture cannot be measured"
+  else
+    rc=0
+    env -u CI PATH="$np" BL308_POSTURE_CHILD=1 "$BASH" "$SCRIPT_DIR/${0##*/}" > "$A/a1.txt" 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ] && grep -q '^  \[SKIP\] the whole suite' "$A/a1.txt" && ! grep -q '^  \[FAIL\]' "$A/a1.txt"; then
+      pass "A1: gitleaks absent, CI unset — the suite skips with a named reason (rc 0)"
+    else
+      fail_ "A1" "rc=$rc (want 0 with one [SKIP] and no [FAIL]): $(tr '\n' ';' < "$A/a1.txt")"
+    fi
+    rc=0
+    env CI=1 PATH="$np" BL308_POSTURE_CHILD=1 "$BASH" "$SCRIPT_DIR/${0##*/}" > "$A/a2.txt" 2>&1 || rc=$?
+    if [ "$rc" -eq 1 ] && grep -q '^  \[FAIL\] setup' "$A/a2.txt"; then
+      pass "A2: gitleaks absent, CI set — the suite fails at setup (rc 1)"
+    else
+      fail_ "A2" "rc=$rc (want 1 with [FAIL] setup) — a CI run without gitleaks would be credited with a scan that never ran: $(tr '\n' ';' < "$A/a2.txt")"
+    fi
+  fi
+fi
+
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed, $SKIPPED skipped"

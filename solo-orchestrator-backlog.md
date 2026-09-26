@@ -22042,14 +22042,19 @@ keeps it demanded in the PR-blocking lane. RED at `f8841de`: G1 fails naming the
 C1/C2/C3 pass (controls green at base). C4 and R1 were added red at `7d74ccb` (C4 planted into 0
 of 2 docs files; R1 rc 0 with the suite `unit-lane-exempt:init-sh-invoker`). Mutants:
 reverting the rename on the declaration line only (located at distance 0 from
-`wf_has_step_coe=0 wf_has_step_if=0`, two changed lines) fails G1; removing either plant fails its
+`wf_has_step_coe=0 wf_has_step_if=0`, one line replaced) fails G1; removing either plant fails its
 control; a generic-shaped key appended to `docs/security-scan-guide.md`, to `init.sh` or to
 `evaluation-prompts/Projects/bases/03-security.md` fails G1; dropping the platform modules from the
-surface fails C4; one executed line naming `$REPO_ROOT/init.sh` in the suite fails R1. `tests/test-bl308-gitleaks-generated-project.sh` (full lane, invokes init.sh): P1 asserts
+surface fails C4; one executed line naming `$REPO_ROOT/init.sh` in the suite fails R1.
+`tests/test-bl308-gitleaks-generated-project.sh` (full lane, invokes init.sh): P1 asserts
 the generated `ci.yml` carries `gitleaks git --redact --exit-code 1`, P2 runs exactly that over the
 generated project and asserts rc 0, zero findings, at least one commit; RED at `f8841de` on P2 with
 the same line. Both suites skip with a named reason when gitleaks is absent locally and fail when
-`CI` is set, the `## BL-288:` posture.
+`CI` is set, the `## BL-288:` posture. Each pins it on itself: A1 and A2 re-run the suite with
+gitleaks shadowed off PATH (`tests/test-helpers/path-without-tool.sh`), A1 with `CI` unset asserting
+rc 0 and `[SKIP] the whole suite`, A2 with `CI=1` asserting rc 1 and `[FAIL] setup`; a PATH that
+still finds gitleaks fails both at setup. Mutants: the `CI` line removed fails A2; the skip turned
+into a failure fails A1; the helper leaving gitleaks on PATH fails `A1/A2 setup`.
 
 **Migration for projects generated before this fix.** The working tree is cleared by the next
 framework sync (`scripts/upgrade-project.sh --sync-framework`, or carrying the rename by hand), but
