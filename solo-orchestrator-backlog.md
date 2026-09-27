@@ -18018,7 +18018,9 @@ a hoist is not taken).
 
 **Status:** Open — **BUILT 2026-09-18 on branch `fix/bl277-detector-authorship`, to the decision below;
 one adversarial review round applied (its block findings were lane membership and a stale RED figure,
-both corrected in the second cut); PR to follow.** See "Build note" at the end of this entry for what
+both corrected in the second cut); PR #454. Revised 2026-09-27 to the maintainer's review and ruling
+on #454 (Write stays scanned and authored; the false-positive close is operator-only); see "The
+maintainer's review of #454" after the mutants.** See "Build note" at the end of this entry for what
 changed, the suites, the mutants, the tallies and the residuals. **DECIDED 2026-09-17 (Karl, issue #385): option 3 below, the
 entry's own recommendation** — quoted: *"keep scanning output, let only Stop-event matches raise the
 sentinel, and have PostToolUse rows carry an actor other than `claude` with the sentinel gated on
@@ -18217,12 +18219,14 @@ true — reading the ledger back mints no `claude` row — and the growth is lis
 each marked:
 
 - `# BL-277-AUTHORSHIP` in `scripts/hooks/bypass-detector.sh`: `ACTOR` and `USER_RESPONSE` are set from
-  the event before the row loop — Stop gives `claude` / `PENDING`; PostToolUse gives `tool_output` /
-  `n/a` (`final_outcome` stays `recorded_only`). The scan, the row-per-pattern loop, the excerpt and
+  the event before the row loop — Stop, and a PostToolUse whose `tool_name` is `Write`, give `claude` /
+  `PENDING`; any other PostToolUse gives `tool_output` / `n/a` (`final_outcome` stays
+  `recorded_only`). The scan, the row-per-pattern loop, the excerpt and
   the severity are untouched, so `tests/test-bypass-detector.sh` T1 still passes unchanged (A5 restates
   its envelope). Pinned by A1 (each of the six patterns in tool output writes its row and none is
-  attributed to `claude`), A3 (`n/a` / `recorded_only`), A4 (all four `tool_response` shapes), S1 (a
-  Stop match writes one `claude` row, PENDING), K1 (the whole shipped `claude-md.tmpl` as tool output:
+  attributed to `claude`), A3 (`n/a` / `recorded_only`), A4 (a real Bash result, every key present, the
+  text on `stdout`), W1 (a real Write result, created and overwritten: one `claude` row, PENDING, and
+  the sentinel), S1 (a Stop match writes one `claude` row, PENDING), K1 (the whole shipped `claude-md.tmpl` as tool output:
   matched, no `claude` row, no sentinel — it is the R1 measurement above, inverted), L1 (the ledger read
   back twice as tool output is scanned and mints no `claude` row — R3 above, inverted).
 - `# BL-277-SENTINEL-AUTHORED`, same file: the sentinel write is guarded by `ACTOR = claude`, so it is
@@ -18235,32 +18239,40 @@ each marked:
   reason, and never depended on this hook — that arm predates BL-029. "Detected" therefore holds
   through the gate, not through a ledger row: the detector never scanned `tool_input`, so a
   verify-skipping commit that actually executes leaves no row, before and after (review probe P3; G1
-  says which arm it pins). The sentinel's question now also tells the model to say so when the matched
-  text was not a proposal, and points the OPERATOR at the third disposition by way of `--help` rather
-  than carrying a runnable self-clearing command — the deny reason relays the question to the model,
-  and BL-029's rationale is that the framework does not rely on the model's good taste alone.
+  says which arm it pins). The sentinel's question is main's text, unchanged: the gate's deny reason
+  relays it to the model, so it names no way to close the proposal as a false positive. Pinned by S3
+  (the relayed question is present and names none of `false-positive`, `false positive`,
+  `false_positive` or `--reason`).
 - `# BL-277-FALSE-POSITIVE` and `# BL-277-FP-RECORD` in `scripts/lib/bypass-audit.sh`,
   `# BL-277-FP-REASON` and `# BL-277-FP-PASS` in `scripts/pending-approval.sh`: `--resolve --decision
   false-positive --reason "<why>"` closes PENDING proposal rows as `user_response: false_positive`,
   `final_outcome: recorded_only`, and records the reason on each row as `details.false_positive_reason`
   (the `jq` that lands it is `# BL-277-FP-RECORD`; the call that carries the reason to the library is
-  `# BL-277-FP-PASS`, which also prints the row's own spelling, `false_positive`, in its `[OK]` line). A
+  `# BL-277-FP-PASS`, which also prints the row's own spelling, `false_positive`, in its `[OK]` line).
+  The close is the operator's alone: `# BL-277-FP-OPERATOR` refuses it when stdin is not a terminal,
+  the guard `test-gate.sh --unrecord-feature` and `process-checklist.sh --reset` already use to block
+  agent calls, with the same message shape. A
   missing, empty or blank reason is refused in the script BEFORE the sentinel is touched (the same
   ordering the `accpet`-typo fix established), and refused again in the library so a direct caller
-  cannot close silently. Pinned by D1 (closes, records, distinct from accept and decline), D2 (three
-  empty shapes: non-zero, sentinel kept, row still PENDING), D4 (the library's own refusal, reached
-  directly because the script's guard would otherwise shield it from every test), D3 (decline still
-  records declined/abandoned).
+  cannot close silently. Pinned by D1 (the operator's close, under a pseudo-terminal: closes, records,
+  distinct from accept and decline), D2 (five empty shapes on the operator's side, tab-only and
+  newline-only among them: non-zero, sentinel kept, row still PENDING), D5 (the agent's side, no
+  terminal on stdin: a well-formed close with a reason is refused, sentinel kept, row PENDING, no
+  reason written), P0 (control: the pseudo-terminal is real and the agent's side has none), D4 (the
+  library's own refusal, reached directly because the script's guard would otherwise shield it from
+  every test), D3 (decline and accept record what they did before, and neither writes a
+  `false_positive_reason`, even when handed a `--reason`).
 - `# BL-277-MATCHER` in the hook roster, `scripts/lib/claude-settings.sh` (`soif_register_hook_roster`,
   which `init.sh` sources since #451 moved the roster out of it; this entry's hunk moved with it, inside
   the greenfield branch of the maintainer's `# BL-242-SETTINGS-BL277` guard, which is unchanged): the
   detector's PostToolUse registration is its own hook group with
-  `"matcher": "Bash"`, consistent with every other scoped registration in the file, instead of being
+  `"matcher": "Bash|Write"` (the maintainer's ruling on #454: files the agent writes are still
+  scanned), instead of being
   appended to group `[0]` and inheriting its absent matcher. The registration's idempotence probe
   (the `if ! jq -e` guard that stops a re-run appending a second group) was widened from group `[0]`
   to any group. Pinned by R6 in the unit suite: the roster, sourced, runs twice in greenfield mode on
-  the settings template, and the settings then hold exactly one detector, under matcher Bash and in no
-  other group, the Stop arm once, and the tool tracker and commit recorder unscoped (only the detector
+  the settings template, and the settings then hold exactly one detector, under matcher Bash|Write and
+  in no other group, the Stop arm once, and the tool tracker and commit recorder unscoped (only the detector
   moved). The second run is what reaches the probe; a second `init.sh` never can, because it refuses an
   existing directory. `tests/test-bl029-integration.sh` T1 (full lane) looks the registration up by
   matcher in a project `init.sh` produces.
@@ -18335,15 +18347,21 @@ M7 reported `operative text occurs 0 times` — the quoting trap made visible ra
 |---|---|---|---|---|---|
 | M1 | detector, `# BL-277-AUTHORSHIP` | ≤ 6 | `ACTOR="tool_output"` → `ACTOR="claude"` | A1 | S1 |
 | M2 | detector, `# BL-277-AUTHORSHIP` | ≤ 6 | `USER_RESPONSE="n/a"` → `USER_RESPONSE="PENDING"` | A3 | A1 |
-| M3 | detector, `# BL-277-SENTINEL-AUTHORED` | ≤ 4 | the authorship guard removed (the shipped `if [ ! -f "$SENTINEL" ]`) | A2, G2 | A1 |
-| M3b | detector, `# BL-277-SENTINEL-AUTHORED` | ≤ 4 | `if false; then` (sentinel never raised) | S2, G3 | S1 |
+| M3 | detector, `# BL-277-SENTINEL-AUTHORED` | ≤ 6 | the authorship guard removed (the shipped `if [ ! -f "$SENTINEL" ]`) | A2, G2 | A1 |
+| M3b | detector, `# BL-277-SENTINEL-AUTHORED` | ≤ 6 | `if false; then` (sentinel never raised) | S2, G3 | S1 |
 | M4 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 4 | `false_positive`/`recorded_only` → `declined`/`abandoned` | D1 | D3 |
 | M5 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 5 | the reason guard → `if false; then` | D4 | — |
 | M6 | pending-approval, `# BL-277-FP-REASON` | ≤ 6 | the reason guard → `if false; then` | D2 | D1 |
-| M7 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | the group written without `"matcher": "Bash"` | R6 | R5 |
+| M7 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | the group written without `"matcher": "Bash\|Write"` | R6 | R5 |
 | M8 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 4 | the idempotence probe regressed to `[0].hooks[]?` | R6 | R5 |
-| M10 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | `"matcher": "Bash"` → `"matcher": "Bash\|Read\|Edit\|Write"` | R6 | R5 |
+| M10 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | `"matcher": "Bash\|Write"` → `"matcher": "Bash\|Read\|Edit\|Write"` | R6 | R5 |
+| M12 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | `"matcher": "Bash\|Write"` → `"matcher": "Bash"` (the ruling's case) | R6 | R5 |
 | M9 | roster (copied, sourced), `THE PostToolUse ARM IS GREENFIELD-ONLY FOR NOW` | ≤ 4 | the adoption guard → `if true; then` | R5 | — |
+| M11 | detector, `# BL-277-AUTHORSHIP` | ≤ 10 | the Write arm dropped: `if [ "$EVENT" = "Stop" ]; then` | W1 | S1, A1 |
+| M13 | detector, `# BL-277-SENTINEL-AUTHORED` | ≤ 8 | a false-positive close command appended to the question | S3 | S2 |
+| M14 | lib, `# BL-277-FP-RECORD` | ≤ 3 | the condition removed, the reason written onto every closed row (the maintainer's mutant) | D3 | D1 |
+| M15 | pending-approval, `# BL-277-FP-REASON` | ≤ 6 | `[[:space:]]` narrowed to a space (the maintainer's mutant) | D2 | D1 |
+| M16 | pending-approval, `# BL-277-FP-OPERATOR` | ≤ 8 | the terminal guard → `if false; then` | D5 | D1 |
 
 All killed on both shells (M9 and M10 added, and M7 and M8 moved onto R6, at the 25 September re-cut); each "survives" column is asserted too, so a kill that came from
 breaking something else is reported as such. Review ran four of its own (the event test inverted at
@@ -18353,19 +18371,45 @@ survived because nothing reached the probe — M8 is its repair, killed by R4 th
 distances 51 and 42 (`# BL-277-FP-RECORD`, `# BL-277-FP-PASS`) now sit on the lines those mutants
 anchored to.
 
+**The maintainer's review of #454 (2026-09-27), and what changed for it.** Three points and a ruling:
+*"files the agent writes must still be scanned (the 'Bash only' registration may not drop Write)."*
+- **The matcher removed `Write`, not `Read`.** It is now `Bash|Write`, and a `Write` result is
+  authored text: `# BL-277-AUTHORSHIP` gives it `claude` / `PENDING` and the sentinel. W1 pins it with a
+  real `Write` result, created and overwritten; M11 (the `Write` arm dropped) and M12 (the matcher
+  narrowed to `Bash`) are killed by W1 and R6. Residuals 1 and 2 are corrected.
+- **The relayed question told the agent how to close its own proposal.** The pointer is gone (S3, M13),
+  and `# BL-277-FP-OPERATOR` makes the false-positive close operator-only by the framework's existing
+  terminal guard (D5, M16; P0 proves the operator's side in the suite has a real terminal). Its bounds
+  are residual 8.
+- **`# BL-277-FP-RECORD` was unpinned.** D3 now closes by `accept` and by `decline`, each handed a
+  `--reason`, and asserts no `false_positive_reason` is written; the maintainer's mutant is M14, killed
+  by D3. Measured before the change: the 9c030d0 suite passed 38 / 0 with that mutant applied.
+- **Minor.** D2 gains tab-only and newline-only reasons, which kill the maintainer's `[[:space:]]`
+  narrowing (M15; the 9c030d0 suite with it applied: D2 passed, and only M6's text check failed). A4's
+  cases that no Bash result can arrive as are replaced by the real shape (residual 7). The echoed
+  proposal is residual 6.
+
 **Residuals, disclosed.**
 1. **The ledger still grows on reads through Bash.** Option 3 keeps output scanning, so `cat` or `grep`
    of a file with the vocabulary appends `tool_output` rows — three per read of the template, and the
    ledger read back through Bash still quotes itself. Nothing blocks, but `## BL-161:`'s point stands:
-   every row dirties the tree. The scoped matcher removes the `Read`-tool half of this entirely
-   (the detector no longer runs after `Read`, `Edit` or `Write`), not the Bash half. Reducing the Bash
-   half further means deciding what output is worth a row, which is the maintainer's scan-surface call.
+   every row dirties the tree. The matcher does not reduce this. **Corrected 2026-09-27 (the
+   maintainer's measurement on #454):** an earlier version said the matcher removed the `Read`-tool
+   half of the growth. It never existed: a `Read` result carries the file under `file.content`, which
+   none of the four keys the detector reads (`stdout`, `stderr`, `output`, top-level `content`) reaches,
+   so `Read` results were never scanned, before or after. The top-level `content` belongs to `Write`,
+   and scoping to `Bash` alone removed that — text the model authored — which is why the matcher is now
+   `Bash|Write`. Reducing the Bash half means deciding what output is worth a row, which is the
+   maintainer's scan-surface call.
 2. **Existing projects keep their unscoped registration.** No upgrade path rewrites `settings.json`
    hook groups: `upgrade-project.sh --sync-framework` delivers the three changed scripts (all in the
    shipped set `soif_parse_shipped_scripts` derives from `init.sh`), so the behavioural fix reaches
    them, but the detector stays in PostToolUse group `[0]` there and still runs after every tool.
-   Harmless under this change — the extra rows are `tool_output` and raise nothing — and A4 pins the
-   `.content` shape a `Read`-driven envelope takes. `verify-install.sh`'s registration row looks the
+   Harmless under this change: a `Write` result is authored there too (actor `claude`, sentinel raised,
+   as on a new project), `Bash` output is `tool_output` and raises nothing, and the other tools' results
+   carry none of the four keys, so they write nothing. **Corrected 2026-09-27:** an earlier version said
+   A4 pinned "the `.content` shape a `Read`-driven envelope takes"; `Read` takes no such shape (residual
+   1), and A4 is now a real Bash result. `verify-install.sh`'s registration row looks the
    detector up in any group and is satisfied by both shapes. A migration that moves the group is a
    `settings.json` write during an upgrade, which `## BL-149:` warns against doing silently; not built.
 3. **A PENDING row written before this change closes under the new vocabulary too.** `false-positive`
@@ -18380,6 +18424,24 @@ anchored to.
    flags the comment. Lifting the guard is the maintainer's one-line choice, not made here. R5 pins
    the current behaviour (adoption registers no PostToolUse detector), so lifting the guard means
    flipping R5 with it.
+6. **An authored proposal echoed through Bash is now `tool_output`, with no sentinel.** `echo "…"` of
+   bypass-shaped text the model composed comes back as `stdout`, so it is recorded under `tool_output`
+   and blocks nothing. That is what option 3 decides: the detector cannot tell an echo from a `cat`. The
+   same text in the model's own message still reaches the Stop arm, and a Bash command that runs the
+   bypass is still denied by `pre-commit-gate.sh`'s own arms (G1).
+7. **`stderr` is never read under a Bash registration** (pre-existing, not this change's). Every real
+   Bash result carries `stdout`, empty or not, and `jq`'s `//` keeps an empty string, so the extraction
+   stops at `stdout`. A4 used to feed `stderr`, `output` and `content` under `tool_name: Bash`, which no
+   Bash result can arrive as; it now feeds the real shape and claims only `stdout`.
+8. **The operator-only guard is a terminal check, with that guard's bounds.** `[ ! -t 0 ]` is the
+   framework's existing way of telling the Orchestrator from an agent call; it is not a credential. A
+   caller that runs the script under a pseudo-terminal (as D1 does, through `script(1)`) passes it, as it
+   would pass `--unrecord-feature` and `--reset`. And, pre-existing, `--clear` and a bare `--resolve`
+   still remove the sentinel from any caller; those leave the rows PENDING, so the ledger still records
+   an open proposal, where a false-positive close would have recorded that none was made.
+9. **`Edit` is not scanned** (pre-existing). An `Edit` result carries `oldString`/`newString`, none of
+   the four keys, so a proposal written into a file by `Edit` leaves no row, on `main` and here. The
+   ruling names `Write`; extending the scan to `Edit` would be a new surface, not built.
 
 **Container run.** Recorded in the PR body: both suites and the neighbours in `ubuntu:24.04` as a
 non-root user, `--platform linux/amd64` (CLAUDE.md's own note on ARM instability); the unit suite with
