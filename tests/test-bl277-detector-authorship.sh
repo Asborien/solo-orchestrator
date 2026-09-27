@@ -340,7 +340,8 @@ run_pa() {
 }
 # run_tty <dir> <answer> <command...> -> TTY_RC — the operator's side: the
 # command runs with a pseudo-terminal on stdin, from BSD or util-linux
-# script(1), and <answer> (if not empty) is typed at it. It reaches script(1) as
+# script(1), and <answer> is typed at it: nothing when it is empty, a bare
+# Enter when it is RUN_TTY_ENTER, otherwise the text and Enter. It reaches script(1) as
 # a generated file, so arguments holding tabs or newlines survive util-linux's
 # single command string, and its exit code comes back through a file. No
 # script(1), or a command that never ran, leaves TTY_RC=NORUN, which every
@@ -349,6 +350,7 @@ run_pa() {
 # discards input that arrives while it sets the terminal up. CI and
 # SOIF_NONINTERACTIVE are cleared, as they are in an operator's own terminal;
 # prompt_yes_no answers N under either.
+RUN_TTY_ENTER='<enter>'
 run_tty() {
   local d="$1" ans="$2" w; shift 2
   w="$(newtmp)"
@@ -359,7 +361,11 @@ run_tty() {
   _tty_feed() {
     local i=0
     while [ ! -e "$w/ready" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-    if [ -n "$ans" ]; then printf '%s\n' "$ans"; fi
+    case "$ans" in
+      '') ;;
+      "$RUN_TTY_ENTER") printf '\n' ;;
+      *) printf '%s\n' "$ans" ;;
+    esac
     # Held open until the command is done: BSD script(1) types ^D into the
     # terminal when its stdin ends, which a prompt not yet reached reads as
     # an empty answer.
@@ -443,7 +449,7 @@ stub_mirror() { local md; md="$(mirror_scripts)" && rm -f "$md/scripts/lib/helpe
 # cancel: rc 0, nothing moves.
 chk_fp_operator_declines() {
   local pa="$1" d ans
-  for ans in n ""; do
+  for ans in n "$RUN_TTY_ENTER"; do
     d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
     PA_ANSWER="$ans" run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
     [ "$PA_RC" = "0" ] || { echo "answer '$ans': rc=$PA_RC, want 0 (cancelled)"; return 1; }
@@ -897,6 +903,15 @@ if why="$(mutate "$MP" "# BL-277-FP-CONFIRM" 'if ! prompt_yes_no ' 'if false && 
   elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M19 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D7"
   else pass "M19 (MUTATION) — the operator's confirmation removed: D7 kills it, D1 survives"; fi
 else fail_ "M19 setup" "$why"; fi
+
+# M23 — the confirmation's default flipped to Y. Only a real Enter reaches the
+# default, so D7 must fail on its Enter arm, not its "n" arm.
+MD="$(mirror_scripts)"; MP="$MD/scripts/pending-approval.sh"
+if why="$(mutate "$MP" "# BL-277-FP-CONFIRM" '? [y/N]" "N"; then' '? [y/N]" "Y"; then' 3)"; then
+  if m23="$(chk_fp_operator_declines "$MP" 2>&1)"; then fail_ "M23 (MUTATION)" "a default of Y survived D7"
+  else case "$m23" in *"$RUN_TTY_ENTER"*) pass "M23 (MUTATION) — the confirmation defaults to Y: D7's Enter arm kills it" ;;
+         *) fail_ "M23 (MUTATION)" "D7 failed, but not on its Enter arm: $m23" ;; esac; fi
+else fail_ "M23 setup" "$why"; fi
 
 # M21, M22 — the close's row selection widened (review RV-A, RV-E): tool_output
 # rows (user_response n/a), or escalation rows, closed with the proposals.
