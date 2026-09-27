@@ -18964,7 +18964,9 @@ one entry by a shared defect class — the precedent for this entry's shape), `#
 
 ## BL-265: `intake-wizard.sh` names a jq KEYWORD as a function parameter, so the intake appendix's Project Context table renders with zero rows on every jq since 1.5
 
-**Status:** Open — 2026-09-26 reconciliation: **the rename half landed on `main` via PR #412** (`141eef5`); `tests/test-bl265-jq-reserved-label.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — `render_intake_file || true` is unchanged at all three call sites on `main`, so jq's exit status is still not checked (the second half of `## BUG-010:` defect (3)'s prescribed fix).
+**Status:** Closed — 2026-09-27: the `render_intake_file || true` residual is closed in `eed252b` (`# BL-265-RENDER-STATUS`: every step checked, file replaced only whole, a failed final render stops the run); `tests/test-bug010-intake-silent-paths.sh` R1–R5.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the rename half landed on `main` via PR #412** (`141eef5`); `tests/test-bl265-jq-reserved-label.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — `render_intake_file || true` is unchanged at all three call sites on `main`, so jq's exit status is still not checked (the second half of `## BUG-010:` defect (3)'s prescribed fix).
 
 **Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl265` at `8f2eecb`. Not pushed, no PR.
 
@@ -19138,7 +19140,9 @@ branch, so on a branch carrying only this entry those citations would resolve to
 
 ## BL-266: typing `pause` files the UNFINISHED intake section under `completed_sections`, and `--resume` then skips it permanently — with no message either way
 
-**Status:** Open — 2026-09-26 reconciliation: **the pause fix landed on `main` via PR #412** (`41c7bc2`, then `2fa9887` dropping the resume-point block); `tests/test-bl266-paused-section-marked-complete.sh` 10 passed / 0 failed, rc 0, on `c3f3d9e`. The first residual below (the `115` arithmetic without a pause) is fixed by `## BL-281:` (`eb15bc0`, same PR). **Still open: the second residual** — `load_progress()` still subscripts `data['project_name']` etc. with no `.get` on `main` (`## BUG-010:` defect (1)).
+**Status:** Closed — 2026-09-27: its last residual, BUG-010 defect (1), is fixed in `eed252b` (`# BUG-010-LOAD-REFUSE`: `load_progress` refuses an unusable progress file by name); the `115` residual was closed by BL-281. `tests/test-bug010-intake-silent-paths.sh` L cases.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the pause fix landed on `main` via PR #412** (`41c7bc2`, then `2fa9887` dropping the resume-point block); `tests/test-bl266-paused-section-marked-complete.sh` 10 passed / 0 failed, rc 0, on `c3f3d9e`. The first residual below (the `115` arithmetic without a pause) is fixed by `## BL-281:` (`eb15bc0`, same PR). **Still open: the second residual** — `load_progress()` still subscripts `data['project_name']` etc. with no `.get` on `main` (`## BUG-010:` defect (1)).
 
 **Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl266` at `b3b781f`. Not pushed, no PR.
 
@@ -19308,7 +19312,9 @@ on a branch carrying only this entry those citations would resolve to nothing.)*
 
 ## BL-267: the wizard's own `?` help key is recorded as the answer at 81 of its prompts, because only one of the two prompt helpers handles it
 
-**Status:** Open — 2026-09-26 reconciliation: **the `prompt_input` fix landed on `main` via PR #412** (`78f20b9`, suite hardened by `ee7a9f4` and `51ee606`); `tests/test-bl267-bare-question-mark.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — on `main`, `prompt_choice` still answers `?` with "Invalid choice", and neither `prompt_choice` nor `prompt_with_suggestions` checks `read`'s exit status (the EOF hang, `## BUG-010:` defect (2)).
+**Status:** Closed — 2026-09-27: the `prompt_choice` `?` message (`# BL-267-CHOICE-HELP`) and the end-of-input loop in `prompt_choice` and `prompt_with_suggestions` (BUG-010 defect (2), `# BUG-010-EOF`) are fixed in `eed252b`; `tests/test-bug010-intake-silent-paths.sh` E1–E6.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the `prompt_input` fix landed on `main` via PR #412** (`78f20b9`, suite hardened by `ee7a9f4` and `51ee606`); `tests/test-bl267-bare-question-mark.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — on `main`, `prompt_choice` still answers `?` with "Invalid choice", and neither `prompt_choice` nor `prompt_with_suggestions` checks `read`'s exit status (the EOF hang, `## BUG-010:` defect (2)).
 
 **Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl267` at `1989933`. Not pushed, no PR.
 
