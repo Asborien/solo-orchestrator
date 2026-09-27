@@ -18371,6 +18371,8 @@ M7 reported `operative text occurs 0 times` — the quoting trap made visible ra
 | M18 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 3 | `false-positive)` widened to `false-positive\|*)` (review E23) | D6 | D1 |
 | M19 | pending-approval, `# BL-277-FP-CONFIRM` | ≤ 3 | the confirmation skipped: `if false && ! prompt_yes_no …` | D7 | D1 |
 | M20 | pending-approval on a stub install, `# BL-277-FP-STUB` | ≤ 4 | the fallback `prompt_yes_no` renamed away | D8 | — |
+| M21 | lib, `# BL-277-FP-RECORD` | ≤ 2 | the close widened to `user_response == "n/a"` rows | D9 | D1 |
+| M22 | lib, `# BL-277-FP-RECORD` | ≤ 2 | the close widened to `escalation` rows | D9 | D1 |
 
 All killed on both shells (M9 and M10 added, and M7 and M8 moved onto R6, at the 25 September re-cut); each "survives" column is asserted too, so a kill that came from
 breaking something else is reported as such. Review ran four of its own (the event test inverted at
@@ -18432,6 +18434,9 @@ the Status paragraph above; each point of the review, with the change and the ca
    proposals — but the reason is applied to all of them at once, as `accept` and `decline` always have.
 4. **`escalation` rows are untouched by the third disposition**, as by the other two (the D2 fix's
    scoping in `bypass_audit_close_pending`). Closing an escalation as a false positive has no meaning.
+   D9 pins the scope under all three decisions: on a ledger holding PENDING proposals, a
+   `tool_output` row (`n/a`) and an open escalation, only the proposals change (M21 and M22 widen the
+   selection to `n/a` rows and to escalations, and D9 kills both).
 5. **The adoption guard's comment goes stale when this entry closes.** The maintainer's comment at
    `# BL-242-SETTINGS-BL277` in `scripts/lib/claude-settings.sh` keeps the detector's PostToolUse arm
    off on adopted projects "until that entry closes". Merging this meets that condition, and nothing
