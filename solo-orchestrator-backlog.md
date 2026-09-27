@@ -21334,7 +21334,10 @@ unchanged (A1, A14).
   lock cannot be made and none exists (A27 at mode 0555, A28 under `chflags uchg`); 4, `.claude/process-state.json.lockdir` is held, with the
   instruction to remove it if no other gate run holds it (A25); 5, `jq` cannot merge the record: the
   state file is not a JSON object, or `.attestations` or `.attestations.single_authority` is not an
-  object (A24, and A31 for a top-level array), and the first line of `jq`'s own message is printed. On each, exit is non-zero, there is no `[ATTESTED]` line, an
+  object (A24, and A31 for a top-level array), and the first line of `jq`'s own message is printed,
+  with C0 controls and backslashes stripped as `# BL-233-WPB-ONELINE` does, so a value `jq` quotes from
+  the state file cannot forge a gate line (A32). Its stderr file lives in `TMPDIR` and is removed on
+  every path that returns (A13, A31). On each, exit is non-zero, there is no `[ATTESTED]` line, an
   existing state file's bytes are unchanged, and the recorder leaves no lock of its own (A9) and no
   temp file (A24); a TERM during the write leaves neither (A30).
 - With the attestation, a project the gate otherwise clears exits 0 (A13, on the PREMISE that the same
@@ -21410,7 +21413,9 @@ signatures are unchecked for authorship whether or not this attestation exists.
 - If another run releases the lock between a failed `mkdir` and the existence check that follows it,
   the refusal is code 3 and names an unwritable `.claude/`. The run still refuses and records nothing;
   only the named cause is wrong, and only in that window.
-
+- A TERM delivered to the gate process itself between the `mktemp` of `jq`'s stderr file and its
+  removal leaves that file in `TMPDIR`: the recorder's trap is in the subshell and covers only the
+  temp state file and the lock.
 **Related:** `## BL-275:` (the same control, and why its remedy line cannot be made both true and
 consistent), `## BL-212:` (the same walker, its coverage stopping at Phase 1→2), `## BL-279:` (the
 A13 fixture that exposed the WARN-vs-block drift), `## BL-256:` (a green line read as a check that was
