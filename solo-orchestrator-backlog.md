@@ -18016,21 +18016,21 @@ a hoist is not taken).
 
 ## BL-277: the bypass detector's PostToolUse arm scans text whose authorship it has not established, records it as `actor: "claude"`, and raises a BLOCKING sentinel on it — so reading the framework's own rules reports the agent for proposing a bypass
 
-**Status:** Open — **BUILT 2026-09-18 on branch `fix/bl277-detector-authorship`, to the decision below;
-one adversarial review round applied (its block findings were lane membership and a stale RED figure,
-both corrected in the second cut); PR #454. Revised 2026-09-27 to the maintainer's review and ruling
-on #454 (Write stays scanned and authored; the false-positive close is operator-only); see "The
-maintainer's review of #454" after the mutants.** See "Build note" at the end of this entry for what
-changed, the suites, the mutants, the tallies and the residuals. **DECIDED 2026-09-17 (Karl, issue #385): option 3 below, the
-entry's own recommendation** — quoted: *"keep scanning output, let only Stop-event matches raise the
-sentinel, and have PostToolUse rows carry an actor other than `claude` with the sentinel gated on
-authorship. Build that recommendation (a scoped `matcher` on the registration is welcome alongside it),
-with the suite pinning both directions you described: a real [verify-skipping flag] invocation still
-detected and blocking, a read of the shipped CLAUDE.md producing no `claude`-attributed row and no
-sentinel. If you want the third disposition for closing a false positive, include it."* (The flag's
-literal is elided from the quote for the reason this entry documents.) All three parts are built.
-*(Before 2026-09-17: ENTRY-ONLY BY DECISION (2026-09-13); three options set out below with a
-recommendation, none built.)* Consequence for adoption:
+**Status:** Open — **DECIDED 2026-09-17 (Karl): option 3 below, the entry's own recommendation.** The
+contributor who filed this (also issue #385, which proposed scanning `tool_input`) is invited to build it;
+adversarial review before merge, as every PR. Built on branch `fix/bl277-detector-authorship`, PR #454, to
+that decision and to the ruling below, including both of its requests; see "Build note" at the end of
+this entry for what changed, the suites, the mutants, the tallies and the residuals.
+**RULED 2026-09-27 (Karl), on PR #454's review: files the agent WRITES must still be scanned.** The PR's
+Bash-only PostToolUse matcher was justified as removing the Read half, but Read output was never
+scanned (Read's text sits at `toolUseResult.file.content`); a top-level `content` is a Write, both
+`type: create` and `type: update` (measured over local transcripts 2026-09-27: Read `text` 35 rows,
+keys `file` only; Write `create` 47, `update` 5, each with `content`), so Bash-only dropped model-authored files. The matcher must be `Bash|Write`, with
+Write rows recorded as authored (`actor: "claude"`, sentinel raised). Requested alongside it: the
+false-positive close becomes operator-only, and its pointer comes out of the deny text relayed to the
+model — after option 3 every sentinel comes from model-authored text, so a model-run false-positive
+close could only relabel a real proposal. *(Before 2026-09-17: ENTRY-ONLY BY DECISION
+(2026-09-13); three options set out below with a recommendation, none built.)* Consequence for adoption:
 ADOPT-002-ARCH v2.2 makes shipping `.claude/settings.json` to adoptees depend on this landing, so no
 adoptee imports the day-one sentinel. Choosing among them is a judgement about this
 framework's risk appetite rather than about correct code: every candidate narrows a security control
@@ -18380,8 +18380,8 @@ survived because nothing reached the probe — M8 is its repair, killed by R4 th
 distances 51 and 42 (`# BL-277-FP-RECORD`, `# BL-277-FP-PASS`) now sit on the lines those mutants
 anchored to.
 
-**The maintainer's review of #454 (2026-09-27), and what changed for it.** Three points and a ruling:
-*"files the agent writes must still be scanned (the 'Bash only' registration may not drop Write)."*
+**The maintainer's review of #454 (2026-09-27), and what changed for it.** The ruling is recorded in
+the Status paragraph above; each point of the review, with the change and the cases that pin it:
 - **The matcher removed `Write`, not `Read`.** It is now `Bash|Write`, and a `Write` result is
   authored text: `# BL-277-AUTHORSHIP` gives it `claude` / `PENDING` and the sentinel. W1 pins it with a
   real `Write` result, created and overwritten; M11 (the `Write` arm dropped) and M12 (the matcher
@@ -22324,3 +22324,110 @@ for the 4.0 trap: **assign at the declaration**, applied to code you are already
 
 **Related:** `## BL-242:` (the package that surfaced it).
 
+---
+
+## BL-309: twenty-four absence assertions in eight suites grep for `integer expression`, which bash 5.3 reworded, so where the script under test runs under 5.3 they cannot fail
+
+**Status:** Open — entry only, the sweep asked for on #419 ("the 'assertion that cannot fail'
+shape is worth the wider sweep you suggested; file it as a follow-up entry rather than folding it
+in"). No fix is on this branch. A pending fix for #420 covering the three sites in
+`tests/test-bl233-wpb-accumulation.sh` touches no other site.
+
+**The three counts, at `19d27e3`:** 27 assertion sites in 9 files in total; 24 absence sites in
+8 suites cannot fail today where the script under test runs under 5.3 (the title's figure);
+22 in 7 suites will still be unable to fail once the pending three-site fix for #420 lands.
+
+**Found:** 2026-09-17 in #420, in one suite. Swept 2026-09-22 over `tests/` at `d95520f`; the
+same sweep on 2026-09-23 at `32832a3` and on 2026-09-26 at `19d27e3` returns identical results.
+
+**The shape.** A test captures the output of the script under test and asserts that a shell
+diagnostic is ABSENT by grepping for one wording of it. `[: X: integer expression expected` is
+the wording of bash 3.2 through 5.2; bash 5.3 prints `[: X: integer expected`. Wherever the bash
+that runs the script under test is 5.3, the diagnostic the script emits never matches the string
+the test looks for, and the absence assertion passes whether or not the leak happened. Most suites
+run their script under whatever `bash` is first on `PATH` (`#!/usr/bin/env bash`, or a bare `bash`
+invocation). One does not: `tests/test-test-gate-counter-sanitizer.sh` runs its subject as
+`PATH="/usr/bin:/bin" bash "$SCRIPT"` in `run_gate()`, so its three sites follow the system bash, which
+on macOS is `/bin/bash` 3.2.57 even when the caller's `PATH` bash is Homebrew 5.3.
+#420 demonstrated it on one site: with the sanitiser removed from `scripts/validate.sh`,
+`tests/test-validate-counter-sanitizer.sh` T2 reported "stderr clean" over a stderr that read
+`[: 0: integer expected`. Measured on 2026-09-22, `[ "$a" -le 20260922 ]` with `a=ZZZZZZZZZZ`:
+
+| bash | wording |
+|---|---|
+| 3.2.57, macOS `/bin/bash` | `integer expression expected` |
+| 5.2.21, `ubuntu:24.04` (the bash of `ubuntu-latest`, currently 24.04) | `integer expression expected` |
+| 5.3.15, Homebrew | `integer expected` |
+
+**Method.** Two scans, each line read at its site. First, the derived command from #420,
+`grep -rn "integer expression expected" tests/ | grep -E 'grep|if \['`: 41 lines in 8 files.
+Each line was sorted into an assertion site (a grep whose result decides pass or fail) or a
+`fail_` message that merely repeats the string (15 lines, not sites). The plain grep finds one
+more file, `tests/test-brownfield-wp2-scout-sections.sh`, whose hit is the comment on `_num()`. The derived
+command keys on the full phrase, so it misses a grep for part of it. Second, the broader scan,
+`grep -rn -i integer tests/` filtered to lines holding `grep`, `[[`, `case` or `=~`: one further
+assertion site, `tests/test-intake-wizard-fixes.sh` (T-bl203-session-check-null-safe), whose
+conjunct `! printf '%s' "$OUT" | grep -q 'integer expression'` targets the same diagnostic from a
+script run under bare `bash`. The other lines it returns are `fail_` and `pass` messages, an
+`echo` and a comment. Both scans give the same lines at `d95520f`, `32832a3` and `19d27e3`. Sites were then split by
+direction, absence (the test wants the diagnostic gone) or presence (the test wants a mutant to
+leak it), and checked for a wording-independent arm in their alternation. Whether any site already
+matches both wordings: `grep -rF 'integer( expression)? expected' tests/` and a search for the
+bare `integer expected` return nothing. With the pending fix for #420 merged onto `19d27e3`
+(a `git merge-tree` of the two, which merges cleanly and changes only
+`tests/test-bl233-wpb-accumulation.sh` under `tests/`), the derived command returns 39 lines: the
+fix moves that suite's three sites to a pattern matching both wordings, and adds one line,
+`_sid_old`, a self-check of its own pattern against the old wording, which is not an assertion
+site. After the three-site fix, that leaves 24 sites in 8 files, 22 of which cannot fail where the
+script under test runs under 5.3 (19 on a Mac whose `PATH` bash is 5.3).
+
+**Count: 27 assertion sites in 9 files.**
+
+| Suite | Sites | Direction | Where the script under test runs under bash 5.3 |
+|---|---|---|---|
+| `tests/test-init-schema-phase-gate.sh` | 8 (T1, T2, T3a to T3e, T4) | absence | cannot fail |
+| `tests/test-validate-counter-sanitizer.sh` | 4 (T2 to T5) | absence | cannot fail (T2 is the #420 demonstration) |
+| `tests/test-test-gate-null-handling.sh` | 4 (T1 to T4) | absence; T1 and T4 also match `unbound variable` | the integer arm cannot fail |
+| `tests/test-test-gate-counter-sanitizer.sh` | 3 (T1, T4, T5) | absence | cannot fail; the suite pins `PATH="/usr/bin:/bin"`, so only where the system bash is 5.3 |
+| `tests/test-check-phase-gate-counter-sanitizer.sh` | 1 (T7) | absence | cannot fail |
+| `tests/test-bl281-resume-after-115.sh` | 1 (C3 control, one conjunct of the pass condition) | absence | that conjunct cannot fail |
+| `tests/test-intake-wizard-fixes.sh` | 1 (T-bl203-session-check-null-safe, one conjunct; greps `integer expression`) | absence | that conjunct cannot fail |
+| `tests/test-bl233-wpb-accumulation.sh` | 3 (N6 and the M23 control arm; the M23 mutant arm) | 2 absence, 1 presence | the two absence arms cannot fail; the presence arm is the red in #420 |
+| `tests/known-bugs-test-suite.sh` | 2 (bug7, bug7b) | absence | immune: the alternation's `line [0-9]+: \[: ` arm matches both wordings |
+
+So 26 absence sites, of which 2 are immune and 24, in 8 suites, cannot fail where the script
+under test runs under 5.3, plus 1 presence site that goes red there. On a Mac whose `PATH` bash is
+5.3, that is 21 sites in 7 suites, because the three in `tests/test-test-gate-counter-sanitizer.sh`
+still run under `/bin/bash` 3.2.57. Zero sites match the 5.3 wording. Once the pending
+three-site fix for #420 lands, 22 vacuous sites in 7 files remain (19 on such a Mac). Not measured here: a per-site kill on a 5.3
+host beyond the one #420 ran; the count is by reading, the wording table is by execution.
+
+**Why CI does not see it.** The unit lane runs on `ubuntu-latest`, currently 24.04, whose bash is
+5.2.21. 16 of the 24 sites run in that PR-blocking lane and still discriminate there. The other 8
+are in `tests/test-init-schema-phase-gate.sh`, which has no unit-lane row and runs only in the
+full lane (manual `workflow_dispatch`), so they run on no pull request, on any bash. A Mac with
+Homebrew bash 5.3 first on `PATH` sees M23 red and 21 sites in 7 suites green regardless of what
+the scripts print; the three in `tests/test-test-gate-counter-sanitizer.sh` still go red on a leak.
+The day `ubuntu-latest` is repointed at an image that ships 5.3, the 16 stop discriminating on CI
+too, silently; only M23 will announce it.
+
+**Proposed follow-up (not built; the shape is yours to decide).** One change over the eight
+suites (seven once the pending fix for #420 lands): match both wordings with `integer( expression)? expected`
+(under `grep -E`), a superset of the current pattern, so every absence assertion strengthens and
+the M23 presence arm goes green on 5.3. A `grep -q` site in BRE needs `-E`, and where its
+alternation is written `\|` (null-handling T1 and T4, `expected\|unbound variable`) adding `-E`
+means rewriting `\|` as `|`, or the `unbound variable` arm silently stops matching; staying in
+BRE, the pattern is `integer\( expression\)\{0,1\} expected`. The proof per site is #420's: with the
+script under test running under 5.3, remove the sanitiser the site guards and see the site go RED, with the same run on
+3.2.57 as the control. A lint refusing the bare wording under `tests/` would keep the shape from
+returning, if you want one; until then the broader scan above is the check, since the derived
+command misses partial-phrase greps. A wider class is not covered by this sweep: any other
+absence assertion that quotes a shell diagnostic verbatim (`unbound variable`, `cd: null
+directory` from #419's table, `command not found`) has the same exposure to a rewording, and a
+second pass over quoted `line [0-9]+:` diagnostics would find them.
+
+**Related:** `## BL-233:` (owner of N6 and M23), #420 (the one-suite instance and the
+demonstration), #419 (where the follow-up was asked for), the pending fix for #420 (the three sites in
+`tests/test-bl233-wpb-accumulation.sh`, not yet opened).
+
+---
