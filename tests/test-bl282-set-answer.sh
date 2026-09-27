@@ -746,7 +746,11 @@ refuse_all N9 "keys with a line break" \
 # every check after the charset accept, so only the charset can refuse here;
 # the lower-case control proves the mirror accepts past it.
 N11FW="$(newtmp)/fw"
-if ! mkdir -p "$N11FW" || ! cp -Rp "$REPO_ROOT/scripts" "$N11FW/"; then
+# Without the locale, bash falls back to C, where both spellings agree, so
+# the case would pass while testing less than it says.
+if ! locale -a 2>/dev/null | grep -i -x -E 'en_GB\.utf-?8' >/dev/null; then
+  echo "  [SKIP] N11 — en_GB.UTF-8 is not installed (locale -a), so this host cannot tell a collating [a-z] from the spelled-out class"
+elif ! mkdir -p "$N11FW" || ! cp -Rp "$REPO_ROOT/scripts" "$N11FW/"; then
   fail_ "N11 setup" "could not mirror scripts/"
 else
   n11t="$N11FW/scripts/intake-wizard.sh"
