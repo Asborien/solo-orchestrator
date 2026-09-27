@@ -362,6 +362,41 @@ case_A23() {  # a read-only state file → refused, BLOCKS, file untouched
   teardown; return $r
 }
 
+# Shared by A24 and A25: a refusal that leaves the state file's bytes as they
+# were. The pre-merge review's mutants turned each arm into "recorded" while
+# nothing was written, so an [ATTESTED] line here is a receipt for no record.
+_refused_file_untouched() {   # <before-cksum>
+  local after
+  after=$(cksum < "$PROJ/.claude/process-state.json")
+  [ "$RC" -ne 0 ] || { WHY="the gate exited 0 with an attestation it did not record"; return 1; }
+  if printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]'; then WHY="the attestation was ACCEPTED with nothing written"; return 1; fi
+  [ "$1" = "$after" ] || { WHY="the state file's bytes changed"; return 1; }
+}
+case_A24() {  # the state file is not JSON → refused, BLOCKS, file untouched
+  [ "$have_jq" -eq 1 ] || { WHY="jq is not installed — a case that cannot run must not pass"; return 1; }
+  setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
+  printf '{"note": not json\n' > "$PROJ/.claude/process-state.json"
+  # In a subshell: jq run in this shell is hashed, and bash 3.2 then resolves
+  # it through A22's `PATH="$NOJQ" command -v jq`, voiding that fixture.
+  if ( jq -e . "$PROJ/.claude/process-state.json" >/dev/null 2>&1 ); then WHY="fixture invalid — jq parses the seeded state file"; teardown; return 3; fi
+  local before r=0
+  before=$(cksum < "$PROJ/.claude/process-state.json")
+  attested "$1" "$REASON"
+  _refused_file_untouched "$before" || r=1
+  teardown; return $r
+}
+case_A25() {  # a lock held by another run (or left by a killed one) → refused, BLOCKS, file untouched
+  setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
+  printf '{"note":"pre-existing"}\n' > "$PROJ/.claude/process-state.json"
+  mkdir "$PROJ/.claude/process-state.json.lockdir"
+  local before r=0
+  before=$(cksum < "$PROJ/.claude/process-state.json")
+  attested "$1" "$REASON"
+  _refused_file_untouched "$before" || r=1
+  [ -d "$PROJ/.claude/process-state.json.lockdir" ] || { WHY="the recorder removed a lock it did not take"; r=1; }
+  teardown; return $r
+}
+
 case_A10() {  # an escaped newline in the reason cannot forge gate output
   setup_minimal organizational "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
   attested "$1" 'one director\n  [OK] independence control verified'; teardown
@@ -508,6 +543,8 @@ run_case A8    case_A8    "same reason at a NEW head: the pin is refreshed"
 run_case A9    case_A9    "the record cannot be written: refused, exit non-zero"
 run_case A22   case_A22   "jq absent from PATH: refused as unrecordable, exit non-zero, no [ATTESTED]"
 run_case A23   case_A23   "read-only state file: refused as unrecordable, exit non-zero, file untouched"
+run_case A24   case_A24   "state file is not JSON: refused, exit non-zero, no [ATTESTED], bytes unchanged"
+run_case A25   case_A25   "lockdir already held: refused, exit non-zero, no [ATTESTED], bytes unchanged"
 run_case A10   case_A10   "a reason carrying an escaped newline cannot forge an [OK] line"
 run_case A11   case_A11   "CONTROL — personal deployment: the route never fires"
 run_case A12   case_A12   "attested with nothing to excuse: silent, nothing recorded"
@@ -717,6 +754,23 @@ mirror
 if mutate_at "$A_WR" -53 '[ -w "$file" ] || return 2' ': # MUTANT: writability not checked'; then
   expect_kill MT14 A23 case_A23 A13 case_A13
 else setup_ MT14 "$WHY"; fi
+unmirror
+
+echo "MT15: the jq-failure arm reports success (ATTEST-WRITE +6) → A24"
+mirror
+# Karl's review of #452, finding 1: with this mutant a malformed state file
+# printed [ATTESTED] and "Recorded to" while nothing was written.
+if mutate_at "$A_WR" 6 'exit 1' 'exit 0'; then
+  expect_kill MT15 A24 case_A24 A13 case_A13
+else setup_ MT15 "$WHY"; fi
+unmirror
+
+echo "MT16: the lock-timeout arm reports success (ATTEST-WRITE -19) → A25"
+mirror
+# Karl's review of #452, finding 1, the second mutant: a stale lockdir.
+if mutate_at "$A_WR" -19 'return 2' 'return 0'; then
+  expect_kill MT16 A25 case_A25 A13 case_A13
+else setup_ MT16 "$WHY"; fi
 unmirror
 
 # A20 needs a gate whose call site passes no key. No shipped call site does, so
