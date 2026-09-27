@@ -486,37 +486,14 @@ if [ "$BACKFILL_ONLY" != true ]; then _bl015_sentinel_guard; fi
 # --sync-framework path can invoke it AFTER its guards + source-check instead of
 # before them.
 _run_idempotent_backfill() {
-  # BL-298-BACKFILL-ROOT-GUARD: find_project_root returns the EMPTY STRING when
-  # no project is above cwd, and the `cd "$PROJECT_ROOT"` below then depends on
-  # the bash version. Measured: `cd ""` is a silent no-op returning 0 on 3.2.57
-  # and on 5.2.21, and an error ("null directory", rc 1) from 5.3 on. So this
-  # function either ran rooted at whatever cwd happened to be, or killed the
-  # script under `set -e` — and this function's CALL SITE runs long before the
-  # `--- Validate project root ---` block that owns this refusal, so that block
-  # was never reached either way. Refusing here makes both bash versions behave
-  # alike. (No line distance is quoted on purpose: two earlier drafts of this
-  # comment carried one and both went stale within a commit or two.)
-  #
-  # SYNC SIBLING: the two message lines below are a verbatim copy of that
-  # block's. The PREDICATE deliberately is not — it tests `-z`, this tests
-  # `! -d`, a strict superset, because the very next statement is a `cd`.
-  # Reword one copy and reword both; only this copy is pinned, by C6b.
-  #
-  # That block is now DEFENSIVE ONLY for an empty root. Measured twice, with a
-  # sentinel exit code in each place in turn, because the two checks tell
-  # different stories:
-  #   • sentinel in the canonical block — no projectless invocation returns it.
-  #   • sentinel HERE — bare, --backfill-only and --to-production return it, so
-  #     those three are refused by this guard; --plan and --sync-framework come
-  #     back rc 1 WITHOUT reaching it, because `_run_plan` and
-  #     `_run_sync_framework` each test `-z "$PROJECT_ROOT"` inside their own
-  #     dispatch function, earlier than this.
-  # So nothing reaches the canonical block with an empty root any more, but the
-  # credit is split: two paths never did. It is kept rather than deleted because
-  # deleting a working refusal to tidy a duplicate is a wider change than this
-  # defect asks for, and it still covers any future caller that reaches it with
-  # an empty root by another route. One line removes it for a maintainer who
-  # would rather not carry the pair.
+  # BL-298-BACKFILL-ROOT-GUARD: find_project_root returns the empty string when
+  # no project is above cwd, and `cd ""` is a silent no-op up to bash 5.2 but an
+  # error from 5.3, so the `cd` below either ran in whatever cwd this was or
+  # killed the script. This call site runs before `--- Validate project root ---`
+  # is reached, so the refusal belongs here, alike on every version.
+  # SYNC SIBLING: the two message lines are a verbatim copy of that block's;
+  # reword both together. The predicate is `! -d`, not its `-z`, because the next
+  # statement is a `cd`.
   if [ ! -d "$PROJECT_ROOT" ]; then
     print_fail "No Solo Orchestrator project found."
     print_info "Run this script from your project directory (where .claude/phase-state.json lives)."
@@ -757,11 +734,9 @@ _run_idempotent_backfill() {
   # host-field and BL-030 sibling backfills above: the enclosing subshell does
   # `cd "$PROJECT_ROOT"`, so without this gate the block would append its two
   # lines to whatever tree cwd names — the framework's OWN .gitignore, for an
-  # in-framework invocation. This comment used to lean on that as DESIGNED
-  # ("PROJECT_ROOT is empty so that `cd` no-ops"), which holds only up to bash
-  # 5.2 — from 5.3 the same `cd` errors. `# BL-298-BACKFILL-ROOT-GUARD` now
-  # refuses the projectless case on every version, so this gate no longer
-  # carries that weight alone. NOTE: not every sibling block in
+  # in-framework invocation. `# BL-298-BACKFILL-ROOT-GUARD` refuses the
+  # projectless case first, so this gate is the second line of defence.
+  # NOTE: not every sibling block in
   # this function carries such a gate — the vendored-skills sync and the BL-088
   # source-closure copy have NO project gate and do write outside generated
   # projects today; that structural gap is tracked as BL-177.
@@ -887,8 +862,7 @@ _run_idempotent_backfill() {
 # (ten files on a bare fixture, measured), and on bash 5.3+ dying before
 # printing anything at all. The no-target check just above the help block
 # already carves SHOW_HELP out; this carves it out of the writes too. Same
-# invariant as --plan above: read-only flags write nothing. (No line distance
-# quoted: the one that used to be here went stale between two commits.)
+# invariant as --plan above: read-only flags write nothing.
 if [ "$SYNC_FRAMEWORK" != true ] && [ "$PLAN" != true ] && [ "$SHOW_HELP" != true ]; then
   _run_idempotent_backfill
 fi
@@ -1758,19 +1732,12 @@ fi
 # --backfill-only short-circuits here — no track / deployment / POC
 # transition follows.
 #
-# BL-298-HELP-BEATS-BACKFILL: --help wins over --backfill-only, the same way it
-# already wins over the no-target check below. Without this, `--backfill-only
-# --help` fell through to the CDF refresh, wrote into the project and exited 0
-# having printed no help at all — the one read-only flag silently doing the most
-# work. Third of the places SHOW_HELP is honoured before the help block; the
-# others are the no-target check and `# BL-298-HELP-SKIPS-BACKFILL`.
-#
-# NOT the last, and an earlier version of this comment said it was. `_run_plan`
-# and `_run_sync_framework` each `exit 0` inside their own dispatch function
-# without consulting SHOW_HELP, so `--plan --help` and `--sync-framework --help`
-# still print no help and still write — 4 and 116 files respectively, measured,
-# identically at 579b0b0 and here. Different mechanism, untouched by BL-298,
-# tabulated in the `## BL-298:` entry under "Not fixed here".
+# BL-298-HELP-BEATS-BACKFILL: --help wins over --backfill-only, as it does over
+# the no-target check below; otherwise `--backfill-only --help` would refresh the
+# CDF assets and exit 0 with no help. `_run_plan` and `_run_sync_framework` exit
+# inside their own dispatch functions without consulting SHOW_HELP, so
+# `--plan --help` and `--sync-framework --help` still print no help and still
+# write; see "Not fixed here" in the `## BL-298:` entry.
 if [ "$BACKFILL_ONLY" = true ] && [ "$SHOW_HELP" != true ]; then
   # BL-001: --backfill-only refreshes CDF assets too, parallel to the manifest
   # backfills above. Consistent with --backfill-only's existing semantics (a
