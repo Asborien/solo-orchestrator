@@ -18,7 +18,8 @@
 # the same surface — a planted AWS-shaped key and a planted generic-shaped key
 # must each be found — so the fix cannot be "disable the rule" or an
 # allowlist wide enough to swallow a real credential. C3 pins that no scanner
-# config is shipped, C4 that the scanner is live over the shipped docs, and R1
+# config is shipped, C4 and C5 that the scanner is live over the shipped docs
+# and over the installer, templates/ and the evaluation prompts, and R1
 # that the registration lint keeps this suite in the PR-blocking unit lane.
 # A1/A2 pin the gitleaks-absent posture by re-running this file without it.
 set -euo pipefail
@@ -209,6 +210,35 @@ else
         pass "C4: planted generic-shaped keys in $ref_doc and docs/platform-modules/web.md are both found (rc 1, generic-api-key x2)"
       else
         fail_ "C4" "rc=$rc planted-line hits=$n (want rc 1, 2) — the scanner is not live over the shipped docs"
+      fi
+    fi
+  fi
+
+  # ── C5: the scanner is live over the installer, templates/ and the prompts ─
+  # One plant in each remaining part of the surface, each file taken from this
+  # tree, so a part dropped from mk_surface leaves its plant nowhere to land.
+  mkdir -p "$D/c5"
+  if ! mk_surface "$D/c5"; then
+    fail_ "C5 setup" "could not copy the shipped surface"
+  else
+    tmpl=$(cd "$REPO_ROOT" && LC_ALL=C ls templates/pipelines/ci/github/*.yml 2>/dev/null | head -n 1)
+    prompt=$(cd "$REPO_ROOT" && find evaluation-prompts/Projects -type f -name '*.md' 2>/dev/null | LC_ALL=C sort | head -n 1)
+    planted=0
+    for p in "${INSTALLER##*/}" "$tmpl" "$prompt"; do
+      if [ -n "$p" ] && [ -f "$D/c5/$p" ]; then
+        printf '\n# planted by the BL-308 control\napi_key="%s"\n' "$GENERIC_PLANT" >> "$D/c5/$p"
+        planted=$((planted + 1))
+      fi
+    done
+    if [ "$planted" -ne 3 ]; then
+      fail_ "C5" "planted into $planted of 3 files (${INSTALLER##*/}, ${tmpl:-no CI template found}, ${prompt:-no evaluation prompt found}) — a part of what the installer ships is not in the surface G1 scans"
+    else
+      rc=0; scan_dir "$D/c5" "$D/c5.json" || rc=$?
+      n=$(jq -r --arg r generic-api-key '[.[] | select(.RuleID == $r and (.File | contains("/c5/")) and (.Match | startswith("api_key=")))] | length' "$D/c5.json")
+      if [ "$rc" -eq 1 ] && [ "$n" -eq 3 ]; then
+        pass "C5: planted generic-shaped keys in ${INSTALLER##*/}, $tmpl and $prompt are all found (rc 1, generic-api-key x3)"
+      else
+        fail_ "C5" "rc=$rc planted-line hits=$n (want rc 1, 3) — the scanner is not live over the installer, templates/ or the evaluation prompts"
       fi
     fi
   fi
