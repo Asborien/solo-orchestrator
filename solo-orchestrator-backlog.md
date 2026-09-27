@@ -22100,7 +22100,8 @@ three governance steps since `## BL-147:`: every step that needs the manifest ca
 `if: hashFiles('<manifests>') != ''`, and one new step immediately after checkout, guarded `== ''`,
 reads `current_phase` from `.claude/phase-state.json` and then either FAILS (`::error::`, exit 1)
 when the phase is 2 or more — a check that cannot run must not pass — or FAILS when the phase
-cannot be read (the file missing, `null`, no `current_phase` key, not JSON), with an error naming
+cannot be read (the file missing, `null`, no `current_phase` key, not JSON, a second
+`current_phase` key, a number of ten or more digits), with an error naming
 `.claude/phase-state.json`, or prints a `::notice::` naming what was skipped, why, and that secret
 detection and governance still run. The manifest
 lists are the ones the framework itself recognises (`process-checklist.sh`'s lockfile list under
@@ -22123,9 +22124,14 @@ TODO comments and its dependency-audit step exits 1 by design until a scanner is
 Why the phase rule: past Phase 1 a tree with no recognised manifest (a Poetry tree the census
 missed, say) must fail, not skip green; skipping would turn a loud red into a silent pass, the
 regression class this change exists to avoid. The phase is read as a bare or quoted whole number,
-the parse `scripts/resume.sh` uses. Anything else fails the step, because a phase the step cannot
-read is not phase 0: otherwise deleting or corrupting one tracked file would switch every toolchain
-step off with a green job. Once the notice step fails, the steps after it do not run under the
+the parse `scripts/resume.sh` uses, and must be exactly one match of at most nine digits. Anything
+else fails the step, because a phase the step cannot read is not phase 0: otherwise deleting or
+corrupting one tracked file would switch every toolchain step off with a green job. The one-match
+and length bounds exist because `[ "$phase" -ge 2 ]` errors on two matched lines or on a number
+past the shell's integer range, and inside an `if` that error reads as false, so the step would
+fall through to the notice at phase 3. One `case` refuses all of it: `''` for no match,
+`*[!0-9]*` for anything with a non-digit, which includes the newline two matches leave, and
+`??????????*` for ten or more digits. Once the notice step fails, the steps after it do not run under the
 default `success()` check, so the job is red. The `grep` carries `|| true` because `run:` steps
 execute under `bash -e` (workflow-syntax reference: bash and sh enforce fail-fast with `set -e`),
 and a no-match must reach the step's own error rather than abort it silently. `init.sh` writes
@@ -22145,9 +22151,10 @@ templates carry, `hashFiles(...) != ''` and `== ''`, over an empty fixture (all 
 runs) and over one holding the first census sample file (all 62 run, notice skips). `act` is not
 installed on this host, so the workflow itself is not executed; T4 evaluates only those two shapes
 and the header says so. T5 — the notice step's `run:` script is extracted and EXECUTED under
-`bash -e -o pipefail` against eleven fixtures per template: `current_phase` 0, 1 and `"1"` (rc 0,
+`bash -e -o pipefail` against thirteen fixtures per template: `current_phase` 0, 1 and `"1"` (rc 0,
 `::notice::`); 2, `"2"`, 3 and 4 (rc 1, `::error::`); no `phase-state.json`, `null`, no
-`current_phase` key and not JSON (rc 1, `::error::`, and with no file the error names it). T6 — one
+`current_phase` key, not JSON, a phase-3 file with a second `current_phase` of 1 nested under it,
+and a 20-digit phase (rc 1, `::error::`, and with no file the error names it). T6 — one
 case per language: each manifest name in the census, alone in a fixture, enables every toolchain
 step and skips the notice. Mutants on a mirror of `templates/`, each proving it landed by
 changed-line count: drop the setup-node guard (T2 names the step), invert one go.yml guard (T1
@@ -22155,8 +22162,8 @@ counts two skip steps and names Build), guard the gitleaks step (T3 refuses), de
 notice step (T1 counts zero), delete the `exit 1` from python.yml's phase check (T5 executes it at
 phase 3 and sees rc 0), drop `pyproject.toml` from every python.yml guard (T2 and T1 name the drift
 and a pyproject-only tree skips all eight toolchain steps again), and, in each of the nine
-templates, replace the unreadable-phase refusal with `if false` (T5 sees a tree with no
-`phase-state.json` skip green). Registered in `tests/full-project-test-suite.sh` and the
+templates, delete the unreadable-phase `case` (T5 sees no `phase-state.json`, the second key and
+the 20-digit phase each skip green). Registered in `tests/full-project-test-suite.sh` and the
 `tests.yml` unit list.
 
 **Evidence.**
@@ -22169,7 +22176,10 @@ templates, replace the unreadable-phase refusal with `if false` (T5 sees a tree 
 - RED for the fail-closed read alone, against the templates before it: `Results: 21 passed, 10
   failed` on both shells. T5 reports 54 violations, six per template: `"2"`, no file, `null`, no
   key and not JSON each exit 0 with `::notice::`, and the missing-file error does not name the file.
-  The nine MT7 mutants cannot land, since the refusal they disable is not there.
+  The nine MT7 mutants cannot land, since the refusal they delete is not there.
+- RED for the one-match and length bounds alone, against the templates before them: `Results: 21
+  passed, 10 failed` on both shells. T5 reports 18 violations, two per template: the second key
+  and the 20-digit phase each exit 0 with `::notice::`. The nine MT7 mutants cannot land.
 - GREEN: `Results: 31 passed, 0 failed` under both shells. All ten templates parse (PyYAML).
 
 **Residual — same class, other hosts, deliberately not in this change.** `ci/gitlab/*.yml` runs

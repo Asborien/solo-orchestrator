@@ -30,10 +30,11 @@ jobs:
         run: |
           # Absent or unreadable must fail, never default to phase 0; same parse as scripts/resume.sh.
           phase=$(grep -o '"current_phase"[[:space:]]*:[[:space:]]*"*[0-9][0-9]*"*' .claude/phase-state.json 2>/dev/null | grep -o '[0-9][0-9]*' || true)
-          if [ -z "$phase" ]; then
-            echo "::error::.claude/phase-state.json is missing, or its current_phase is not a whole number - this step cannot tell whether the toolchain steps may be skipped, and a check that cannot run must not pass."
-            exit 1
-          fi
+          case "$phase" in
+            ''|*[!0-9]*|??????????*)
+              echo "::error::.claude/phase-state.json is missing, or it does not hold exactly one current_phase that is a whole number of at most nine digits - this step cannot tell whether the toolchain steps may be skipped, and a check that cannot run must not pass."
+              exit 1 ;;
+          esac
           if [ "$phase" -ge 2 ]; then
             echo "::error::current_phase is ${phase} and there is no package.json in this tree - the toolchain steps cannot run, and a check that cannot run must not pass. Commit the manifest this workflow expects, or change its guards to the manifest this project uses."
             exit 1

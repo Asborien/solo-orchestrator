@@ -48,9 +48,10 @@
 #       a phase that cannot be read fails too: the notice step's `run:`
 #       script is extracted and EXECUTED under `"$BASH" -e -o pipefail` (the
 #       runner's fail-fast options, under the interpreter this suite itself
-#       runs under) against eleven fixtures — current_phase 0, 1 and "1"
+#       runs under) against thirteen fixtures — current_phase 0, 1 and "1"
 #       (rc 0, `::notice::`); 2, "2", 3 and 4 (rc 1, `::error::`); and no
-#       phase-state.json, null, no current_phase key, and not JSON (rc 1,
+#       phase-state.json, null, no current_phase key, not JSON, a second
+#       current_phase nested under a phase-3 one, and a 20-digit phase (rc 1,
 #       `::error::`, the missing-file error naming the file). A check that
 #       cannot run must not pass, and a phase it cannot read is not phase 0.
 #   T6  one case per language: every manifest name in the census, placed
@@ -62,7 +63,7 @@
 # MUTANTS (on a mirror of templates/, never the real tree): remove one
 # guard, invert one guard, guard the secret scan, delete the notice step,
 # delete the phase check's `exit 1`, drop one manifest name from every
-# guard of one template, and, in each of the nine templates, disable the
+# guard of one template, and, in each of the nine templates, delete the
 # unreadable-phase refusal. Each proves it landed (changed-line count) and
 # names the case that fails.
 #
@@ -404,11 +405,13 @@ mk_phase_fixture() {
     none)    return 0 ;;
     nokey)   printf '{\n  "phase_gates": {}\n}\n' > "$1/.claude/phase-state.json" ;;
     notjson) printf 'current_phase = 1\n' > "$1/.claude/phase-state.json" ;;
+    dup)     printf '{\n  "current_phase": 3,\n  "history": [{"current_phase": 1}]\n}\n' > "$1/.claude/phase-state.json" ;;
     *)       printf '{\n  "current_phase": %s,\n  "phase_gates": {}\n}\n' "$2" > "$1/.claude/phase-state.json" ;;
   esac
 }
-# T5_CASES — <fixture>|<expected "rc kind">. The phase is read as a bare or
-# quoted whole number; anything else is unreadable and fails, never phase 0.
+# T5_CASES — <fixture>|<expected "rc kind">. The phase is read as exactly one
+# bare or quoted whole number of at most nine digits; anything else, two
+# matches or a number `[` cannot compare included, fails, never phase 0.
 T5_CASES='0|0 notice
 1|0 notice
 "1"|0 notice
@@ -419,7 +422,9 @@ T5_CASES='0|0 notice
 none|1 error
 null|1 error
 nokey|1 error
-notjson|1 error'
+notjson|1 error
+dup|1 error
+99999999999999999999|1 error'
 # t5_check <template> <lang> — prints violations, one per line
 t5_check() {
   local f="$1" lang="$2" args="" want_skip="" script="" fx="" v="" c="" want="" out=""
@@ -455,7 +460,7 @@ while IFS= read -r f; do
   t5_check "$f" "$lang" >> "$t5_bad"
 done < "$GH_LIST"
 if [ ! -s "$t5_bad" ]; then
-  pass "T5 — executed: every notice step exits 0 with ::notice:: at current_phase 0 and 1 (bare or quoted), and exits 1 with ::error:: at 2 or more, or when phase-state.json is missing, null, keyless or not JSON, naming the file ($n_lang templates, 11 fixtures each)"
+  pass "T5 — executed: every notice step exits 0 with ::notice:: at current_phase 0 and 1 (bare or quoted), and exits 1 with ::error:: at 2 or more, or when phase-state.json is missing, null, keyless, not JSON, holds two current_phase keys or a 20-digit phase, naming the file ($n_lang templates, 13 fixtures each)"
 else
   fail_ "T5" "$(grep -c . "$t5_bad") violation(s): $(head -3 "$t5_bad" | tr '\n' ';' | cut -c1-240)"
 fi
@@ -651,10 +656,12 @@ else
   fi
 fi
 
-# MT7 — per template: turn the unreadable-phase refusal into `if false`, which
-# restores the old default (no phase read as phase 0, toolchain skipped green).
-# T5 must see rc 0 where it wants rc 1 with no phase-state.json. One mirror,
-# each template restored from its copy before the next.
+# MT7 — per template: delete the unreadable-phase refusal (the `case` block),
+# which restores the old default: an unreadable phase makes `[ -ge ]` error,
+# the `if` reads the error as false, and the toolchain is skipped green. T5
+# must see rc 0 where it wants rc 1 with no phase-state.json, with a second
+# current_phase key, and with a 20-digit phase. One mirror, each template
+# restored from its copy before the next.
 MT7="$(newtmp)/fw"
 if ! mk_mirror "$MT7"; then
   fail_ "MT7 setup" "could not mirror the framework"
@@ -668,17 +675,20 @@ else
     awk '
       /^        if: hashFiles\(.*\) == ..$/ { innotice = 1 }
       /^      - / { innotice = 0 }
-      innotice && /^          if \[ -z "\$phase" \]; then$/ { sub(/if \[ -z "\$phase" \]; then/, "if false; then"); innotice = 0 }
+      innotice && /^          case "\$phase" in$/ { incase = 1 }
+      incase { if ($0 ~ /^          esac$/) { incase = 0; innotice = 0 }; next }
       { print }
     ' "$before" > "$tgt"
-    if [ "$(_changed_lines "$before" "$tgt")" -ne 2 ] || [ "$(count_in "$tgt" 'if false; then')" -ne 1 ]; then
-      fail_ "MT7-$lang setup" "the mutation did not change exactly one line to 'if false; then' in the notice step"
+    if [ "$(_changed_lines "$before" "$tgt")" -ne 5 ] || [ "$(count_in "$tgt" 'case "$phase" in')" -ne 0 ]; then
+      fail_ "MT7-$lang setup" "the mutation did not delete exactly the five-line case block from the notice step"
     else
       t5_check "$tgt" "$lang" > "$TOPTMP/mt7.$lang.bad"
-      if [ "$(count_in "$TOPTMP/mt7.$lang.bad" 'with current_phase fixture none expected "1 error", got "0 notice"')" -ge 1 ]; then
-        pass "MT7-$lang (MUTATION) — with the unreadable-phase refusal disabled, T5 sees a tree with no phase-state.json skip green"
+      if [ "$(count_in "$TOPTMP/mt7.$lang.bad" 'with current_phase fixture none expected "1 error", got "0 notice"')" -ge 1 ] \
+         && [ "$(count_in "$TOPTMP/mt7.$lang.bad" 'with current_phase fixture dup expected "1 error", got "0 notice"')" -ge 1 ] \
+         && [ "$(count_in "$TOPTMP/mt7.$lang.bad" 'with current_phase fixture 99999999999999999999 expected "1 error", got "0 notice"')" -ge 1 ]; then
+        pass "MT7-$lang (MUTATION) — with the unreadable-phase refusal deleted, T5 sees no phase-state.json, a second current_phase key and a 20-digit phase each skip green"
       else
-        fail_ "MT7-$lang (MUTATION)" "disabling the refusal changed nothing T5 can see: $(head -2 "$TOPTMP/mt7.$lang.bad" | tr '\n' ';')"
+        fail_ "MT7-$lang (MUTATION)" "deleting the refusal was not caught on all three fixtures: $(head -3 "$TOPTMP/mt7.$lang.bad" | tr '\n' ';')"
       fi
     fi
     cp "$before" "$tgt"
