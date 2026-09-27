@@ -22049,9 +22049,8 @@ for the 4.0 trap: **assign at the declaration**, applied to code you are already
 
 ## BL-308: every project born from init.sh fails its first pull request at the generated CI's gitleaks step — a vendored `scripts/check-gate.sh` declaration reads as a generic API key
 
-**Status:** Open — reproduction and fix in the pull request that files this entry, from branch
-`fix/bl308-gitleaks-vendored`. Numbered by the fork's lead to stay clear of the maintainer's
-sequence; renumber as you see fit.
+**Status:** Open — reproduction and fix in the pull request that files this entry. Numbered by the
+fork's lead to stay clear of the maintainer's sequence; renumber as you see fit.
 
 **Found:** 2026-09-22 on the first pull request of an organizational project generated at `f8841de`
 (the fork's adopter, run 35758105393): the `Security - Secret detection (gitleaks)` step of the
@@ -22083,12 +22082,12 @@ compound `local` (`wf_folded="" wf_dupkey="" wf_mapscope="" …`) has the identi
 is not flagged, because `wf_mapscope=` scores 3.42; scanned alone, that line is rc 0 and the
 defect's line rc 1. The shape alone does not trip, so that declaration needs no rename.
 
-**Fix (this branch).** Rename the variable — `wf_bad_key` → `wf_unrecognised` at its five sites in
+**Fix.** Rename the variable — `wf_bad_key` → `wf_unrecognised` at its five sites in
 `scripts/check-gate.sh` (declaration, accumulator, the `wf_swallows` verdict at
 `# D-A-STEP-KEY-VERDICT`, and the two lines of the remedy message). Behaviour is identical: the
-remedy text still says "a key this check does not recognise", and `tests/test-check-gate.sh`,
-`tests/test-bl147-ci-template-integrity.sh` (84/0), `tests/test-walk006-ci-protection-scope.sh`
-(158/0) and the other twelve suites naming the script are green under bash 3.2.57 and 5.3.15.
+remedy text still says "a key this check does not recognise", and
+`tests/test-walk006-ci-protection-scope.sh`, which pins the step-key verdict, and the other suites
+naming the script stay green.
 No `.gitleaks.toml` is shipped, no rule is disabled and no path is allowlisted: a declaration that
 looks like a credential is renamed, which is what an operator would be told to do.
 
@@ -22114,23 +22113,21 @@ doc and in a platform module and asserts rc 1 with both found, so G1 covers the 
 asserts rc 1 naming the suite `not-in-unit-lane`: the lint's `## BL-181:` predicate exempts any
 test that names the installer on an executed line, so the suite spells that path in halves and
 R1 keeps it demanded in the PR-blocking lane. RED at `19d27e3`: G1 fails naming the line above,
-every other case passes (7 / 1; controls green at base). C4 and R1 were added red at `7d74ccb` (C4
-planted into 0 of 2 docs files; R1 rc 0 with the suite `unit-lane-exempt:init-sh-invoker`). Mutants:
-reverting the rename on the declaration line only (located at distance 0 from `wf_has_step_coe=0
-wf_has_step_if=0`, one line replaced) fails G1; removing either plant fails its control;
-a generic-shaped key appended to `docs/security-scan-guide.md`, to `init.sh` or to
-`evaluation-prompts/Projects/bases/03-security.md` fails G1; dropping the platform modules
-from the surface fails C4; one executed line naming `$REPO_ROOT/init.sh` in the suite fails R1.
-`tests/test-bl308-gitleaks-generated-project.sh` (full lane, invokes init.sh): P1 asserts the
-generated `ci.yml` carries `gitleaks git --redact --exit-code 1`, P2 runs exactly that over the
-generated project and asserts rc 0, zero findings, at least one commit; RED at `19d27e3` on P2
-with the same line. Both suites skip with a named reason when gitleaks is absent locally and fail
-when `CI` is set, the `## BL-288:` posture. Each pins it on itself: A1 and A2 re-run the suite
-with gitleaks shadowed off PATH by the PATH mirror of `tests/test-bl112-commit-enforcement.sh`,
-written inline, A1 with `CI` unset asserting rc 0 and `[SKIP] the whole suite`, A2 with `CI=1`
-asserting rc 1 and `[FAIL] setup`; a PATH that still finds gitleaks fails both at setup. Mutants:
-the `CI` line removed fails A2; the skip turned into a failure fails A1; the mirror keeping
-gitleaks fails `A1/A2 setup`.
+every other case passes (7 / 1; controls green at base).  Mutants: reverting the rename on the
+declaration line only (located at distance 0 from `wf_has_step_coe=0 wf_has_step_if=0`, one line
+replaced) fails G1; removing either plant fails its control; a generic-shaped key appended to
+`docs/security-scan-guide.md`, to `init.sh` or to `evaluation-prompts/Projects/bases/03-security.md`
+fails G1; dropping the platform modules from the surface fails C4; one executed line naming
+`$REPO_ROOT/init.sh` in the suite fails R1.  `tests/test-bl308-gitleaks-generated-project.sh`
+(full lane, invokes init.sh): P1 asserts the generated `ci.yml` carries `gitleaks git --redact
+--exit-code 1`, P2 runs exactly that over the generated project and asserts rc 0, zero findings, at
+least one commit; RED at `19d27e3` on P2 with the same line. Both suites skip with a named reason
+when gitleaks is absent locally and fail when `CI` is set, the `## BL-288:` posture. Each pins
+it on itself: A1 and A2 re-run the suite with gitleaks shadowed off PATH by the PATH mirror of
+`tests/test-bl112-commit-enforcement.sh`, written inline, A1 with `CI` unset asserting rc 0 and
+`[SKIP] the whole suite`, A2 with `CI=1` asserting rc 1 and `[FAIL] setup`; a PATH that still
+finds gitleaks fails both at setup. Mutants: the `CI` line removed fails A2; the skip turned
+into a failure fails A1; the mirror keeping gitleaks fails `A1/A2 setup`.
 
 **Migration for projects generated before this fix.** The working tree is cleared by the next
 framework sync (`scripts/upgrade-project.sh --sync-framework`, or applying the rename directly), but
