@@ -467,6 +467,38 @@ chk_lib_refuses_empty_reason() {
   done
   return 0
 }
+# D9 — a close changes only PENDING claude_bypass_proposal rows. The ledger
+# holds the row classes this change creates (a tool_output row, user_response
+# n/a) and an open escalation; under each decision, through the library, the two
+# proposal rows close and every other row is byte-identical.
+seed_mixed() {
+  local d="$1"
+  mk_proj "$d" || return 1
+  jq -nc '[
+    {timestamp:"t1", session_id:"bl277", type:"claude_bypass_proposal", actor:"claude", enforcement_level_at_event:"strict",
+     details:{pattern:"no_verify", event:"Stop", excerpt:"x", severity:"normal"}, user_response:"PENDING", final_outcome:"recorded_only"},
+    {timestamp:"t2", session_id:"bl277", type:"claude_bypass_proposal", actor:"tool_output", enforcement_level_at_event:"strict",
+     details:{pattern:"no_verify", event:"PostToolUse", excerpt:"x", severity:"normal"}, user_response:"n/a", final_outcome:"recorded_only"},
+    {timestamp:"t3", session_id:"bl277", type:"escalation", actor:"claude", enforcement_level_at_event:"strict",
+     details:{question:"q"}, user_response:"PENDING", final_outcome:"n/a"},
+    {timestamp:"t4", session_id:"bl277", type:"claude_bypass_proposal", actor:"claude", enforcement_level_at_event:"strict",
+     details:{pattern:"force_push", event:"Stop", excerpt:"y", severity:"normal"}, user_response:"PENDING", final_outcome:"recorded_only"}
+  ]' > "$(ledger "$d")"
+}
+chk_close_scope() {
+  local lib="$1" d dec ur rc before after
+  for dec in accept decline false-positive; do
+    d="$(newtmp)"; seed_mixed "$d" || { echo "fixture"; return 1; }
+    before="$(jq -c '[.[1], .[2]]' "$(ledger "$d")")"
+    ( . "$lib" && bypass_audit_close_pending "$d" "$dec" "$REASON_FP" ) >/dev/null 2>&1; rc=$?
+    case "$dec" in accept) ur="accepted" ;; decline) ur="declined" ;; false-positive) ur="false_positive" ;; esac
+    [ "$rc" -eq 0 ] || { echo "$dec: rc=$rc"; return 1; }
+    [ "$(q "$d" "[.[0], .[3]] | map(.user_response) | unique | join(\",\")")" = "$ur" ] || { echo "$dec: the proposal rows are not $ur"; return 1; }
+    after="$(jq -c '[.[1], .[2]]' "$(ledger "$d")")"
+    [ "$before" = "$after" ] || { echo "$dec: a tool_output or escalation row changed: $after"; return 1; }
+  done
+  return 0
+}
 # D6 — the library refuses a decision it does not know, even with a reason, so
 # a widened false-positive pattern cannot turn a typo into a false_positive close.
 chk_lib_refuses_unknown() {
@@ -630,6 +662,8 @@ if why="$(chk_lib_refuses_empty_reason "$LIB")"; then pass "D4 — bypass_audit_
 else fail_ "D4" "$why"; fi
 if why="$(chk_lib_refuses_unknown "$LIB")"; then pass "D6 — bypass_audit_close_pending refuses an unknown decision given with a reason, and closes nothing"
 else fail_ "D6" "$why"; fi
+if why="$(chk_close_scope "$LIB")"; then pass "D9 — accept, decline and false-positive each close only the PENDING proposal rows; tool_output and escalation rows are byte-identical"
+else fail_ "D9" "$why"; fi
 if why="$(chk_decline_still_declines "$PA")"; then pass "D3 — decline and accept record what they did before, and write no false_positive_reason"
 else fail_ "D3" "$why"; fi
 
@@ -863,6 +897,22 @@ if why="$(mutate "$MP" "# BL-277-FP-CONFIRM" 'if ! prompt_yes_no ' 'if false && 
   elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M19 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D7"
   else pass "M19 (MUTATION) — the operator's confirmation removed: D7 kills it, D1 survives"; fi
 else fail_ "M19 setup" "$why"; fi
+
+# M21, M22 — the close's row selection widened (review RV-A, RV-E): tool_output
+# rows (user_response n/a), or escalation rows, closed with the proposals.
+# Killed by D9; D1 survives.
+MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
+if why="$(mutate "$ML" "# BL-277-FP-RECORD" '.user_response == "PENDING" then' '(.user_response == "PENDING" or .user_response == "n/a") then' 2)"; then
+  if chk_close_scope "$ML" >/dev/null 2>&1; then fail_ "M21 (MUTATION)" "closing tool_output rows survived D9"
+  elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M21 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D9"
+  else pass "M21 (MUTATION) — the close widened to user_response n/a: D9 kills it, D1 survives"; fi
+else fail_ "M21 setup" "$why"; fi
+MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
+if why="$(mutate "$ML" "# BL-277-FP-RECORD" '.type == "claude_bypass_proposal" and' '(.type == "claude_bypass_proposal" or .type == "escalation") and' 2)"; then
+  if chk_close_scope "$ML" >/dev/null 2>&1; then fail_ "M22 (MUTATION)" "closing escalation rows survived D9"
+  elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M22 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D9"
+  else pass "M22 (MUTATION) — the close widened to escalation rows: D9 kills it, D1 survives"; fi
+else fail_ "M22 setup" "$why"; fi
 
 # M20 — the stub install's prompt_yes_no fallback removed. Killed by D8.
 MD="$(stub_mirror)"; MP="$MD/scripts/pending-approval.sh"
