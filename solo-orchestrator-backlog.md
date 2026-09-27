@@ -22131,7 +22131,11 @@ and length bounds exist because `[ "$phase" -ge 2 ]` errors on two matched lines
 past the shell's integer range, and inside an `if` that error reads as false, so the step would
 fall through to the notice at phase 3. One `case` refuses all of it: `''` for no match,
 `*[!0-9]*` for anything with a non-digit, which includes the newline two matches leave, and
-`??????????*` for ten or more digits. Once the notice step fails, the steps after it do not run under the
+`??????????*` for ten or more digits. One limit remains, and it is the parser's, shared with
+`scripts/resume.sh`: a non-numeric top-level `current_phase` with a numeric nested one (`null`
+beside `{"current_phase": 1}` in another object) reads as the nested value, since only the numeric
+key matches. Only a hand edit of the tracked file reaches it, and the parse is kept identical to
+`resume.sh` rather than diverging. Once the notice step fails, the steps after it do not run under the
 default `success()` check, so the job is red. The `grep` carries `|| true` because `run:` steps
 execute under `bash -e` (workflow-syntax reference: bash and sh enforce fail-fast with `set -e`),
 and a no-match must reach the step's own error rather than abort it silently. `init.sh` writes
