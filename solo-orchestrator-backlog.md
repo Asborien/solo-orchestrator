@@ -18248,19 +18248,22 @@ each marked:
   false-positive --reason "<why>"` closes PENDING proposal rows as `user_response: false_positive`,
   `final_outcome: recorded_only`, and records the reason on each row as `details.false_positive_reason`
   (the `jq` that lands it is `# BL-277-FP-RECORD`; the call that carries the reason to the library is
-  `# BL-277-FP-PASS`, which also prints the row's own spelling, `false_positive`, in its `[OK]` line).
+  `# BL-277-FP-PASS`; its `[OK]` line prints `$decision`, as on `main`).
   The close is the operator's alone: `# BL-277-FP-OPERATOR` refuses it when stdin is not a terminal,
-  the guard `test-gate.sh --unrecord-feature` and `process-checklist.sh --reset` already use to block
-  agent calls, with the same message shape. A
+  and `# BL-277-FP-CONFIRM` then asks `[y/N]` through `prompt_yes_no`, the two steps
+  `test-gate.sh --unrecord-feature` and `process-checklist.sh --reset` already take for agent calls,
+  in the same shape (a refusal is rc 1; a "no" is "cancelled", rc 0, nothing moved). A
   missing, empty or blank reason is refused in the script BEFORE the sentinel is touched (the same
   ordering the `accpet`-typo fix established), and refused again in the library so a direct caller
   cannot close silently. Pinned by D1 (the operator's close, under a pseudo-terminal: closes, records,
   distinct from accept and decline), D2 (five empty shapes on the operator's side, tab-only and
   newline-only among them: non-zero, sentinel kept, row still PENDING), D5 (the agent's side, no
   terminal on stdin: a well-formed close with a reason is refused, sentinel kept, row PENDING, no
-  reason written), P0 (control: the pseudo-terminal is real and the agent's side has none), D4 (the
-  library's own refusal, reached directly because the script's guard would otherwise shield it from
-  every test), D3 (decline and accept record what they did before, and neither writes a
+  reason written), D7 (the operator answers "n", or presses Enter: cancelled, nothing moves), P0
+  (control: the pseudo-terminal is real and the agent's side has none), D4 (the library's own refusal
+  of a blank, tab-only or newline-only reason, reached directly because the script's guard would
+  otherwise shield it from every test), D6 (the library refuses an unknown decision given with a
+  reason), D3 (decline and accept record what they did before, and neither writes a
   `false_positive_reason`, even when handed a `--reason`).
 - `# BL-277-MATCHER` in the hook roster, `scripts/lib/claude-settings.sh` (`soif_register_hook_roster`,
   which `init.sh` sources since #451 moved the roster out of it; this entry's hunk moved with it, inside
@@ -18362,6 +18365,9 @@ M7 reported `operative text occurs 0 times` — the quoting trap made visible ra
 | M14 | lib, `# BL-277-FP-RECORD` | ≤ 3 | the condition removed, the reason written onto every closed row (the maintainer's mutant) | D3 | D1 |
 | M15 | pending-approval, `# BL-277-FP-REASON` | ≤ 6 | `[[:space:]]` narrowed to a space (the maintainer's mutant) | D2 | D1 |
 | M16 | pending-approval, `# BL-277-FP-OPERATOR` | ≤ 8 | the terminal guard → `if false; then` | D5 | D1 |
+| M17 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 5 | `[[:space:]]` narrowed to a space (review E21) | D4 | — |
+| M18 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 3 | `false-positive)` widened to `false-positive\|*)` (review E23) | D6 | D1 |
+| M19 | pending-approval, `# BL-277-FP-CONFIRM` | ≤ 3 | the confirmation skipped: `if false && ! prompt_yes_no …` | D7 | D1 |
 
 All killed on both shells (M9 and M10 added, and M7 and M8 moved onto R6, at the 25 September re-cut); each "survives" column is asserted too, so a kill that came from
 breaking something else is reported as such. Review ran four of its own (the event test inverted at
@@ -18389,27 +18395,49 @@ anchored to.
   cases that no Bash result can arrive as are replaced by the real shape (residual 7). The echoed
   proposal is residual 6.
 
+**Our exhaustive review of that answer (`747e99d`, 2026-09-27): `major_concerns`, and what changed.**
+48 mutants over 23 arms, 43 killed; 4 behavioural survivors and 1 equivalent.
+- **Residuals 1 and 2 were wrong about `Grep` and `Agent`**, whose results carry a top-level `content`,
+  and `Bash|Write` dropped `Agent` (subagent-authored) results undisclosed. Both residuals are
+  corrected with measured counts, and residual 10 discloses the `Agent` drop. The matcher is not
+  widened: that is the maintainer's call, and it is put to him on #454.
+- **The operator-only close lacked the confirmation** that follows the same guard in
+  `--unrecord-feature` and `--reset`. `# BL-277-FP-CONFIRM` adds it in their shape (D7, M19), and
+  residual 8 now names both routes that still reach the close (a pseudo-terminal that types `y`, and
+  the library called directly).
+- **Survivors:** the library's reason guard narrowed to a space (D4 gains tab-only and newline-only
+  reasons; M17), and the library's `false-positive)` widened to every decision (D6; M18). The
+  `[OK]` line's `closed_as` label had no reader and no case; it is removed, so the line prints
+  `$decision` as on `main`.
+- Text: the aggregator's comment for this suite, R6's pass label and the detector's comment on
+  envelope shapes now say what is true.
+
 **Residuals, disclosed.**
 1. **The ledger still grows on reads through Bash.** Option 3 keeps output scanning, so `cat` or `grep`
    of a file with the vocabulary appends `tool_output` rows — three per read of the template, and the
    ledger read back through Bash still quotes itself. Nothing blocks, but `## BL-161:`'s point stands:
-   every row dirties the tree. The matcher does not reduce this. **Corrected 2026-09-27 (the
-   maintainer's measurement on #454):** an earlier version said the matcher removed the `Read`-tool
-   half of the growth. It never existed: a `Read` result carries the file under `file.content`, which
-   none of the four keys the detector reads (`stdout`, `stderr`, `output`, top-level `content`) reaches,
-   so `Read` results were never scanned, before or after. The top-level `content` belongs to `Write`,
-   and scoping to `Bash` alone removed that — text the model authored — which is why the matcher is now
-   `Bash|Write`. Reducing the Bash half means deciding what output is worth a row, which is the
+   every row dirties the tree. **Corrected 2026-09-27 (the maintainer's measurement on #454, then
+   our review's):** an earlier version said the matcher removed the `Read`-tool half of the growth.
+   There was none: a `Read` result carries the file under `file.content`, which none of the four keys
+   the detector reads (`stdout`, `stderr`, `output`, top-level `content`) reaches, so `Read` results
+   were never scanned, before or after. Three other tools do carry a top-level `content`: `Write` (the
+   file written, hence `Bash|Write`), `Grep` in content mode, and `Agent` (a subagent's report). On
+   new projects the matcher stops scanning `Grep` and `Agent` results, so it does reduce the growth by
+   the `Grep` share; residual 10 is what it costs for `Agent`. Measured over transcript results, each
+   joined to its tool name: our review's 400 transcripts, `Grep` 316 of 583 and `Agent` 131 of 1087
+   reach a scanned key; our own 150 from the last three days, `Grep` 140 of 272 and `Agent` 26 of 86;
+   `Read` 0 in both. Reducing the Bash half means deciding what output is worth a row, which is the
    maintainer's scan-surface call.
 2. **Existing projects keep their unscoped registration.** No upgrade path rewrites `settings.json`
    hook groups: `upgrade-project.sh --sync-framework` delivers the three changed scripts (all in the
    shipped set `soif_parse_shipped_scripts` derives from `init.sh`), so the behavioural fix reaches
    them, but the detector stays in PostToolUse group `[0]` there and still runs after every tool.
-   Harmless under this change: a `Write` result is authored there too (actor `claude`, sentinel raised,
-   as on a new project), `Bash` output is `tool_output` and raises nothing, and the other tools' results
-   carry none of the four keys, so they write nothing. **Corrected 2026-09-27:** an earlier version said
-   A4 pinned "the `.content` shape a `Read`-driven envelope takes"; `Read` takes no such shape (residual
-   1), and A4 is now a real Bash result. `verify-install.sh`'s registration row looks the
+   Under this change a `Write` result is authored there too (actor `claude`, sentinel raised, as on a
+   new project); `Bash`, `Grep` and `Agent` results are `tool_output` and raise nothing; the other
+   tools' results carry none of the four keys, so they write nothing. **Corrected 2026-09-27:** an
+   earlier version said every other tool wrote nothing, which is false for `Grep` and `Agent`
+   (residual 1's counts), and that A4 pinned "the `.content` shape a `Read`-driven envelope takes";
+   `Read` takes no such shape, and A4 is now a real Bash result. `verify-install.sh`'s registration row looks the
    detector up in any group and is satisfied by both shapes. A migration that moves the group is a
    `settings.json` write during an upgrade, which `## BL-149:` warns against doing silently; not built.
 3. **A PENDING row written before this change closes under the new vocabulary too.** `false-positive`
@@ -18433,15 +18461,27 @@ anchored to.
    Bash result carries `stdout`, empty or not, and `jq`'s `//` keeps an empty string, so the extraction
    stops at `stdout`. A4 used to feed `stderr`, `output` and `content` under `tool_name: Bash`, which no
    Bash result can arrive as; it now feeds the real shape and claims only `stdout`.
-8. **The operator-only guard is a terminal check, with that guard's bounds.** `[ ! -t 0 ]` is the
-   framework's existing way of telling the Orchestrator from an agent call; it is not a credential. A
-   caller that runs the script under a pseudo-terminal (as D1 does, through `script(1)`) passes it, as it
-   would pass `--unrecord-feature` and `--reset`. And, pre-existing, `--clear` and a bare `--resolve`
-   still remove the sentinel from any caller; those leave the rows PENDING, so the ledger still records
-   an open proposal, where a false-positive close would have recorded that none was made.
+8. **The operator-only close is a terminal check and a typed confirmation, with their bounds.**
+   `[ ! -t 0 ]` then `prompt_yes_no` is the framework's existing way of telling the Orchestrator from
+   an agent call; it is not a credential. Two routes still reach a false-positive close without the
+   Orchestrator: a caller that runs the script under a pseudo-terminal and types `y` into it (D1 does
+   exactly that, through `script(1)`), which would pass `--unrecord-feature` and `--reset` the same
+   way; and a caller that sources `scripts/lib/bypass-audit.sh` and calls `bypass_audit_close_pending`
+   directly (D4 and D6 do), which has no terminal check, the same shape as `test-gate.sh`'s callable
+   `_unrecord_feature_apply`. No environment variable or other flag reaches it. And, pre-existing,
+   `--clear` and a bare `--resolve` still remove the sentinel from any caller; those leave the rows
+   PENDING, so the ledger still records an open proposal, where a false-positive close would have
+   recorded that none was made.
 9. **`Edit` is not scanned** (pre-existing). An `Edit` result carries `oldString`/`newString`, none of
    the four keys, so a proposal written into a file by `Edit` leaves no row, on `main` and here. The
    ruling names `Write`; extending the scan to `Edit` would be a new surface, not built.
+10. **`Bash|Write` stops scanning `Agent` results on new projects, and an `Agent` result is
+    subagent-authored text.** It is the subagent's final report, top-level `content` (residual 1's
+    counts). On `main`, with no matcher, a bypass proposal in a subagent's report raised the sentinel.
+    Here it is not scanned on a new project, and on an existing project it is a `tool_output` row with
+    no sentinel. The detector is not registered on `SubagentStop`, so no authored arm sees it. The same
+    reasoning as the `Write` ruling would scan it as authored (`Bash|Write|Agent`); that is a scan-scope
+    call for the maintainer and is put to him on #454, not built.
 
 **Container run.** Recorded in the PR body: both suites and the neighbours in `ubuntu:24.04` as a
 non-root user, `--platform linux/amd64` (CLAUDE.md's own note on ARM instability); the unit suite with
