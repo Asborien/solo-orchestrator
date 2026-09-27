@@ -76,6 +76,8 @@ fail_() { echo "  [FAIL] $1 — $2"; FAILED=$((FAILED + 1)); }
 TOPTMP="$(mktemp -d)"
 trap 'rm -rf "$TOPTMP"' EXIT INT TERM
 newtmp() { mktemp -d "$TOPTMP/fixXXXXXX"; }
+# mirror_scripts — a copy of scripts/ for a mutant or a stub install to change.
+mirror_scripts() { local d; d="$(newtmp)/fw"; mkdir -p "$d" && cp -Rp "$REPO_ROOT/scripts" "$d/" && printf '%s' "$d"; }
 
 for need in "$HOOK" "$GATE" "$PA" "$LIB" "$ROSTER" "$TEMPLATE"; do
   [ -f "$need" ] || { echo "  [FAIL] setup — $need not found"; echo ""; echo "Results: 0 passed, 1 failed"; exit 1; }
@@ -351,12 +353,18 @@ run_tty() {
   local d="$1" ans="$2" w; shift 2
   w="$(newtmp)"
   { printf 'unset CI SOIF_NONINTERACTIVE\n'; printf 'cd %q || exit 99\n' "$d"; printf ': > %q\n' "$w/ready"
-    printf '%q ' "$@"; printf '>/dev/null 2>&1\n'
+    printf '%q ' "$@"; printf '>%q 2>&1\n' "$w/out"
     printf 'printf "%%s" "$?" > %q\n' "$w/rc"; } > "$w/run.sh"
+  TTY_OUT="$w/out"
   _tty_feed() {
     local i=0
     while [ ! -e "$w/ready" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
     if [ -n "$ans" ]; then printf '%s\n' "$ans"; fi
+    # Held open until the command is done: BSD script(1) types ^D into the
+    # terminal when its stdin ends, which a prompt not yet reached reads as
+    # an empty answer.
+    i=0
+    while [ ! -e "$w/rc" ] && [ "$i" -lt 1200 ]; do sleep 0.1; i=$((i + 1)); done
   }
   if script --version >/dev/null 2>&1; then
     _tty_feed | script -qec "bash $(printf '%q' "$w/run.sh")" /dev/null >/dev/null 2>&1
@@ -414,6 +422,22 @@ chk_fp_needs_terminal() {
   [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] || { echo "a reason was written by a refused close"; return 1; }
   return 0
 }
+# D8 — a stub install (no scripts/lib/helpers-core.sh, the fallback at the top
+# of the script): the operator's well-formed close cannot be confirmed, so it
+# is refused and says why. <script> is the copy whose helpers are removed.
+chk_fp_stub_refuses() {
+  local pa="$1" d
+  d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+  case "$PA_RC" in ''|NORUN|*[!0-9]*) echo "the command did not run (rc=$PA_RC)"; return 1 ;; 0) echo "rc=0, want a refusal"; return 1 ;; esac
+  [ -f "$(sentinel "$d")" ] || { echo "the sentinel was removed"; return 1; }
+  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the row was closed"; return 1; }
+  grep -q 'helpers-core.sh' "$TTY_OUT" 2>/dev/null || { echo "the refusal does not name helpers-core.sh"; return 1; }
+  if grep -q 'command not found' "$TTY_OUT" 2>/dev/null; then echo "the script ran a command it does not define"; return 1; fi
+  return 0
+}
+stub_mirror() { local md; md="$(mirror_scripts)" && rm -f "$md/scripts/lib/helpers-core.sh" && printf '%s' "$md"; }
+
 # D7 — the operator's side, well-formed, but the operator answers no, or just
 # presses Enter (the default is N). Cancelled as --unrecord-feature and --reset
 # cancel: rc 0, nothing moves.
@@ -598,6 +622,10 @@ if why="$(chk_fp_needs_terminal "$PA")"; then pass "D5 — with no terminal on s
 else fail_ "D5" "$why"; fi
 if why="$(chk_fp_operator_declines "$PA")"; then pass "D7 — the operator answers no, or presses Enter, at the confirmation: cancelled, rc 0, sentinel kept, row PENDING, no reason written"
 else fail_ "D7" "$why"; fi
+SM="$(stub_mirror)"
+if [ -z "$SM" ] || [ -e "$SM/scripts/lib/helpers-core.sh" ]; then fail_ "D8 setup" "could not build a stub install"
+elif why="$(chk_fp_stub_refuses "$SM/scripts/pending-approval.sh")"; then pass "D8 — on a stub install (no helpers-core.sh) the operator's close is refused, naming the missing file: non-zero, sentinel kept, row PENDING"
+else fail_ "D8" "$why"; fi
 if why="$(chk_lib_refuses_empty_reason "$LIB")"; then pass "D4 — bypass_audit_close_pending itself refuses a blank, tab-only or newline-only reason and closes nothing"
 else fail_ "D4" "$why"; fi
 if why="$(chk_lib_refuses_unknown "$LIB")"; then pass "D6 — bypass_audit_close_pending refuses an unknown decision given with a reason, and closes nothing"
@@ -640,6 +668,7 @@ for spec in \
   "$PA|# BL-277-FP-PASS" \
   "$PA|# BL-277-FP-OPERATOR" \
   "$PA|# BL-277-FP-CONFIRM" \
+  "$PA|# BL-277-FP-STUB" \
   "$ROSTER|# BL-277-MATCHER"; do
   f="${spec%%|*}"; m="${spec#*|}"
   n="$(S="$m" awk 'index($0, ENVIRON["S"]){c++} END{print c+0}' "$f")"
@@ -682,7 +711,6 @@ mutate() {
   bash -n "$f" 2>/dev/null || { echo "the mutated file does not parse"; return 1; }
   return 0
 }
-mirror_scripts() { local d; d="$(newtmp)/fw"; mkdir -p "$d" && cp -Rp "$REPO_ROOT/scripts" "$d/" && printf '%s' "$d"; }
 
 # M1 — PostToolUse rows attributed to claude again. Killed by A1 (also A4, K1, L1).
 MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
@@ -835,6 +863,13 @@ if why="$(mutate "$MP" "# BL-277-FP-CONFIRM" 'if ! prompt_yes_no ' 'if false && 
   elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M19 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D7"
   else pass "M19 (MUTATION) — the operator's confirmation removed: D7 kills it, D1 survives"; fi
 else fail_ "M19 setup" "$why"; fi
+
+# M20 — the stub install's prompt_yes_no fallback removed. Killed by D8.
+MD="$(stub_mirror)"; MP="$MD/scripts/pending-approval.sh"
+if why="$(mutate "$MP" "# BL-277-FP-STUB" '  prompt_yes_no() {' '  _no_prompt_yes_no() {' 4)"; then
+  if chk_fp_stub_refuses "$MP" >/dev/null 2>&1; then fail_ "M20 (MUTATION)" "the stub install without its fallback survived D8"
+  else pass "M20 (MUTATION) — the stub install's confirmation fallback removed: D8 kills it"; fi
+else fail_ "M20 setup" "$why"; fi
 
 # M9 — the maintainer's adoption guard lifted, so adoption registers the
 # PostToolUse arm. Killed by R5.

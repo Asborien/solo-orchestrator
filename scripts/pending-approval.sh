@@ -21,7 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# BL-046: uses print_ok/fail/info + guard_not_in_framework only — core subset.
+# BL-046: uses print_ok/fail/info, guard_not_in_framework and prompt_yes_no only — core subset.
 if [ -f "$SCRIPT_DIR/lib/helpers-core.sh" ]; then
   source "$SCRIPT_DIR/lib/helpers-core.sh"
 else
@@ -32,6 +32,12 @@ else
   # framework guard: there's nothing to source. The full Solo install always
   # ships helpers.
   guard_not_in_framework() { return 0; }
+  # BL-277-FP-STUB — the false-positive close's confirmation cannot be asked
+  # without helpers-core.sh, so it is refused, before the sentinel is touched.
+  prompt_yes_no() {
+    print_fail "--resolve --decision false-positive cannot ask for confirmation: $SCRIPT_DIR/lib/helpers-core.sh is missing. Sentinel left in place."
+    exit 1
+  }
 fi
 
 # security-audits-2 (S3, 2026-04-26 audit sweep): the helpers.sh docstring at
@@ -192,9 +198,9 @@ cmd_resolve() {
   if [ -n "$decision" ]; then
     case "$decision" in
       accept|decline) ;;
-      # Both refusals below come BEFORE the sentinel is touched, for the same
-      # reason the typo check above does: a close that fails after the sentinel
-      # is gone leaves PENDING rows stranded.
+      # Every refusal below, and the confirmation, come BEFORE the sentinel is
+      # touched, for the same reason the typo check above does: a close that
+      # fails after the sentinel is gone leaves PENDING rows stranded.
       false-positive)
         # BL-277-FP-OPERATOR — operator-only, by the same guard as
         # `test-gate.sh --unrecord-feature`: every sentinel now comes from text
