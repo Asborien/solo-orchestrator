@@ -18224,7 +18224,8 @@ true — reading the ledger back mints no `claude` row — and the growth is lis
   the severity are untouched, so `tests/test-bypass-detector.sh` T1 still passes unchanged (A5 restates
   its envelope). Pinned by A1 (each of the six patterns in tool output writes its row and none is
   attributed to `claude`), A3 (`n/a` / `recorded_only`), A4 (a real Bash result, every key present, the
-  text on `stdout`), W1 (a real Write result, created and overwritten: one `claude` row, PENDING, and
+  text on `stdout`), A7 (an Agent report and a Grep content result, each with its `tool_name`: scanned,
+  `tool_output`, `n/a`, no sentinel), W1 (a real Write result, created and overwritten: one `claude` row, PENDING, and
   the sentinel), S1 (a Stop match writes one `claude` row, PENDING), K1 (the whole shipped `claude-md.tmpl` as tool output:
   matched, no `claude` row, no sentinel — it is the R1 measurement above, inverted), L1 (the ledger read
   back twice as tool output is scanned and mints no `claude` row — R3 above, inverted).
@@ -18342,6 +18343,7 @@ passes. A mutant that fails any of that is reported as a SETUP failure, never as
 | M18 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 3 | `false-positive)` widened to `false-positive\|*)` | D6 | D1 |
 | M19 | pending-approval, `# BL-277-FP-CONFIRM` | ≤ 3 | the confirmation skipped: `if false && ! prompt_yes_no …` | D7 | D1 |
 | M23 | pending-approval, `# BL-277-FP-CONFIRM` | ≤ 3 | the confirmation's default flipped to `Y` | D7 (its Enter arm) | — |
+| M24 | detector, `# BL-277-AUTHORSHIP` | ≤ 6 | an authored `Agent` arm added beside the block | A7 | S1, W1 |
 | M20 | pending-approval on a stub install, `# BL-277-FP-STUB` | ≤ 4 | the fallback `prompt_yes_no` renamed away | D8 | — |
 | M21 | lib, `# BL-277-FP-RECORD` | ≤ 2 | the close widened to `user_response == "n/a"` rows | D9 | D1 |
 | M22 | lib, `# BL-277-FP-RECORD` | ≤ 2 | the close widened to `escalation` rows | D9 | D1 |
@@ -18379,9 +18381,10 @@ the Status paragraph above; each point of the review, with the change and the ca
    file written, hence `Bash|Write`), `Grep` in content mode, and `Agent` (a subagent's report). On
    new projects the matcher stops scanning `Grep` and `Agent` results, so it does reduce the growth by
    the `Grep` share; residual 10 is what it costs for `Agent`. Measured over transcript results, each
-   joined to its tool name, on the contributor's machine on 27 September: in the 400 most recent
-   transcripts, `Grep` 316 of 583 and `Agent` 131 of 1087 reach a scanned key; in the 150 modified in
-   the three days before, `Grep` 140 of 272 and `Agent` 26 of 86; `Read` 0 in both. Reducing the Bash half means deciding what output is worth a row, which is the
+   joined to its tool name, over the 400 most recently modified `~/.claude/projects/*/*.jsonl` on the
+   contributor's machine at 19:08 BST on 27 September, taking the detector's own extraction
+   (`stdout // stderr // output // content`) as the test: `Agent` 82 of 1098 results reach a scanned
+   key, `Grep` 333 of 605, `Read` 0 of 1404. Reducing the Bash half means deciding what output is worth a row, which is the
    maintainer's scan-surface call.
 2. **Existing projects keep their unscoped registration.** No upgrade path rewrites `settings.json`
    hook groups: `upgrade-project.sh --sync-framework` delivers the three changed scripts (all in the
@@ -18440,6 +18443,11 @@ the Status paragraph above; each point of the review, with the change and the ca
     no sentinel. The detector is not registered on `SubagentStop`, so no authored arm sees it. The same
     reasoning as the `Write` ruling would scan it as authored (`Bash|Write|Agent`); that is a scan-scope
     call for the maintainer and is put to him on #454, not built.
+11. **The Write arm depends on `content` being in the Write result.** The Claude Code hooks page's
+    PostToolUse example gives Write's `tool_response` as `{filePath, type}`, with no `content`, and an
+    envelope of that shape gives no row, here and on `main`. Real Write results carry `content` (a
+    transcript `toolUseResult` for Write does), so the example is trimmed and W1 uses the real shape;
+    but if the payload ever drops `content`, the Write arm stops scanning without a sound.
 
 **A pre-existing failure, easy to misread as this change's.** Where no global git identity exists (a
 bare `ubuntu:24.04` container, or a temporary `HOME`), `tests/test-bl029-integration.sh` exits 128 with
