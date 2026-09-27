@@ -322,7 +322,7 @@ case_A9() {   # a record that cannot be written → refused, and the gate BLOCKS
     || { WHY="not refused on the grounds that the attestation could not be recorded"; r=1; }
   [ "$RC" -ne 0 ] || { WHY="the gate exited 0 with an attestation it could not record — a route that leaves no trace"; r=1; }
   if printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]'; then WHY="an unrecordable attestation was ACCEPTED"; r=1; fi
-  _remedy_names 'cannot be written' 'cannot be written' 'an unwritable state file' || r=1
+  [ "$r" -ne 0 ] || _remedy_names 'cannot be written' 'cannot be written' 'an unwritable state file' || r=1
   teardown; return $r
 }
 
@@ -364,7 +364,7 @@ case_A22() {  # jq absent → the record cannot be written → refused, BLOCKS
   printf '%s\n' "$OUT" | grep -q 'COULD NOT BE RECORDED' || { WHY="without jq the attestation was not refused as unrecordable"; r=1; }
   [ "$RC" -ne 0 ] || { WHY="without jq the gate exited 0 — an attestation accepted with no record"; r=1; }
   if printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]'; then WHY="without jq the attestation was ACCEPTED"; r=1; fi
-  _remedy_names 'install jq' 'install jq' 'a missing jq' || r=1
+  [ "$r" -ne 0 ] || _remedy_names 'install jq' 'install jq' 'a missing jq' || r=1
   teardown; return $r
 }
 
@@ -381,7 +381,7 @@ case_A23() {  # a read-only state file → refused, BLOCKS, file untouched
   [ "$RC" -ne 0 ] || { WHY="a read-only state file and the gate exited 0"; r=1; }
   if printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]'; then WHY="the attestation was ACCEPTED over a read-only state file"; r=1; fi
   [ "$before" = "$after" ] || { WHY="the read-only state file was replaced"; r=1; }
-  _remedy_names 'cannot be written' 'cannot be written' 'a read-only state file' || r=1
+  [ "$r" -ne 0 ] || _remedy_names 'cannot be written' 'cannot be written' 'a read-only state file' || r=1
   chmod 0644 "$PROJ/.claude/process-state.json" 2>/dev/null
   teardown; return $r
 }
@@ -859,6 +859,83 @@ mirror
 if mutate_at "$A_SA" 53 '    5) echo' '    6) echo'; then
   expect_kill MT22 A24 case_A24 A25 case_A25
 else setup_ MT22 "$WHY"; fi
+unmirror
+
+# MT23 to MT29 flip each remaining refusal arm to success, so every arm of
+# the recorder and the gate has a flip-to-success mutant with its killer.
+# The two arms inside the lock that no fixture reaches (`mktemp` and `mv`
+# failing, ATTEST-WRITE -6 and +0) are named in the entry, not mutated.
+echo "MT23: the read-only arm returns 0 (ATTEST-WRITE -53) → A23"
+mirror
+if mutate_at "$A_WR" -53 '[ -w "$file" ] || return 3' '[ -w "$file" ] || return 0'; then
+  expect_kill MT23 A23 case_A23 A13 case_A13
+else setup_ MT23 "$WHY"; fi
+unmirror
+
+echo "MT24: the cannot-create arm returns 0 (ATTEST-WRITE -11) → A9"
+mirror
+if mutate_at "$A_WR" -11 'return 3; }' 'return 0; }'; then
+  expect_kill MT24 A9 case_A9 A13 case_A13
+else setup_ MT24 "$WHY"; fi
+unmirror
+
+echo "MT25: the subshell's status discarded (ATTEST-WRITE +8) → A24"
+mirror
+if mutate_at "$A_WR" 8 ') || rc=$?' ') || rc=0'; then
+  expect_kill MT25 A24 case_A24 A13 case_A13
+else setup_ MT25 "$WHY"; fi
+unmirror
+
+echo "MT26: the recorder's final refusal returns 0 (ATTEST-WRITE +11) → A24"
+mirror
+if mutate_at "$A_WR" 11 'return "$rc"' 'return 0'; then
+  expect_kill MT26 A24 case_A24 A13 case_A13
+else setup_ MT26 "$WHY"; fi
+unmirror
+
+echo "MT27: the blank-reason refusal returns 0 (SINGLE-AUTHORITY +20) → A5"
+mirror
+if mutate_at "$A_SA" 20 'return 1' 'return 0'; then
+  expect_kill MT27 A5 case_A5 A13 case_A13
+else setup_ MT27 "$WHY"; fi
+unmirror
+
+echo "MT28: the no-key refusal returns 0 (SINGLE-AUTHORITY +25, on the key-removed mirror) → A20"
+mirror
+if mutate_at 'validate_approval_fields "Phase 0.*Phase 1" "Phase 0→1" "phase_0_to_1"' 0 ' "phase_0_to_1"' '' \
+   && mutate_at "$A_SA" 25 'return 1' 'return 0'; then
+  expect_kill MT28 A20 case_A20 A5 case_A5
+else setup_ MT28 "$WHY"; fi
+unmirror
+
+echo "MT29: the unrecordable refusal returns 0 (SINGLE-AUTHORITY +56) → A9"
+mirror
+if mutate_at "$A_SA" 56 'return 1' 'return 0'; then
+  expect_kill MT29 A9 case_A9 A13 case_A13
+else setup_ MT29 "$WHY"; fi
+unmirror
+
+# MT30 to MT32, with MT22: each remedy arm made unreachable, so its cause
+# falls to the default text.
+echo "MT30: the no-jq remedy arm unreachable (SINGLE-AUTHORITY +50) → A22"
+mirror
+if mutate_at "$A_SA" 50 '    2) echo' '    9) echo'; then
+  expect_kill MT30 A22 case_A22 A13 case_A13
+else setup_ MT30 "$WHY"; fi
+unmirror
+
+echo "MT31: the unwritable remedy arm unreachable (SINGLE-AUTHORITY +51) → A23"
+mirror
+if mutate_at "$A_SA" 51 '    3) echo' '    8) echo'; then
+  expect_kill MT31 A23 case_A23 A13 case_A13
+else setup_ MT31 "$WHY"; fi
+unmirror
+
+echo "MT32: the held-lock remedy arm unreachable (SINGLE-AUTHORITY +52) → A25"
+mirror
+if mutate_at "$A_SA" 52 '    4) echo' '    7) echo'; then
+  expect_kill MT32 A25 case_A25 A13 case_A13
+else setup_ MT32 "$WHY"; fi
 unmirror
 
 # A20 needs a gate whose call site passes no key. No shipped call site does, so
