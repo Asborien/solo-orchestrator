@@ -20,6 +20,9 @@
 # and broke a live lock, losing call rows at 40 concurrent events. If the lock
 # is still stale after the one break it cannot be removed, and the write goes
 # ahead unlocked: it may lose an update, but the unique temp keeps it whole.
+# The wait is bounded in every other shape too: a lock dated more than the
+# budget ahead of the clock is stale, and a lock whose time cannot be read is
+# given up after one budget.
 #
 # Safe under `set -e` (session-test-gate-check.sh runs with it), bash 3.2
 # compatible, and silent on every path: the gate's stdout is its decision.
@@ -32,8 +35,7 @@ LW_TMP=""
 _lw_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
 _lw_lock() {
-  local broken=0 mt now
-  LW_LOCKED=0
+  local broken=0 mt now age unread=""
   while ! mkdir "$TOOL_USAGE.lockdir" 2>/dev/null; do   # BL-312-LOCK
     if [ ! -e "$TOOL_USAGE.lockdir" ]; then
       # Released between the two calls, or mkdir cannot create it at all
@@ -41,10 +43,23 @@ _lw_lock() {
       mkdir "$TOOL_USAGE.lockdir" 2>/dev/null && break
       [ -e "$TOOL_USAGE.lockdir" ] || return 1   # BL-312-NOT-EEXIST
     fi
-    mt=$(_lw_mtime "$TOOL_USAGE.lockdir") || mt=""
-    case "$mt" in ''|*[!0-9]*) sleep 0.1; continue ;; esac
     now=$(date +%s)
-    if [ $((now - mt)) -gt "$LW_BUDGET" ]; then   # BL-312-STALE-AGE
+    mt=$(_lw_mtime "$TOOL_USAGE.lockdir") || mt=""
+    case "$mt" in
+      ''|*[!0-9]*)
+        # Gone since the mkdir, or a time no stat here can read. Retry, and
+        # give the lock up once it has stayed unreadable for a whole budget.
+        [ -n "$unread" ] || unread=$now
+        [ $((now - unread)) -gt "$LW_BUDGET" ] && return 1   # BL-312-UNREADABLE
+        sleep 0.1
+        continue ;;
+    esac
+    unread=""
+    age=$((now - mt))
+    # A lock dated ahead of the clock (a SIGKILL-left lock, then the clock
+    # stepped back) would never age; past the budget ahead, it is stale too.
+    if [ "$age" -lt "-$LW_BUDGET" ]; then age=$((LW_BUDGET + 1)); fi   # BL-312-FUTURE-STALE
+    if [ "$age" -gt "$LW_BUDGET" ]; then   # BL-312-STALE-AGE
       [ "$broken" = "1" ] && return 1
       rmdir "$TOOL_USAGE.lockdir" 2>/dev/null || :   # BL-312-BREAK-STALE
       broken=1
@@ -60,15 +75,14 @@ _lw_unlock() {
   LW_LOCKED=0
 }
 
-# _lw_sweep — remove temps a SIGKILLed writer left. Only under the lock, only
-# this lib's own `.lw.` temps, and only those older than the budget: a younger
-# one may belong to a live writer that went ahead unlocked.
+# _lw_sweep — remove temps a SIGKILLed writer left: only this lib's own `.lw.`
+# temps, and only those older than the budget, since a younger one may belong
+# to a live writer. The `|| continue` is load-bearing under a caller's `set -e`:
+# an unmatched glob stays literal, and its failed stat must not end the hook.
 _lw_sweep() {
   local f mt now
-  [ "$LW_LOCKED" = "1" ] || return 0
   now=$(date +%s)
   for f in "$TOOL_USAGE".lw.??????; do   # BL-312-SWEEP-GLOB
-    [ -f "$f" ] || continue
     mt=$(_lw_mtime "$f") || continue
     case "$mt" in ''|*[!0-9]*) continue ;; esac
     [ $((now - mt)) -gt "$LW_BUDGET" ] && rm -f "$f" || :   # BL-312-SWEEP-AGE

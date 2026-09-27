@@ -61,7 +61,6 @@ TOOL_USAGE=".claude/tool-usage.json"
 # session-mcp-gate.sh shares. Without it this hook cannot write the ledger at
 # all, and verify-install reports the lib missing.
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
-[ "$SCRIPT_DIR" = "${BASH_SOURCE[0]}" ] && SCRIPT_DIR=.
 [ -f "$SCRIPT_DIR/lib/ledger-write.sh" ] || exit 0
 # shellcheck source=scripts/lib/ledger-write.sh
 . "$SCRIPT_DIR/lib/ledger-write.sh"
@@ -132,11 +131,11 @@ case "$TOOL_NAME" in
     BASH_CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
     if echo "$BASH_CMD" | grep -qE '^\s*git\s+commit' 2>/dev/null; then
       if [ -f "$TOOL_USAGE" ] && command -v jq &>/dev/null; then
+        # The read and the write under one hold; the EXIT trap releases it.
         _lw_lock
         CURRENT=$(jq -r '.commits_since_last_context7 // 0' "$TOOL_USAGE" 2>/dev/null)
         case "$CURRENT" in ''|*[!0-9]*) CURRENT=0 ;; esac
         _lw_write ".commits_since_last_context7 = $((CURRENT + 1))"
-        _lw_unlock
       fi
     fi
     exit 0

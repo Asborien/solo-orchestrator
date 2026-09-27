@@ -22081,16 +22081,26 @@ non-empty result into place (`# BL-312-NONEMPTY`). Each behaviour, with the case
 - The commit counter's read and write happen under one lock hold, so no commit is lost (C3).
 - The seed is taken under the lock (`# BL-312-SEED-LOCK`), re-checked inside it and landed by `mv`,
   so a burst with no ledger records every call and seeds no `mcp_requirements`, as `## BL-233:`
-  requires (C5).
+  requires (C5). A tracker that arrives while another is landing the seed waits for it and appends
+  its own row to it (C5b).
 - A lock is stale when its mtime is more than 3 s old (`# BL-312-STALE-AGE`): SIGKILL skips every
   trap, and a live hold lasts milliseconds. It is broken at most once per acquisition
   (`# BL-312-BREAK-STALE`), so one write past it records its call and clears it (C7). A lock still
   stale after that break cannot be removed, and the write goes ahead unlocked; it may lose an update,
-  and the unique temp keeps the ledger whole (C6, with a breakable and a stuck lock).
+  and the unique temp keeps the ledger whole (C6, with a breakable and a stuck lock). A lock aged
+  5 s is broken at once, so the budget is 3 s and not longer (C7a). The wait is bounded in the other
+  shapes too: a lock dated more than the budget ahead of the clock is stale (`# BL-312-FUTURE-STALE`,
+  C7f, the tracker and the gate), and a lock whose time cannot be read is given up after one budget,
+  the write then going ahead unlocked (`# BL-312-UNREADABLE`, C7u). The lock's time is read with GNU
+  `stat -c %Y` or, failing that, BSD `stat -f %m`; the BSD branch is pinned under a stat that
+  refuses `-c` (C20).
 - A busy lock is waited for and never broken: 40 and 80 concurrent events keep every call row (C9).
 - The gate's two writes take the same lock: twelve concurrent checks, alone and mixed with twelve
   find events, keep the ledger whole, and the next Write is allowed (C8). They are a record only,
-  so without the lib they are skipped and no decision changes.
+  so without the lib they fail and no decision changes.
+- Every one of the fifteen locked write sites holds the lock through its write: the tracker's
+  thirteen and the gate's two, allow and deny. Stalled inside that one write, each makes a racing
+  find event wait, and its row survives (C18, one arm per site).
 - POSIX `mkdir()` fails with EEXIST only when the name exists, so only EEXIST is contention. When
   `mkdir` fails and no lockdir exists, one retry separates a lock released in between from EACCES,
   EROFS, ENOSPC or ENOTDIR, and those give the lock up at once (`# BL-312-NOT-EEXIST`); the write
@@ -22109,7 +22119,8 @@ non-empty result into place (`# BL-312-NONEMPTY`). Each behaviour, with the case
 - A jq filter that prints nothing never lands an empty ledger (C12). The tracker reseeds an existing
   0-byte or unparseable ledger as it seeds a missing one (C13); the seed carries no requirements, so
   the gate stays closed until outcomes are recorded again.
-- A failed write removes its temp (`# BL-312-FAIL-CLEAN`, C14).
+- A failed write removes its temp (`# BL-312-FAIL-CLEAN`, C14). A failed `mv` is a failed write:
+  `_lw_update` returns 1, the ledger is unchanged, and no temp is left (C19).
 - SessionStart's merge goes through `_lw_update`, and its two fresh writes through `_lw_put`
   (`# BL-312-SESSION-PUT` on the startup one). Twelve concurrent resumes mixed with twelve find
   events keep every call row, and twelve concurrent startups are never seen half-written (C17). The
@@ -22119,8 +22130,14 @@ non-empty result into place (`# BL-312-NONEMPTY`). Each behaviour, with the case
   `## BL-236:`'s reset holds (C17c).
 - Without the lib, or jq, no ledger can be written, so a startup removes the existing one
   (`# BL-312-NOLIB-RESET`, the literal path `.claude/tool-usage.json`). An inherited ledger's `true`
-  flags cannot reach the first Write, and the gate reports the ledger absent (T5d). Without the lib,
-  the tracker writes nothing and exits 0.
+  flags cannot reach the first Write, and the gate reports the ledger absent (T5d). This is new
+  behaviour, not a restoration: before this change the startup reset ran only when jq was present,
+  so without jq an inherited ledger kept its flags. Without the lib, the tracker writes nothing and
+  exits 0, and a SessionStart write that cannot land ends that hook non-zero, on startup and on
+  resume (C19).
+- verify-install reports the lib missing as auto-fixable, and `fix_lib_copy_ledger-write` restores it
+  byte for byte (C21). `.gitignore` and the generated-project template ignore the lib's temps,
+  `.claude/tool-usage.json.lw.*`, and not a user's `.backup` (C22).
 
 **Mutants.** The suite places each in a mirror of the three hooks and the lib, and counts it only
 after proving its location: one end-of-line site of the marker, and a diff of exactly that line.
@@ -22142,13 +22159,18 @@ after proving its location: one end-of-line site of the marker, and a diff of ex
 | `BL-312-PUT-LOCK` | MX5, `_lw_put` without the lock | C17c |
 
 **Residuals.**
-- `# BL-312-SEED-LOCK` has no mutant. Every process in a burst passes the seed check before any of
-  them appends, so a second seed cannot land over a first writer's row unless one process pauses
-  mid-seed. The lock closes that window by construction.
 - Two waiters that both read a stale lock's age can both break it, and the second can remove a lock a
   third writer has just taken, between one `stat` and the next `rmdir`. That loses at most an update,
   and the unique temp keeps the ledger whole. M1, M2, MR and MT are killed by concurrency, not by
   construction.
+- Behind a lock whose time cannot be read, each locked write waits one budget before going ahead, so
+  a find event, with three writes, takes more than 10 s; C7u allows 20 s. That needs a host where no
+  `stat` can read a directory's mtime.
+- Existing projects do not get the new ignore line: the upgrade backfill adds only
+  `.claude/tool-usage.json`. Until the next locked write sweeps it, a temp a SIGKILL left there is
+  visible to `git add -A`.
+- Without the lib, the gate's two record writes fail with "command not found" on the hook's stderr.
+  No decision changes, and verify-install reports the lib missing.
 - A live hold longer than 3 s is taken for stale and can lose a row. jq appends take about 0.23 s at
   50,000 rows, so only a suspended writer reaches it (a lid close, SIGSTOP, heavy swapping). The age
   is `date +%s` minus the lockdir's mtime, so a filesystem whose clock is skewed by more than 3 s
