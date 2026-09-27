@@ -24,11 +24,17 @@ jobs:
       # its lockfile still fails setup-node loudly, which is the right verdict.
       # Past Phase 1 a missing manifest FAILS this step: a check that cannot
       # run must not pass.
+      # So does a .claude/phase-state.json it cannot read: that is not phase 0.
       - name: Toolchain skipped - no package.json yet (Phase 0/1)
         if: hashFiles('package.json') == ''
         run: |
-          phase=$(grep -o '"current_phase"[[:space:]]*:[[:space:]]*[0-9]*' .claude/phase-state.json 2>/dev/null | grep -o '[0-9]*$' || true)
-          if [ "${phase:-0}" -ge 2 ]; then
+          # Absent or unreadable must fail, never default to phase 0; same parse as scripts/resume.sh.
+          phase=$(grep -o '"current_phase"[[:space:]]*:[[:space:]]*"*[0-9][0-9]*"*' .claude/phase-state.json 2>/dev/null | grep -o '[0-9][0-9]*' || true)
+          if [ -z "$phase" ]; then
+            echo "::error::.claude/phase-state.json is missing, or its current_phase is not a whole number - this step cannot tell whether the toolchain steps may be skipped, and a check that cannot run must not pass."
+            exit 1
+          fi
+          if [ "$phase" -ge 2 ]; then
             echo "::error::current_phase is ${phase} and there is no package.json in this tree - the toolchain steps cannot run, and a check that cannot run must not pass. Commit the manifest this workflow expects, or change its guards to the manifest this project uses."
             exit 1
           fi

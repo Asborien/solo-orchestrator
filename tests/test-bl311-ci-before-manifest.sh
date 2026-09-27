@@ -44,17 +44,15 @@
 #       templates carry, and nothing else — `act` is not available here, so
 #       the workflow itself is not executed; the assertion is on the
 #       rendered YAML plus this evaluation of its conditions.
-#   T5  past Phase 1 a missing manifest FAILS, it does not skip green: the
-#       notice step's `run:` script is extracted and EXECUTED under
-#       `"$BASH" -e -o pipefail` (the runner's fail-fast options, under the
-#       interpreter this suite itself runs under) against four
-#       fixtures — `.claude/phase-state.json` at current_phase 3 and 2
-#       (rc 1, `::error::`), at current_phase 1 (rc 0, `::notice::`), and
-#       no phase-state at all (rc 0, `::notice::`). A review of the first
-#       cut found the gap: a Poetry or Pipenv project (the framework's own
-#       Python guidance) has no requirements.txt, and on a Phase 3 tree
-#       every toolchain step skipped and the check went green — "a check
-#       that cannot run must not pass".
+#   T5  past Phase 1 a missing manifest FAILS, it does not skip green, and
+#       a phase that cannot be read fails too: the notice step's `run:`
+#       script is extracted and EXECUTED under `"$BASH" -e -o pipefail` (the
+#       runner's fail-fast options, under the interpreter this suite itself
+#       runs under) against eleven fixtures — current_phase 0, 1 and "1"
+#       (rc 0, `::notice::`); 2, "2", 3 and 4 (rc 1, `::error::`); and no
+#       phase-state.json, null, no current_phase key, and not JSON (rc 1,
+#       `::error::`, the missing-file error naming the file). A check that
+#       cannot run must not pass, and a phase it cannot read is not phase 0.
 #   T6  one case per language: every manifest name in the census, placed
 #       ALONE in a fixture, enables every toolchain step and skips the
 #       notice. The census carries the manifests the harness itself
@@ -64,7 +62,8 @@
 # MUTANTS (on a mirror of templates/, never the real tree): remove one
 # guard, invert one guard, guard the secret scan, delete the notice step,
 # delete the phase check's `exit 1`, drop one manifest name from every
-# guard of one template. Each proves it landed (changed-line count) and
+# guard of one template, and, in each of the nine templates, disable the
+# unreadable-phase refusal. Each proves it landed (changed-line count) and
 # names the case that fails.
 #
 # WHY `other.yml` IS OUT: its toolchain steps are TODO comments and its
@@ -396,16 +395,34 @@ else
   fail_ "T4" "guard evaluation disagrees with the intent:$t4_bad"
 fi
 
-# T5 — the notice step EXECUTED: past Phase 1 it fails, before it notices.
-# mk_phase_fixture <dir> <phase|none>
+# T5 — the notice step EXECUTED: past Phase 1 it fails, and so does a tree
+# whose phase cannot be read, before it notices.
+# mk_phase_fixture <dir> <current_phase-json|none|nokey|notjson>
 mk_phase_fixture() {
   mkdir -p "$1/.claude" || return 1
-  [ "$2" = "none" ] && return 0
-  printf '{\n  "current_phase": %s,\n  "phase_gates": {}\n}\n' "$2" > "$1/.claude/phase-state.json"
+  case "$2" in
+    none)    return 0 ;;
+    nokey)   printf '{\n  "phase_gates": {}\n}\n' > "$1/.claude/phase-state.json" ;;
+    notjson) printf 'current_phase = 1\n' > "$1/.claude/phase-state.json" ;;
+    *)       printf '{\n  "current_phase": %s,\n  "phase_gates": {}\n}\n' "$2" > "$1/.claude/phase-state.json" ;;
+  esac
 }
+# T5_CASES — <fixture>|<expected "rc kind">. The phase is read as a bare or
+# quoted whole number; anything else is unreadable and fails, never phase 0.
+T5_CASES='0|0 notice
+1|0 notice
+"1"|0 notice
+2|1 error
+"2"|1 error
+3|1 error
+4|1 error
+none|1 error
+null|1 error
+nokey|1 error
+notjson|1 error'
 # t5_check <template> <lang> — prints violations, one per line
 t5_check() {
-  local f="$1" lang="$2" args="" want_skip="" script="" fx="" v=""
+  local f="$1" lang="$2" args="" want_skip="" script="" fx="" v="" c="" want="" out=""
   args="$(census_args "$lang")"
   want_skip="hashFiles($args) == ''"
   script="$TOPTMP/notice.$lang.$$.sh"
@@ -416,18 +433,19 @@ t5_check() {
   if [ "$(count_in "$script" 'current_phase')" -lt 1 ] || [ "$(count_in "$script" 'exit 1')" -lt 1 ]; then
     printf '%s: notice script does not read current_phase and exit 1\n' "$lang.yml"
   fi
-  fx="$(newtmp)"; mk_phase_fixture "$fx" 3
-  v="$(run_notice "$script" "$fx")"
-  [ "$v" = "1 error" ] || printf '%s: at current_phase 3 expected "1 error", got "%s"\n' "$lang.yml" "$v"
-  fx="$(newtmp)"; mk_phase_fixture "$fx" 2
-  v="$(run_notice "$script" "$fx")"
-  [ "$v" = "1 error" ] || printf '%s: at current_phase 2 expected "1 error", got "%s"\n' "$lang.yml" "$v"
-  fx="$(newtmp)"; mk_phase_fixture "$fx" 1
-  v="$(run_notice "$script" "$fx")"
-  [ "$v" = "0 notice" ] || printf '%s: at current_phase 1 expected "0 notice", got "%s"\n' "$lang.yml" "$v"
+  while IFS='|' read -r c want; do
+    fx="$(newtmp)"; mk_phase_fixture "$fx" "$c"
+    v="$(run_notice "$script" "$fx")"
+    [ "$v" = "$want" ] || printf '%s: with current_phase fixture %s expected "%s", got "%s"\n' "$lang.yml" "$c" "$want" "$v"
+  done <<EOF
+$T5_CASES
+EOF
   fx="$(newtmp)"; mk_phase_fixture "$fx" none
-  v="$(run_notice "$script" "$fx")"
-  [ "$v" = "0 notice" ] || printf '%s: with no phase-state.json expected "0 notice", got "%s"\n' "$lang.yml" "$v"
+  out="$(cd "$fx" && "$BASH" -e -o pipefail "$script" 2>&1)"
+  case "$out" in
+    *".claude/phase-state.json"*) : ;;
+    *) printf '%s: with no phase-state.json the error does not name .claude/phase-state.json\n' "$lang.yml" ;;
+  esac
 }
 t5_bad="$TOPTMP/t5.txt"; : > "$t5_bad"
 while IFS= read -r f; do
@@ -437,7 +455,7 @@ while IFS= read -r f; do
   t5_check "$f" "$lang" >> "$t5_bad"
 done < "$GH_LIST"
 if [ ! -s "$t5_bad" ]; then
-  pass "T5 — executed: every notice step exits 1 with ::error:: at current_phase 2 and 3, and exits 0 with ::notice:: at phase 1 or with no phase-state ($n_lang templates, 4 fixtures each)"
+  pass "T5 — executed: every notice step exits 0 with ::notice:: at current_phase 0 and 1 (bare or quoted), and exits 1 with ::error:: at 2 or more, or when phase-state.json is missing, null, keyless or not JSON, naming the file ($n_lang templates, 11 fixtures each)"
 else
   fail_ "T5" "$(grep -c . "$t5_bad") violation(s): $(head -3 "$t5_bad" | tr '\n' ';' | cut -c1-240)"
 fi
@@ -583,15 +601,16 @@ else
   before="$(mktemp "$TOPTMP/mt5.XXXXXX")"; cp "$tgt" "$before"
   awk '
     /^        if: hashFiles\(.*\) == ..$/ { innotice = 1 }
-    /^      - / { innotice = 0 }
-    innotice && /^            exit 1$/ { innotice = 0; next }
+    /^      - / { innotice = 0; inge = 0 }
+    innotice && /-ge 2 \]; then$/ { inge = 1 }
+    inge && /^            exit 1$/ { inge = 0; innotice = 0; next }
     { print }
   ' "$before" > "$tgt"
   if [ "$(_changed_lines "$before" "$tgt")" -ne 1 ]; then
     fail_ "MT5 setup" "the mutation did not remove exactly one line — python.yml's notice step has no exit 1 at the expected indent"
   else
     t5_check "$tgt" python > "$TOPTMP/mt5.bad"
-    if [ "$(count_in "$TOPTMP/mt5.bad" 'at current_phase 3 expected "1 error", got "0 error"')" -ge 1 ]; then
+    if [ "$(count_in "$TOPTMP/mt5.bad" 'with current_phase fixture 3 expected "1 error", got "0 error"')" -ge 1 ]; then
       pass "MT5 (MUTATION) — with the exit 1 deleted, T5 executes the notice at phase 3 and sees rc 0 — the regression is caught"
     else
       fail_ "MT5 (MUTATION)" "deleting exit 1 changed nothing T5 can see: $(head -2 "$TOPTMP/mt5.bad" | tr '\n' ';')"
@@ -630,6 +649,40 @@ else
       fail_ "MT6 (MUTATION)" "dropping a manifest name was not caught: gaps=$(grep -c . "$TOPTMP/mt6.gaps") sim=run=$1,skip=$2,notice=$3"
     fi
   fi
+fi
+
+# MT7 — per template: turn the unreadable-phase refusal into `if false`, which
+# restores the old default (no phase read as phase 0, toolchain skipped green).
+# T5 must see rc 0 where it wants rc 1 with no phase-state.json. One mirror,
+# each template restored from its copy before the next.
+MT7="$(newtmp)/fw"
+if ! mk_mirror "$MT7"; then
+  fail_ "MT7 setup" "could not mirror the framework"
+else
+  while IFS= read -r f; do
+    lang="${f##*/}"; lang="${lang%.yml}"
+    [ "$lang" = "other" ] && continue
+    [ -n "$(census_args "$lang")" ] || continue
+    tgt="$MT7/templates/pipelines/ci/github/$lang.yml"
+    before="$(mktemp "$TOPTMP/mt7.XXXXXX")"; cp "$tgt" "$before"
+    awk '
+      /^        if: hashFiles\(.*\) == ..$/ { innotice = 1 }
+      /^      - / { innotice = 0 }
+      innotice && /^          if \[ -z "\$phase" \]; then$/ { sub(/if \[ -z "\$phase" \]; then/, "if false; then"); innotice = 0 }
+      { print }
+    ' "$before" > "$tgt"
+    if [ "$(_changed_lines "$before" "$tgt")" -ne 2 ] || [ "$(count_in "$tgt" 'if false; then')" -ne 1 ]; then
+      fail_ "MT7-$lang setup" "the mutation did not change exactly one line to 'if false; then' in the notice step"
+    else
+      t5_check "$tgt" "$lang" > "$TOPTMP/mt7.$lang.bad"
+      if [ "$(count_in "$TOPTMP/mt7.$lang.bad" 'with current_phase fixture none expected "1 error", got "0 notice"')" -ge 1 ]; then
+        pass "MT7-$lang (MUTATION) — with the unreadable-phase refusal disabled, T5 sees a tree with no phase-state.json skip green"
+      else
+        fail_ "MT7-$lang (MUTATION)" "disabling the refusal changed nothing T5 can see: $(head -2 "$TOPTMP/mt7.$lang.bad" | tr '\n' ';')"
+      fi
+    fi
+    cp "$before" "$tgt"
+  done < "$GH_LIST"
 fi
 
 echo ""

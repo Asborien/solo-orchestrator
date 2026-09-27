@@ -22049,7 +22049,7 @@ for the 4.0 trap: **assign at the declaration**, applied to code you are already
 
 ## BL-311: the generated GitHub CI is red on every pull request before Phase 2 — `actions/setup-node` with `cache: 'npm'` fails "Dependencies lock file is not found" on a tree that has no `package.json` yet, and every language template has the same shape
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/bl307-ci-before-lockfile`, NOT yet submitted.
+**Status:** Open — reproduction and fix in the pull request that files this entry.
 
 **Found:** 2026-09-22, on the first pull requests of an organisational project born from `init.sh` at
 `f8841de` — the intake, the manifesto, the pre-Phase-0 precondition rows. Every one carried a red
@@ -22099,8 +22099,10 @@ behind `setup-java` `cache: 'gradle'` (which hashes `**/*.gradle*` for its key),
 three governance steps since `## BL-147:`: every step that needs the manifest carries
 `if: hashFiles('<manifests>') != ''`, and one new step immediately after checkout, guarded `== ''`,
 reads `current_phase` from `.claude/phase-state.json` and then either FAILS (`::error::`, exit 1)
-when the phase is 2 or more — a check that cannot run must not pass — or prints a `::notice::`
-naming what was skipped, why, and that secret detection and governance still run. The manifest
+when the phase is 2 or more — a check that cannot run must not pass — or FAILS when the phase
+cannot be read (the file missing, `null`, no `current_phase` key, not JSON), with an error naming
+`.claude/phase-state.json`, or prints a `::notice::` naming what was skipped, why, and that secret
+detection and governance still run. The manifest
 lists are the ones the framework itself recognises (`process-checklist.sh`'s lockfile list under
 `project_scaffolded`, and the platform modules' lockfile notes): `package.json`;
 `requirements.txt, pyproject.toml, Pipfile` (a Poetry or Pipenv tree, which is what
@@ -22118,11 +22120,16 @@ setup-node loudly, and a Poetry or Maven tree still fails the `pip install -r re
 operator must act on rather than a green nobody reads. `other.yml` is out: its toolchain steps are
 TODO comments and its dependency-audit step exits 1 by design until a scanner is configured.
 
-Why the phase rule: the first cut skipped green on a Phase 3 Poetry tree (review finding R-306-1),
-turning a loud red into a silent pass — the regression class the change exists to avoid. The
-phase read is `grep -o` over the committed JSON with `|| true`, because `run:` steps execute under
-`bash -e` (workflow-syntax reference: bash and sh enforce fail-fast with `set -e`), so a Phase 0
-tree with no `phase-state.json` yet must not fail the notice step itself.
+Why the phase rule: past Phase 1 a tree with no recognised manifest (a Poetry tree the census
+missed, say) must fail, not skip green; skipping would turn a loud red into a silent pass, the
+regression class this change exists to avoid. The phase is read as a bare or quoted whole number,
+the parse `scripts/resume.sh` uses. Anything else fails the step, because a phase the step cannot
+read is not phase 0: otherwise deleting or corrupting one tracked file would switch every toolchain
+step off with a green job. Once the notice step fails, the steps after it do not run under the
+default `success()` check, so the job is red. The `grep` carries `|| true` because `run:` steps
+execute under `bash -e` (workflow-syntax reference: bash and sh enforce fail-fast with `set -e`),
+and a no-match must reach the step's own error rather than abort it silently. `init.sh` writes
+`phase-state.json` at birth and it is tracked, so a project that has not lost it never meets this.
 
 Why step-level `hashFiles` rather than a job split: `hashFiles` reads the checked-out workspace, so
 it is a step-context function and a job-level `if:` cannot see the tree. Why guard the setup action
@@ -22138,33 +22145,32 @@ templates carry, `hashFiles(...) != ''` and `== ''`, over an empty fixture (all 
 runs) and over one holding the first census sample file (all 62 run, notice skips). `act` is not
 installed on this host, so the workflow itself is not executed; T4 evaluates only those two shapes
 and the header says so. T5 — the notice step's `run:` script is extracted and EXECUTED under
-`bash -e -o pipefail` against four fixtures per template: `current_phase` 3 and 2 (rc 1,
-`::error::`), 1 (rc 0, `::notice::`), and no `phase-state.json` (rc 0, `::notice::`). T6 — one
+`bash -e -o pipefail` against eleven fixtures per template: `current_phase` 0, 1 and `"1"` (rc 0,
+`::notice::`); 2, `"2"`, 3 and 4 (rc 1, `::error::`); no `phase-state.json`, `null`, no
+`current_phase` key and not JSON (rc 1, `::error::`, and with no file the error names it). T6 — one
 case per language: each manifest name in the census, alone in a fixture, enables every toolchain
-step and skips the notice. Six mutants on a mirror of `templates/`, each proving it landed by
+step and skips the notice. Mutants on a mirror of `templates/`, each proving it landed by
 changed-line count: drop the setup-node guard (T2 names the step), invert one go.yml guard (T1
 counts two skip steps and names Build), guard the gitleaks step (T3 refuses), delete rust.yml's
 notice step (T1 counts zero), delete the `exit 1` from python.yml's phase check (T5 executes it at
 phase 3 and sees rc 0), drop `pyproject.toml` from every python.yml guard (T2 and T1 name the drift
-and a pyproject-only tree skips all eight toolchain steps again). Registered in
-`tests/full-project-test-suite.sh` and the `tests.yml` unit list.
+and a pyproject-only tree skips all eight toolchain steps again), and, in each of the nine
+templates, replace the unreadable-phase refusal with `if false` (T5 sees a tree with no
+`phase-state.json` skip green). Registered in `tests/full-project-test-suite.sh` and the
+`tests.yml` unit list.
 
 **Evidence.**
-- RED at `f8841de`, before the first cut, identical under `/bin/bash` 3.2.57 and Homebrew bash
-  5.3.15: `Results: 4 passed, 6 failed` — T0 (two assertions), T3 and MT3 pass as controls (MT3
-  passes at base because the weakening it plants, a guard on the secret scan, is refused regardless
-  of the fix); T1 fails `9 notice violation(s)`, T2 fails `71 guard violation(s)`, T4 fails with
-  every toolchain step evaluating `run` on the empty fixture.
-- RED for the second cut at `1dd146f` (the first cut committed), both shells: `Results: 13 passed,
-  9 failed` — T5 finds no script to execute in any template, T6 fails for python, java and kotlin
-  while the six single-manifest languages pass as controls, T1/T2/T4 report the widened census, and
-  MT5/MT6 cannot land.
-- GREEN after the second cut: `Results: 22 passed, 0 failed` under both shells, and under bash
-  5.2.21 in `ubuntu:24.04` as a non-root user (mawk 1.3.4). All ten templates parse (PyYAML 6.0.3).
-- External mutant, outside the suite, first cut: the setup-node guard removed from a copy of
-  typescript.yml (cksum 4007748106 → 1560107544, guard count 9 → 8); suite `7 passed, 3 failed`,
-  T2 naming `typescript.yml: guard-missing: actions/setup-node@…` and T4 reporting
-  `typescript(empty:run=1,skip=8,…)`.
+- RED against `main`'s templates at `80b3f8d`, identical under `/bin/bash` 3.2.57 and Homebrew
+  bash 5.3.15: `Results: 4 passed, 27 failed`. T0 (two assertions), T3 and MT3 pass as controls
+  (MT3 because the weakening it plants, a guard on the secret scan, is refused either way); T1
+  fails `9 notice violation(s)`, T2 `71 guard violation(s)`, T4 with every toolchain step
+  evaluating `run` on the empty fixture, T5 finding no notice script in any template, T6 for every
+  language, and the mutants that need the fix's lines cannot land.
+- RED for the fail-closed read alone, against the templates before it: `Results: 21 passed, 10
+  failed` on both shells. T5 reports 54 violations, six per template: `"2"`, no file, `null`, no
+  key and not JSON each exit 0 with `::notice::`, and the missing-file error does not name the file.
+  The nine MT7 mutants cannot land, since the refusal they disable is not there.
+- GREEN: `Results: 31 passed, 0 failed` under both shells. All ten templates parse (PyYAML).
 
 **Residual — same class, other hosts, deliberately not in this change.** `ci/gitlab/*.yml` runs
 `npm ci` (and each language's install) in `before_script` / `script`; the documented guard there is
