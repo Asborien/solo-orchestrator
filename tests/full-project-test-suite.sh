@@ -964,6 +964,9 @@ run_child_suite "tests/test-bl281-resume-after-115.sh" \
 run_child_suite "tests/test-upgrade-help-and-projectless.sh" \
   "#419/#426/BL-177: upgrade-project.sh --help wins over every mode and a projectless run writes nothing" \
   "upgrade help/projectless tests FAILED (run tests/test-upgrade-help-and-projectless.sh for details)"
+run_child_suite "tests/test-bug010-intake-silent-paths.sh" \
+  "BUG-010: the intake wizard refuses an unreadable progress file, stops at end of input, and never completes over a failed render" \
+  "BUG-010 intake silent-path tests FAILED (run tests/test-bug010-intake-silent-paths.sh for details)"
 # BL-286: the TDD gate's branch axis resolves its base from the project's
 # recorded integration branch, so it stops exempting every commit on a
 # non-`main` trunk — and an absent key still behaves byte-identically.
