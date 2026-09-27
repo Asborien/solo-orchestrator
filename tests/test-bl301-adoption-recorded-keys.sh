@@ -26,6 +26,8 @@
 # the no-regression pins for wizard-owned keys, G1 is the vacuous-pass guard
 # (it proves the keys under test are NOT wizard-owned, so an A-case pass can
 # only come from the new route), N1/N2/I1 are refusals that must survive.
+# I1 is red at the parent on one key, `NOT A KEY<LF>gate_q`, which BL-282's
+# line-by-line match accepted until the review of 27 September.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -441,7 +443,9 @@ I1="$(newtmp)/proj"
 if ! mk_adopted "$I1"; then
   fail_ "I1 setup" "could not build the fixture"
 else
-  before_p="$(_cksum "$I1/$PROG")"; bad=""
+  before_p="$(_cksum "$I1/$PROG")"; before_i="$(_cksum "$I1/PROJECT_INTAKE.md")"; bad=""; i1_n=0
+  # The last two carry a line break with a valid key on one line (review of
+  # 27 September): matching is of the whole string, never line by line.
   for hk in \
     'x$(touch PWNED_a)' \
     'x`touch PWNED_b`' \
@@ -451,14 +455,19 @@ else
     "x' in answers or __import__('os').system('touch PWNED_e') or '" \
     "x\$(touch $TOPTMP/PWNED_f)" \
     '-n' \
-    '$key' ; do
+    '$key' \
+    "$(printf 'NOT A KEY\ngate_q')" \
+    "$(printf 'NOT A KEY\ntest_command')" ; do
+    i1_n=$((i1_n + 1))
     wiz "$I1" --set-answer "$hk" "v"
     [ "$WIZ_RC" -eq 1 ] || bad="$bad [rc=$WIZ_RC for $hk]"
     [ "$(_cksum "$I1/$PROG")" = "$before_p" ] || bad="$bad [progress CHANGED by $hk]"
   done
+  [ "$(_cksum "$I1/PROJECT_INTAKE.md")" = "$before_i" ] || bad="$bad [PROJECT_INTAKE.md CHANGED]"
+  grep -q 'NOT A KEY' "$I1/PROJECT_INTAKE.md" && bad="$bad [an appendix row names NOT A KEY]"
   pw="$(_pwned)"
   if [ -z "$bad" ] && [ -z "$pw" ]; then
-    pass "I1 (control) — nine hostile unrecorded keys are each refused (rc=1), nothing written, no payload ran"
+    pass "I1 (control) — $i1_n hostile unrecorded keys are each refused (rc=1), nothing written, no appendix row, no payload ran"
   else
     fail_ "I1 (control)" "${bad:-no rc/cksum fault}; payload file: ${pw:-none}"
   fi
@@ -598,9 +607,9 @@ mutate() {
 # proof: if the block is edited, re-measure and update them deliberately.
 # The three KEY-ESCAPE markers are in render_intake_file, ABOVE the anchor,
 # so their distances are negative.
-D_ESC_PIPE=-130
-D_ESC_NL=-129
-D_ESC_TICK=-128
+D_ESC_PIPE=-142
+D_ESC_NL=-141
+D_ESC_TICK=-140
 D_ANSWERS_READ=16
 D_UNREADABLE=67
 D_IS_OBJECT=17

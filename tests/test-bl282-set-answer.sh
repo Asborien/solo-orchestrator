@@ -25,6 +25,9 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WIZARD="$REPO_ROOT/scripts/intake-wizard.sh"
+# The wizard runs under the suite's own interpreter, so a run under
+# /bin/bash 3.2 exercises the wizard's `[[ =~ ]]` and `case` under 3.2.
+RUN_BASH="${BASH:-bash}"
 
 PASSED=0
 FAILED=0
@@ -35,7 +38,7 @@ TOPTMP="$(mktemp -d)"
 trap 'rm -rf "$TOPTMP"' EXIT INT TERM
 newtmp() { mktemp -d "$TOPTMP/fixXXXXXX"; }
 _changed_lines() { local n; n=$(diff "$1" "$2" 2>/dev/null | grep -c '^[<>]'); case "$n" in ''|*[!0-9]*) n=0 ;; esac; printf '%s\n' "$n"; }
-_syntax_ok() { bash "-n" "$1" 2>/dev/null; }
+_syntax_ok() { "$RUN_BASH" "-n" "$1" 2>/dev/null; }
 strip_ansi() { sed 's/\x1b\[[0-9;]*m//g' "$1"; }
 _cksum() { cksum < "$1" | cut -d' ' -f1; }
 
@@ -74,7 +77,7 @@ PROG
 # wiz <dir> <args…> — the real wizard, stdin closed, output to run.out.
 wiz() {
   local d="$1"; shift
-  ( cd "$d" && bash scripts/intake-wizard.sh "$@" ) >"$d/run.raw" 2>&1 </dev/null
+  ( cd "$d" && "$RUN_BASH" scripts/intake-wizard.sh "$@" ) >"$d/run.raw" 2>&1 </dev/null
   WIZ_RC=$?
   strip_ansi "$d/run.raw" > "$d/run.out"
   return 0
@@ -212,6 +215,25 @@ else
     pass "H8 — a loop-generated key (input_2_name) is accepted (rc=$WIZ_RC)"
   else
     fail_ "H8" "rc=$WIZ_RC input_2_name=[$got]: $(tail -1 "$H8/run.out")"
+  fi
+fi
+
+# H8N — H8's negative twin: the index is bounded to DIGITS, so a letter in
+# its place mints nothing (`# BL-282-INDEX-DIGITS`; MP7 widens it).
+H8N="$(newtmp)/proj"
+if ! mk_project "$H8N"; then
+  fail_ "H8N setup" "could not build the fixture"
+else
+  before_p="$(_cksum "$H8N/.claude/intake-progress.json")"; bad=""
+  for nk in input_x_name input_1a_name; do
+    wiz "$H8N" --set-answer "$nk" "minted"
+    [ "$WIZ_RC" -eq 1 ] || bad="$bad [rc=$WIZ_RC for $nk]"
+  done
+  after_p="$(_cksum "$H8N/.claude/intake-progress.json")"
+  if [ -z "$bad" ] && [ "$before_p" = "$after_p" ]; then
+    pass "H8N — input_x_name and input_1a_name, a non-digit index, are refused (rc=1), file byte-identical"
+  else
+    fail_ "H8N" "${bad:-rc fine}; file $([ "$before_p" = "$after_p" ] && echo unchanged || echo CHANGED)"
   fi
 fi
 
@@ -378,6 +400,63 @@ else
   fi
 fi
 
+# wiz_paused <dir> <args…> — the real wizard with its pause sentinel already
+# present. save_answer returns 0 WITHOUT writing when that file exists, and
+# the file is named by the wizard's PID, so the sentinel is created by a
+# shell that then `exec`s the wizard under the same PID.
+wiz_paused() {
+  local d="$1" pid; shift
+  ( cd "$d" && "$RUN_BASH" -c 'printf %s "$$" > wiz.pid; : > "/tmp/.solo-intake-pause-$$"; exec "$0" scripts/intake-wizard.sh "$@"' "$RUN_BASH" "$@" ) \
+    >"$d/run.raw" 2>&1 </dev/null
+  WIZ_RC=$?
+  strip_ansi "$d/run.raw" > "$d/run.out"
+  pid="$(cat "$d/wiz.pid" 2>/dev/null)"
+  case "$pid" in ''|*[!0-9]*) ;; *) rm -f "/tmp/.solo-intake-pause-$pid" ;; esac
+  return 0
+}
+
+# S4 — a save that returns 0 without writing (`# BL-282-READ-BACK`): the
+# answer must read back before an amendment is logged. The unchanged answer
+# is what proves the pause engaged; the refusal is what the read-back adds.
+S4="$(newtmp)/proj"
+if ! mk_project "$S4"; then
+  fail_ "S4 setup" "could not build the fixture"
+else
+  wiz_paused "$S4" --set-answer monthly_budget "$NEW_BUDGET"
+  got="$(jq_answer monthly_budget "$S4")"
+  n="$(jq_amend_n "$S4")"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  ok_n="$(grep -c '\[OK\]' "$S4/run.out")"; case "$ok_n" in ''|*[!0-9]*) ok_n=0 ;; esac
+  if [ "$WIZ_RC" -eq 1 ] && [ "$got" = "$OLD_BUDGET" ] && [ "$n" -eq 0 ] && [ "$ok_n" -eq 0 ] \
+     && grep -q 'does not read back' "$S4/run.out"; then
+    pass "S4 — a paused save that wrote nothing is refused (rc=$WIZ_RC): answer still [$got], no amendment, no [OK]"
+  else
+    fail_ "S4" "rc=$WIZ_RC (want 1); monthly_budget=[$got] (want [$OLD_BUDGET]); amendments=$n (want 0); [OK] lines=$ok_n (want 0); refusal $(grep -q 'does not read back' "$S4/run.out" && echo present || echo missing)"
+  fi
+fi
+
+# ok_lines <dir> → how many [OK] lines the run printed.
+ok_lines() { local n; n="$(grep -c '\[OK\]' "$1/run.out")"; case "$n" in ''|*[!0-9]*) n=0 ;; esac; printf '%s\n' "$n"; }
+
+# S7 — PROJECT_INTAKE.md cannot be rewritten (`# BL-282-RENDER-STATUS`): the
+# answer and amendment are recorded, so the refusal must say the render is
+# what failed, and there is no [OK].
+S7="$(newtmp)/proj"
+if ! mk_project "$S7"; then
+  fail_ "S7 setup" "could not build the fixture"
+elif [ "$(id -u)" = "0" ]; then
+  echo "  [SKIP] S7 — running as root, a read-only file would still be writable"
+else
+  chmod 0444 "$S7/PROJECT_INTAKE.md"
+  wiz "$S7" --set-answer monthly_budget "$NEW_BUDGET"
+  chmod 0644 "$S7/PROJECT_INTAKE.md" 2>/dev/null
+  if [ "$WIZ_RC" -eq 1 ] && [ "$(ok_lines "$S7")" -eq 0 ] && grep -q 'could not be re-rendered' "$S7/run.out" \
+     && [ "$(jq_answer monthly_budget "$S7")" = "$NEW_BUDGET" ]; then
+    pass "S7 — an unwritable PROJECT_INTAKE.md refuses (rc=$WIZ_RC) with 'could not be re-rendered' and no [OK]"
+  else
+    fail_ "S7" "rc=$WIZ_RC (want 1); [OK] lines=$(ok_lines "$S7") (want 0); refusal $(grep -q 'could not be re-rendered' "$S7/run.out" && echo present || echo missing)"
+  fi
+fi
+
 echo "=== N — the competency family is bounded by the wizard's own domain list ==="
 
 # The wizard asks nine fixed domains and derives each key from that list.
@@ -495,6 +574,61 @@ PYCR
   fi
 fi
 
+echo "=== N — gate_, infra_ and escalation_ are bounded by their own arrays; keys match whole ==="
+
+# refuse_all <id> <label> <key…> — each key refused at exit 1, and the
+# progress file AND PROJECT_INTAKE.md byte-identical, so no appendix row.
+refuse_all() {
+  local id="$1" label="$2" d before_p before_i bad="" k; shift 2
+  d="$(newtmp)/proj"
+  if ! mk_project "$d"; then fail_ "$id setup" "could not build the fixture"; return 0; fi
+  before_p="$(_cksum "$d/.claude/intake-progress.json")"; before_i="$(_cksum "$d/PROJECT_INTAKE.md")"
+  for k in "$@"; do
+    wiz "$d" --set-answer "$k" "minted"
+    [ "$WIZ_RC" -eq 1 ] || bad="$bad [rc=$WIZ_RC for $(printf '%s' "$k" | tr '\n' '/')]"
+  done
+  if [ -z "$bad" ] && [ "$before_p" = "$(_cksum "$d/.claude/intake-progress.json")" ] \
+     && [ "$before_i" = "$(_cksum "$d/PROJECT_INTAKE.md")" ]; then
+    pass "$id — $label: $# keys each refused (rc=1), progress file and PROJECT_INTAKE.md byte-identical"
+  else
+    fail_ "$id" "$label:${bad:- rc fine}; progress $([ "$before_p" = "$(_cksum "$d/.claude/intake-progress.json")" ] && echo unchanged || echo CHANGED); intake $([ "$before_i" = "$(_cksum "$d/PROJECT_INTAKE.md")" ] && echo unchanged || echo CHANGED)"
+  fi
+}
+
+# N7 (control) — a real key from each array is accepted, derived the way the
+# wizard derives it: `SSO / Identity Provider` → `sso___identity_provider`,
+# `Level 1 (first escalation)` → `level_1__first_escalation_`.
+N7="$(newtmp)/proj"
+if ! mk_project "$N7"; then
+  fail_ "N7 setup" "could not build the fixture"
+else
+  bad=""
+  for k in gate_phase_0_to_phase_1 gate_phase_3_to_phase_4 infra_sso___identity_provider infra_ci_cd_platform \
+           escalation_level_1__first_escalation_ escalation_level_2; do
+    wiz "$N7" --set-answer "$k" "v-$k"
+    [ "$WIZ_RC" -eq 0 ] && [ "$(jq_answer "$k" "$N7")" = "v-$k" ] || bad="$bad [rc=$WIZ_RC for $k]"
+  done
+  if [ -z "$bad" ]; then
+    pass "N7 (control) — six keys the gates, infra_items and levels arrays yield are accepted and written"
+  else
+    fail_ "N7 (control)" "a real array key was refused:$bad"
+  fi
+fi
+
+# N8 — the review's four (a typo of a real gate key among them) and two
+# near-misses: each was accepted and minted by the `$key` widening.
+refuse_all N8 "gate_, infra_ and escalation_ keys no array yields" \
+  gate_phase_0_phase_1 gate_zzz infra_typo escalation_nonsense gate_phase_0_to_phase_1_x infra_monitoring_tooling
+
+# N9 — keys carrying a line break, each with one line a valid key would
+# match. Matching is of the WHOLE string (`# BL-282-KEY-CHARSET`,
+# `# BL-282-FAMILY-WHOLE`), never line by line.
+refuse_all N9 "keys with a line break" \
+  "$(printf 'NOT A KEY\ngate_q')" "$(printf 'NOT A KEY\ninput_1_name')" \
+  "$(printf 'gate_phase_0_to_phase_1\nNOT')" "$(printf 'competency_security\nNOT')" \
+  "$(printf 'monthly_budget\nNOT')" "input_1_name
+"
+
 echo "=== A — an abort inside run_set_answer must fail CLOSED ==="
 
 # `if run_set_answer "$@"; then` puts the function in a condition, which
@@ -567,7 +701,9 @@ fi
 
 echo "=== M — mutation proofs on a mirror ==="
 
-for mark in BL-282-SET-ANSWER-BEGIN BL-282-SET-ANSWER-END BL-282-KEY-REFUSE BL-282-RERENDER BL-282-HINT-COUNT BL-282-WRITE-STATUS BL-282-COMPETENCY-DOMAINS BL-282-ARM-FAILCLOSED; do
+for mark in BL-282-SET-ANSWER-BEGIN BL-282-SET-ANSWER-END BL-282-KEY-REFUSE BL-282-RERENDER BL-282-HINT-COUNT BL-282-WRITE-STATUS BL-282-COMPETENCY-DOMAINS BL-282-ARM-FAILCLOSED \
+            BL-282-KEY-CHARSET BL-282-GATE-KEYS BL-282-INFRA-KEYS BL-282-ESCALATION-KEYS BL-282-INDEX-DIGITS BL-282-FAMILY-WHOLE BL-282-READ-BACK \
+            BL-282-RENDER-STATUS; do
   n="$(grep -c "$mark" "$WIZARD" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
   [ "$n" = "1" ] \
     && pass "M0 — '$mark' occurs exactly once in intake-wizard.sh" \
@@ -676,9 +812,12 @@ else
   fi
 fi
 
-# MP4 — discard the write's status again: the guard becomes `|| true`. The
-# no-answers fixture then reports success while writing no answer, which is
-# the defect as it was found in the field. S1 is what stops it.
+# MP4 — discard the write's status again: the guard becomes `|| true`. In
+# the first cut the no-answers fixture then reported [OK] at exit 0 with no
+# answer written. `# BL-282-READ-BACK` now refuses that run too, so the
+# verdict is held twice and this mutant is DIAGNOSIS-ONLY: the refusal says
+# "does not read back" instead of "could not write". S1's reason assertion
+# is what sees it; S4 is the case the read-back alone holds.
 MP4="$(newtmp)/fw"
 if ! mkdir -p "$MP4" || ! cp -Rp "$REPO_ROOT/scripts" "$MP4/"; then
   fail_ "MP4 setup" "could not mirror scripts/"
@@ -699,28 +838,29 @@ else
       wiz "$PDM4" --set-answer monthly_budget "$NEW_BUDGET"
       got_ans="$(jq_answer monthly_budget "$PDM4")"
       ok_n="$(grep -c '\[OK\]' "$PDM4/run.out")"; case "$ok_n" in ''|*[!0-9]*) ok_n=0 ;; esac
-      if [ "$WIZ_RC" -eq 0 ] && [ "$ok_n" -ge 1 ] && [ "$got_ans" = "<<unset>>" ]; then
-        pass "MP4 (MUTATION) — with the write's status discarded the wizard reports [OK] and exits 0 while no answer was written: S1 is what stops it"
+      if [ "$WIZ_RC" -eq 1 ] && [ "$ok_n" -eq 0 ] && [ "$got_ans" = "<<unset>>" ] \
+         && ! grep -q 'could not write' "$PDM4/run.out" && grep -q 'does not read back' "$PDM4/run.out"; then
+        pass "MP4 (MUTATION, DIAGNOSIS-ONLY) — with the write's status discarded the read-back still refuses (rc=$WIZ_RC, no [OK], no answer) but says 'does not read back': S1's reason assertion is what sees it"
       else
-        fail_ "MP4 (MUTATION)" "rc=$WIZ_RC ok_lines=$ok_n answer=[$got_ans] — discarding the status changed nothing S1 can see"
+        fail_ "MP4 (MUTATION)" "rc=$WIZ_RC ok_lines=$ok_n answer=[$got_ans] reason=[$(grep -m1 'FAIL' "$PDM4/run.out" || echo '<none>')] — not the diagnosis-only outcome this proof records"
       fi
     fi
   fi
 fi
 
-# MP5 — widen the family again: the competency arm stops matching, so the
-# generic `$key` template admits any competency_* key. N3 is what stops it.
+# MP5 — widen the family again: the competency arm's membership test
+# becomes `return 0`, so any competency_* key is admitted. N3 is what stops it.
 MP5="$(newtmp)/fw"
 if ! mkdir -p "$MP5" || ! cp -Rp "$REPO_ROOT/scripts" "$MP5/"; then
   fail_ "MP5 setup" "could not mirror scripts/"
 else
   tgt5="$MP5/scripts/intake-wizard.sh"; before5="$(mktemp)"; cp "$tgt5" "$before5"
   d_ln="$(grep -n 'BL-282-COMPETENCY-DOMAINS' "$before5" | head -1 | cut -d: -f1)"
-  sed -e 's/^\([[:space:]]*\)competency_\*)\([[:space:]]*# BL-282-COMPETENCY-DOMAINS\)$/\1competency_NEVERMATCHES_*)\2/' "$before5" > "$tgt5"
+  sed -e 's/^\([[:space:]]*\)_bl282_array_keys domains .*\(  # BL-282-COMPETENCY-DOMAINS\)$/\1return 0\2/' "$before5" > "$tgt5"
   h_ln5="$(_hunk_line "$before5" "$tgt5")"
   if [ -z "$d_ln" ] || ! _syntax_ok "$tgt5" \
      || [ "$(_changed_lines "$before5" "$tgt5")" -ne 2 ] || [ "$h_ln5" != "$d_ln" ] \
-     || ! sed -n "${d_ln}p" "$tgt5" | grep -q 'NEVERMATCHES'; then
+     || ! sed -n "${d_ln}p" "$tgt5" | grep -q 'return 0  # BL-282-COMPETENCY-DOMAINS'; then
     fail_ "MP5 setup" "the competency-widening mutation did not land on the marker line (marker=$d_ln hunk=$h_ln5 changed=$(_changed_lines "$before5" "$tgt5"))"
   else
     PDM5="$(newtmp)/proj"
@@ -769,6 +909,53 @@ else
       else
         fail_ "MP6 (MUTATION)" "rc=$WIZ_RC answer=[$got6] amendments=$n6 — restoring the old arm changed nothing A1 can see"
       fi
+    fi
+  fi
+fi
+
+# mp_mutate <id> <sed-script-file> <marker>… — mirrors scripts/, applies the
+# sed script, and proves where it landed: exactly one changed line per named
+# marker, every hunk on a marker's own line, each marker line now differing,
+# and the result parses. Sets MP_TGT; returns 1 (after reporting) otherwise.
+MP_TGT=""
+mp_mutate() {
+  local id="$1" script="$2" fw tgt before m ln hunks want_hunks=""; shift 2
+  MP_TGT=""
+  fw="$(newtmp)/fw"
+  if ! mkdir -p "$fw" || ! cp -Rp "$REPO_ROOT/scripts" "$fw/"; then fail_ "$id setup" "could not mirror scripts/"; return 1; fi
+  tgt="$fw/scripts/intake-wizard.sh"; before="$fw/before.sh"; cp "$tgt" "$before"
+  sed -f "$script" "$before" > "$tgt"
+  for m in "$@"; do
+    ln="$(grep -n "# $m\$" "$before" | head -1 | cut -d: -f1)"
+    if [ -z "$ln" ] || [ "$(sed -n "${ln}p" "$before")" = "$(sed -n "${ln}p" "$tgt")" ] || ! sed -n "${ln}p" "$tgt" | grep -q "# $m\$"; then
+      fail_ "$id setup" "the mutation did not land on the '$m' line (line=${ln:-none})"; return 1
+    fi
+    want_hunks="$want_hunks $ln"
+  done
+  hunks="$(diff "$before" "$tgt" 2>/dev/null | grep -E '^[0-9]+' | sed -E 's/^([0-9]+).*/\1/' | tr '\n' ' ')"
+  if ! _syntax_ok "$tgt" || [ "$(_changed_lines "$before" "$tgt")" -ne $((2 * $#)) ] || [ " ${hunks% }" != "$want_hunks" ]; then
+    fail_ "$id setup" "the mutation landed elsewhere: hunks at [${hunks% }] want [${want_hunks# }], changed=$(_changed_lines "$before" "$tgt"), syntax $(_syntax_ok "$tgt" && echo ok || echo BROKEN)"
+    return 1
+  fi
+  MP_TGT="$tgt"
+  return 0
+}
+SEDS="$(newtmp)"
+
+# MP7 — THE REVIEW'S MUTANT: the index bound `[0-9]+` widened to `[0-9a-z]+`.
+# Both suites were green under it; H8N is what stops it now.
+cat > "$SEDS/mp7.sed" <<'SED'
+/# BL-282-INDEX-DIGITS$/s/\[0-9\]+/[0-9a-z]+/g
+SED
+if mp_mutate MP7 "$SEDS/mp7.sed" BL-282-INDEX-DIGITS; then
+  PD="$(newtmp)/proj"
+  if ! mk_project "$PD" "$MP_TGT"; then fail_ "MP7 setup" "could not build the mutant's fixture"; else
+    wiz "$PD" --set-answer input_x_name "minted"; rc_bad=$WIZ_RC; got_bad="$(jq_answer input_x_name "$PD")"
+    wiz "$PD" --set-answer input_2_name "ok"; rc_ok=$WIZ_RC
+    if [ "$rc_bad" -eq 0 ] && [ "$got_bad" = "minted" ] && [ "$rc_ok" -eq 0 ]; then
+      pass "MP7 (MUTATION) — with the index widened to [0-9a-z]+ input_x_name is MINTED (rc=$rc_bad) while input_2_name still works: H8N is what stops it"
+    else
+      fail_ "MP7 (MUTATION)" "input_x_name rc=$rc_bad written=[$got_bad]; input_2_name rc=$rc_ok — the widening changed nothing H8N can see"
     fi
   fi
 fi

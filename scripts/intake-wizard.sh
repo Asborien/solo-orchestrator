@@ -505,11 +505,14 @@ render_intake_file() {
     skip != 1 { print }
   ' "$INTAKE_FILE" > "$tmp"
 
-  # Trim trailing blank lines, then append.
-  awk 'BEGIN{blank=0} /^$/{blank++; next} {while(blank-->0) print ""; blank=0; print} END{print ""}' "$tmp" > "$INTAKE_FILE"
-  cat "$appendix" >> "$INTAKE_FILE"
+  # Trim trailing blank lines, then append. Callers run this under `||`, which
+  # disarms errexit here, so the writes' status is returned explicitly.
+  local rc=0
+  awk 'BEGIN{blank=0} /^$/{blank++; next} {while(blank-->0) print ""; blank=0; print} END{print ""}' "$tmp" > "$INTAKE_FILE" \
+    && cat "$appendix" >> "$INTAKE_FILE" || rc=$?
 
   rm -f "$tmp" "$appendix"
+  return "$rc"  # BL-282-RENDER-STATUS
 }
 
 # ================================================================
@@ -547,44 +550,53 @@ with open(path, 'w') as f:
 # the generic setter the three tier-crosscheck-6 flags were the precedent
 # for. The allowed keys are this file's OWN save_answer call sites, read at
 # runtime, so a typo cannot mint a key; loop-generated families
-# (`input_${i}_name`) are matched by shape with `$i`/`$j` bounded to digits.
+# (`input_${i}_name`) are matched by shape with `$i`/`$j` bounded to digits,
+# and the four `$key` families by the arrays their loops iterate. A `$key`
+# family with no array bound here is refused, never widened.
 _bl282_key_templates() {
   grep -o 'save_answer "[^"]*"' "${BASH_SOURCE[0]}" | sed 's/^save_answer "//; s/"$//' | sort -u
 }
 
-# The nine competency domains, read from the SAME array the prompts iterate
-# and transformed the same way, so this can never drift from what the wizard
-# actually records. A second hand-written list here would be the drift.
-_bl282_competency_keys() {
-  grep -m1 -E '^[[:space:]]*local domains=[(]' "${BASH_SOURCE[0]}" \
+# _bl282_array_keys NAME FROM TO — the keys a `$key` loop records: the
+# labels of `local NAME=(…)`, read from the SAME array the prompts iterate
+# and put through the loop's own `tr FROM TO` and lower-casing, so this can
+# never drift from what the wizard writes. A hand-written list would be the
+# drift. No line here may spell the domains array's own declaration: a
+# neighbouring suite scans for the first one (see the BL-282 suite's N5).
+_bl282_array_keys() {
+  grep -m1 -E "^[[:space:]]*local $1=[(]" "${BASH_SOURCE[0]}" \
     | grep -o '"[^"]*"' | sed 's/^"//; s/"$//' \
-    | tr '/ ' '_' | tr '[:upper:]' '[:lower:]'
+    | tr "$2" "$3" | tr '[:upper:]' '[:lower:]'
 }
 
+# Whole-string throughout: `grep` matches line by line, so a key with a line
+# break would pass if any one line did. Membership reads all of grep's input
+# (no -q), so under pipefail an early exit cannot SIGPIPE the writer.
 _bl282_key_allowed() {
   local key="$1" tpl pat base
-  printf '%s' "$key" | grep -q -E '^[a-z0-9_]+$' || return 1
-  # `competency_$key` would widen to `competency_[a-z0-9_]+` in the generic
-  # loop below and MINT a key the wizard records nowhere. Bound it to the
-  # domain list instead.
+  case "$key" in ''|*[!a-z0-9_]*) return 1 ;; esac  # BL-282-KEY-CHARSET
   case "$key" in
-    competency_*)  # BL-282-COMPETENCY-DOMAINS
+    competency_*)
       base="${key#competency_}"; base="${base%_tooling}"
-      _bl282_competency_keys | grep -q -x -- "$base" && return 0
+      _bl282_array_keys domains '/ ' '_' | grep -x -- "$base" >/dev/null && return 0  # BL-282-COMPETENCY-DOMAINS
+      return 1 ;;
+    gate_*)
+      _bl282_array_keys gates ' ' '_' | grep -x -- "${key#gate_}" >/dev/null && return 0  # BL-282-GATE-KEYS
+      return 1 ;;
+    infra_*)
+      _bl282_array_keys infra_items '/ ' '_' | grep -x -- "${key#infra_}" >/dev/null && return 0  # BL-282-INFRA-KEYS
+      return 1 ;;
+    escalation_*)
+      _bl282_array_keys levels ' ()' '___' | grep -x -- "${key#escalation_}" >/dev/null && return 0  # BL-282-ESCALATION-KEYS
       return 1 ;;
   esac
   while IFS= read -r tpl; do
     case "$tpl" in
-      '$'*)
-        # A bare-variable call site (this function's own write) is not a
-        # family: with no literal prefix it would admit any key at all.
-        continue ;;
       *'$'*)
-        pat="$(printf '%s' "$tpl" | sed -e 's/\${[ij]}/[0-9]+/g; s/\$[ij]$/[0-9]+/; s/\${key}/[a-z0-9_]+/g; s/\$key$/[a-z0-9_]+/')"
+        pat="$(printf '%s' "$tpl" | sed -e 's/\${[ij]}/[0-9]+/g; s/\$[ij]$/[0-9]+/')"  # BL-282-INDEX-DIGITS
         case "$pat" in *'$'*) continue ;; esac
-        printf '%s' "$key" | grep -q -E "^${pat}\$" && return 0 ;;
+        [[ $key =~ ^${pat}$ ]] && return 0 ;;  # BL-282-FAMILY-WHOLE
       *)
-        printf '%s' "$tpl" | grep -q -E '^[a-z0-9_]+$' || continue
         [ "$key" = "$tpl" ] && return 0 ;;
     esac
   done < <(_bl282_key_templates)
@@ -686,6 +698,14 @@ with open(sys.argv[2]) as f:
 print(json.dumps(data.get("answers", {}).get(sys.argv[1])))
 ' "$key" "$PROGRESS_FILE")" || { print_fail "could not read $PROGRESS_FILE."; return 1; }
   save_answer "$key" "$value" || { print_fail "could not write '$key' to $PROGRESS_FILE — nothing recorded."; return 1; }  # BL-282-WRITE-STATUS
+  # save_answer returns 0 without writing while a pause is pending, so its
+  # status alone cannot prove the write: read the answer back first.
+  python3 -c '
+import json, sys
+with open(sys.argv[2]) as f:
+    data = json.load(f)
+sys.exit(0 if data["answers"].get(sys.argv[1]) == sys.argv[3] else 1)
+' "$key" "$PROGRESS_FILE" "$value" 2>/dev/null || { print_fail "'$key' does not read back as the new value from $PROGRESS_FILE — nothing recorded."; return 1; }  # BL-282-READ-BACK
   python3 -c '
 import json, sys
 from datetime import datetime, timezone
