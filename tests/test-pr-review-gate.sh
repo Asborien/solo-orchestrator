@@ -15,6 +15,18 @@
 #
 # Hermetic: temp git repos only, no remotes, no network. bash 3.2 safe.
 set -o pipefail
+# #435 — `printf … | grep -q` under pipefail is a RACE: grep -q exits at the
+# first match, the writer can take SIGPIPE (141) before it finishes, and
+# pipefail reports the pipeline as failed although the pattern matched —
+# every time on a large output with an early match, under load on a small
+# one. `_gq` reads to EOF (no -q), so the writer always finishes; the exit
+# codes are grep's own (0 match, 1 none, 2 error).
+_gq() { grep "$@" >/dev/null; }
+# #422 — pin git's STOCK template, which is what CI runs with. Without this,
+# `git init` copies the operator's `init.templateDir`, which may carry no
+# hooks/, and this suite's fixtures write into .git/hooks/ without creating it.
+_stock_tpl="$(git --exec-path 2>/dev/null)/../../share/git-core/templates"
+if [ -d "$_stock_tpl/hooks" ]; then export GIT_TEMPLATE_DIR="$_stock_tpl"; fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -33,6 +45,12 @@ TOPTMP="$(mktemp -d)"
   exit 1
 }
 trap 'chmod -R u+rwX "$TOPTMP" 2>/dev/null; rm -rf "$TOPTMP"' EXIT INT TERM
+# #435 — Z2b's orphan check counts fresh tmp.* entries in $TMPDIR; on a shared
+# TMPDIR every other suite running at the same time manufactured a failure
+# (the pr-review-gate entry's residual 13). Every mktemp here, the hook's
+# included, now lands inside TOPTMP, so the scan sees this suite alone.
+export TMPDIR="$TOPTMP/tmp"
+mkdir -p "$TMPDIR" || { echo "FATAL: cannot create $TMPDIR" >&2; exit 1; }
 newtmp() { local _d; _d="$(mktemp -d "$TOPTMP/gXXXXXX")"; [ -n "$_d" ] && [ -d "$_d" ] || { echo "FATAL: newtmp failed" >&2; exit 1; }; printf '%s' "$_d"; }
 
 for f in "$CHECK" "$RECORD"; do
@@ -51,7 +69,7 @@ if [ -z "${SOIF_MKTEMP_CONTROL:-}" ]; then
   _m1_out="$( cd "$_m1_canary" && SOIF_MKTEMP_CONTROL=1 PATH="$_m1_stub:$PATH" \
                 bash "$SCRIPT_DIR/$(basename "$0")" </dev/null 2>&1 )"
   _m1_left="$(ls -A "$_m1_canary" 2>/dev/null | wc -l | tr -d ' ')"
-  if printf '%s' "$_m1_out" | grep -q 'FATAL: mktemp -d failed' && [ "$_m1_left" = "0" ]; then
+  if printf '%s' "$_m1_out" | _gq 'FATAL: mktemp -d failed' && [ "$_m1_left" = "0" ]; then
     pass "M-1: with mktemp denied the suite REFUSES and leaves the launch directory untouched — the ## BL-244: control, automated rather than asserted"
   else
     fail_ "M-1" "denied mktemp did not refuse cleanly (canary entries=$_m1_left): $(printf '%s' "$_m1_out" | head -1)"
@@ -86,7 +104,7 @@ echo "=== A. absent, present, stale, refused — four situations, four messages 
 
 A="$(newtmp)"; mk "$A"
 a_out="$(run "$A")"; a_rc="$(rc_of "$A")"
-if [ "$a_rc" -ne 0 ] && printf '%s' "$a_out" | grep -q 'no review has ever been recorded'; then
+if [ "$a_rc" -ne 0 ] && printf '%s' "$a_out" | _gq 'no review has ever been recorded'; then
   pass "A1: with no record at all the push is BLOCKED and says the review is absent"
 else
   fail_ "A1" "rc=$a_rc out: $(printf '%s' "$a_out" | head -2 | tr '\n' '|')"
@@ -96,7 +114,7 @@ fi
 # stops someone owes them a decision they can act on.
 a_tldr=0
 for _need in "Plain English" "What it means for you" "Options:" "Recommendation" "If you do nothing"; do
-  printf '%s' "$a_out" | grep -q "$_need" || { fail_ "A2" "refusal is missing the '$_need' section"; a_tldr=1; break; }
+  printf '%s' "$a_out" | _gq "$_need" || { fail_ "A2" "refusal is missing the '$_need' section"; a_tldr=1; break; }
 done
 [ "$a_tldr" -eq 0 ] && pass "A2: the refusal carries the full TL;DR format — plain English, options, a recommendation, and the cost of doing nothing"
 
@@ -115,9 +133,9 @@ C="$(newtmp)"; mk "$C"
 ( cd "$C" && bash "$RECORD" --verdict approve >/dev/null 2>&1
   echo y >> a.txt; git add -A >/dev/null 2>&1; git commit -qm "feat: b" >/dev/null 2>&1 )
 c_out="$(run "$C")"; c_rc="$(rc_of "$C")"
-if [ "$c_rc" -ne 0 ] && printf '%s' "$c_out" | grep -q 'does not cover what you are pushing' \
-   && printf '%s' "$c_out" | grep -q 'Recorded against:' \
-   && ! printf '%s' "$c_out" | grep -q 'no review has ever been recorded'; then
+if [ "$c_rc" -ne 0 ] && printf '%s' "$c_out" | _gq 'does not cover what you are pushing' \
+   && printf '%s' "$c_out" | _gq 'Recorded against:' \
+   && ! printf '%s' "$c_out" | _gq 'no review has ever been recorded'; then
   pass "C1: a review of an EARLIER commit blocks and is named as stale, not as missing — the remedy differs"
 else
   fail_ "C1" "rc=$c_rc out: $(printf '%s' "$c_out" | grep BLOCKED | head -1)"
@@ -127,7 +145,7 @@ fi
 D="$(newtmp)"; mk "$D"
 ( cd "$D" && bash "$RECORD" --verdict block >/dev/null 2>&1 )
 d_out="$(run "$D")"; d_rc="$(rc_of "$D")"
-if [ "$d_rc" -ne 0 ] && printf '%s' "$d_out" | grep -q "a review that said no"; then
+if [ "$d_rc" -ne 0 ] && printf '%s' "$d_out" | _gq "a review that said no"; then
   pass "D1: a recorded 'block' verdict blocks the push and is named as a refusal, not an absence"
 else
   fail_ "D1" "rc=$d_rc out: $(printf '%s' "$d_out" | grep BLOCKED | head -1)"
@@ -147,7 +165,7 @@ echo "=== F. the attested escape — recorded, or refused ==="
 F="$(newtmp)"; mk "$F"
 f_out=$( cd "$F" && SOLO_PR_REVIEW_ATTESTED=1 bash "$CHECK" </dev/null 2>&1 )   # BL-276-STDIN-REDIRECT
 f_rc=$( cd "$F" && SOLO_PR_REVIEW_ATTESTED=1 bash "$CHECK" </dev/null >/dev/null 2>&1; echo $? )   # BL-276-STDIN-REDIRECT
-if [ "$f_rc" -ne 0 ] && printf '%s' "$f_out" | grep -q 'with no reason'; then
+if [ "$f_rc" -ne 0 ] && printf '%s' "$f_out" | _gq 'with no reason'; then
   pass "F1: an attestation with no reason is REFUSED — a justification-free escape is the gate off with extra steps"
 else
   fail_ "F1" "rc=$f_rc out: $(printf '%s' "$f_out" | head -1)"
@@ -210,7 +228,7 @@ echo "=== J. the two arms a mutation battery found UNCOVERED ==="
 J1="$(newtmp)"; mk "$J1"
 ( cd "$J1" && printf '{"pr_review":{"head":"%s","verdict":"lgtm"}}\n' "$(git rev-parse HEAD)" > .claude/process-state.json )
 j1_out="$(run "$J1")"; j1_rc="$(rc_of "$J1")"
-if [ "$j1_rc" -ne 0 ] && printf '%s' "$j1_out" | grep -q 'not one this gate understands'; then
+if [ "$j1_rc" -ne 0 ] && printf '%s' "$j1_out" | _gq 'not one this gate understands'; then
   pass "J1: a verdict the gate does not recognise BLOCKS — 'could not classify' is not 'approved'"
 else
   fail_ "J1" "rc=$j1_rc out: $(printf '%s' "$j1_out" | grep BLOCKED | head -1)"
@@ -227,7 +245,7 @@ ln -s "$(command -v git)" "$j2_stub/git" 2>/dev/null
 if [ -x "$j2_stub/git" ]; then
   j2_out="$( cd "$J2" && PATH="$j2_stub" "$(command -v bash)" "$CHECK" </dev/null 2>&1 )"
   j2_rc="$( cd "$J2" && PATH="$j2_stub" "$(command -v bash)" "$CHECK" </dev/null >/dev/null 2>&1; echo $? )"
-  if [ "$j2_rc" -ne 0 ] && printf '%s' "$j2_out" | grep -q 'jq is not installed'; then
+  if [ "$j2_rc" -ne 0 ] && printf '%s' "$j2_out" | _gq 'jq is not installed'; then
     pass "J2: with jq unavailable the gate BLOCKS and names the TOOLING fault — 'could not check' is never 'nothing to check'"
   else
     fail_ "J2" "rc=$j2_rc out: $(printf '%s' "$j2_out" | head -2 | tr '\n' '|')"
@@ -257,7 +275,7 @@ k_head="$( cd "$K" && git rev-parse HEAD )"
 
 k1_out="$(push_out "$K" "refs/heads/other $k_other refs/heads/other $ZERO")"
 k1_rc="$(push_rc  "$K" "refs/heads/other $k_other refs/heads/other $ZERO")"
-if [ "$k1_rc" -ne 0 ] && printf '%s' "$k1_out" | grep -q 'does not cover what you are pushing'; then
+if [ "$k1_rc" -ne 0 ] && printf '%s' "$k1_out" | _gq 'does not cover what you are pushing'; then
   pass "K1: an approve on record for HEAD does NOT let an unreviewed branch be pushed — the gate reads the refs git hands it, not HEAD"
 else
   fail_ "K1" "rc=$k1_rc — unreviewed commits would ship: $(printf '%s' "$k1_out" | grep -E '\[OK\]|BLOCKED' | head -1)"
@@ -275,7 +293,7 @@ fi
 # people cannot satisfy honestly.
 k3_out="$(push_out "$K" "(delete) $ZERO refs/heads/gone $k_other")"
 k3_rc="$(push_rc  "$K" "(delete) $ZERO refs/heads/gone $k_other")"
-if [ "$k3_rc" -eq 0 ] && printf '%s' "$k3_out" | grep -q 'deletion-only'; then
+if [ "$k3_rc" -eq 0 ] && printf '%s' "$k3_out" | _gq 'deletion-only'; then
   pass "K3: a deletion-only push passes and says why — no commits leave the machine, so there is nothing a review could have covered"
 else
   fail_ "K3" "rc=$k3_rc out: $(printf '%s' "$k3_out" | head -1)"
@@ -306,7 +324,7 @@ L="$(newtmp)"
 ( cd "$L" && unset GITHUB_BASE_REF && git init -q -b main . >/dev/null 2>&1
   git config user.email t@e.x; git config user.name "T O"; mkdir -p .claude )
 l_out="$(run "$L")"; l_rc="$(rc_of "$L")"
-if [ "$l_rc" -ne 0 ] && printf '%s' "$l_out" | grep -qi 'unborn\|does not resolve\|nothing resolves'; then
+if [ "$l_rc" -ne 0 ] && printf '%s' "$l_out" | _gq -i 'unborn\|does not resolve\|nothing resolves'; then
   pass "L1: with no commits at all the gate REFUSES instead of resolving HEAD to the literal string 'HEAD'"
 else
   fail_ "L1" "rc=$l_rc out: $(printf '%s' "$l_out" | head -1)"
@@ -352,7 +370,7 @@ echo "=== S. arms a second mutation battery found unpinned ==="
 S1="$(newtmp)"; mk "$S1"
 ( cd "$S1" && printf '{}' > .claude/process-state.json )
 s1_out="$(run "$S1")"; s1_rc="$(rc_of "$S1")"
-if [ "$s1_rc" -ne 0 ] && printf '%s' "$s1_out" | grep -q 'no review has ever been recorded'; then
+if [ "$s1_rc" -ne 0 ] && printf '%s' "$s1_out" | _gq 'no review has ever been recorded'; then
   pass "S1a: a state file that EXISTS but carries no review still blocks — the field case, not just the pristine one"
 else
   fail_ "S1a" "rc=$s1_rc out: $(printf '%s' "$s1_out" | grep BLOCKED | head -1)"
@@ -361,7 +379,7 @@ fi
 S1b="$(newtmp)"; mk "$S1b"
 ( cd "$S1b" && printf '{"pr_review":{"verdict":"approve"}}' > .claude/process-state.json )
 s1b_out="$(run "$S1b")"; s1b_rc="$(rc_of "$S1b")"
-if [ "$s1b_rc" -ne 0 ] && printf '%s' "$s1b_out" | grep -q 'INCOMPLETE'; then
+if [ "$s1b_rc" -ne 0 ] && printf '%s' "$s1b_out" | _gq 'INCOMPLETE'; then
   pass "S1b: a verdict with no sha reads as INCOMPLETE, not as 'never reviewed' — a record exists, it just cannot be checked"
 else
   fail_ "S1b" "rc=$s1b_rc out: $(printf '%s' "$s1b_out" | grep BLOCKED | head -1)"
@@ -389,7 +407,7 @@ fi
 S3="$(newtmp)"; mk "$S3"
 ( cd "$S3" && bash "$RECORD" --verdict major_concerns >/dev/null 2>&1 )
 s3_out="$(run "$S3")"; s3_rc="$(rc_of "$S3")"
-if [ "$s3_rc" -ne 0 ] && printf '%s' "$s3_out" | grep -q "major_concerns"; then
+if [ "$s3_rc" -ne 0 ] && printf '%s' "$s3_out" | _gq "major_concerns"; then
   pass "S3: major_concerns BLOCKS and is named — the rubric's boundary is 'major_concerns and above', and the gate has to agree with it"
 else
   fail_ "S3" "rc=$s3_rc out: $(printf '%s' "$s3_out" | grep BLOCKED | head -1)"
@@ -432,7 +450,7 @@ fi
 # assertions, which is the definition of an unpinned arm.
 t3_rc="$(push_rc "$T" "refs/heads/ghost 1234567890abcdef1234567890abcdef12345678 refs/heads/ghost $ZERO")"
 t3_out="$(push_out "$T" "refs/heads/ghost 1234567890abcdef1234567890abcdef12345678 refs/heads/ghost $ZERO")"
-if [ "$t3_rc" -ne 0 ] && printf '%s' "$t3_out" | grep -q 'does not resolve to a commit'; then
+if [ "$t3_rc" -ne 0 ] && printf '%s' "$t3_out" | _gq 'does not resolve to a commit'; then
   pass "T3: a ref the gate cannot resolve to a commit BLOCKS and says so — could-not-check is never nothing-to-check"
 else
   fail_ "T3" "rc=$t3_rc out: $(printf '%s' "$t3_out" | grep BLOCKED | head -1)"
@@ -466,7 +484,7 @@ else
 fi
 
 w1_out="$(w_line)"; w1_rc="$(w_rc)"
-if [ "$w1_rc" -ne 0 ] && printf '%s' "$w1_out" | grep -q 'no review has ever been recorded'; then
+if [ "$w1_rc" -ne 0 ] && printf '%s' "$w1_out" | _gq 'no review has ever been recorded'; then
   pass "W1: the EMITTED hook DELEGATES — an unreviewed push driven through the hook itself is blocked by the gate, not waved through"
 else
   fail_ "W1" "rc=$w1_rc out: $(printf '%s' "$w1_out" | head -1)"
@@ -474,7 +492,7 @@ fi
 
 ( cd "$W" && chmod -x scripts/check-pr-review.sh )
 w2_out="$(w_line)"; w2_rc="$(w_rc)"
-if [ "$w2_rc" -eq 0 ] && printf '%s' "$w2_out" | grep -q 'PUSHING UNGATED'; then
+if [ "$w2_rc" -eq 0 ] && printf '%s' "$w2_out" | _gq 'PUSHING UNGATED'; then
   pass "W2: script present but unusable -> the hook degrades OPEN and SAYS SO — silent-open is exactly what shipped to this repo and went unnoticed"
 else
   fail_ "W2" "rc=$w2_rc out: $(printf '%s' "$w2_out" | head -1)"
@@ -482,7 +500,7 @@ fi
 
 ( cd "$W" && rm -f scripts/check-pr-review.sh )
 w3_out="$(w_line)"; w3_rc="$(w_rc)"
-if [ "$w3_rc" -eq 0 ] && printf '%s' "$w3_out" | grep -q 'PUSHING UNGATED'; then
+if [ "$w3_rc" -eq 0 ] && printf '%s' "$w3_out" | _gq 'PUSHING UNGATED'; then
   pass "W3: script ABSENT -> degrades open and says so too — could-not-check is never nothing-to-check"
 else
   fail_ "W3" "rc=$w3_rc out: $(printf '%s' "$w3_out" | head -1)"
@@ -534,8 +552,8 @@ esac
 N6="$(newtmp)"; mk "$N6"
 ( cd "$N6" && printf 'not json at all {{{' > .claude/process-state.json )
 n6_out="$(run "$N6")"; n6_rc="$(rc_of "$N6")"
-if [ "$n6_rc" -ne 0 ] && printf '%s' "$n6_out" | grep -q 'does not parse' \
-   && ! printf '%s' "$n6_out" | grep -q 'no review has ever been recorded'; then
+if [ "$n6_rc" -ne 0 ] && printf '%s' "$n6_out" | _gq 'does not parse' \
+   && ! printf '%s' "$n6_out" | _gq 'no review has ever been recorded'; then
   pass "N6: a CORRUPT state file is named as unreadable, not as never-reviewed — the remedy is to fix the file, not to run a review"
 else
   fail_ "N6" "rc=$n6_rc out: $(printf '%s' "$n6_out" | grep BLOCKED | head -1)"
@@ -552,9 +570,9 @@ X="$(newtmp)"; mk "$X"
 ( cd "$X" && bash "$RECORD" --verdict approve >/dev/null 2>&1 )
 x_out="$( cd "$X" && bash "$CHECK" --from-hook < /dev/null 2>&1 )"
 x_rc="$( cd "$X" && bash "$CHECK" --from-hook < /dev/null >/dev/null 2>&1; echo $? )"
-if printf '%s' "$x_out" | grep -q 'no refs arrived on stdin' \
-   && printf '%s' "$x_out" | grep -q 'up-to-date push still runs this hook' \
-   && printf '%s' "$x_out" | grep -q 'CONSUMED the list'; then
+if printf '%s' "$x_out" | _gq 'no refs arrived on stdin' \
+   && printf '%s' "$x_out" | _gq 'up-to-date push still runs this hook' \
+   && printf '%s' "$x_out" | _gq 'CONSUMED the list'; then
   pass "X1: invoked from a hook with NO ref list, the gate SAYS it fell back to HEAD and names BOTH causes — an up-to-date push (harmless) and a drained stdin (a pass for the wrong tree)"
 else
   fail_ "X1" "rc=$x_rc — the fallback to HEAD was silent: $(printf '%s' "$x_out" | head -1)"
@@ -571,7 +589,7 @@ fi
 # A HAND RUN MUST STAY QUIET. Warning on every manual invocation is how an audit
 # line gets ignored — the gate warns only when a ref list was DUE.
 x3_out="$( cd "$X" && bash "$CHECK" < /dev/null 2>&1 )"
-if ! printf '%s' "$x3_out" | grep -q 'no refs arrived on stdin'; then
+if ! printf '%s' "$x3_out" | _gq 'no refs arrived on stdin'; then
   pass "X3: without --from-hook the same invocation is SILENT — the warning fires only when a ref list was actually due"
 else
   fail_ "X3" "a plain manual run cried wolf about missing refs"
@@ -590,8 +608,8 @@ fi
 X5="$(newtmp)"; mk "$X5"
 ( cd "$X5" && printf '{"pr_review":{"head":"%s"}}' "$(git rev-parse HEAD)" > .claude/process-state.json )
 x5_out="$(run "$X5")"; x5_rc="$(rc_of "$X5")"
-if [ "$x5_rc" -ne 0 ] && printf '%s' "$x5_out" | grep -q 'INCOMPLETE' \
-   && ! printf '%s' "$x5_out" | grep -q 'not one this gate understands'; then
+if [ "$x5_rc" -ne 0 ] && printf '%s' "$x5_out" | _gq 'INCOMPLETE' \
+   && ! printf '%s' "$x5_out" | _gq 'not one this gate understands'; then
   pass "X5: a commit with NO verdict reads as INCOMPLETE, not as an unrecognised verdict — the mirror of S1b, same remedy"
 else
   fail_ "X5" "rc=$x5_rc out: $(printf '%s' "$x5_out" | grep BLOCKED | head -1)"
@@ -604,15 +622,15 @@ X6="$(newtmp)"; mk "$X6"
 ( cd "$X6" && bash "$RECORD" --verdict approve >/dev/null 2>&1 )
 x6_out="$( cd "$X6" && bash "$CHECK" --form-hook < /dev/null 2>&1 )"
 x6_rc="$( cd "$X6" && bash "$CHECK" --form-hook < /dev/null >/dev/null 2>&1; echo $? )"
-if printf '%s' "$x6_out" | grep -q "ignoring unrecognized option '--form-hook'" && [ "$x6_rc" -eq 0 ]; then
+if printf '%s' "$x6_out" | _gq "ignoring unrecognized option '--form-hook'" && [ "$x6_rc" -eq 0 ]; then
   pass "X6: a typo'd flag is NAMED rather than swallowed — --form-hook silently disabled the drained-stdin warning, which is one keystroke from a green fail-open"
 else
   fail_ "X6" "rc=$x6_rc out: $(printf '%s' "$x6_out" | head -1)"
 fi
 
 x7_out="$( cd "$X6" && bash "$CHECK" --from-hook origin "file:///tmp/x" < /dev/null 2>&1 )"
-if ! printf '%s' "$x7_out" | grep -q 'ignoring unrecognized option' \
-   && printf '%s' "$x7_out" | grep -q 'no refs arrived on stdin'; then
+if ! printf '%s' "$x7_out" | _gq 'ignoring unrecognized option' \
+   && printf '%s' "$x7_out" | _gq 'no refs arrived on stdin'; then
   pass "X7: git's own <remote-name> <remote-url> arguments are accepted without complaint — a wiring that forwards \"\$@\" must not be nagged"
 else
   fail_ "X7" "forwarded git args were treated as typos: $(printf '%s' "$x7_out" | head -1)"
@@ -640,14 +658,14 @@ y1="$(y_row "$(printf '#!/usr/bin/env bash\nread -r a b c d\nbash scripts/check-
 # `register_pass` with identical text does not. That is CLAUDE.md's `[WARN]`
 # trap — read the effect, not the label — and flipping this one call survived
 # all 63 assertions while turning the auditor's own warning into a pass.
-if printf '%s' "$y1" | grep -q 'ALSO READS STDIN' && printf '%s' "$y1" | grep -qF '(manual)'; then
+if printf '%s' "$y1" | _gq 'ALSO READS STDIN' && printf '%s' "$y1" | _gq -F '(manual)'; then
   pass "Y1: a hook that delegates AND reads stdin is reported as unsafe AND AS AN ACTION ITEM — the row class is what carries verify-install's exit code, and the wording alone carries nothing"
 else
   fail_ "Y1" "the unsafe composition was not reported as an action item: ${y1:-<no pre-push row>}"
 fi
 
 y2="$(y_row "$(printf '#!/usr/bin/env bash\nrefs="$(cat)"\nprintf "%%s\\n" "$refs" | while read -r a b c d; do :; done\nprintf "%%s\\n" "$refs" | bash scripts/check-pr-review.sh --from-hook || exit 1\n')")"
-if ! printf '%s' "$y2" | grep -q 'ALSO READS STDIN'; then
+if ! printf '%s' "$y2" | _gq 'ALSO READS STDIN'; then
   pass "Y2: the capture-and-replay wiring is NOT flagged — the detector must not nag the very shape the recipe tells people to build"
 else
   fail_ "Y2" "the correct wiring was reported as unsafe: $y2"
@@ -659,7 +677,7 @@ fi
 # shape has a LINE-ANCHORED read AND a capture, so only the exclusion keeps it
 # quiet.
 y3="$(y_row "$(printf '#!/usr/bin/env bash\nrefs="$(cat)"\nwhile read -r a b c d; do :; done <<EOF\n$refs\nEOF\nprintf "%%s\\n" "$refs" | bash scripts/check-pr-review.sh --from-hook\n')")"
-if ! printf '%s' "$y3" | grep -q 'ALSO READS STDIN'; then
+if ! printf '%s' "$y3" | _gq 'ALSO READS STDIN'; then
   pass "Y3: a line-anchored read that IS preceded by a capture stays quiet — the capture exclusion is load-bearing, not decoration"
 else
   fail_ "Y3" "a correct capture-and-replay wiring was flagged unsafe: $y3"
@@ -675,7 +693,7 @@ fi
 y4_missed=""
 for _spell in 'if read -r a b c d; then :; fi' 'IFS= read -r line' 'while IFS= read -r l; do :; done' 'mapfile -t refs'; do
   _y="$(y_row "$(printf '#!/usr/bin/env bash\n%s\nbash scripts/check-pr-review.sh --from-hook || exit 1\n' "$_spell")")"
-  printf '%s' "$_y" | grep -q 'ALSO READS STDIN' || y4_missed="$y4_missed [$_spell]"
+  printf '%s' "$_y" | _gq 'ALSO READS STDIN' || y4_missed="$y4_missed [$_spell]"
 done
 if [ -z "$y4_missed" ]; then
   pass "Y4: if-read, IFS=-read, while-IFS=-read and mapfile are all seen — two spellings was not the family"
@@ -684,7 +702,7 @@ else
 fi
 
 y10="$(y_row "$(printf '#!/usr/bin/env bash\nread -r a b c d\nbanner="$(cat /etc/hosts)"\n: "$banner"\nbash scripts/check-pr-review.sh --from-hook || exit 1\n')")"
-if printf '%s' "$y10" | grep -q 'ALSO READS STDIN'; then
+if printf '%s' "$y10" | _gq 'ALSO READS STDIN'; then
   pass "Y10: an unrelated \$(cat FILE) does NOT excuse a consumer — the exclusion is about capturing STDIN, and hook-wide excuse-matching let one everyday line disarm the whole check"
 else
   fail_ "Y10" "a file-cat disarmed the consumer detector: ${y10:-<no row>}"
@@ -693,7 +711,7 @@ fi
 y11_missed=""
 for _body in 'while read -r a b c d; do :; done </dev/stdin' 'perl -ne "print; last"'; do
   _y="$(y_row "$(printf '#!/usr/bin/env bash\n%s\nbash scripts/check-pr-review.sh --from-hook || exit 1\n' "$_body")")"
-  printf '%s' "$_y" | grep -q 'ALSO READS STDIN' || y11_missed="$y11_missed [$_body]"
+  printf '%s' "$_y" | _gq 'ALSO READS STDIN' || y11_missed="$y11_missed [$_body]"
 done
 if [ -z "$y11_missed" ]; then
   pass "Y11: the no-space '</dev/stdin' spelling and perl are seen — the spaced twin was already pinned, and perl is the same partial-reader class as dd and python"
@@ -711,7 +729,7 @@ for _body in 'cat > .git/push-note <<NOTE
 pushed
 NOTE' 'cat > .git/copy < .git/config' 'concat > .git/merged'; do
   _y="$(y_row "$(printf '#!/usr/bin/env bash\nread -r a b c d\n%s\nbash scripts/check-pr-review.sh --from-hook || exit 1\n' "$_body")")"
-  printf '%s' "$_y" | grep -q 'ALSO READS STDIN' || y12_missed="$y12_missed [${_body%%$'\n'*}]"
+  printf '%s' "$_y" | _gq 'ALSO READS STDIN' || y12_missed="$y12_missed [${_body%%$'\n'*}]"
 done
 if [ -z "$y12_missed" ]; then
   pass "Y12: a heredoc-fed cat, a file-fed cat, and 'concat' do NOT excuse a consumer — the excuse is about capturing STDIN, and only that"
@@ -724,7 +742,7 @@ fi
 # capture living only in a COMMENT would excuse a live consumer, with nothing
 # red. The consumer side's strip was pinned; this half was not.
 y13="$(y_row "$(printf '#!/usr/bin/env bash\nread -r a b c d\n# capture disabled: refs="$(cat)"\nbash scripts/check-pr-review.sh --from-hook || exit 1\n')")"
-if printf '%s' "$y13" | grep -q 'ALSO READS STDIN'; then
+if printf '%s' "$y13" | _gq 'ALSO READS STDIN'; then
   pass "Y13: a capture that lives only in a COMMENT does not excuse — the excuse conjunct reads the stripped hook, and nothing pinned that half"
 else
   fail_ "Y13" "a commented-out capture excused a live consumer: ${y13:-<no row>}"
@@ -735,7 +753,7 @@ fi
 # capture conjunct is never reached — deleting that conjunct passed the whole
 # suite. This shape has no `<` on the consuming line.
 y7="$(y_row "$(printf '#!/usr/bin/env bash\nt=$(mktemp)\ncat > "$t"\nbash scripts/check-pr-review.sh --from-hook < "$t" || exit 1\n')")"
-if ! printf '%s' "$y7" | grep -q 'ALSO READS STDIN'; then
+if ! printf '%s' "$y7" | _gq 'ALSO READS STDIN'; then
   pass "Y7: the temp-file capture-and-replay recipe stays quiet — the capture exclusion is load-bearing again, on a line the redirect filter cannot mask"
 else
   fail_ "Y7" "the temp-file recipe was flagged unsafe: $y7"
@@ -744,7 +762,7 @@ fi
 # Y8. THE REDIRECT EXCLUSION, PINNED ON ITS OWN. A read redirected from a FILE
 # reads that file, not the ref list.
 y8="$(y_row "$(printf '#!/usr/bin/env bash\nwhile read -r l; do :; done < .git/config\nbash scripts/check-pr-review.sh --from-hook || exit 1\n')")"
-if ! printf '%s' "$y8" | grep -q 'ALSO READS STDIN'; then
+if ! printf '%s' "$y8" | _gq 'ALSO READS STDIN'; then
   pass "Y8: a file-redirected read is not flagged — the redirect exclusion is load-bearing, and nagging a correct wiring is how a real warning gets tuned out"
 else
   fail_ "Y8" "a file-redirected read was flagged as consuming the ref list: $y8"
@@ -756,7 +774,7 @@ fi
 y9_missed=""
 for _body in 'read -r a b c d # fields: <lref> <lsha> <rref> <rsha>' 'while read -r a b c d; do :; done < /dev/stdin'; do
   _y="$(y_row "$(printf '#!/usr/bin/env bash\n%s\nbash scripts/check-pr-review.sh --from-hook || exit 1\n' "$_body")")"
-  printf '%s' "$_y" | grep -q 'ALSO READS STDIN' || y9_missed="$y9_missed [$_body]"
+  printf '%s' "$_y" | _gq 'ALSO READS STDIN' || y9_missed="$y9_missed [$_body]"
 done
 if [ -z "$y9_missed" ]; then
   pass "Y9: a trailing comment containing '<', and an explicit '< /dev/stdin', do not blind the detector — the crude '-v <' filter regressed both"
@@ -773,7 +791,7 @@ cp "$CHECK" "$y5b_dir/scripts/check-pr-review.sh"; chmod +x "$y5b_dir/scripts/ch
 ( cd "$y5b_dir" && unset GITHUB_BASE_REF && git init -q -b main . ) >/dev/null 2>&1
 rm -f "$y5b_dir/.git/hooks/pre-push"
 y5b="$( cd "$y5b_dir" && SOURCE_DIR="$REPO_ROOT" bash "$VI" 2>&1 | grep -i 'pre-push' | head -1 )"
-if printf '%s' "$y5b" | grep -qF '(manual)' && printf '%s' "$y5b" | grep -q 'NOT gated'; then
+if printf '%s' "$y5b" | _gq -F '(manual)' && printf '%s' "$y5b" | _gq 'NOT gated'; then
   pass "Y5b: a project with NO pre-push hook reads as an action item — 'pushes are NOT gated' as a pass would be the auditor lying about the thing it exists to report"
 else
   fail_ "Y5b" "the missing-hook row was not an action item: ${y5b:-<no row>}"
@@ -790,7 +808,7 @@ cp "$CHECK" "$y5c_dir/scripts/check-pr-review.sh"; chmod +x "$y5c_dir/scripts/ch
 printf '#!/usr/bin/env bash\nexec bash scripts/check-pr-review.sh --from-hook\n' > "$y5c_dir/.git/hooks/pre-push"
 chmod 644 "$y5c_dir/.git/hooks/pre-push"
 y5c="$( cd "$y5c_dir" && SOURCE_DIR="$REPO_ROOT" bash "$VI" 2>&1 | grep -i 'pre-push' | head -1 )"
-if printf '%s' "$y5c" | grep -qF '(manual)' && printf '%s' "$y5c" | grep -q 'NOT executable'; then
+if printf '%s' "$y5c" | _gq -F '(manual)' && printf '%s' "$y5c" | _gq 'NOT executable'; then
   pass "Y5c: a delegating hook git will not run reads as an action item — 'git ignores it silently' printed as a pass is the [WARN] trap on the fourth row"
 else
   fail_ "Y5c" "the not-executable row was not an action item: ${y5c:-<no row>}"
@@ -819,9 +837,9 @@ y5d_rows="$(printf '%s' "$y5d" | grep -c .)"
 # made the same mistake a third time: demoting this row to `register_pass` with
 # identical wording passed until this conjunct was added. `(manual)` and
 # `(auto-fixable)` are the action-item suffixes; a bare `[OK]` is neither.
-if printf '%s' "$y5d" | grep -q 'predates the pre-push recipe' \
-   && printf '%s' "$y5d" | grep -qF '(manual)' \
-   && ! printf '%s' "$y5d" | grep -q 'lib present' \
+if printf '%s' "$y5d" | _gq 'predates the pre-push recipe' \
+   && printf '%s' "$y5d" | _gq -F '(manual)' \
+   && ! printf '%s' "$y5d" | _gq 'lib present' \
    && [ "$y5d_rows" = "1" ]; then
   pass "Y5d: a hook-templates lib that PREDATES the recipe is reported — presence passed the [ -f ] check while the recipe it feeds exits 2, which is the auditor asserting health against its own broken remedy"
 else
@@ -835,8 +853,8 @@ fi
 # absent-with.
 rm -f "$y5d_dir/scripts/lib/hook-templates.sh"
 y5d2="$( cd "$y5d_dir" && HOME="$y5d_dir" bash "$VI" 2>&1 | grep -E '^[[:space:]]*\[(OK|WARN|FAIL)\]' | grep -i 'hook-templates' | head -1 )"
-if printf '%s' "$y5d2" | grep -qF '(manual)' \
-   && printf '%s' "$y5d2" | grep -q 'missing'; then
+if printf '%s' "$y5d2" | _gq -F '(manual)' \
+   && printf '%s' "$y5d2" | _gq 'missing'; then
   pass "Y5d2: an absent lib with NO reachable source is still an action item — unfixable is not the same as fine, and it is the arm a project cut off from its orchestrator lands on"
 else
   fail_ "Y5d2" "absent-unfixable lib was not an action item: ${y5d2:-<no row>}"
@@ -860,7 +878,7 @@ y5e_row="$( cd "$y5e_dir" && bash "$VI" 2>&1 | grep -E '^[[:space:]]*\[(OK|WARN|
 ( cd "$y5e_dir" && bash "$VI" --auto-fix >/dev/null 2>&1 )
 y5e_has="$(grep -c 'soif_emit_prepush_preamble' "$y5e_dir/scripts/lib/hook-templates.sh" 2>/dev/null || printf '0')"
 y5e_rc="$( cd "$y5e_dir" && bash scripts/print-prepush-recipe.sh >/dev/null 2>&1; echo $? )"
-if printf '%s' "$y5e_row" | grep -qE '\((manual|auto-fixable)\)' \
+if printf '%s' "$y5e_row" | _gq -E '\((manual|auto-fixable)\)' \
    && [ "$y5e_has" != "0" ] && [ "$y5e_rc" -eq 0 ]; then
   pass "Y5e: with a reachable source the stale lib is an action item AND --auto-fix genuinely repairs it — the refreshed lib carries the emitter and the recipe exits 0"
 else
@@ -874,7 +892,7 @@ rm -f "$y5e_dir/scripts/lib/hook-templates.sh"
 y5f_row="$( cd "$y5e_dir" && bash "$VI" 2>&1 | grep -E '^[[:space:]]*\[(OK|WARN|FAIL)\]' | grep -i 'hook-templates' | head -1 )"
 ( cd "$y5e_dir" && bash "$VI" --auto-fix >/dev/null 2>&1 )
 y5f_has="$(grep -c 'soif_emit_prepush_preamble' "$y5e_dir/scripts/lib/hook-templates.sh" 2>/dev/null || printf '0')"
-if printf '%s' "$y5f_row" | grep -qE '\((manual|auto-fixable)\)' && [ "$y5f_has" != "0" ]; then
+if printf '%s' "$y5f_row" | _gq -E '\((manual|auto-fixable)\)' && [ "$y5f_has" != "0" ]; then
   pass "Y5f: an ABSENT lib with a reachable source is an action item and is genuinely delivered — the third arm of one decision, and the only one nothing was watching"
 else
   fail_ "Y5f" "row='$y5f_row' emitter_after_fix=$y5f_has (want non-zero)"
@@ -889,7 +907,7 @@ fi
 y6_missed=""
 for _spell in 'head -1 >/dev/null' 'sed 1q >/dev/null' 'tail -1 >/dev/null'; do
   _y="$(y_row "$(printf '#!/usr/bin/env bash\n%s\nbash scripts/check-pr-review.sh --from-hook || exit 1\n' "$_spell")")"
-  printf '%s' "$_y" | grep -q 'ALSO READS STDIN' || y6_missed="$y6_missed [$_spell]"
+  printf '%s' "$_y" | _gq 'ALSO READS STDIN' || y6_missed="$y6_missed [$_spell]"
 done
 if [ -z "$y6_missed" ]; then
   pass "Y6: buffered consumers are flagged too — above ~64 KB of ref list they stop draining and become byte-exact partial readers, which nothing announces"
@@ -901,9 +919,9 @@ fi
 # the ordinary way to disable something temporarily, and BOTH audit surfaces read
 # it as installed while pushes ran ungated.
 y5="$(y_row "$(printf '#!/usr/bin/env bash\n# temporarily disabled: bash scripts/check-pr-review.sh --from-hook\nexit 0\n')")"
-if ! printf '%s' "$y5" | grep -qF '(manual)'; then
+if ! printf '%s' "$y5" | _gq -F '(manual)'; then
   fail_ "Y5" "a hook with no live delegation was not reported as an ACTION ITEM: ${y5:-<no row>}"
-elif ! printf '%s' "$y5" | grep -q 'gate hook installed'; then
+elif ! printf '%s' "$y5" | _gq 'gate hook installed'; then
   pass "Y5: a hook whose delegation is COMMENTED OUT is not reported as installed — an auditor must not say the gate is on while pushes run ungated"
 else
   fail_ "Y5" "a commented-out delegation was reported as installed: $y5"
@@ -947,7 +965,7 @@ for _body in 'read -r a b c d; echo "BODY-SAW $a"' \
   z_hook "$_body"
   [ "$(z_rc "$z_unrev")" -ne 0 ] || z_bad="$z_bad [unreviewed-passed: ${_body%%;*}]"
   [ "$(z_rc "$z_head")"  -eq 0 ] || z_bad="$z_bad [reviewed-blocked: ${_body%%;*}]"
-  printf '%s' "$(z_run "$z_head")" | grep -q 'BODY-SAW' || z_bad="$z_bad [body-starved: ${_body%%;*}]"
+  printf '%s' "$(z_run "$z_head")" | _gq 'BODY-SAW' || z_bad="$z_bad [body-starved: ${_body%%;*}]"
 done
 if [ -z "$z_bad" ]; then
   pass "Z1: in front of four hook bodies — including a single-read partial consumer no static check can recognise — the preamble blocks the unreviewed sha, passes the reviewed one, AND the untouched body still sees the ref list"
@@ -963,7 +981,7 @@ z2_out="$( cd "$Z" && printf 'refs/heads/x %s refs/heads/x %s\n' "$z_head" "$ZER
   && PATH="$z_stub:$PATH" .git/hooks/pre-push < zrl 2>&1 )"
 z2_rc="$( cd "$Z" && printf 'refs/heads/x %s refs/heads/x %s\n' "$z_head" "$ZERO" > zrl \
   && PATH="$z_stub:$PATH" .git/hooks/pre-push < zrl >/dev/null 2>&1; echo $? )"
-if [ "$z2_rc" -ne 0 ] && printf '%s' "$z2_out" | grep -q 'cannot capture the ref list'; then
+if [ "$z2_rc" -ne 0 ] && printf '%s' "$z2_out" | _gq 'cannot capture the ref list'; then
   pass "Z2: if the capture itself fails the preamble REFUSES — a block that silently proceeds without the list is the gate switched off with extra steps"
 else
   fail_ "Z2" "rc=$z2_rc out: $(printf '%s' "$z2_out" | head -1)"
@@ -982,7 +1000,7 @@ z2b_out="$( cd "$Z" && printf 'refs/heads/x %s refs/heads/x %s\n' "$z_head" "$ZE
 z2b_rc="$( cd "$Z" && printf 'refs/heads/x %s refs/heads/x %s\n' "$z_head" "$ZERO" > zrl \
   && PATH="$z2b_stub:$PATH" .git/hooks/pre-push < zrl >/dev/null 2>&1; echo $? )"
 z2b_orphans="$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'tmp.*' -newer "$Z/zrl" 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$z2b_rc" -ne 0 ] && printf '%s' "$z2b_out" | grep -q 'could not capture the ref list' \
+if [ "$z2b_rc" -ne 0 ] && printf '%s' "$z2b_out" | _gq 'could not capture the ref list' \
    && [ "$z2b_orphans" = "0" ]; then
   pass "Z2b: a capture that REPORTS FAILURE stops the push AND leaves no orphaned temp file — the trap has to be armed before the capture, not after it"
 else
@@ -998,7 +1016,7 @@ fi
 Z3="$(newtmp)"; mk "$Z3"
 z3_out="$( cd "$Z3" && printf 'refs/heads/ghost\n' | bash "$CHECK" --from-hook 2>&1 )"
 z3_rc="$( cd "$Z3" && printf 'refs/heads/ghost\n' | bash "$CHECK" --from-hook >/dev/null 2>&1; echo $? )"
-if [ "$z3_rc" -ne 0 ] && printf '%s' "$z3_out" | grep -q 'NO sha'; then
+if [ "$z3_rc" -ne 0 ] && printf '%s' "$z3_out" | _gq 'NO sha'; then
   pass "Z3: a ref line with no sha REFUSES as malformed — it used to land in the deletion-only arm and print [OK] without reading the record at all"
 else
   fail_ "Z3" "rc=$z3_rc out: $(printf '%s' "$z3_out" | head -1)"
