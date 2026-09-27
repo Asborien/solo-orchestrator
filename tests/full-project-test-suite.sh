@@ -961,6 +961,9 @@ run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
 run_child_suite "tests/test-bl281-resume-after-115.sh" \
   "BL-281: --resume after a clean Section 11.5 must run Sections 12 and 13" \
   "BL-281 resume-after-115 tests FAILED (run tests/test-bl281-resume-after-115.sh for details)"
+run_child_suite "tests/test-upgrade-help-and-projectless.sh" \
+  "#419/#426/BL-177: upgrade-project.sh --help wins over every mode and a projectless run writes nothing" \
+  "upgrade help/projectless tests FAILED (run tests/test-upgrade-help-and-projectless.sh for details)"
 # BL-286: the TDD gate's branch axis resolves its base from the project's
 # recorded integration branch, so it stops exempting every commit on a
 # non-`main` trunk — and an absent key still behaves byte-identically.
