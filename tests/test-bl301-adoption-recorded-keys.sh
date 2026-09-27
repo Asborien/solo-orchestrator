@@ -607,9 +607,9 @@ mutate() {
 # proof: if the block is edited, re-measure and update them deliberately.
 # The three KEY-ESCAPE markers are in render_intake_file, ABOVE the anchor,
 # so their distances are negative.
-D_ESC_PIPE=-144
-D_ESC_NL=-143
-D_ESC_TICK=-142
+D_ESC_PIPE=-153
+D_ESC_NL=-152
+D_ESC_TICK=-151
 D_ANSWERS_READ=16
 D_UNREADABLE=67
 D_IS_OBJECT=17

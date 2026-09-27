@@ -525,23 +525,30 @@ else
   fi
 fi
 
-# S7 — PROJECT_INTAKE.md cannot be rewritten (`# BL-282-RENDER-STATUS`): the
-# answer and amendment are recorded, so the refusal must say the render is
-# what failed, and there is no [OK].
+# S7 — the render fails after the answer landed. Since `# BL-265-RENDER-STATUS`
+# render_intake_file returns non-zero and writes nothing when a jq step fails;
+# `completed_sections` as a string makes the Project Context jq fail (the
+# fixture of tests/test-bug010-intake-silent-paths.sh R5). Through this route
+# the refusal must say the render is what failed, with no [OK], and
+# PROJECT_INTAKE.md must be left byte-identical (`# BL-282-RERENDER`).
 S7="$(newtmp)/proj"
 if ! mk_project "$S7"; then
   fail_ "S7 setup" "could not build the fixture"
-elif [ "$(id -u)" = "0" ]; then
-  echo "  [SKIP] S7 — running as root, a read-only file would still be writable"
 else
-  chmod 0444 "$S7/PROJECT_INTAKE.md"
+  python3 - "$S7/.claude/intake-progress.json" <<'PYCS' || true
+import io, json, sys
+p = sys.argv[1]
+d = json.load(io.open(p, encoding="utf-8"))
+d["completed_sections"] = "1, 2"
+io.open(p, "w", encoding="utf-8").write(json.dumps(d, indent=2))
+PYCS
+  before_i="$(_cksum "$S7/PROJECT_INTAKE.md")"
   wiz "$S7" --set-answer monthly_budget "$NEW_BUDGET"
-  chmod 0644 "$S7/PROJECT_INTAKE.md" 2>/dev/null
   if [ "$WIZ_RC" -eq 1 ] && [ "$(ok_lines "$S7")" -eq 0 ] && grep -q 'could not be re-rendered' "$S7/run.out" \
-     && [ "$(jq_answer monthly_budget "$S7")" = "$NEW_BUDGET" ]; then
-    pass "S7 — an unwritable PROJECT_INTAKE.md refuses (rc=$WIZ_RC) with 'could not be re-rendered' and no [OK]"
+     && [ "$(jq_answer monthly_budget "$S7")" = "$NEW_BUDGET" ] && [ "$before_i" = "$(_cksum "$S7/PROJECT_INTAKE.md")" ]; then
+    pass "S7 — a render that fails after the write refuses (rc=$WIZ_RC) with 'could not be re-rendered', no [OK], PROJECT_INTAKE.md byte-identical"
   else
-    fail_ "S7" "rc=$WIZ_RC (want 1); [OK] lines=$(ok_lines "$S7") (want 0); refusal $(grep -q 'could not be re-rendered' "$S7/run.out" && echo present || echo missing)"
+    fail_ "S7" "rc=$WIZ_RC (want 1); [OK] lines=$(ok_lines "$S7") (want 0); refusal $(grep -q 'could not be re-rendered' "$S7/run.out" && echo present || echo missing); intake $([ "$before_i" = "$(_cksum "$S7/PROJECT_INTAKE.md")" ] && echo unchanged || echo CHANGED)"
   fi
 fi
 
@@ -884,8 +891,7 @@ fi
 echo "=== M — mutation proofs on a mirror ==="
 
 for mark in BL-282-SET-ANSWER-BEGIN BL-282-SET-ANSWER-END BL-282-KEY-REFUSE BL-282-RERENDER BL-282-HINT-COUNT BL-282-WRITE-STATUS BL-282-COMPETENCY-DOMAINS BL-282-ARM-FAILCLOSED \
-            BL-282-KEY-CHARSET BL-282-GATE-KEYS BL-282-INFRA-KEYS BL-282-ESCALATION-KEYS BL-282-INDEX-DIGITS BL-282-FAMILY-WHOLE BL-282-READ-BACK \
-            BL-282-RENDER-STATUS; do
+            BL-282-KEY-CHARSET BL-282-GATE-KEYS BL-282-INFRA-KEYS BL-282-ESCALATION-KEYS BL-282-INDEX-DIGITS BL-282-FAMILY-WHOLE BL-282-READ-BACK; do
   n="$(grep -c "$mark" "$WIZARD" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
   [ "$n" = "1" ] \
     && pass "M0 — '$mark' occurs exactly once in intake-wizard.sh" \
@@ -1246,22 +1252,20 @@ if mp_mutate MP14 "$SEDS/mp14.sed" BL-282-READ-BACK; then
   fi
 fi
 
-# MP15 — the render's status discarded again: `return "$rc"` becomes
-# `return 0`, so an unwritable PROJECT_INTAKE.md reports [OK] at exit 0, the
-# defect as first measured. S7 is what stops it.
+# MP15 — the re-render's refusal discarded (`|| true` on `# BL-282-RERENDER`):
+# a failed render then ends in [OK] at exit 0. S7 is what stops it.
 cat > "$SEDS/mp15.sed" <<'SED'
-/# BL-282-RENDER-STATUS$/s/return "\$rc"/return 0/
+/# BL-282-RERENDER$/s/ || {.*}\(  # BL-282-RERENDER\)$/ || true\1/
 SED
-if [ "$(id -u)" != "0" ] && mp_mutate MP15 "$SEDS/mp15.sed" BL-282-RENDER-STATUS; then
+if mp_mutate MP15 "$SEDS/mp15.sed" BL-282-RERENDER; then
   PD="$(newtmp)/proj"
   if ! mk_project "$PD" "$MP_TGT"; then fail_ "MP15 setup" "could not build the mutant's fixture"; else
-    chmod 0444 "$PD/PROJECT_INTAKE.md"
+    python3 -c 'import io,json,sys; p=sys.argv[1]; d=json.load(io.open(p)); d["completed_sections"]="1, 2"; io.open(p,"w").write(json.dumps(d))' "$PD/.claude/intake-progress.json"
     wiz "$PD" --set-answer monthly_budget "$NEW_BUDGET"
-    chmod 0644 "$PD/PROJECT_INTAKE.md" 2>/dev/null
     if [ "$WIZ_RC" -eq 0 ] && [ "$(ok_lines "$PD")" -ge 1 ] && ! grep -q -F "$NEW_BUDGET" "$PD/PROJECT_INTAKE.md"; then
-      pass "MP15 (MUTATION) — with the render's status discarded an unwritable PROJECT_INTAKE.md prints [OK] at exit 0 and never gains the row: S7 is what stops it"
+      pass "MP15 (MUTATION) — with the re-render's refusal discarded a failed render prints [OK] at exit 0 and PROJECT_INTAKE.md never gains the row: S7 is what stops it"
     else
-      fail_ "MP15 (MUTATION)" "rc=$WIZ_RC [OK] lines=$(ok_lines "$PD") — discarding the render status changed nothing S7 can see"
+      fail_ "MP15 (MUTATION)" "rc=$WIZ_RC [OK] lines=$(ok_lines "$PD") — discarding the refusal changed nothing S7 can see"
     fi
   fi
 fi

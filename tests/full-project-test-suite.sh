@@ -961,6 +961,9 @@ run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
 run_child_suite "tests/test-bl281-resume-after-115.sh" \
   "BL-281: --resume after a clean Section 11.5 must run Sections 12 and 13" \
   "BL-281 resume-after-115 tests FAILED (run tests/test-bl281-resume-after-115.sh for details)"
+run_child_suite "tests/test-bug010-intake-silent-paths.sh" \
+  "BUG-010: the intake wizard refuses an unreadable progress file, stops at end of input, and never completes over a failed render" \
+  "BUG-010 intake silent-path tests FAILED (run tests/test-bug010-intake-silent-paths.sh for details)"
 # BL-282: once a section was complete no flag could correct a recorded
 # answer; --set-answer writes through save_answer, records the amendment,
 # refuses unknown keys, and re-renders PROJECT_INTAKE.md.
