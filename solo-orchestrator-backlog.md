@@ -18018,9 +18018,9 @@ a hoist is not taken).
 
 **Status:** Open — **DECIDED 2026-09-17 (Karl): option 3 below, the entry's own recommendation.** The
 contributor who filed this (also issue #385, which proposed scanning `tool_input`) is invited to build it;
-adversarial review before merge, as every PR. Built on branch `fix/bl277-detector-authorship`, PR #454, to
-that decision and to the ruling below, including both of its requests; see "Build note" at the end of
-this entry for what changed, the suites, the mutants, the tallies and the residuals.
+adversarial review before merge, as every PR. Built in PR #454, to that decision and to the ruling
+below, including both of its requests; see "Build note" at the end of this entry for what changed, the
+suite, the mutants and the residuals.
 **RULED 2026-09-27 (Karl), on PR #454's review: files the agent WRITES must still be scanned.** The PR's
 Bash-only PostToolUse matcher was justified as removing the Read half, but Read output was never
 scanned (Read's text sits at `toolUseResult.file.content`); a top-level `content` is a Write, both
@@ -18215,8 +18215,7 @@ it: output scanning is kept on purpose, so reading the ledger through a Bash too
 what changes is that they carry `actor: "tool_output"` and raise nothing. The suite's L1 pins what is
 true — reading the ledger back mints no `claude` row — and the growth is listed as a residual below.
 
-**Build note (2026-09-18, branch `fix/bl277-detector-authorship`, base `4d9c172`).** Five changed sites,
-each marked:
+**Build note.** The changed sites, each marked:
 
 - `# BL-277-AUTHORSHIP` in `scripts/hooks/bypass-detector.sh`: `ACTOR` and `USER_RESPONSE` are set from
   the event before the row loop — Stop, and a PostToolUse whose `tool_name` is `Write`, give `claude` /
@@ -18238,8 +18237,8 @@ each marked:
   (the `_is_git_commit` test paired with the flag grep, directly above the BL-015 block), with its own
   reason, and never depended on this hook — that arm predates BL-029. "Detected" therefore holds
   through the gate, not through a ledger row: the detector never scanned `tool_input`, so a
-  verify-skipping commit that actually executes leaves no row, before and after (review probe P3; G1
-  says which arm it pins). The sentinel's question is main's text, unchanged: the gate's deny reason
+  verify-skipping commit that actually executes leaves no row, before and after (G1 says which arm it
+  pins). The sentinel's question is main's text, unchanged: the gate's deny reason
   relays it to the model, so it names no way to close the proposal as a false positive. Pinned by S3
   (the relayed question is present and names none of `false-positive`, `false positive`,
   `false_positive` or `--reason`).
@@ -18266,7 +18265,7 @@ each marked:
   reason), D3 (decline and accept record what they did before, and neither writes a
   `false_positive_reason`, even when handed a `--reason`). On a stub install without
   `scripts/lib/helpers-core.sh`, `# BL-277-FP-STUB` supplies a `prompt_yes_no` that refuses the close
-  and names the missing file, where it had printed "command not found" and "cancelled" (D8).
+  and names the missing file (D8).
 - `# BL-277-MATCHER` in the hook roster, `scripts/lib/claude-settings.sh` (`soif_register_hook_roster`,
   which `init.sh` sources since #451 moved the roster out of it; this entry's hunk moved with it, inside
   the greenfield branch of the maintainer's `# BL-242-SETTINGS-BL277` guard, which is unchanged): the
@@ -18291,18 +18290,13 @@ each marked:
   literal (now beside `# BL-277-AUTHORSHIP`) has always been `recorded_only` and the document now says
   so.
 
-**Suites.** `tests/test-bl277-detector-authorship.sh` is hermetic (temp trees,
+**Suite.** `tests/test-bl277-detector-authorship.sh` is hermetic (temp trees,
 the real scripts over stdin, the roster sourced into a temp tree, `init.sh` never run) and is in the
-`tests.yml` unit lane. At the 25 September re-cut it absorbed the full-lane suite: #451 made the roster
-sourceable, so R6 pins the matcher in the PR-blocking lane (review finding R-277-1: a matcher widened to
-`Bash|Read|Edit|Write` had survived every unit-lane suite), and it replaced R4's static read of the
-probe and the full-lane R1–R3 and M7, which were then removed (R-277-2). Until then,
-`tests/test-bl277-matcher-registration.sh` ran `init.sh --non-interactive` twice (R1–R3 and M7) and was
-in `tests/full-project-test-suite.sh` ONLY: `init.sh` installs the Claude Dev Framework into `$HOME`,
-cloning it from GitHub when absent and pulling the developer's real clone when present (review
-reproduced a 1.3 MB clone plus `~/.claude`, `~/.claude.json`, `~/.npm` and `~/.semgrep` appearing under
-an empty `HOME`), which is not hermetic and is the membership rule CLAUDE.md states. The first cut had
-those cases in the unit suite and the unit lane; the review's block finding R-385-1 is what split them.
+`tests.yml` unit lane. Because the roster is sourced, R6 pins the matcher in the PR-blocking lane
+without running `init.sh`, which installs the Claude Dev Framework into `$HOME` and so, by CLAUDE.md's
+membership rule, stays out of the unit lane. The operator's side of the false-positive close runs under
+`script(1)` (BSD or util-linux) with its answer typed at the terminal: "y" for D1, and "n" and a bare
+Enter for D7.
 Every fixture in the suite is assembled from split literals (see the correction above); a scan of the file
 with the six regexes finds zero matches. Controls: A5 (T1's exact envelope still writes exactly one
 row), A6 (clean output writes nothing), G1, G3, D3, X1 (non-JSON, an unknown event, a string
@@ -18314,39 +18308,16 @@ their envelopes are Stop events; the PostToolUse halves are A3 and A2), `tests/t
 T1, T2, T2b, T4 (Stop envelopes) plus a new T1b (a tool-output match writes a row and no sentinel),
 `tests/test-bl029-integration.sh` T1 (lookup by matcher), a new T2b (the tool-output row raised no
 sentinel) ahead of T3 (which now raises it with a Stop event), and T5's actor whitelist (`tool_output`
-added — with the T2 row as the fixture behind it, so the entry can fail).
-
-**Tallies, re-measured on the COMMITTED suites in a detached worktree at `4d9c172`** (the first cut's
-entry said "11 / 9", a figure taken before D4 and the M section were added; review finding R-385-2).
-Unit suite RED: **10 / 24** — of the 19 behavioural cases, 9 fail (A1, A2, A3, A4, L1, K1, G2, D1,
-R4), each for the reason the fix removes (`1 row(s) attributed to claude`, `a sentinel was raised from
-tool output`, `user_response=PENDING`, `claude rows went 1 -> 3 by reading the ledger`, `3 of 3 row(s)
-attributed to claude`, `a ledger holding only tool-output rows blocked the commit`, `rc=1` on
-`false-positive`, `no jq probe within 6 lines after the marker`); the 7 marker checks fail (markers
-absent) and the 8 mutants report SETUP (marker not found), never a kill; the controls and D2 pass at
-base (D2 by the unknown-decision refusal, which is why M5 and M6 exist). Full-lane suite RED: **2 / 3**
-— R1 fails (`registrations under matcher Bash=0`), M0 fails, M7 reports SETUP; R2 and R3 pass as
-controls. GREEN after the change: unit **34 / 0** and full-lane **5 / 0** on bash 3.2.57 (`/bin/bash`,
-macOS 26.4), the same on bash 5.3.15 (Homebrew). Neighbours after the change, both shells: `test-bypass-detector` 15 / 0,
-`test-bypass-sentinel` 6 / 0 (was 5), `test-bl029-integration` 9 / 0 (was 8),
-`test-pending-approval-resolve-decision` 8 / 0, `test-pending-approval` rc 0,
-`test-bypass-detector-session-id` 5 / 0, `test-bl278-sentinel-root` 10 / 0, `test-bypass-audit-lib`
-10 / 0, `test-bypass-audit-integrity` 8 / 0, `test-verify-install-bl030-coverage` 8 / 0. Before the
-neighbours were retargeted, the change alone turned `test-bypass-detector` 13 / 2 (T5, T12),
-`test-bypass-sentinel` rc 2 at T1, `test-bl029-integration` 5 / 3 (T1, T3, T5) — the six cases named
-above, no others. `scripts/run-lints.sh` 16 / 16; `lint-tests-registered.sh` registered;
-`shellcheck -S error` clean on every touched script and suite. The unit suite is registered in both
-`tests/full-project-test-suite.sh` and the `tests.yml` unit lane; the full-lane suite in the aggregator
-only (`lint-tests-registered.sh --list`: `registered` and `unit-lane-exempt:init-sh-invoker`).
+added — with the T2 row as the fixture behind it, so the entry can fail). The suite is registered in both
+`tests/full-project-test-suite.sh` and the `tests.yml` unit lane.
 
 **Mutants, each applied by the suite's `mutate` helper, which proves location and landing before any
 verdict counts.** Location: the operative text occurs exactly once in the file and its line lies within
 N lines AFTER the marker. Landing: the operative text is gone, the replacement is present exactly once
 more than before and ON the operative line, `diff` shows one line removed and one added, and `bash -n`
 passes. A mutant that fails any of that is reported as a SETUP failure, never as a kill. Text reaches
-`awk` through `ENVIRON`, never `-v`, because `-v` applies backslash escapes: the first cut passed the
-init.sh operative (which contains `\"`) through `-v`, awk searched for `"` instead, found nothing, and
-M7 reported `operative text occurs 0 times` — the quoting trap made visible rather than silent.
+`awk` through `ENVIRON`, never `-v`, because `-v` applies backslash escapes, so an operative holding
+`\"` would be searched for as `"`.
 
 | Mutant | File, marker | Distance | Operative → replacement | Killed by | Survives |
 |---|---|---|---|---|---|
@@ -18367,20 +18338,16 @@ M7 reported `operative text occurs 0 times` — the quoting trap made visible ra
 | M14 | lib, `# BL-277-FP-RECORD` | ≤ 3 | the condition removed, the reason written onto every closed row (the maintainer's mutant) | D3 | D1 |
 | M15 | pending-approval, `# BL-277-FP-REASON` | ≤ 6 | `[[:space:]]` narrowed to a space (the maintainer's mutant) | D2 | D1 |
 | M16 | pending-approval, `# BL-277-FP-OPERATOR` | ≤ 8 | the terminal guard → `if false; then` | D5 | D1 |
-| M17 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 5 | `[[:space:]]` narrowed to a space (review E21) | D4 | — |
-| M18 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 3 | `false-positive)` widened to `false-positive\|*)` (review E23) | D6 | D1 |
+| M17 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 5 | `[[:space:]]` narrowed to a space | D4 | — |
+| M18 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 3 | `false-positive)` widened to `false-positive\|*)` | D6 | D1 |
 | M19 | pending-approval, `# BL-277-FP-CONFIRM` | ≤ 3 | the confirmation skipped: `if false && ! prompt_yes_no …` | D7 | D1 |
+| M23 | pending-approval, `# BL-277-FP-CONFIRM` | ≤ 3 | the confirmation's default flipped to `Y` | D7 (its Enter arm) | — |
 | M20 | pending-approval on a stub install, `# BL-277-FP-STUB` | ≤ 4 | the fallback `prompt_yes_no` renamed away | D8 | — |
 | M21 | lib, `# BL-277-FP-RECORD` | ≤ 2 | the close widened to `user_response == "n/a"` rows | D9 | D1 |
 | M22 | lib, `# BL-277-FP-RECORD` | ≤ 2 | the close widened to `escalation` rows | D9 | D1 |
 
-All killed on both shells (M9 and M10 added, and M7 and M8 moved onto R6, at the 25 September re-cut); each "survives" column is asserted too, so a kill that came from
-breaking something else is reported as such. Review ran four of its own (the event test inverted at
-distance 6; the reason assignment dropped at distance 51; the reason not passed to the library at
-distance 42; the probe regressed): the first three were killed by the committed suite, the fourth
-survived because nothing reached the probe — M8 is its repair, killed by R4 then and by R6 since the re-cut, and the two markers at
-distances 51 and 42 (`# BL-277-FP-RECORD`, `# BL-277-FP-PASS`) now sit on the lines those mutants
-anchored to.
+Each "survives" column is asserted too, so a kill that came from breaking something else is reported
+as such.
 
 **The maintainer's review of #454 (2026-09-27), and what changed for it.** The ruling is recorded in
 the Status paragraph above; each point of the review, with the change and the cases that pin it:
@@ -18394,9 +18361,9 @@ the Status paragraph above; each point of the review, with the change and the ca
   are residual 8.
 - **`# BL-277-FP-RECORD` was unpinned.** D3 now closes by `accept` and by `decline`, each handed a
   `--reason`, and asserts no `false_positive_reason` is written; the maintainer's mutant is M14, killed
-  by D3. Measured before the change: the 9c030d0 suite passed 38 / 0 with that mutant applied.
+  by D3. Before D3 changed, the suite passed in full with that mutant applied.
 - **Minor.** D2 gains tab-only and newline-only reasons, which kill the maintainer's `[[:space:]]`
-  narrowing (M15; the 9c030d0 suite with it applied: D2 passed, and only M6's text check failed). A4's
+  narrowing (M15; before, with it applied, D2 passed and only M6's text check failed). A4's
   cases that no Bash result can arrive as are replaced by the real shape (residual 7). The echoed
   proposal is residual 6.
 
@@ -18404,17 +18371,17 @@ the Status paragraph above; each point of the review, with the change and the ca
 1. **The ledger still grows on reads through Bash.** Option 3 keeps output scanning, so `cat` or `grep`
    of a file with the vocabulary appends `tool_output` rows — three per read of the template, and the
    ledger read back through Bash still quotes itself. Nothing blocks, but `## BL-161:`'s point stands:
-   every row dirties the tree. **Corrected 2026-09-27 (the maintainer's measurement on #454, then
-   our review's):** an earlier version said the matcher removed the `Read`-tool half of the growth.
+   every row dirties the tree. **Corrected 2026-09-27 (the maintainer's measurement on #454):** an
+   earlier version said the matcher removed the `Read`-tool half of the growth.
    There was none: a `Read` result carries the file under `file.content`, which none of the four keys
    the detector reads (`stdout`, `stderr`, `output`, top-level `content`) reaches, so `Read` results
    were never scanned, before or after. Three other tools do carry a top-level `content`: `Write` (the
    file written, hence `Bash|Write`), `Grep` in content mode, and `Agent` (a subagent's report). On
    new projects the matcher stops scanning `Grep` and `Agent` results, so it does reduce the growth by
    the `Grep` share; residual 10 is what it costs for `Agent`. Measured over transcript results, each
-   joined to its tool name: our review's 400 transcripts, `Grep` 316 of 583 and `Agent` 131 of 1087
-   reach a scanned key; our own 150 from the last three days, `Grep` 140 of 272 and `Agent` 26 of 86;
-   `Read` 0 in both. Reducing the Bash half means deciding what output is worth a row, which is the
+   joined to its tool name, on the contributor's machine on 27 September: in the 400 most recent
+   transcripts, `Grep` 316 of 583 and `Agent` 131 of 1087 reach a scanned key; in the 150 modified in
+   the three days before, `Grep` 140 of 272 and `Agent` 26 of 86; `Read` 0 in both. Reducing the Bash half means deciding what output is worth a row, which is the
    maintainer's scan-surface call.
 2. **Existing projects keep their unscoped registration.** No upgrade path rewrites `settings.json`
    hook groups: `upgrade-project.sh --sync-framework` delivers the three changed scripts (all in the
@@ -18474,18 +18441,13 @@ the Status paragraph above; each point of the review, with the change and the ca
     reasoning as the `Write` ruling would scan it as authored (`Bash|Write|Agent`); that is a scan-scope
     call for the maintainer and is put to him on #454, not built.
 
-**Container run.** Recorded in the PR body: both suites and the neighbours in `ubuntu:24.04` as a
-non-root user, `--platform linux/amd64` (CLAUDE.md's own note on ARM instability); the unit suite with
-NO framework clone in `$HOME`, the full-lane suite with the clone, node and a git identity present.
-One measurement worth keeping here because it is pre-existing and easy to misread as this change's:
-`tests/test-bl029-integration.sh` exits 128 in that image with no output at all, identically at base
-and on the branch. Review traced it (R-385-4): the suite provisions its project with an unguarded
-`( cd /tmp && bash init.sh … )` under `set -e`, and `init.sh`'s initial commit fails for want of a
-global git identity (`Author identity unknown`), so the suite exits with `init.sh`'s status before
-printing a line; `settings.json` is already written by then, which is why the full-lane suite's R
-cases pass in the same image. With an identity configured, the suite runs. Not this change's
-regression; a `|| exit 1` with a message on that subshell, or a fixture identity, is a separate
-one-line follow-up.
+**A pre-existing failure, easy to misread as this change's.** Where no global git identity exists (a
+bare `ubuntu:24.04` container, or a temporary `HOME`), `tests/test-bl029-integration.sh` exits 128 with
+no output, identically before and after this change. The suite provisions its project with an
+unguarded `( cd /tmp && bash init.sh … )` under `set -e`, and `init.sh`'s initial commit fails for want
+of a git identity (`Author identity unknown`), so the suite exits with `init.sh`'s status before
+printing a line. With an identity configured, the suite runs. A `|| exit 1` with a message on that
+subshell, or a fixture identity, is a separate one-line follow-up.
 
 **Related:** `## BL-029:` (the detector, and the only backlog family that has ever touched this file —
 swept by file across full history: `scripts/hooks/bypass-detector.sh` and `scripts/lib/bypass-patterns.sh`
