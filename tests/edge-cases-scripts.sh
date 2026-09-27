@@ -718,6 +718,7 @@ with open('$E21_DIR/.claude/intake-progress.json', 'w') as f:
     extract_file=$(mktemp)
     awk '/^load_progress\(\) \{/,/^\}/' "$REPO_DIR/scripts/intake-wizard.sh" > "$extract_file"
     print_warn() { echo "WARN: $1"; }
+    print_fail() { echo "FAIL: $1"; }
     PROGRESS_FILE="$E21B_DIR/.claude/intake-progress.json"
     LAST_SECTION=0
     COMPLETED_SECTIONS=""
@@ -730,18 +731,17 @@ with open('$E21_DIR/.claude/intake-progress.json', 'w') as f:
     echo "LP_LAST_SECTION=$LAST_SECTION"
   ) || result=$?
 
-  # On malformed JSON the python helper inside load_progress raises
-  # (json.JSONDecodeError) — visible in the captured stderr — and
-  # writes nothing to the tmpfile that gets sourced, so LAST_SECTION
-  # stays at its pre-call default (0). The function's trailing
-  # `rm -f` returns 0, so we can't rely on rc alone; we assert the
-  # real, observable side-effects (default state + python traceback)
-  # that prove the actual bash function ran, not a python re-impl.
-  if echo "$output" | grep -q "^LP_LAST_SECTION=0$" \
-     && echo "$output" | grep -qE "JSONDecodeError|Traceback"; then
-    pass "E21: malformed progress JSON exercises real load_progress (LAST_SECTION stays 0, python raises)"
+  # `## BUG-010:` defect (1) — this case used to ASSERT the defect: a raw
+  # python traceback and rc 0 from the trailing `rm -f`, after which
+  # --resume carried on. load_progress now refuses (# BUG-010-LOAD-REFUSE):
+  # non-zero, LAST_SECTION untouched, the reason named, no traceback.
+  if echo "$output" | grep -qE "^LP_RC=[1-9]" \
+     && echo "$output" | grep -q "^LP_LAST_SECTION=0$" \
+     && echo "$output" | grep -q "not readable JSON" \
+     && ! echo "$output" | grep -q "Traceback"; then
+    pass "E21: malformed progress JSON is refused by the real load_progress (rc!=0, LAST_SECTION stays 0, reason named)"
   else
-    fail "E21: malformed JSON should leave LAST_SECTION=0 with python traceback, got: $output"
+    fail "E21: malformed JSON should be refused with rc!=0 and a named reason, got: $output"
   fi
 else
   skip "E21: python3 not available"
