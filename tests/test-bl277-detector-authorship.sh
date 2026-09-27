@@ -37,10 +37,11 @@
 #       ledger holding only tool-output rows does not block; an authored match
 #       does.
 #   D*  the third disposition of scripts/pending-approval.sh, which is
-#       operator-only: refused without a terminal on stdin, the same guard as
-#       `test-gate.sh --unrecord-feature` and `process-checklist.sh --reset`.
-#       The operator's side runs under a pseudo-terminal from script(1); P0
-#       proves the pseudo-terminal is real, so D5's refusal is the guard's.
+#       operator-only: refused without a terminal on stdin, then confirmed at a
+#       [y/N] prompt, the same two steps as `test-gate.sh --unrecord-feature`
+#       and `process-checklist.sh --reset`. The operator's side runs under a
+#       pseudo-terminal from script(1) and types its answer; P0 proves the
+#       pseudo-terminal is real, so D5's refusal is the guard's.
 #   X*  malformed hook input.
 #   R5  the hook roster (scripts/lib/claude-settings.sh) in adoption mode
 #       still registers no PostToolUse detector: the maintainer's
@@ -335,26 +336,39 @@ run_pa() {
   PA_RC=$?
   return 0
 }
-# run_tty <dir> <command...> -> TTY_RC — the operator's side: the command runs
-# with a pseudo-terminal on stdin, from BSD or util-linux script(1). It reaches
-# script(1) as a generated file, so arguments holding tabs or newlines survive
-# util-linux's single command string, and its exit code comes back through a
-# file. No script(1), or a command that never ran, leaves TTY_RC=NORUN, which
-# every caller treats as a failure.
+# run_tty <dir> <answer> <command...> -> TTY_RC — the operator's side: the
+# command runs with a pseudo-terminal on stdin, from BSD or util-linux
+# script(1), and <answer> (if not empty) is typed at it. It reaches script(1) as
+# a generated file, so arguments holding tabs or newlines survive util-linux's
+# single command string, and its exit code comes back through a file. No
+# script(1), or a command that never ran, leaves TTY_RC=NORUN, which every
+# caller treats as a failure.
+# The answer is typed only once the command is about to run: BSD script(1)
+# discards input that arrives while it sets the terminal up. CI and
+# SOIF_NONINTERACTIVE are cleared, as they are in an operator's own terminal;
+# prompt_yes_no answers N under either.
 run_tty() {
-  local d="$1" w; shift
+  local d="$1" ans="$2" w; shift 2
   w="$(newtmp)"
-  { printf 'cd %q || exit 99\n' "$d"; printf '%q ' "$@"; printf '>/dev/null 2>&1\n'
+  { printf 'unset CI SOIF_NONINTERACTIVE\n'; printf 'cd %q || exit 99\n' "$d"; printf ': > %q\n' "$w/ready"
+    printf '%q ' "$@"; printf '>/dev/null 2>&1\n'
     printf 'printf "%%s" "$?" > %q\n' "$w/rc"; } > "$w/run.sh"
+  _tty_feed() {
+    local i=0
+    while [ ! -e "$w/ready" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+    if [ -n "$ans" ]; then printf '%s\n' "$ans"; fi
+  }
   if script --version >/dev/null 2>&1; then
-    script -qec "bash $(printf '%q' "$w/run.sh")" /dev/null </dev/null >/dev/null 2>&1
+    _tty_feed | script -qec "bash $(printf '%q' "$w/run.sh")" /dev/null >/dev/null 2>&1
   else
-    script -q /dev/null bash "$w/run.sh" </dev/null >/dev/null 2>&1
+    _tty_feed | script -q /dev/null bash "$w/run.sh" >/dev/null 2>&1
   fi
   TTY_RC="$(cat "$w/rc" 2>/dev/null || printf 'NORUN')"
   return 0
 }
-run_pa_tty() { local script="$1" d="$2"; shift 2; run_tty "$d" bash "$script" "$@"; PA_RC="$TTY_RC"; return 0; }
+# run_pa_tty <script> <project> args... -> PA_RC — the operator answers
+# ${PA_ANSWER-y} at the confirmation.
+run_pa_tty() { local script="$1" d="$2"; shift 2; run_tty "$d" "${PA_ANSWER-y}" bash "$script" "$@"; PA_RC="$TTY_RC"; return 0; }
 chk_fp_closes() {
   local pa="$1" d ur fo why
   d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
@@ -400,14 +414,43 @@ chk_fp_needs_terminal() {
   [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] || { echo "a reason was written by a refused close"; return 1; }
   return 0
 }
+# D7 — the operator's side, well-formed, but the operator answers no, or just
+# presses Enter (the default is N). Cancelled as --unrecord-feature and --reset
+# cancel: rc 0, nothing moves.
+chk_fp_operator_declines() {
+  local pa="$1" d ans
+  for ans in n ""; do
+    d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+    PA_ANSWER="$ans" run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+    [ "$PA_RC" = "0" ] || { echo "answer '$ans': rc=$PA_RC, want 0 (cancelled)"; return 1; }
+    [ -f "$(sentinel "$d")" ] || { echo "answer '$ans': the sentinel was removed"; return 1; }
+    [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "answer '$ans': the row was closed"; return 1; }
+    [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] || { echo "answer '$ans': a reason was written"; return 1; }
+  done
+  return 0
+}
 # The library guard on its own: scripts/pending-approval.sh refuses first, so
 # without this case the library's refusal is never reached by any test.
 chk_lib_refuses_empty_reason() {
+  local lib="$1" d rc shape why
+  for shape in blank tab newline; do
+    case "$shape" in blank) why="  " ;; tab) why="$(printf '\t')" ;; newline) why="
+" ;; esac
+    d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+    ( . "$lib" && bypass_audit_close_pending "$d" false-positive "$why" ) >/dev/null 2>&1; rc=$?
+    [ "$rc" -ne 0 ] || { echo "$shape reason: the library closed rows as false_positive"; return 1; }
+    [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "$shape reason: the row was closed by a refused close"; return 1; }
+  done
+  return 0
+}
+# D6 — the library refuses a decision it does not know, even with a reason, so
+# a widened false-positive pattern cannot turn a typo into a false_positive close.
+chk_lib_refuses_unknown() {
   local lib="$1" d rc
   d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
-  ( . "$lib" && bypass_audit_close_pending "$d" false-positive "  " ) >/dev/null 2>&1; rc=$?
-  [ "$rc" -ne 0 ] || { echo "the library closed rows as false_positive with a blank reason"; return 1; }
-  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the row was closed by a refused close"; return 1; }
+  ( . "$lib" && bypass_audit_close_pending "$d" accpet "$REASON_FP" ) >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] || { echo "the library accepted the decision 'accpet'"; return 1; }
+  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "an unknown decision closed the row as $(q "$d" '.[0].user_response')"; return 1; }
   return 0
 }
 # D3 — accept and decline are unchanged, and carry no false_positive_reason:
@@ -540,7 +583,7 @@ else fail_ "G3" "$why"; fi
 
 echo "=== D — closing a sentinel as a false positive ==="
 p="$(newtmp)"
-run_tty "$p" bash -c '[ -t 0 ]'; p0_tty="$TTY_RC"
+run_tty "$p" "" bash -c '[ -t 0 ]'; p0_tty="$TTY_RC"
 ( cd "$p" && bash -c '[ -t 0 ]' </dev/null ); p0_pipe=$?
 if [ "$p0_tty" = "0" ] && [ "$p0_pipe" -ne 0 ]; then
   pass "P0 (control) — the operator's side has a terminal on stdin and the agent's side has none"
@@ -553,8 +596,12 @@ if why="$(chk_fp_refuses_empty_reason "$PA")"; then pass "D2 — a missing, empt
 else fail_ "D2" "$why"; fi
 if why="$(chk_fp_needs_terminal "$PA")"; then pass "D5 — with no terminal on stdin a well-formed false-positive close is refused: non-zero, sentinel kept, row PENDING, no reason written"
 else fail_ "D5" "$why"; fi
-if why="$(chk_lib_refuses_empty_reason "$LIB")"; then pass "D4 — bypass_audit_close_pending itself refuses a blank reason and closes nothing"
+if why="$(chk_fp_operator_declines "$PA")"; then pass "D7 — the operator answers no, or presses Enter, at the confirmation: cancelled, rc 0, sentinel kept, row PENDING, no reason written"
+else fail_ "D7" "$why"; fi
+if why="$(chk_lib_refuses_empty_reason "$LIB")"; then pass "D4 — bypass_audit_close_pending itself refuses a blank, tab-only or newline-only reason and closes nothing"
 else fail_ "D4" "$why"; fi
+if why="$(chk_lib_refuses_unknown "$LIB")"; then pass "D6 — bypass_audit_close_pending refuses an unknown decision given with a reason, and closes nothing"
+else fail_ "D6" "$why"; fi
 if why="$(chk_decline_still_declines "$PA")"; then pass "D3 — decline and accept record what they did before, and write no false_positive_reason"
 else fail_ "D3" "$why"; fi
 
@@ -579,7 +626,7 @@ else fail_ "X1" "$x_fail"; fi
 echo "=== R — the hook roster, sourced ==="
 if why="$(chk_adoption_no_post "$ROSTER")"; then pass "R5 (control) — adoption mode still registers no PostToolUse detector, greenfield does, both keep Stop"
 else fail_ "R5" "$why"; fi
-if why="$(chk_roster_scoped "$ROSTER")"; then pass "R6 — the roster run twice: one detector, under matcher Bash and nowhere else; Stop once; tracker and recorder unscoped"
+if why="$(chk_roster_scoped "$ROSTER")"; then pass "R6 — the roster run twice: one detector, under matcher Bash|Write and nowhere else; Stop once; tracker and recorder unscoped"
 else fail_ "R6" "$why"; fi
 
 echo "=== M — markers and mutants ==="
@@ -592,6 +639,7 @@ for spec in \
   "$PA|# BL-277-FP-REASON" \
   "$PA|# BL-277-FP-PASS" \
   "$PA|# BL-277-FP-OPERATOR" \
+  "$PA|# BL-277-FP-CONFIRM" \
   "$ROSTER|# BL-277-MATCHER"; do
   f="${spec%%|*}"; m="${spec#*|}"
   n="$(S="$m" awk 'index($0, ENVIRON["S"]){c++} END{print c+0}' "$f")"
@@ -763,6 +811,30 @@ if why="$(mutate "$MP" "# BL-277-FP-OPERATOR" 'if [ ! -t 0 ]; then' 'if false; t
   elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M16 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D5"
   else pass "M16 (MUTATION) — the operator-only guard removed: D5 kills it, D1 survives"; fi
 else fail_ "M16 setup" "$why"; fi
+
+# M17 — the library's reason guard narrowed to a space (review E21). Killed by D4.
+MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"
+if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" 'if [ -z "${reason//[[:space:]]/}" ]; then' 'if [ -z "${reason// /}" ]; then' 5)"; then
+  if chk_lib_refuses_empty_reason "$ML" >/dev/null 2>&1; then fail_ "M17 (MUTATION)" "the library's narrowed reason guard survived D4"
+  else pass "M17 (MUTATION) — the library's reason guard narrowed to spaces: D4 kills it"; fi
+else fail_ "M17 setup" "$why"; fi
+
+# M18 — the library's false-positive pattern widened to catch every decision
+# (review E23). Killed by D6; D1 survives.
+MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
+if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" '    false-positive)' '    false-positive|*)' 3)"; then
+  if chk_lib_refuses_unknown "$ML" >/dev/null 2>&1; then fail_ "M18 (MUTATION)" "the widened pattern survived D6"
+  elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M18 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D6"
+  else pass "M18 (MUTATION) — the library's false-positive pattern widened to every decision: D6 kills it, D1 survives"; fi
+else fail_ "M18 setup" "$why"; fi
+
+# M19 — the operator's confirmation removed. Killed by D7; D1 survives.
+MD="$(mirror_scripts)"; MP="$MD/scripts/pending-approval.sh"
+if why="$(mutate "$MP" "# BL-277-FP-CONFIRM" 'if ! prompt_yes_no ' 'if false && ! prompt_yes_no ' 3)"; then
+  if chk_fp_operator_declines "$MP" >/dev/null 2>&1; then fail_ "M19 (MUTATION)" "closing without the confirmation survived D7"
+  elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M19 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D7"
+  else pass "M19 (MUTATION) — the operator's confirmation removed: D7 kills it, D1 survives"; fi
+else fail_ "M19 setup" "$why"; fi
 
 # M9 — the maintainer's adoption guard lifted, so adoption registers the
 # PostToolUse arm. Killed by R5.

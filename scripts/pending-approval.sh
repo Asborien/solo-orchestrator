@@ -211,6 +211,12 @@ cmd_resolve() {
           print_fail "--resolve: --decision false-positive requires --reason \"<why this was not a proposal>\". Sentinel left in place."
           return 1
         fi
+        # BL-277-FP-CONFIRM — confirmed, as --unrecord-feature and --reset
+        # confirm after the same guard.
+        if ! prompt_yes_no "Close every PENDING bypass proposal as a false positive, reason \"$reason\"? [y/N]" "N"; then
+          print_info "False-positive close cancelled. Sentinel left in place."
+          return 0
+        fi
         ;;
       *)
         print_fail "--resolve: unknown decision '$decision' (expected: accept | decline | false-positive). Sentinel left in place."
@@ -245,12 +251,9 @@ cmd_resolve() {
     if [ -f "$lib" ]; then
       # shellcheck disable=SC1090
       source "$lib"
-      # BL-277-FP-PASS — the reason travels to the library; the label printed
-      # is the row's own spelling.
-      local closed_as="$decision"
-      case "$decision" in accept) closed_as="accepted" ;; decline) closed_as="declined" ;; false-positive) closed_as="false_positive" ;; esac
+      # BL-277-FP-PASS — the reason travels to the library.
       if bypass_audit_close_pending "$project_root" "$decision" "$reason" 2>&1; then
-        print_ok "Audit log closed: pending bypass rows marked $closed_as."
+        print_ok "Audit log closed: pending bypass rows marked $decision."
       else
         print_fail "Audit log close failed (decision='$decision')."
         echo "  Re-run 'pending-approval --resolve --decision $decision' to retry the audit close." >&2
@@ -383,7 +386,8 @@ Commands:
                                   was proposed, and WHY is recorded on each row
                                   (BL-277). An empty reason is refused. The
                                   Orchestrator's alone: refused unless run
-                                  directly in a terminal.
+                                  directly in a terminal, then confirmed at a
+                                  [y/N] prompt.
   --clear                         Delete the sentinel (agent abort, semantic alias).
   --status                        Print the current pending question, if any.
   --validate [PATH]               Lint a sentinel file. Default: .claude/pending-approval.json.

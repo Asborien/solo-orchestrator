@@ -60,9 +60,11 @@ STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false' 2>/dev/nul
 TEXT=""
 case "$EVENT" in
   PostToolUse)
-    # Claude Code envelope: .tool_response. For Bash, .stdout/.stderr/.exit_code/.interrupted;
-    # for Read/Edit/Write, .output or .content (or a string). Cover all
-    # known shapes; missing field returns "" and the next guard exits.
+    # Claude Code envelope: .tool_response. Bash always carries .stdout (so
+    # .stderr is reached only when .stdout is absent); Write, Grep in content
+    # mode and Agent carry a top-level .content; Read nests its text under
+    # .file.content and Edit carries none of these, so neither is scanned.
+    # A missing field returns "" and the next guard exits.
     TEXT=$(echo "$INPUT" | jq -r '.tool_response.stdout // .tool_response.stderr // .tool_response.output // .tool_response.content // ""' 2>/dev/null)
     ;;
   Stop)
