@@ -192,10 +192,21 @@ cmd_resolve() {
   if [ -n "$decision" ]; then
     case "$decision" in
       accept|decline) ;;
-      # BL-277-FP-REASON — refused here, BEFORE the sentinel is touched, for the
-      # same reason the typo check above is: a close that fails after the
-      # sentinel is gone leaves PENDING rows stranded.
+      # Both refusals below come BEFORE the sentinel is touched, for the same
+      # reason the typo check above does: a close that fails after the sentinel
+      # is gone leaves PENDING rows stranded.
       false-positive)
+        # BL-277-FP-OPERATOR — operator-only, by the same guard as
+        # `test-gate.sh --unrecord-feature`: every sentinel now comes from text
+        # the model wrote, so a model closing it here would relabel its own
+        # proposal as none. Agent calls have no terminal on stdin.
+        if [ ! -t 0 ]; then
+          print_fail "--resolve --decision false-positive requires interactive authorization. Sentinel left in place."
+          echo "The Orchestrator must run this command directly in a terminal:" >&2
+          echo "  scripts/pending-approval.sh --resolve --decision false-positive --reason \"<why this was not a proposal>\"" >&2
+          return 1
+        fi
+        # BL-277-FP-REASON — a reason of whitespace alone is no reason.
         if [ -z "${reason//[[:space:]]/}" ]; then
           print_fail "--resolve: --decision false-positive requires --reason \"<why this was not a proposal>\". Sentinel left in place."
           return 1
@@ -370,7 +381,9 @@ Commands:
                                   --decision false-positive --reason "WHY"
                                   closes them as false_positive instead: nothing
                                   was proposed, and WHY is recorded on each row
-                                  (BL-277). An empty reason is refused.
+                                  (BL-277). An empty reason is refused. The
+                                  Orchestrator's alone: refused unless run
+                                  directly in a terminal.
   --clear                         Delete the sentinel (agent abort, semantic alias).
   --status                        Print the current pending question, if any.
   --validate [PATH]               Lint a sentinel file. Default: .claude/pending-approval.json.

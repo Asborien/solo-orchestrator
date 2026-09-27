@@ -311,11 +311,12 @@ soif_register_hook_roster() {
         # adopted project it stays OFF until that entry closes, and the
         # adoption transcript says so. ONE guarded line, as §10-WP9c specifies.
         if [ "$_mode" != "adoption" ]; then   # BL-242-SETTINGS-BL277
-          # BL-277-MATCHER — its own PostToolUse group, scoped to Bash like every
-          # other scoped registration in this file. Appended to group [0] it
-          # inherited that group's absent matcher and ran after every tool.
+          # BL-277-MATCHER — its own PostToolUse group, scoped to Bash and Write.
+          # Appended to group [0] it inherited that group's absent matcher and ran
+          # after every tool. Write stays: a file the model writes is text it
+          # authored, and the maintainer ruled it is still scanned (PR #454).
           if ! jq -e '.hooks.PostToolUse[]? | .hooks[]? | select(.command | contains("bypass-detector.sh"))' "$_f" >/dev/null 2>&1; then
-            jq '.hooks.PostToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' "$_f" > "$_f.tmp" \
+            jq '.hooks.PostToolUse += [{"matcher": "Bash|Write", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' "$_f" > "$_f.tmp" \
               && mv "$_f.tmp" "$_f"
             hooks_added=true
           fi

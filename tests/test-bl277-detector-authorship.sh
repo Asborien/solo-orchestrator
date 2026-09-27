@@ -12,7 +12,9 @@
 #
 # The decision (issue #385, maintainer, 2026-09-17) is the entry's option 3:
 # keep scanning output, let only authored matches raise the sentinel, and have
-# PostToolUse rows carry an actor other than `claude`.
+# PostToolUse rows carry an actor other than `claude`. The maintainer's ruling
+# on PR #454 (2026-09-27): files the agent writes are still scanned, so a Write
+# result is authored text, and the false-positive close is the operator's alone.
 #
 # WHY NO PATTERN APPEARS LITERALLY IN THIS FILE. Every fixture below is
 # assembled from split string literals. A suite for this defect has to feed the
@@ -22,21 +24,29 @@
 # "cannot avoid containing the trigger strings"; this file is the correction.
 #
 # STRUCTURE
-#   A*  PostToolUse: a row is still written (T1's output-scanning contract),
-#       its actor is not `claude`, nothing is left PENDING, no sentinel.
-#   S*  Stop: a `claude` row, PENDING, and the sentinel.
+#   A*  PostToolUse from Bash: a row is still written (T1's output-scanning
+#       contract), its actor is not `claude`, nothing is left PENDING, no
+#       sentinel.
+#   W*  PostToolUse from Write: the model wrote the file, so a `claude` row,
+#       PENDING, and the sentinel.
+#   S*  Stop: a `claude` row, PENDING, and the sentinel, whose question does
+#       not tell the model how to close it as a false positive.
 #   L*  the ledger read back as tool output mints no `claude` row.
 #   K*  the shipped CLAUDE.md template read as tool output.
 #   G*  the pre-commit gate: the verify-skipping commit is still denied; a
 #       ledger holding only tool-output rows does not block; an authored match
 #       does.
-#   D*  the third disposition of scripts/pending-approval.sh.
+#   D*  the third disposition of scripts/pending-approval.sh, which is
+#       operator-only: refused without a terminal on stdin, the same guard as
+#       `test-gate.sh --unrecord-feature` and `process-checklist.sh --reset`.
+#       The operator's side runs under a pseudo-terminal from script(1); P0
+#       proves the pseudo-terminal is real, so D5's refusal is the guard's.
 #   X*  malformed hook input.
 #   R5  the hook roster (scripts/lib/claude-settings.sh) in adoption mode
 #       still registers no PostToolUse detector: the maintainer's
 #       `# BL-242-SETTINGS-BL277` guard, unchanged.
 #   R6  the roster run twice in greenfield mode: one detector, under matcher
-#       Bash and nowhere else.
+#       Bash|Write and nowhere else.
 #   M*  marker presence and mutants. Each mutant proves its location by distance
 #       from its marker and asserts the literal text that landed; one that
 #       cannot be applied is a SETUP failure, never a kill.
@@ -102,9 +112,20 @@ sentinel() { printf '%s' "$1/.claude/pending-approval.json"; }
 # ledger cannot be read, so an unreadable ledger never compares equal to 0.
 q() { jq -r "$2" "$(ledger "$1")" 2>/dev/null || printf 'ERR'; }
 
+# The result shapes below are a real Bash and a real Write result from a Claude
+# Code transcript (`toolUseResult`), their text replaced. Every Bash result
+# carries `stdout`, empty or not.
 env_post() { jq -nc --arg k "$1" --arg t "$2" \
   '{session_id:"bl277", hook_event_name:"PostToolUse", tool_name:"Bash",
-    tool_input:{command:"cat notes.txt"}, tool_response:{($k):$t}}'; }
+    tool_input:{command:"cat notes.txt"},
+    tool_response:({stdout:"", stderr:"", interrupted:false, isImage:false, noOutputExpected:false} + {($k):$t})}'; }
+# env_write <create|update> <text> — Write returns the file's new text as a
+# top-level `content`.
+env_write() { jq -nc --arg ty "$1" --arg t "$2" \
+  '{session_id:"bl277", hook_event_name:"PostToolUse", tool_name:"Write",
+    tool_input:{file_path:"/proj/NEXT_STEPS.md", content:$t},
+    tool_response:{type:$ty, filePath:"/proj/NEXT_STEPS.md", content:$t, structuredPatch:[],
+      originalFile:(if $ty == "create" then null else "old notes\n" end), userModified:false}}'; }
 env_stop() { jq -nc --arg t "$1" \
   '{session_id:"bl277", hook_event_name:"Stop", last_assistant_message:$t,
     transcript_path:"/nonexistent/bl277.jsonl"}'; }
@@ -155,14 +176,31 @@ chk_post_not_pending() {
   [ "$ur" = "n/a" ] && [ "$fo" = "recorded_only" ] || { echo "user_response=$ur final_outcome=$fo, want n/a and recorded_only"; return 1; }
   return 0
 }
-chk_post_every_shape() {
-  local hook="$1" p key a
-  for key in stdout stderr output content; do
+# A4 — a real Bash result, every key present, the text on stdout. The only
+# key that reaches the scan under a Bash registration: stdout is always
+# present, and jq's `//` keeps an empty string, so stderr is never read.
+chk_post_bash_shape() {
+  local hook="$1" p a
+  p="$(newtmp)"; mk_proj "$p" || { echo "fixture"; return 1; }
+  run_hook "$hook" "$p" "$(env_post stdout "$(fixture_for no_verify)")"
+  a="$(q "$p" '[.[].actor] | unique | join(",")')"
+  [ "$a" = "tool_output" ] || { echo "actors=[$a], want [tool_output]"; return 1; }
+  [ ! -e "$(sentinel "$p")" ] || { echo "sentinel raised"; return 1; }
+  return 0
+}
+
+# W — a file the model wrote, created or overwritten.
+chk_write_authored() {
+  local hook="$1" p ty a ur
+  for ty in create update; do
     p="$(newtmp)"; mk_proj "$p" || { echo "fixture"; return 1; }
-    run_hook "$hook" "$p" "$(env_post "$key" "$(fixture_for no_verify)")"
-    a="$(q "$p" '[.[].actor] | unique | join(",")')"
-    [ "$a" = "tool_output" ] || { echo "tool_response.$key: actors=[$a], want [tool_output]"; return 1; }
-    [ ! -e "$(sentinel "$p")" ] || { echo "tool_response.$key: sentinel raised"; return 1; }
+    run_hook "$hook" "$p" "$(env_write "$ty" "$(fixture_for no_verify)")"
+    a="$(q "$p" '[.[].actor] | unique | join(",")')"; ur="$(q "$p" '[.[].user_response] | unique | join(",")')"
+    [ "$HOOK_RC" -eq 0 ] || { echo "$ty: hook rc=$HOOK_RC"; return 1; }
+    [ "$(q "$p" 'length')" = "1" ] || { echo "$ty: rows=$(q "$p" 'length'), want 1"; return 1; }
+    [ "$a" = "claude" ] || { echo "$ty: actors=[$a], want [claude]"; return 1; }
+    [ "$ur" = "PENDING" ] || { echo "$ty: user_response=[$ur], want [PENDING]"; return 1; }
+    [ -f "$(sentinel "$p")" ] || { echo "$ty: no sentinel after the model wrote the text"; return 1; }
   done
   return 0
 }
@@ -240,7 +278,7 @@ run_gate() {
   return 0
 }
 denied()     { grep -q '"permissionDecision": "deny"' "$GATE_OUT" 2>/dev/null; }
-reason_has() { grep -qF "$1" "$GATE_OUT" 2>/dev/null; }
+reason_has() { grep -qF -e "$1" "$GATE_OUT" 2>/dev/null; }
 
 chk_gate_after_tool_output() {
   local hook="$1" r
@@ -259,6 +297,23 @@ chk_gate_after_authored() {
   denied && reason_has "pending user decision" || { echo "an authored match did not block the commit (rc=$GATE_RC)"; return 1; }
   return 0
 }
+# S3 — the gate relays the sentinel's question to the model, so the question
+# names no way to close the proposal as a false positive: that close is the
+# operator's. The relayed question is checked non-empty first, so a gate that
+# stopped relaying it cannot pass this case.
+chk_gate_no_fp_pointer() {
+  local hook="$1" r
+  r="$(newtmp)/repo"; mk_repo "$r" || { echo "fixture"; return 1; }
+  run_hook "$hook" "$r" "$(env_stop "$(fixture_for no_verify)")"
+  run_gate "$GATE" "$r" "git commit -m wip"
+  denied && reason_has "Bypass proposal detected" || { echo "the gate did not relay the sentinel's question (rc=$GATE_RC)"; return 1; }
+  # The gate's own text names `pending-approval.sh --resolve`, for after the
+  # user has picked, so the script's name alone is not the pointer.
+  for t in "false-positive" "false positive" "false_positive" "--reason"; do
+    if reason_has "$t"; then echo "the relayed question names '$t'"; return 1; fi
+  done
+  return 0
+}
 
 # D — the third disposition.
 REASON_FP="the matched text was a rule quoted from CLAUDE.md, nobody proposed it"
@@ -272,38 +327,77 @@ seed_pending() {
     > "$(sentinel "$d")" || return 1
   return 0
 }
-# run_pa <script> <project> args... -> PA_RC
+# run_pa <script> <project> args... -> PA_RC — the agent's side: stdin is not a
+# terminal, whoever runs this suite.
 run_pa() {
   local script="$1" d="$2"; shift 2
-  ( cd "$d" && bash "$script" "$@" >/dev/null 2>&1 )
+  ( cd "$d" && bash "$script" "$@" </dev/null >/dev/null 2>&1 )
   PA_RC=$?
   return 0
 }
+# run_tty <dir> <command...> -> TTY_RC — the operator's side: the command runs
+# with a pseudo-terminal on stdin, from BSD or util-linux script(1). It reaches
+# script(1) as a generated file, so arguments holding tabs or newlines survive
+# util-linux's single command string, and its exit code comes back through a
+# file. No script(1), or a command that never ran, leaves TTY_RC=NORUN, which
+# every caller treats as a failure.
+run_tty() {
+  local d="$1" w; shift
+  w="$(newtmp)"
+  { printf 'cd %q || exit 99\n' "$d"; printf '%q ' "$@"; printf '>/dev/null 2>&1\n'
+    printf 'printf "%%s" "$?" > %q\n' "$w/rc"; } > "$w/run.sh"
+  if script --version >/dev/null 2>&1; then
+    script -qec "bash $(printf '%q' "$w/run.sh")" /dev/null </dev/null >/dev/null 2>&1
+  else
+    script -q /dev/null bash "$w/run.sh" </dev/null >/dev/null 2>&1
+  fi
+  TTY_RC="$(cat "$w/rc" 2>/dev/null || printf 'NORUN')"
+  return 0
+}
+run_pa_tty() { local script="$1" d="$2"; shift 2; run_tty "$d" bash "$script" "$@"; PA_RC="$TTY_RC"; return 0; }
 chk_fp_closes() {
   local pa="$1" d ur fo why
   d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
-  run_pa "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+  run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
   ur="$(q "$d" '.[0].user_response')"; fo="$(q "$d" '.[0].final_outcome')"; why="$(q "$d" '.[0].details.false_positive_reason')"
-  [ "$PA_RC" -eq 0 ] || { echo "rc=$PA_RC, want 0"; return 1; }
+  [ "$PA_RC" = "0" ] || { echo "rc=$PA_RC, want 0"; return 1; }
   [ ! -e "$(sentinel "$d")" ] || { echo "the sentinel is still present"; return 1; }
   [ "$ur" = "false_positive" ] || { echo "user_response=$ur, want false_positive"; return 1; }
   [ "$fo" = "recorded_only" ] || { echo "final_outcome=$fo, want recorded_only"; return 1; }
   [ "$why" = "$REASON_FP" ] || { echo "the reason was not recorded on the row (got '$why')"; return 1; }
   return 0
 }
+# D2 runs on the operator's side, so the refusal it sees is the reason guard's
+# and not the terminal guard's.
 chk_fp_refuses_empty_reason() {
-  local pa="$1" d shape
-  for shape in missing empty blank; do
+  local pa="$1" d shape tab nl
+  tab="$(printf '\t')"; nl="
+"
+  for shape in missing empty blank tab newline; do
     d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
     case "$shape" in
-      missing) run_pa "$pa" "$d" --resolve --decision false-positive ;;
-      empty)   run_pa "$pa" "$d" --resolve --decision false-positive --reason "" ;;
-      blank)   run_pa "$pa" "$d" --resolve --decision false-positive --reason "   " ;;
+      missing) run_pa_tty "$pa" "$d" --resolve --decision false-positive ;;
+      empty)   run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "" ;;
+      blank)   run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "   " ;;
+      tab)     run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$tab" ;;
+      newline) run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$nl" ;;
     esac
-    [ "$PA_RC" -ne 0 ] || { echo "$shape reason: rc=0, want a refusal"; return 1; }
+    case "$PA_RC" in ''|NORUN|*[!0-9]*) echo "$shape reason: the command did not run (rc=$PA_RC)"; return 1 ;; 0) echo "$shape reason: rc=0, want a refusal"; return 1 ;; esac
     [ -f "$(sentinel "$d")" ] || { echo "$shape reason: the sentinel was removed by a refused close"; return 1; }
     [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "$shape reason: the row was closed by a refused close"; return 1; }
   done
+  return 0
+}
+# D5 — the agent's side: a well-formed close with a reason, refused because
+# stdin is not a terminal. Nothing moves.
+chk_fp_needs_terminal() {
+  local pa="$1" d
+  d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  run_pa "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+  [ "$PA_RC" -ne 0 ] || { echo "rc=0: the false-positive close ran with no terminal on stdin"; return 1; }
+  [ -f "$(sentinel "$d")" ] || { echo "the sentinel was removed by a refused close"; return 1; }
+  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the row was closed by a refused close"; return 1; }
+  [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] || { echo "a reason was written by a refused close"; return 1; }
   return 0
 }
 # The library guard on its own: scripts/pending-approval.sh refuses first, so
@@ -316,12 +410,20 @@ chk_lib_refuses_empty_reason() {
   [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the row was closed by a refused close"; return 1; }
   return 0
 }
+# D3 — accept and decline are unchanged, and carry no false_positive_reason:
+# the reason belongs to false-positive closes only. A --reason is passed so a
+# close that wrote it everywhere would write text, not just an empty key.
 chk_decline_still_declines() {
-  local pa="$1" d
-  d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
-  run_pa "$pa" "$d" --resolve --decision decline
-  [ "$PA_RC" -eq 0 ] && [ "$(q "$d" '.[0].user_response')" = "declined" ] && [ "$(q "$d" '.[0].final_outcome')" = "abandoned" ] \
-    || { echo "decline no longer records declined/abandoned (rc=$PA_RC)"; return 1; }
+  local pa="$1" d dec ur fo
+  for dec in decline accept; do
+    d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+    run_pa "$pa" "$d" --resolve --decision "$dec" --reason "$REASON_FP"
+    case "$dec" in decline) ur="declined"; fo="abandoned" ;; accept) ur="accepted"; fo="bypassed" ;; esac
+    [ "$PA_RC" -eq 0 ] && [ "$(q "$d" '.[0].user_response')" = "$ur" ] && [ "$(q "$d" '.[0].final_outcome')" = "$fo" ] \
+      || { echo "$dec no longer records $ur/$fo (rc=$PA_RC)"; return 1; }
+    [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] \
+      || { echo "$dec wrote a false_positive_reason onto the row"; return 1; }
+  done
   return 0
 }
 
@@ -348,7 +450,7 @@ chk_adoption_no_post() {
 # R6 — the roster sourced and run TWICE in greenfield mode on the settings
 # template. The second run reaches the idempotence probe that a second init.sh
 # never can (it refuses an existing directory). Exactly one detector, under
-# matcher Bash and in no other group; Stop once; the tool tracker and the
+# matcher Bash|Write and in no other group; Stop once; the tool tracker and the
 # commit recorder still unscoped, so only the detector moved.
 chk_roster_scoped() {
   local roster="$1" d s det scoped other stop trk rec
@@ -357,13 +459,13 @@ chk_roster_scoped() {
       && soif_register_hook_roster .claude/settings.json init && soif_register_hook_roster .claude/settings.json init ) >/dev/null 2>&1 \
     || { echo "the roster did not run twice"; return 1; }
   det='.hooks[]? | select((.command // "") | contains("bypass-detector.sh"))'
-  scoped="$(jq -r "[.hooks.PostToolUse[]? | select(.matcher == \"Bash\") | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
-  other="$(jq -r "[.hooks.PostToolUse[]? | select((.matcher // \"\") != \"Bash\") | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
+  scoped="$(jq -r "[.hooks.PostToolUse[]? | select(.matcher == \"Bash|Write\") | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
+  other="$(jq -r "[.hooks.PostToolUse[]? | select((.matcher // \"\") != \"Bash|Write\") | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
   stop="$(jq -r "[.hooks.Stop[]? | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
   trk="$(jq -r '[.hooks.PostToolUse[]? | select(has("matcher") | not) | .hooks[]? | select((.command // "") | contains("track-tool-usage.sh"))] | length' "$s" 2>/dev/null || printf 'ERR')"
   rec="$(jq -r '[.hooks.PostToolUse[]? | select(has("matcher") | not) | .hooks[]? | select((.command // "") | contains("record-claude-commit.sh"))] | length' "$s" 2>/dev/null || printf 'ERR')"
   [ "$scoped" = "1" ] && [ "$other" = "0" ] \
-    || { echo "detector under matcher Bash=$scoped, elsewhere=$other, want 1 and 0"; return 1; }
+    || { echo "detector under matcher Bash|Write=$scoped, elsewhere=$other, want 1 and 0"; return 1; }
   [ "$stop" = "1" ] || { echo "Stop detector registrations=$stop, want 1"; return 1; }
   [ "$trk" = "1" ] && [ "$rec" = "1" ] || { echo "unscoped tracker=$trk recorder=$rec, want 1 and 1"; return 1; }
   return 0
@@ -377,7 +479,7 @@ if why="$(chk_post_no_sentinel "$HOOK")"; then pass "A2 — none of the six rais
 else fail_ "A2" "$why"; fi
 if why="$(chk_post_not_pending "$HOOK")"; then pass "A3 — a tool-output row awaits no decision: user_response n/a, final_outcome recorded_only"
 else fail_ "A3" "$why"; fi
-if why="$(chk_post_every_shape "$HOOK")"; then pass "A4 — stdout, stderr, output and content all record actor tool_output and raise nothing"
+if why="$(chk_post_bash_shape "$HOOK")"; then pass "A4 — a real Bash result, every key present and the text on stdout, records actor tool_output and raises nothing"
 else fail_ "A4" "$why"; fi
 
 # A5 — T1's contract, restated here so this suite fails with it: the exact T1
@@ -400,11 +502,17 @@ else
   fail_ "A6" "clean output wrote $(q "$p" 'length') row(s)"
 fi
 
+echo "=== W — PostToolUse from Write: the model wrote the file ==="
+if why="$(chk_write_authored "$HOOK")"; then pass "W1 — a Write result, created or overwritten, writes one claude row, PENDING, and raises the sentinel"
+else fail_ "W1" "$why"; fi
+
 echo "=== S — Stop: authored, attributed, blocking ==="
 if why="$(chk_stop_claude_row "$HOOK")"; then pass "S1 — an authored match writes one claude row, PENDING"
 else fail_ "S1" "$why"; fi
 if why="$(chk_stop_sentinel "$HOOK")"; then pass "S2 — an authored match raises a schema-valid sentinel"
 else fail_ "S2" "$why"; fi
+if why="$(chk_gate_no_fp_pointer "$HOOK")"; then pass "S3 — the question the gate relays to the model names no false-positive close"
+else fail_ "S3" "$why"; fi
 
 echo "=== L — the ledger read back ==="
 if why="$(chk_ledger_self_read "$HOOK")"; then pass "L1 — reading the ledger twice as tool output is scanned and mints no claude row"
@@ -431,13 +539,23 @@ if why="$(chk_gate_after_authored "$HOOK")"; then pass "G3 (control) — an auth
 else fail_ "G3" "$why"; fi
 
 echo "=== D — closing a sentinel as a false positive ==="
-if why="$(chk_fp_closes "$PA")"; then pass "D1 — --decision false-positive closes the sentinel and records false_positive, recorded_only and the reason"
+p="$(newtmp)"
+run_tty "$p" bash -c '[ -t 0 ]'; p0_tty="$TTY_RC"
+( cd "$p" && bash -c '[ -t 0 ]' </dev/null ); p0_pipe=$?
+if [ "$p0_tty" = "0" ] && [ "$p0_pipe" -ne 0 ]; then
+  pass "P0 (control) — the operator's side has a terminal on stdin and the agent's side has none"
+else
+  fail_ "P0" "terminal on stdin: operator side rc=$p0_tty (want 0), agent side rc=$p0_pipe (want non-zero); D1, D2 and D5 prove nothing"
+fi
+if why="$(chk_fp_closes "$PA")"; then pass "D1 — the operator's --decision false-positive closes the sentinel and records false_positive, recorded_only and the reason"
 else fail_ "D1" "$why"; fi
-if why="$(chk_fp_refuses_empty_reason "$PA")"; then pass "D2 — a missing, empty or blank reason is refused: non-zero, sentinel kept, row still PENDING"
+if why="$(chk_fp_refuses_empty_reason "$PA")"; then pass "D2 — a missing, empty, blank, tab-only or newline-only reason is refused: non-zero, sentinel kept, row still PENDING"
 else fail_ "D2" "$why"; fi
+if why="$(chk_fp_needs_terminal "$PA")"; then pass "D5 — with no terminal on stdin a well-formed false-positive close is refused: non-zero, sentinel kept, row PENDING, no reason written"
+else fail_ "D5" "$why"; fi
 if why="$(chk_lib_refuses_empty_reason "$LIB")"; then pass "D4 — bypass_audit_close_pending itself refuses a blank reason and closes nothing"
 else fail_ "D4" "$why"; fi
-if why="$(chk_decline_still_declines "$PA")"; then pass "D3 (control) — decline still records declined and abandoned"
+if why="$(chk_decline_still_declines "$PA")"; then pass "D3 — decline and accept record what they did before, and write no false_positive_reason"
 else fail_ "D3" "$why"; fi
 
 echo "=== X — malformed hook input ==="
@@ -473,6 +591,7 @@ for spec in \
   "$LIB|# BL-277-FP-RECORD" \
   "$PA|# BL-277-FP-REASON" \
   "$PA|# BL-277-FP-PASS" \
+  "$PA|# BL-277-FP-OPERATOR" \
   "$ROSTER|# BL-277-MATCHER"; do
   f="${spec%%|*}"; m="${spec#*|}"
   n="$(S="$m" awk 'index($0, ENVIRON["S"]){c++} END{print c+0}' "$f")"
@@ -535,7 +654,7 @@ else fail_ "M2 setup" "$why"; fi
 
 # M3 — the sentinel raised regardless of authorship (the shipped behaviour). Killed by A2 and G2.
 MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
-if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'if [ "$ACTOR" = "claude" ] && [ ! -f "$SENTINEL" ]; then' 'if [ ! -f "$SENTINEL" ]; then' 4)"; then
+if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'if [ "$ACTOR" = "claude" ] && [ ! -f "$SENTINEL" ]; then' 'if [ ! -f "$SENTINEL" ]; then' 6)"; then
   if chk_post_no_sentinel "$MH" >/dev/null 2>&1 || chk_gate_after_tool_output "$MH" >/dev/null 2>&1; then
     fail_ "M3 (MUTATION)" "raising the sentinel from tool output survived A2 or G2"
   elif ! chk_post_not_claude "$MH" >/dev/null 2>&1; then fail_ "M3 (MUTATION)" "the mutant broke attribution too, so the kill proves nothing about the sentinel"
@@ -544,7 +663,7 @@ else fail_ "M3 setup" "$why"; fi
 
 # M3b — the sentinel never raised. Killed by S2 and G3, which is what makes them controls rather than decoration.
 MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
-if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'if [ "$ACTOR" = "claude" ] && [ ! -f "$SENTINEL" ]; then' 'if false; then' 4)"; then
+if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'if [ "$ACTOR" = "claude" ] && [ ! -f "$SENTINEL" ]; then' 'if false; then' 6)"; then
   if chk_stop_sentinel "$MH" >/dev/null 2>&1 || chk_gate_after_authored "$MH" >/dev/null 2>&1; then
     fail_ "M3b (MUTATION)" "never raising the sentinel survived S2 or G3"
   elif ! chk_stop_claude_row "$MH" >/dev/null 2>&1; then fail_ "M3b (MUTATION)" "the mutant broke the Stop row too, so the kill proves nothing about the sentinel"
@@ -586,7 +705,7 @@ roster_mutant() {
   elif ! chk_adoption_no_post "$mi" >/dev/null 2>&1; then fail_ "$id (MUTATION)" "the mutant broke R5 too, so the kill proves nothing about R6"
   else pass "$id (MUTATION) — $msg: R6 kills it, R5 survives"; fi
 }
-REG='.hooks.PostToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]'
+REG='.hooks.PostToolUse += [{"matcher": "Bash|Write", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]'
 # M7 — the group written without its matcher: the detector runs after every tool.
 roster_mutant M7 "$REG" '.hooks.PostToolUse += [{"hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' 5 "the registration written without its matcher"
 # M8 — the idempotence probe regressed to group [0]: with the detector in its
@@ -597,6 +716,53 @@ roster_mutant M8 \
   "the idempotence probe regressed to group [0]"
 # M10 — the matcher widened back over Read, Edit and Write (review's X1).
 roster_mutant M10 "$REG" '.hooks.PostToolUse += [{"matcher": "Bash|Read|Edit|Write", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' 5 "the matcher widened to Bash|Read|Edit|Write"
+# M12 — the matcher narrowed back to Bash: files the model writes go unscanned
+# (the maintainer's ruling on PR #454).
+roster_mutant M12 "$REG" '.hooks.PostToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' 5 "the matcher narrowed to Bash"
+
+# M11 — Write results no longer authored: a proposal written into a file leaves
+# a tool_output row and no sentinel. Killed by W1; S1 and A1 survive.
+MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
+if why="$(mutate "$MH" "# BL-277-AUTHORSHIP" 'if [ "$EVENT" = "Stop" ] || { [ "$EVENT" = "PostToolUse" ] && [ "$TOOL_NAME" = "Write" ]; }; then' 'if [ "$EVENT" = "Stop" ]; then' 10)"; then
+  if chk_write_authored "$MH" >/dev/null 2>&1; then fail_ "M11 (MUTATION)" "Write results recorded as tool output survived W1"
+  elif ! chk_stop_claude_row "$MH" >/dev/null 2>&1 || ! chk_post_not_claude "$MH" >/dev/null 2>&1; then fail_ "M11 (MUTATION)" "the mutant broke S1 or A1 too, so the kill proves nothing about W1"
+  else pass "M11 (MUTATION) — Write no longer authored: W1 kills it, S1 and A1 survive"; fi
+else fail_ "M11 setup" "$why"; fi
+
+# M13 — the false-positive pointer put back into the relayed question. Killed by S3; S2 survives.
+MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
+if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" "To decline, say 'decline' or describe what you want instead.\"" "To decline, say 'decline' or describe what you want instead. Or close it: scripts/pending-approval.sh --resolve --decision false-positive --reason WHY.\"" 8)"; then
+  if chk_gate_no_fp_pointer "$MH" >/dev/null 2>&1; then fail_ "M13 (MUTATION)" "the pointer in the relayed question survived S3"
+  elif ! chk_stop_sentinel "$MH" >/dev/null 2>&1; then fail_ "M13 (MUTATION)" "the mutant broke the sentinel too, so the kill proves nothing about S3"
+  else pass "M13 (MUTATION) — the false-positive pointer back in the question: S3 kills it, S2 survives"; fi
+else fail_ "M13 setup" "$why"; fi
+
+# M14 — the maintainer's FP-RECORD mutant: the condition removed, so the reason
+# lands on every closed row. Killed by D3; D1 survives.
+MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
+if why="$(mutate "$ML" "# BL-277-FP-RECORD" '(if $ur == "false_positive" then .details.false_positive_reason = $why else . end)' '.details.false_positive_reason = ($why)' 3)"; then
+  if chk_decline_still_declines "$MP" >/dev/null 2>&1; then fail_ "M14 (MUTATION)" "a reason on every closed row survived D3"
+  elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M14 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D3"
+  else pass "M14 (MUTATION) — the reason written onto every closed row: D3 kills it, D1 survives"; fi
+else fail_ "M14 setup" "$why"; fi
+
+# M15 — the maintainer's FP-REASON mutant: [[:space:]] narrowed to a space, so
+# a tab-only reason deletes the sentinel and the library then refuses. Killed by D2; D1 survives.
+MD="$(mirror_scripts)"; MP="$MD/scripts/pending-approval.sh"
+if why="$(mutate "$MP" "# BL-277-FP-REASON" 'if [ -z "${reason//[[:space:]]/}" ]; then' 'if [ -z "${reason// /}" ]; then' 6)"; then
+  if chk_fp_refuses_empty_reason "$MP" >/dev/null 2>&1; then fail_ "M15 (MUTATION)" "the narrowed reason guard survived D2"
+  elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M15 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D2"
+  else pass "M15 (MUTATION) — the reason guard narrowed to spaces: D2 kills it, D1 survives"; fi
+else fail_ "M15 setup" "$why"; fi
+
+# M16 — the operator-only guard removed: the agent closes its own proposal as a
+# false positive. Killed by D5; D1 survives.
+MD="$(mirror_scripts)"; MP="$MD/scripts/pending-approval.sh"
+if why="$(mutate "$MP" "# BL-277-FP-OPERATOR" 'if [ ! -t 0 ]; then' 'if false; then' 8)"; then
+  if chk_fp_needs_terminal "$MP" >/dev/null 2>&1; then fail_ "M16 (MUTATION)" "the agent's false-positive close survived D5"
+  elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M16 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D5"
+  else pass "M16 (MUTATION) — the operator-only guard removed: D5 kills it, D1 survives"; fi
+else fail_ "M16 setup" "$why"; fi
 
 # M9 — the maintainer's adoption guard lifted, so adoption registers the
 # PostToolUse arm. Killed by R5.
