@@ -22047,196 +22047,124 @@ for the 4.0 trap: **assign at the declaration**, applied to code you are already
 
 ---
 
-## BL-312: concurrent `track-tool-usage.sh` invocations share one temp name, land a 0-byte ledger, and the MCP session gate then refuses every Write and Edit
+## BL-312: concurrent writers of the tool-usage ledger share one temp name, land a 0-byte ledger, and the MCP session gate then refuses every Write and Edit
 
 **Status:** Open — reproduction and fix in the pull request that files this entry.
-`tests/test-bl312-tool-usage-concurrent.sh`, 34 cases, 34/0 under `/bin/bash`
-3.2.57 and bash 5.3.15, and `tests/test-session-test-gate-check-merge.sh` 12/0 on both. Round two answered an adversarial review that blocked round one: the gate
-wrote the same ledger with no lock, and the breaker broke live locks under contention. Round three
-answers the review that blocked round two: the lock loop spun forever when `mkdir` failed for any
-reason but EEXIST, the INT claim was wrong, the sweep deleted a user's `.backup`, and SessionStart
-still wrote the ledger unlocked.
+`tests/test-bl312-tool-usage-concurrent.sh` and T5d in `tests/test-session-test-gate-check-merge.sh`
+pin it; the cases are named below.
 
-**Found:** 2026-09-22 in practice, on a project where several sessions and subagents shared one
-checkout. `.claude/tool-usage.json` sat at 0 bytes with its mtime advancing on every hook event, and
-`scripts/session-mcp-gate.sh` refused every Write and Edit with "requirements not met" even after
-successful qdrant-find and context7 calls.
+**Found:** 2026-09-22 in practice, where several sessions and subagents shared one checkout.
+`.claude/tool-usage.json` sat at 0 bytes with its mtime advancing on every hook event, and
+`scripts/session-mcp-gate.sh` refused every Write and Edit with "requirements not met" after
+qdrant-find and context7 had both succeeded.
 
-**The defect.** Every ledger write in `scripts/track-tool-usage.sh` went
-`jq … "$TOOL_USAGE" > "$TOOL_USAGE.tmp" && mv "$TOOL_USAGE.tmp" "$TOOL_USAGE"`: fourteen sites at
-`f790e09`, one temp NAME shared by every invocation, and no lock. `scripts/session-mcp-gate.sh`
-wrote the same ledger the same way, twice (`# BL-233-LATCH-RECORD-UP` on allow, and the
-`mcp_gate_satisfied = false` line on deny), and it runs on EVERY Write and Edit. Two writers at once
-truncate each other's half-written temp and the `mv` lands it. Once the ledger is empty it stays
-empty, because `jq` on an empty input exits 0 and prints nothing, so every later write lands another
-empty file. The seed was a bare `cat > "$TOOL_USAGE"`, so a reader could also see it half-written.
+**The defect.** Three hooks write the ledger: `scripts/track-tool-usage.sh` after every MCP call,
+`scripts/session-mcp-gate.sh` before every Write and Edit (`# BL-233-LATCH-RECORD-UP` on allow, and
+its twin on deny), and `scripts/session-test-gate-check.sh` at SessionStart. None took a lock. The
+tracker and the gate wrote `jq … > "$TOOL_USAGE.tmp" && mv`, one temp name shared by every
+invocation, and SessionStart wrote with `cat >`. Two writers at once truncate each other's
+half-written temp, and the `mv` lands it. Once the ledger is empty it stays empty: `jq` on an empty
+input exits 0 and prints nothing, so every later write lands another empty file. Without this
+change, twelve concurrent find events leave the ledger unparseable (C1), and twelve concurrent gate
+checks deny the next Write (C8).
 
-**Measured on `main` at `f790e09`** (the suite run against main's tracker, `/bin/bash` 3.2.57):
+**The fix.** All three writers source `scripts/lib/ledger-write.sh` from their own directory.
+`init.sh` ships it beside them, and `scripts/verify-install.sh` checks and restores it
+(`fix_lib_copy_ledger-write`). `_lw_update` applies a jq filter to the ledger, and `_lw_put` lands
+stdin as the whole ledger. Both take a mkdir lock beside the ledger, write through a unique
+`mktemp "$TOOL_USAGE.lw.XXXXXX"` in the same directory (`# BL-312-UNIQUE-TMP`), and `mv` only a
+non-empty result into place (`# BL-312-NONEMPTY`). Each behaviour, with the case that pins it:
 
-```
-  [PASS] C0: control, 12 sequential invocations record 12 call rows on a parseable ledger
-  [FAIL] C1 —  round 1: parses=0 calls=0/12 …; round 2: parses=0 calls=0/12 …; round 3: parses=0 calls=0/12 …
-  [FAIL] C2 —  round 1: 590 bad sightings; round 2: 229 bad sightings; round 3: 577 bad sightings;
-  [FAIL] C3 —  round 1: parses=0 commits=0/12; round 2: parses=1 commits=1/12; round 3: parses=0 commits=0/12;
-  [FAIL] C5 —  round 1: parses=0 calls=0/12 …  (all three rounds)
-  [FAIL] C6 —  round 1: parses=0 bad=227 calls=0 …  (all three rounds)
-```
-
-Twelve concurrent events end with an unparseable ledger in every round (C1). The control shows the
-fixture counts correctly when the same twelve run one at a time (C0).
-
-**Measured at round one's head, `f2ebdc3`** (the round-two cases, `/bin/bash` 3.2.57):
-
-```
-  [FAIL] C8 —  mixed=0 round 1: parses=0 bad=165 next_write=deny …; mixed=1 round 1: parses=0 bad=36899 next_write=deny calls=0/12 …
-  [FAIL] C9 —  N=40: parses=1 calls=38/40; N=80: parses=1 calls=79/80;
-  [FAIL] C10 — rc=0 (want 143) lock=cleared debris=[] calls=1 (want 0)
-  [FAIL] C11 — after SIGKILL (lock=held debris=[tool-usage.json.lockdir tool-usage.json.yvkVaM ]): … debris=[tool-usage.json.LIVE01 tool-usage.json.yvkVaM ]
-  [FAIL] C12 — … probe=null (want 1, proves the lib wrote)
-  [FAIL] C13 —  empty: calls=0 …; garbage: calls=0 …
-  [FAIL] C14 — … debris=[tool-usage.json.tmp ] (want none)
-```
-
-With the tracker fixed, twelve concurrent GATE checks still left a 0-byte ledger, and the next Write
-was denied (C8). Forty concurrent events lost two call rows (C9).
-
-**Measured at round two's code** (the round-three cases, `/bin/bash` 3.2.57, uncommitted tree):
-
-```
-  [FAIL] C15 — left=[tool-usage.json.bak tool-usage.json.lw.AGED01 ] (want the .backup and .bak only)
-  [FAIL] C16 —  gate/EACCES/unsatisfied: still running after 3s; gate/EACCES/satisfied: still running after 3s; tracker/EACCES: still running after 3s; tracker/ENOTDIR: still running after 3s;
-  [FAIL] C17 —  startup round 1: parses=1 bad=23; startup round 2: parses=1 bad=26; startup round 3: parses=1 bad=26;
-```
-
-With `.claude` unwritable, the gate never returned where the base denied at once (C16). Claude Code's
-default command-hook timeout is 600 s, so every Write and Edit would have stalled ten minutes and then
-failed without the gate's text.
-
-**The fix.** All three writers of the ledger now go through one shared lib,
-`scripts/lib/ledger-write.sh`: the tracker, the gate, and `scripts/session-test-gate-check.sh`
-(SessionStart). Each sources it from its own directory. `init.sh` ships it beside them, and
-`scripts/verify-install.sh` checks it and can restore it (`fix_lib_copy_ledger-write`). `_lw_update`
-takes a mkdir lock beside the ledger. It writes through its own `mktemp` in the same directory, with a
-`.lw.` prefix nobody else uses (`# BL-312-UNIQUE-TMP`). It lands only a non-empty result
-(`# BL-312-NONEMPTY`), and moves it into place with `mv`, which is atomic within one filesystem.
-`_lw_put` lands stdin the same way, for SessionStart's whole-ledger writes. The gate's two writes are
-a record only, so a missing lib skips them and changes no decision. Without the lib the tracker writes
-nothing and exits 0, and SessionStart writes no ledger, which the gate then reports as absent. The
-pins:
-
-- Every call row survives a concurrent burst, `mcp_requirements` is kept, and the find flags are set (C1).
-- A reader polling through the burst never sees an empty or unparseable ledger (C2).
+- Every call row survives a concurrent burst, `mcp_requirements` is kept and the find flags are set
+  (C1). A reader polling through the burst never sees an empty or unparseable ledger (C2). No temp
+  or lock is left (C4).
 - The commit counter's read and write happen under one lock hold, so no commit is lost (C3).
-- No temp or lock debris is left (C4).
-- The seed is taken under the lock, re-checked inside it and landed by `mv` (`# BL-312-SEED-LOCK`),
-  so a burst with no ledger records every call and still seeds no `mcp_requirements`, as
-  `## BL-233:` requires (C5).
-- A lock is stale when its mtime is older than the 3 s budget (`# BL-312-STALE-AGE`). SIGKILL
-  skips every trap, and a live hold lasts milliseconds. The lock is broken at most once per
-  acquisition (`# BL-312-BREAK-STALE`), so one write past it records its call and clears it (C7).
-  If it is still stale after that one break, it cannot be removed, and the write goes ahead unlocked.
-  It may lose an update, but the unique temp keeps the ledger whole. C6 runs both a breakable lock
-  and a stuck one.
-- The gate's writes share the lock: twelve concurrent checks, alone and mixed with twelve find
-  events, keep the ledger whole, and the next Write is allowed (C8).
-- A busy lock is waited for, never broken: 40 and 80 concurrent events keep every call row (C9).
-  Round one broke the lock after 30 attempts. A waiter queued behind many short holders reached that
-  count and broke a live lock, and the owner's unlock then removed the breaker's lock too.
-- No signal is trapped; only EXIT is (`# BL-312-TRAP`). SIGTERM at its default ends the hook at
-  once with 143, bash runs the EXIT trap on the way out, it releases the lock and removes the temp,
-  and nothing lands: the tracker (C10) and the gate (C10c, whose `_lw_traps` call carries
-  `# BL-312-GATE-TRAP`). Round one trapped INT and TERM with no `exit`, so the hook carried on into
-  the `mv` after releasing the lock. A mutant that removed only an explicit TERM trap survived, which
-  is how that trap was shown to be redundant.
-- SIGINT is different, and C10b pins what it does, measured: sent to the hook alone, it is waited
-  out. Bash defers it until the foreground jq exits, jq never received it, so the hook carries on
-  (rc 0), and the write lands whole under the lock. The suite delivers INT through
-  `perl -e '$SIG{INT}="DEFAULT"; exec @ARGV'`, because a background job of a non-interactive shell
-  starts with INT ignored.
-- After a SIGKILL, the next locked write sweeps any `tool-usage.json.lw.XXXXXX` temp older than the
-  budget. It spares a younger one, which may belong to a live unlocked writer (C11). It never touches
-  another name: an aged `tool-usage.json.backup` and `.bak` survive (C15, `# BL-312-SWEEP-GLOB`).
-  Round two's glob was `.??????`, which took `.backup`. The ignore rule was not widened instead:
-  that hides a temp holding ledger content without removing it, and it does not reach projects
-  already generated.
+- The seed is taken under the lock (`# BL-312-SEED-LOCK`), re-checked inside it and landed by `mv`,
+  so a burst with no ledger records every call and seeds no `mcp_requirements`, as `## BL-233:`
+  requires (C5).
+- A lock is stale when its mtime is more than 3 s old (`# BL-312-STALE-AGE`): SIGKILL skips every
+  trap, and a live hold lasts milliseconds. It is broken at most once per acquisition
+  (`# BL-312-BREAK-STALE`), so one write past it records its call and clears it (C7). A lock still
+  stale after that break cannot be removed, and the write goes ahead unlocked; it may lose an update,
+  and the unique temp keeps the ledger whole (C6, with a breakable and a stuck lock).
+- A busy lock is waited for and never broken: 40 and 80 concurrent events keep every call row (C9).
+- The gate's two writes take the same lock: twelve concurrent checks, alone and mixed with twelve
+  find events, keep the ledger whole, and the next Write is allowed (C8). They are a record only,
+  so without the lib they are skipped and no decision changes.
 - POSIX `mkdir()` fails with EEXIST only when the name exists, so only EEXIST is contention. When
-  `mkdir` fails and no lockdir exists, one retry separates a lock released in between from
-  EACCES, EROFS, ENOSPC or ENOTDIR, and those give the lock up at once (`# BL-312-NOT-EEXIST`). The
-  write then fails in `mktemp` and cleans up. With `.claude` at mode 0555, the gate denies with its
-  text, or allows, and the tracker finishes, all within 3 s; so does the tracker when `.claude` is a
-  file (C16). The lib no longer probes `stat` at source time: a failed `stat` now means the lock went
-  away, and the loop sleeps and retries the `mkdir`.
+  `mkdir` fails and no lockdir exists, one retry separates a lock released in between from EACCES,
+  EROFS, ENOSPC or ENOTDIR, and those give the lock up at once (`# BL-312-NOT-EEXIST`); the write
+  then fails in `mktemp` and cleans up. With `.claude` at mode 0555, or a file, the gate answers and
+  the tracker finishes within 3 s (C16). A loop that waited there would hold every Write and Edit
+  until Claude Code's 600 s hook timeout.
+- Only EXIT is trapped (`# BL-312-TRAP`; the gate's call carries `# BL-312-GATE-TRAP`). SIGTERM at
+  its default ends the hook with 143, bash runs the EXIT trap, the lock is released, the temp is
+  removed, and nothing lands: in the tracker (C10) and in the gate (C10c).
+- SIGINT sent to the hook alone is waited out. Bash defers it until the foreground jq exits, jq never
+  received it, so the hook finishes with rc 0 and the write lands whole under the lock (C10b).
+- The next locked write sweeps this lib's `tool-usage.json.lw.XXXXXX` temps that are older than the
+  budget, and spares younger ones, which may belong to a live writer (C11, `# BL-312-SWEEP-AGE`). It
+  touches no other name: an aged `tool-usage.json.backup` and `.bak` survive (C15,
+  `# BL-312-SWEEP-GLOB`).
+- A jq filter that prints nothing never lands an empty ledger (C12). The tracker reseeds an existing
+  0-byte or unparseable ledger as it seeds a missing one (C13); the seed carries no requirements, so
+  the gate stays closed until outcomes are recorded again.
+- A failed write removes its temp (`# BL-312-FAIL-CLEAN`, C14).
 - SessionStart's merge goes through `_lw_update`, and its two fresh writes through `_lw_put`
   (`# BL-312-SESSION-PUT` on the startup one). Twelve concurrent resumes mixed with twelve find
   events keep every call row, and twelve concurrent startups are never seen half-written (C17). The
   lib is safe under that hook's `set -e`.
-- The startup write takes the lock (`# BL-312-PUT-LOCK`), and that is what keeps `## BL-236:`'s
-  reset from being undone. A tracker that has already read a ledger carrying inherited successes
-  holds the lock and stalls. The startup waits and lands last, and the successes stay erased
-  (C17c). An unlocked startup write would land first, and the tracker's `mv` would bring them back.
-- Without the lib, or jq, no ledger can be written, so a startup removes the one that is there
-  (`# BL-312-NOLIB-RESET`, a literal path). Before that, an inherited ledger survived a lib-less
-  startup with its `true` flags, and the gate allowed the first Write. At base the reset was
-  unconditional. The gate now reports the ledger absent and names verify-install (T5d in
-  `tests/test-session-test-gate-check-merge.sh`, red before the fix: `qdrant_succeeded=true
-  gate_denied=no`).
-- A filter that prints nothing never lands an empty ledger (C12). The tracker reseeds an existing
-  0-byte or unparseable ledger, the same way it seeds a missing one (C13). The reseed carries no
-  requirements, so the gate stays closed until outcomes are recorded again.
-- A failed write removes its temp (`# BL-312-FAIL-CLEAN`, C14).
+- The startup write takes the lock (`# BL-312-PUT-LOCK`). A tracker that has read a ledger carrying
+  inherited successes, and still holds the lock, lands first; the startup lands last, and
+  `## BL-236:`'s reset holds (C17c).
+- Without the lib, or jq, no ledger can be written, so a startup removes the existing one
+  (`# BL-312-NOLIB-RESET`, the literal path `.claude/tool-usage.json`). An inherited ledger's `true`
+  flags cannot reach the first Write, and the gate reports the ledger absent (T5d). Without the lib,
+  the tracker writes nothing and exits 0.
 
-**Mutants.** Each runs in a mirror of the three hooks and the lib, and proves its location: one
-end-of-line marker site, and a diff of exactly one line replaced at that marker's line number
-(`<n>c<n>`, two changed lines). Each also parses under `bash -n`. MT's first find string matched
-the fallback heredoc too, and the location check refused it. Measured under `/bin/bash` 3.2.57:
+**Mutants.** The suite places each in a mirror of the three hooks and the lib, and counts it only
+after proving its location: one end-of-line site of the marker, and a diff of exactly that line.
 
-| mutant | killed by |
-|---|---|
-| M1 unique temp back to `"$TOOL_USAGE.tmp"` | C6's stuck arm (`parses=0 bad=721`, round 1) |
-| M2 lock never taken | C1 (`calls=4/12`) and C3 |
-| M4 stale lock never broken | C7 (`lock=held`) |
-| MR a held lock broken whatever its age | C9 (`calls=16/40`) |
-| ME the EXIT trap removed | C10 (`lock=held`, a temp left) |
-| MF the failure path's temp cleanup removed | C14 |
-| MG the non-empty check removed | C12 |
-| MN a non-EEXIST `mkdir` failure read as contention | C16 (the gate still running after 3 s) |
-| MX1 the gate's `_lw_traps` call removed | C10c (`lock=held`, a temp left) |
-| MS the sweep glob widened to any six characters | C15 (`.backup` deleted) |
-| MX2 the sweep's age check removed | C11's fresh temp deleted |
-| MT SessionStart's startup write back to `cat >` | C17 (`bad=36`, round 1) |
-| MX5 SessionStart's whole-ledger write takes no lock | C17c (`qdrant=true context7=true`) |
+| marker | mutant | killed by |
+|---|---|---|
+| `BL-312-UNIQUE-TMP` | M1, the shared `"$TOOL_USAGE.tmp"` name back | C6, stuck lock |
+| `BL-312-LOCK` | M2, the lock never taken | C1, C3 |
+| `BL-312-BREAK-STALE` | M4, a stale lock never broken | C7 |
+| `BL-312-STALE-AGE` | MR, a held lock broken whatever its age | C9 |
+| `BL-312-TRAP` | ME, the EXIT trap removed | C10 |
+| `BL-312-FAIL-CLEAN` | MF, the failure path's cleanup removed | C14 |
+| `BL-312-NONEMPTY` | MG, the non-empty check removed | C12 |
+| `BL-312-NOT-EEXIST` | MN, a non-EEXIST failure read as contention | C16 |
+| `BL-312-GATE-TRAP` | MX1, the gate's `_lw_traps` call removed | C10c |
+| `BL-312-SWEEP-GLOB` | MS, the sweep glob widened to any six characters | C15 |
+| `BL-312-SWEEP-AGE` | MX2, the sweep's age check removed | a fresh temp deleted, as C11 sees |
+| `BL-312-SESSION-PUT` | MT, the startup write back to `cat >` | C17 |
+| `BL-312-PUT-LOCK` | MX5, `_lw_put` without the lock | C17c |
 
-That is 13 location-proved mutants in this suite, all killed on both shells, plus T5c in
-`tests/test-session-test-gate-check-merge.sh`. MX5 is the reviewer's round-three survivor. C17c
-passed before MX5 existed, because the lock was already there; its red is MX5's.
-
-The reviewer's MX3, removing `[ -s ]` from the tracker's `_ledger_unusable`, was equivalent:
-`jq -e 'type == "object"'` exits 4 on a 0-byte file (jq-1.8.2, measured), so the check was removed.
-
-**Residuals, disclosed.**
-- Skipping the seed lock survived six C5 rounds and is not in the suite. Every process in a burst
-  passes the seed check before any of them appends, so a second seed cannot land over a first
-  writer's row unless one process pauses mid-seed. The lock closes that window by construction.
-- Two waiters that both read a stale lock's age can both break it, and the second can remove the
-  lock a third writer has just taken. That window is between one `stat` and the next `rmdir`. It
-  loses at most an update, and the unique temp keeps the ledger whole. C6 and M1 are probabilistic
-  for the same reason; M1 was killed in round 1 of 6 on every run so far.
-- `mktemp` creates mode 0600, so the ledger is now 0600 after its first write, where the redirect
-  gave 0644 under the umask. `_tt_record_accumulation` already does the same to `process-state.json`.
-- The gate still says "requirements not met", not "ledger unreadable", when it reads an empty or
-  unparseable ledger. The next MCP event now reseeds that ledger (C13), so the state no longer
-  persists.
-- EROFS and ENOSPC cannot be made in the suite. They take the same path as EACCES, because the
-  lockdir never appears. C16 is skipped, not passed, where a 0555 directory stays writable (root).
-- A live hold longer than the 3 s budget is taken for stale and can lose a row. Measured jq append
-  times are 0.04 s at 5,000 rows and 0.23 s at 50,000, so only suspension reaches it: a lid close,
-  SIGSTOP or heavy swapping. The age is `date +%s` minus the lockdir's mtime, so a filesystem whose
-  clock is skewed by more than 3 s (network or VM-shared) would see fresh locks as stale. Local APFS
-  and ext4 are fine.
-- C17's resume arm did not fail at round two's code in three rounds: the unlocked merge's window is
-  narrow. Its startup arm did, and MT is killed through it.
+**Residuals.**
+- `# BL-312-SEED-LOCK` has no mutant. Every process in a burst passes the seed check before any of
+  them appends, so a second seed cannot land over a first writer's row unless one process pauses
+  mid-seed. The lock closes that window by construction.
+- Two waiters that both read a stale lock's age can both break it, and the second can remove a lock a
+  third writer has just taken, between one `stat` and the next `rmdir`. That loses at most an update,
+  and the unique temp keeps the ledger whole. M1, M2, MR and MT are killed by concurrency, not by
+  construction.
+- A live hold longer than 3 s is taken for stale and can lose a row. jq appends take about 0.23 s at
+  50,000 rows, so only a suspended writer reaches it (a lid close, SIGSTOP, heavy swapping). The age
+  is `date +%s` minus the lockdir's mtime, so a filesystem whose clock is skewed by more than 3 s
+  (network or VM-shared) would see fresh locks as stale.
+- EROFS and ENOSPC cannot be made in the suite. They take the EACCES path, because the lockdir never
+  appears. C16 is skipped, not passed, where a 0555 directory stays writable (root).
+- `mktemp` creates mode 0600, so the ledger is 0600 after its first write, where the redirect gave
+  0644 under the umask. `_tt_record_accumulation` does the same to `process-state.json`.
+- The gate says "requirements not met", not "ledger unreadable", on an empty or unparseable ledger.
+  The next MCP event reseeds it (C13).
 - Under SessionStart's `set -e`, a fresh write that cannot land (an unwritable `.claude`) ends that
-  hook non-zero, as the `cat >` it replaces did on a failed write.
+  hook non-zero, as a failed `cat >` did. A directory at the ledger path ends it with rc 1 and keeps
+  the directory.
+- SessionStart's merge fallback takes the lock twice, once for `_lw_update` and once for `_lw_put`.
+  A tracker row can land between them and be overwritten; the fallback runs only on an unparseable
+  ledger.
 
 **Related:** `## BL-233:` (the outcome ledger this writes, and the no-requirements seed rule),
 `## BL-236:` (the ledger's untracked status).
