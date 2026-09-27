@@ -21318,21 +21318,24 @@ unchanged (A1, A14).
 
 - `SOLO_SINGLE_AUTHORITY_ATTESTED` must be exactly `1` (A21), and
   `SOLO_SINGLE_AUTHORITY_ATTESTED_REASON` is required: blank or absent is `[BLOCKED]`, exit non-zero,
-  nothing recorded (A5, A17). The reason is sanitised at ingest (`accum_oneline`) and printed with
-  `printf '%s'` (A10, A15, A16).
+  nothing recorded (A5, A17). The reason is sanitised at ingest (`accum_oneline`, or a
+  `tr` fallback when `scripts/lib/accumulation.sh` is absent, A29) and printed with `printf '%s'`
+  (A10, A15, A16).
 - `_cpg_record_single_authority_attestation` (`# BL-274-ATTEST-WRITE`) writes
   `.claude/process-state.json::attestations.single_authority[<gate>]` with the sanitised reason, date,
   actor, gate key and `git rev-parse HEAD` (A6+A7), one record per gate (A19). Idempotence is
-  head-sensitive: the same reason at a new HEAD refreshes the pin (A8), and a repeat at the same HEAD
-  changes nothing (A18). Nothing reads the pin back to decide the gate; the attestation is supplied on
+  head-sensitive: the same reason at a new HEAD refreshes the pin (A8), a new reason at the same HEAD
+  replaces the old one (A8b), and a repeat of both changes nothing (A18). Nothing reads the pin back to decide the gate; the attestation is supplied on
   every run.
 - It is refused, and the gate blocks (`# BL-274-ATTEST-REFUSE`), when the call site has no gate key
   (A20) or the record cannot be written. The recorder returns a code per cause, and the `[FAIL]` line
   names that cause and no other: 2, `jq` not on PATH (A22); 3, the state file cannot be written,
-  read-only or not a regular file (A9, A23); 4, `.claude/process-state.json.lockdir` is held, with the
+  read-only or not a regular file (A9, A23), or `.claude/` refuses writes, returned at once when the
+  lock cannot be made and none exists (A27 at mode 0555, A28 under `chflags uchg`); 4, `.claude/process-state.json.lockdir` is held, with the
   instruction to remove it if no other gate run holds it (A25); 5, `jq` cannot merge the record, the
-  state file not being valid JSON (A24). On each, exit is non-zero, there is no `[ATTESTED]` line, and
-  an existing state file's bytes are unchanged.
+  state file not being valid JSON (A24). On each, exit is non-zero, there is no `[ATTESTED]` line, an
+  existing state file's bytes are unchanged, and the recorder leaves no lock of its own (A9) and no
+  temp file (A24); a TERM during the write leaves neither (A30).
 - With the attestation, a project the gate otherwise clears exits 0 (A13, on the PREMISE that the same
   project with an independent approver exits 0).
 
@@ -21399,9 +21402,12 @@ signatures are unchecked for authorship whether or not this attestation exists.
   (`run-phase3-validation.sh` twice, `track-tool-usage.sh`, `lib/bypass-audit.sh` twice). One shared
   helper would change every site's error contract, and is not attempted here.
 - A `mktemp` or `mv` failure inside the lock returns 3, and no case reaches it: both need `.claude/`
-  to refuse writes, and then the lock cannot be taken and the run returns 4 first. It is reachable only
-  if the directory's permissions change between the `mkdir` and the `mktemp`, so neither arm has a
+  to refuse writes, and then the lock cannot be made and the run returns 3 there first. It is reachable
+  only if the directory's permissions change between the `mkdir` and the `mktemp`, so neither arm has a
   mutant.
+- If another run releases the lock between a failed `mkdir` and the existence check that follows it,
+  the refusal is code 3 and names an unwritable `.claude/`. The run still refuses and records nothing;
+  only the named cause is wrong, and only in that window.
 
 **Related:** `## BL-275:` (the same control, and why its remedy line cannot be made both true and
 consistent), `## BL-212:` (the same walker, its coverage stopping at Phase 1→2), `## BL-279:` (the
