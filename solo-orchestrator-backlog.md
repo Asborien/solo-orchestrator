@@ -4380,7 +4380,16 @@ this repo's own agent-worktree flow until PR #304. 'Never a bypass' was wrong.
 **Logged:** 2026-07-24 (BL-174 WP-D adversarial verifier)
 **Category:** Upgrade-path safety / framework-repo hygiene
 **Severity:** Medium
-**Status:** Open
+**Status:** Closed — 2026-09-27, commit `bde8b9d`: the prescribed structural guard is at the top of
+`_run_idempotent_backfill` (`# BL-177-BACKFILL-GUARD` — no project root, or a root with neither
+`.claude/phase-state.json` nor `.claude/manifest.json`, writes nothing), and the project-root check now
+runs right after argument parsing (`# BL-177-HELP-FIRST`), so `--backfill-only` outside a project is
+refused before any write. The empty-root `cd` was a version split: a silent no-op in bash 3.2 (the leak
+below) and "null directory" rc 1 in bash 5 (issue #419). `tests/test-upgrade-help-and-projectless.sh`
+P1–P5. Not done: `guard_not_in_framework` on the `--backfill-only` entry — the project check now stops a
+framework checkout first, because it carries no `.claude/phase-state.json`.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 `scripts/upgrade-project.sh`'s `_run_idempotent_backfill` runs its whole body inside a subshell that opens with `( cd "$PROJECT_ROOT" …`. `find_project_root` keys on `.claude/phase-state.json`; when that marker is absent — the framework repo itself, or any non-project cwd — `PROJECT_ROOT` is the empty string and **`cd ""` is a SILENT rc-0 no-op under `set -euo pipefail` on bash 3.2** (empty operand → success, cwd unchanged), so the subshell proceeds in the INVOCATION directory rather than a project root. Nothing downstream re-checks that we are in a real project.
 
