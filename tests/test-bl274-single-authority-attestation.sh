@@ -460,6 +460,7 @@ case_A32() {  # a state-file value echoed in jq's message cannot forge gate outp
   attested "$1" "$REASON"
   _refused_file_untouched "$before" || r=1
   n=$(printf '%s\n' "$OUT" | grep -c 'jq said:' || true)
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
   inj=$(printf '%s\n' "$OUT" | verdict_led)
   if [ "$r" -eq 0 ] && [ "$n" -ne 1 ]; then WHY="expected one 'jq said:' line, saw $n"; r=1
   elif [ "$r" -eq 0 ] && [ "$inj" -ne "$base" ]; then

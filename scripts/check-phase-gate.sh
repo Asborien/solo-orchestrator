@@ -1511,7 +1511,7 @@ _cpg_record_single_authority_attestation() {
     printf '{}\n' > "$file" 2>/dev/null || { rmdir "$lock_dir" 2>/dev/null; return 3; }
   fi
 
-  rc=0; _sa_jq_err=""; _sa_errf=$(mktemp 2>/dev/null) || _sa_errf=/dev/null
+  rc=0; _sa_jq_err=""; _sa_errf=$(mktemp "${TMPDIR:-/tmp}/soif-sa-jq.XXXXXX" 2>/dev/null) || _sa_errf=/dev/null
   (
     tmp=$(mktemp "${file}.XXXXXX") || exit 3
     trap 'rm -f "$tmp"; rmdir "$lock_dir" 2>/dev/null' EXIT INT TERM
