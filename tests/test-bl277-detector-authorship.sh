@@ -192,6 +192,29 @@ chk_post_bash_shape() {
   return 0
 }
 
+# A7 — the other tools whose results carry a top-level `content`: a subagent's
+# report (Agent, a list of text blocks) and a Grep in content mode. Shapes from
+# transcript `toolUseResult`s, text replaced. Neither is authored here: each is
+# tool_output, awaits no decision and raises no sentinel. On a project whose
+# registration has no matcher, these reach the detector.
+env_other() { jq -nc --arg tn "$1" --arg t "$2" '
+  {session_id:"bl277", hook_event_name:"PostToolUse", tool_name:$tn, tool_input:{},
+   tool_response:(if $tn == "Agent"
+     then {status:"completed", prompt:"review", agentId:"a1", content:[{type:"text", text:$t}], totalDurationMs:1}
+     else {mode:"content", numFiles:1, filenames:["notes.md"], content:$t, numLines:1} end)}'; }
+chk_other_tools() {
+  local hook="$1" p tn a ur
+  for tn in Agent Grep; do
+    p="$(newtmp)"; mk_proj "$p" || { echo "fixture"; return 1; }
+    run_hook "$hook" "$p" "$(env_other "$tn" "$(fixture_for no_verify)")"
+    a="$(q "$p" '[.[].actor] | unique | join(",")')"; ur="$(q "$p" '[.[].user_response] | unique | join(",")')"
+    [ "$(q "$p" 'length')" = "1" ] || { echo "$tn: rows=$(q "$p" 'length'), want 1 (the scan must reach it)"; return 1; }
+    [ "$a" = "tool_output" ] && [ "$ur" = "n/a" ] || { echo "$tn: actor=[$a] user_response=[$ur], want [tool_output] [n/a]"; return 1; }
+    [ ! -e "$(sentinel "$p")" ] || { echo "$tn: a sentinel was raised"; return 1; }
+  done
+  return 0
+}
+
 # W — a file the model wrote, created or overwritten.
 chk_write_authored() {
   local hook="$1" p ty a ur
@@ -363,8 +386,8 @@ run_tty() {
     while [ ! -e "$w/ready" ] && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
     case "$ans" in
       '') ;;
-      "$RUN_TTY_ENTER") printf '\n' ;;
-      *) printf '%s\n' "$ans" ;;
+      "$RUN_TTY_ENTER") printf '\n' 2>/dev/null ;;
+      *) printf '%s\n' "$ans" 2>/dev/null ;;
     esac
     # Held open until the command is done: BSD script(1) types ^D into the
     # terminal when its stdin ends, which a prompt not yet reached reads as
@@ -607,6 +630,9 @@ else
   fail_ "A6" "clean output wrote $(q "$p" 'length') row(s)"
 fi
 
+if why="$(chk_other_tools "$HOOK")"; then pass "A7 — an Agent report and a Grep content result are scanned and recorded as tool_output, n/a, with no sentinel"
+else fail_ "A7" "$why"; fi
+
 echo "=== W — PostToolUse from Write: the model wrote the file ==="
 if why="$(chk_write_authored "$HOOK")"; then pass "W1 — a Write result, created or overwritten, writes one claude row, PENDING, and raises the sentinel"
 else fail_ "W1" "$why"; fi
@@ -830,7 +856,7 @@ roster_mutant M8 \
   ".hooks.PostToolUse[]? | .hooks[]? | select(.command | contains(\"bypass-detector.sh\"))" \
   ".hooks.PostToolUse[0].hooks[]? | select(.command | contains(\"bypass-detector.sh\"))" 4 \
   "the idempotence probe regressed to group [0]"
-# M10 — the matcher widened back over Read, Edit and Write (review's X1).
+# M10 — the matcher widened back over Read, Edit and Write.
 roster_mutant M10 "$REG" '.hooks.PostToolUse += [{"matcher": "Bash|Read|Edit|Write", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' 5 "the matcher widened to Bash|Read|Edit|Write"
 # M12 — the matcher narrowed back to Bash: files the model writes go unscanned
 # (the maintainer's ruling on PR #454).
@@ -880,15 +906,15 @@ if why="$(mutate "$MP" "# BL-277-FP-OPERATOR" 'if [ ! -t 0 ]; then' 'if false; t
   else pass "M16 (MUTATION) — the operator-only guard removed: D5 kills it, D1 survives"; fi
 else fail_ "M16 setup" "$why"; fi
 
-# M17 — the library's reason guard narrowed to a space (review E21). Killed by D4.
+# M17 — the library's reason guard narrowed to a space. Killed by D4.
 MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"
 if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" 'if [ -z "${reason//[[:space:]]/}" ]; then' 'if [ -z "${reason// /}" ]; then' 5)"; then
   if chk_lib_refuses_empty_reason "$ML" >/dev/null 2>&1; then fail_ "M17 (MUTATION)" "the library's narrowed reason guard survived D4"
   else pass "M17 (MUTATION) — the library's reason guard narrowed to spaces: D4 kills it"; fi
 else fail_ "M17 setup" "$why"; fi
 
-# M18 — the library's false-positive pattern widened to catch every decision
-# (review E23). Killed by D6; D1 survives.
+# M18 — the library's false-positive pattern widened to catch every decision.
+# Killed by D6; D1 survives.
 MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
 if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" '    false-positive)' '    false-positive|*)' 3)"; then
   if chk_lib_refuses_unknown "$ML" >/dev/null 2>&1; then fail_ "M18 (MUTATION)" "the widened pattern survived D6"
@@ -904,6 +930,16 @@ if why="$(mutate "$MP" "# BL-277-FP-CONFIRM" 'if ! prompt_yes_no ' 'if false && 
   else pass "M19 (MUTATION) — the operator's confirmation removed: D7 kills it, D1 survives"; fi
 else fail_ "M19 setup" "$why"; fi
 
+# M24 — an authored Agent arm added beside the authorship block: a subagent's
+# report stamped claude and PENDING, with the sentinel. Killed by A7; S1 and W1
+# survive, so the kill is the Agent arm's.
+MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
+if why="$(mutate "$MH" "# BL-277-AUTHORSHIP" 'USER_RESPONSE="n/a"' "USER_RESPONSE='n/a'; [ \"\$TOOL_NAME\" = \"Agent\" ] && { ACTOR=\"claude\"; USER_RESPONSE=\"PENDING\"; }" 6)"; then
+  if chk_other_tools "$MH" >/dev/null 2>&1; then fail_ "M24 (MUTATION)" "an authored Agent arm survived A7"
+  elif ! chk_stop_claude_row "$MH" >/dev/null 2>&1 || ! chk_write_authored "$MH" >/dev/null 2>&1; then fail_ "M24 (MUTATION)" "the mutant broke S1 or W1 too, so the kill proves nothing about A7"
+  else pass "M24 (MUTATION) — an authored Agent arm added: A7 kills it, S1 and W1 survive"; fi
+else fail_ "M24 setup" "$why"; fi
+
 # M23 — the confirmation's default flipped to Y. Only a real Enter reaches the
 # default, so D7 must fail on its Enter arm, not its "n" arm.
 MD="$(mirror_scripts)"; MP="$MD/scripts/pending-approval.sh"
@@ -913,7 +949,7 @@ if why="$(mutate "$MP" "# BL-277-FP-CONFIRM" '? [y/N]" "N"; then' '? [y/N]" "Y";
          *) fail_ "M23 (MUTATION)" "D7 failed, but not on its Enter arm: $m23" ;; esac; fi
 else fail_ "M23 setup" "$why"; fi
 
-# M21, M22 — the close's row selection widened (review RV-A, RV-E): tool_output
+# M21, M22 — the close's row selection widened: tool_output
 # rows (user_response n/a), or escalation rows, closed with the proposals.
 # Killed by D9; D1 survives.
 MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
