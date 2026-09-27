@@ -18018,7 +18018,16 @@ a hoist is not taken).
 
 **Status:** Open — **DECIDED 2026-09-17 (Karl): option 3 below, the entry's own recommendation.** The
 contributor who filed this (also issue #385, which proposed scanning `tool_input`) is invited to build it;
-adversarial review before merge, as every PR. Not built yet. *(Before 2026-09-17: ENTRY-ONLY BY DECISION
+adversarial review before merge, as every PR. Not built yet; the build is PR #454, changes requested.
+**RULED 2026-09-27 (Karl), on PR #454's review: files the agent WRITES must still be scanned.** The PR's
+Bash-only PostToolUse matcher was justified as removing the Read half, but Read output was never
+scanned (Read's text sits at `toolUseResult.file.content`); a top-level `content` is a Write, both
+`type: create` and `type: update` (measured over local transcripts 2026-09-27: Read `text` 35 rows,
+keys `file` only; Write `create` 47, `update` 5, each with `content`), so Bash-only dropped model-authored files. The matcher must be `Bash|Write`, with
+Write rows recorded as authored (`actor: "claude"`, sentinel raised). Requested alongside it: the
+false-positive close becomes operator-only, and its pointer comes out of the deny text relayed to the
+model — after option 3 every sentinel comes from model-authored text, so a model-run false-positive
+close could only relabel a real proposal. *(Before 2026-09-17: ENTRY-ONLY BY DECISION
 (2026-09-13); three options set out below with a recommendation, none built.)* Consequence for adoption:
 ADOPT-002-ARCH v2.2 makes shipping `.claude/settings.json` to adoptees depend on this landing, so no
 adoptee imports the day-one sentinel. Choosing among them is a judgement about this
