@@ -744,6 +744,29 @@ whose §8.7a records `.claude/orchestrator-source.json` — the third broken rou
 found in the same review), and the `[FAIL]`-vs-`issues` doctrine in
 `CLAUDE.md`: a label is not a verdict, and here an exit code was not one either.
 
+
+### Resolution — 2026-09-27
+
+**Status:** Fixed. All three defects, in commit `eed252b` (defect (3) earlier, PR #412, `141eef5`).
+
+- **(1)** `load_progress()` refuses a progress file it cannot use, naming why — missing keys by name,
+  not JSON, a non-whole-number `last_section` — returns non-zero, and never sources over a traceback
+  (`# BUG-010-LOAD-REFUSE`). Chosen over `.get(k, '')`, which would have kept the silence.
+- **(2)** `prompt_choice`, and `prompt_with_suggestions` with no default, treat `read` returning
+  non-zero with nothing read as the end of input: they refuse once and return non-zero, and every caller
+  is a `var=$(prompt_…)` under `set -e`, so the wizard stops (`# BUG-010-EOF`). A final line with no
+  newline is still an answer.
+- The render's `|| true` (the BL-265 residual) is closed too: each step is checked, `PROJECT_INTAKE.md`
+  is replaced only whole, and a failed final render stops the run instead of printing "Intake Complete!".
+
+Pinned by `tests/test-bug010-intake-silent-paths.sh` (16 cases; the reproduction above is L and E1, run
+against the real wizard under a watchdog). Not covered: `load_progress` still does nothing, silently,
+on a host without `python3`.
+Residuals, recorded not fixed: adoption's Act 4 prefill writes a bare `{}` progress file when none
+exists (`_adopt_act4_prefill`) — reachable only if the operator deleted the one adoption wrote — and
+`--resume` on it is now refused by name where it used to fail silently; and the render now replaces
+`PROJECT_INTAKE.md` with `mv`, so a symlinked one becomes a plain file.
+
 ---
 
 ## Template for new entries
