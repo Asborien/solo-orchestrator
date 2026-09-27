@@ -18264,7 +18264,9 @@ each marked:
   of a blank, tab-only or newline-only reason, reached directly because the script's guard would
   otherwise shield it from every test), D6 (the library refuses an unknown decision given with a
   reason), D3 (decline and accept record what they did before, and neither writes a
-  `false_positive_reason`, even when handed a `--reason`).
+  `false_positive_reason`, even when handed a `--reason`). On a stub install without
+  `scripts/lib/helpers-core.sh`, `# BL-277-FP-STUB` supplies a `prompt_yes_no` that refuses the close
+  and names the missing file, where it had printed "command not found" and "cancelled" (D8).
 - `# BL-277-MATCHER` in the hook roster, `scripts/lib/claude-settings.sh` (`soif_register_hook_roster`,
   which `init.sh` sources since #451 moved the roster out of it; this entry's hunk moved with it, inside
   the greenfield branch of the maintainer's `# BL-242-SETTINGS-BL277` guard, which is unchanged): the
@@ -18368,6 +18370,7 @@ M7 reported `operative text occurs 0 times` — the quoting trap made visible ra
 | M17 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 5 | `[[:space:]]` narrowed to a space (review E21) | D4 | — |
 | M18 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 3 | `false-positive)` widened to `false-positive\|*)` (review E23) | D6 | D1 |
 | M19 | pending-approval, `# BL-277-FP-CONFIRM` | ≤ 3 | the confirmation skipped: `if false && ! prompt_yes_no …` | D7 | D1 |
+| M20 | pending-approval on a stub install, `# BL-277-FP-STUB` | ≤ 4 | the fallback `prompt_yes_no` renamed away | D8 | — |
 
 All killed on both shells (M9 and M10 added, and M7 and M8 moved onto R6, at the 25 September re-cut); each "survives" column is asserted too, so a kill that came from
 breaking something else is reported as such. Review ran four of its own (the event test inverted at
@@ -18394,23 +18397,6 @@ anchored to.
   narrowing (M15; the 9c030d0 suite with it applied: D2 passed, and only M6's text check failed). A4's
   cases that no Bash result can arrive as are replaced by the real shape (residual 7). The echoed
   proposal is residual 6.
-
-**Our exhaustive review of that answer (`747e99d`, 2026-09-27): `major_concerns`, and what changed.**
-48 mutants over 23 arms, 43 killed; 4 behavioural survivors and 1 equivalent.
-- **Residuals 1 and 2 were wrong about `Grep` and `Agent`**, whose results carry a top-level `content`,
-  and `Bash|Write` dropped `Agent` (subagent-authored) results undisclosed. Both residuals are
-  corrected with measured counts, and residual 10 discloses the `Agent` drop. The matcher is not
-  widened: that is the maintainer's call, and it is put to him on #454.
-- **The operator-only close lacked the confirmation** that follows the same guard in
-  `--unrecord-feature` and `--reset`. `# BL-277-FP-CONFIRM` adds it in their shape (D7, M19), and
-  residual 8 now names both routes that still reach the close (a pseudo-terminal that types `y`, and
-  the library called directly).
-- **Survivors:** the library's reason guard narrowed to a space (D4 gains tab-only and newline-only
-  reasons; M17), and the library's `false-positive)` widened to every decision (D6; M18). The
-  `[OK]` line's `closed_as` label had no reader and no case; it is removed, so the line prints
-  `$decision` as on `main`.
-- Text: the aggregator's comment for this suite, R6's pass label and the detector's comment on
-  envelope shapes now say what is true.
 
 **Residuals, disclosed.**
 1. **The ledger still grows on reads through Bash.** Option 3 keeps output scanning, so `cat` or `grep`
