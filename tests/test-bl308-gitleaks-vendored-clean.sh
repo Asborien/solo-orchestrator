@@ -86,7 +86,7 @@ build_nogitleaks_path() {
 # cp lines, plus the platform modules it picks from), and the design notes
 # beside them carry planted AKIA fixtures that never leave this repo.
 SHIPPED_SURFACE="scripts templates evaluation-prompts/Projects docs/platform-modules
-$(soif_parse_shipped_reference_doc_sources "$INSTALLER")"
+$(soif_parse_shipped_reference_doc_sources "$INSTALLER" || true)"
 
 # Assembled from halves so this file does not itself carry a scanner-shaped
 # literal. BASE32-VALIDITY IS LOAD-BEARING for the AWS plant: the
@@ -193,7 +193,7 @@ else
   if ! mk_surface "$D/c4"; then
     fail_ "C4 setup" "could not copy the shipped surface"
   else
-    ref_doc=$(soif_parse_shipped_reference_doc_sources "$INSTALLER" | head -n 1)
+    ref_doc=$(soif_parse_shipped_reference_doc_sources "$INSTALLER" | head -n 1 || true)
     planted=0
     for p in "$ref_doc" docs/platform-modules/web.md; do
       if [ -n "$p" ] && [ -f "$D/c4/$p" ]; then
@@ -254,7 +254,7 @@ if [ -z "${BL308_POSTURE_CHILD:-}" ]; then
   R="$(newtmp)"
   grep -v 'tests/test-bl308-gitleaks-vendored-clean.sh' "$REPO_ROOT/.github/workflows/tests.yml" > "$R/tests.yml"
   rc=0
-  bash "$REPO_ROOT/scripts/lint-tests-registered.sh" --list --tests-yml "$R/tests.yml" > "$R/list.txt" 2>&1 || rc=$?
+  "$BASH" "$REPO_ROOT/scripts/lint-tests-registered.sh" --list --tests-yml "$R/tests.yml" > "$R/list.txt" 2>&1 || rc=$?
   if [ "$rc" -eq 1 ] && grep -Eq '^FAIL[[:space:]].*test-bl308-gitleaks-vendored-clean\.sh[[:space:]]+not-in-unit-lane' "$R/list.txt"; then
     pass "R1: with its tests.yml row removed, lint-tests-registered.sh fails naming this suite (rc 1, not-in-unit-lane)"
   else

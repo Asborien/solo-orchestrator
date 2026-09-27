@@ -22151,7 +22151,8 @@ in a saved report and is the wider net, so the fingerprint is preferred.)
   `scripts/lint-no-live-remote-in-tests.sh`: that lint resolves a variable to the installer only
   when its assignment ends in `/init.sh`, and `lint-tests-registered.sh` reads the name the other
   way, so no spelling satisfies both. The suite copies and parses the installer and never runs it.
-- R1 runs the registration lint with `bash` from PATH, not `"$BASH"`.
+- G1's surface is this repository's. The `.claude/framework/` content init.sh vendors from
+  `~/.claude-dev-framework` is outside it, and only P2 (full lane) scans it.
 - A1 and A2 make the unit suite take several seconds where it took under one: building the PATH
   mirror costs one `ln` per entry of each PATH directory that holds gitleaks.
 - P2 is the only check of a real generated project and its history, and it runs in the full lane
