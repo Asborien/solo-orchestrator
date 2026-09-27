@@ -573,8 +573,10 @@ _bl282_array_keys() {
 # break would pass if any one line did. Membership reads all of grep's input
 # (no -q), so under pipefail an early exit cannot SIGPIPE the writer.
 _bl282_key_allowed() {
-  local key="$1" tpl pat base
-  case "$key" in ''|*[!a-z0-9_]*) return 1 ;; esac  # BL-282-KEY-CHARSET
+  local key="$1" tpl="" pat="" base=""
+  # Spelled out, not `a-z`: bash 3.2 collates a range, so in a UTF-8 locale
+  # `[a-z]` also matches upper-case and accented letters.
+  case "$key" in ''|*[!abcdefghijklmnopqrstuvwxyz0123456789_]*) return 1 ;; esac  # BL-282-KEY-CHARSET
   case "$key" in
     competency_*)
       base="${key#competency_}"; base="${base%_tooling}"

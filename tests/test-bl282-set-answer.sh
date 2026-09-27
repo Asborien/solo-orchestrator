@@ -225,13 +225,15 @@ if ! mk_project "$H8N"; then
   fail_ "H8N setup" "could not build the fixture"
 else
   before_p="$(_cksum "$H8N/.claude/intake-progress.json")"; bad=""
-  for nk in input_x_name input_1a_name; do
+  # The last two differ from input_1_name only outside the shape, so they
+  # pin the `^`…`$` anchors of `# BL-282-FAMILY-WHOLE` directly.
+  for nk in input_x_name input_1a_name input_1_namex xinput_1_name; do
     wiz "$H8N" --set-answer "$nk" "minted"
     [ "$WIZ_RC" -eq 1 ] || bad="$bad [rc=$WIZ_RC for $nk]"
   done
   after_p="$(_cksum "$H8N/.claude/intake-progress.json")"
   if [ -z "$bad" ] && [ "$before_p" = "$after_p" ]; then
-    pass "H8N — input_x_name and input_1a_name, a non-digit index, are refused (rc=1), file byte-identical"
+    pass "H8N — a non-digit index (input_x_name, input_1a_name) and a key outside the shape (input_1_namex, xinput_1_name) are refused (rc=1), file byte-identical"
   else
     fail_ "H8N" "${bad:-rc fine}; file $([ "$before_p" = "$after_p" ] && echo unchanged || echo CHANGED)"
   fi
@@ -601,14 +603,18 @@ N3="$(newtmp)/proj"
 if ! mk_project "$N3"; then
   fail_ "N3 setup" "could not build the fixture"
 else
-  before_p="$(_cksum "$N3/.claude/intake-progress.json")"
-  wiz "$N3" --set-answer competency_zzz "minted"
+  # competency_sec is a SUBSTRING of a real domain key: membership is of the
+  # whole line (`grep -x`), never a match inside one.
+  before_p="$(_cksum "$N3/.claude/intake-progress.json")"; bad=""
+  for nk in competency_zzz competency_sec; do
+    wiz "$N3" --set-answer "$nk" "minted"
+    [ "$WIZ_RC" -eq 1 ] && [ "$(jq_answer "$nk" "$N3")" = "<<unset>>" ] || bad="$bad [rc=$WIZ_RC for $nk]"
+  done
   after_p="$(_cksum "$N3/.claude/intake-progress.json")"
-  got="$(jq_answer competency_zzz "$N3")"
-  if [ "$WIZ_RC" -eq 1 ] && [ "$got" = "<<unset>>" ] && [ "$before_p" = "$after_p" ]; then
-    pass "N3 — competency_zzz is refused (rc=$WIZ_RC), mints nothing, file byte-identical"
+  if [ -z "$bad" ] && [ "$before_p" = "$after_p" ]; then
+    pass "N3 — competency_zzz and competency_sec are refused (rc=1), mint nothing, file byte-identical"
   else
-    fail_ "N3" "rc=$WIZ_RC (want 1); competency_zzz=[$got] (want unset); file $([ "$before_p" = "$after_p" ] && echo unchanged || echo CHANGED)"
+    fail_ "N3" "${bad:- rc fine}; file $([ "$before_p" = "$after_p" ] && echo unchanged || echo CHANGED)"
   fi
 fi
 
@@ -722,7 +728,8 @@ fi
 # N8 — the review's four (a typo of a real gate key among them) and two
 # near-misses: each was accepted and minted by the `$key` widening.
 refuse_all N8 "gate_, infra_ and escalation_ keys no array yields" \
-  gate_phase_0_phase_1 gate_zzz infra_typo escalation_nonsense gate_phase_0_to_phase_1_x infra_monitoring_tooling
+  gate_phase_0_phase_1 gate_zzz infra_typo escalation_nonsense gate_phase_0_to_phase_1_x infra_monitoring_tooling \
+  gate_phase_0 infra_sso escalation_level
 
 # N9 — keys carrying a line break, each with one line a valid key would
 # match. Matching is of the WHOLE string (`# BL-282-KEY-CHARSET`,
@@ -732,6 +739,36 @@ refuse_all N9 "keys with a line break" \
   "$(printf 'gate_phase_0_to_phase_1\nNOT')" "$(printf 'competency_security\nNOT')" \
   "$(printf 'monthly_budget\nNOT')" "input_1_name
 "
+
+# N11 — `# BL-282-KEY-CHARSET` alone refuses an upper-case or accented key,
+# in a UTF-8 locale too. On bash 3.2 a `[a-z]` range collates, so `M` and `é`
+# fall inside it; the class is spelled out letter by letter. A mirror makes
+# every check after the charset accept, so only the charset can refuse here;
+# the lower-case control proves the mirror accepts past it.
+N11FW="$(newtmp)/fw"
+if ! mkdir -p "$N11FW" || ! cp -Rp "$REPO_ROOT/scripts" "$N11FW/"; then
+  fail_ "N11 setup" "could not mirror scripts/"
+else
+  n11t="$N11FW/scripts/intake-wizard.sh"
+  awk '{ print } /# BL-282-KEY-CHARSET$/ { print "  return 0" }' "$n11t" > "$n11t.new" && mv "$n11t.new" "$n11t"
+  N11="$(newtmp)/proj"
+  if ! _syntax_ok "$n11t" || [ "$(grep -A1 '# BL-282-KEY-CHARSET$' "$n11t" | sed -n 2p)" != "  return 0" ] \
+     || ! mk_project "$N11" "$n11t"; then
+    fail_ "N11 setup" "could not build the charset-only mirror"
+  else
+    LC_ALL=en_GB.UTF-8 wiz "$N11" --set-answer zz_not_a_key "ctl"; rc_ctl=$WIZ_RC
+    bad=""
+    for nk in Monthly_budget "$(printf 'monthly_budg\303\251t')" GATE_ZZZ; do
+      LC_ALL=en_GB.UTF-8 wiz "$N11" --set-answer "$nk" "minted"
+      [ "$WIZ_RC" -eq 1 ] || bad="$bad [rc=$WIZ_RC for $nk]"
+    done
+    if [ "$rc_ctl" -eq 0 ] && [ -z "$bad" ]; then
+      pass "N11 — with every later check accepting, the charset alone refuses Monthly_budget, monthly_budgét and GATE_ZZZ under LC_ALL=en_GB.UTF-8 (control accepted, rc=$rc_ctl)"
+    else
+      fail_ "N11" "control rc=$rc_ctl (want 0);${bad:- keys refused}"
+    fi
+  fi
+fi
 
 # N10 — a `$key` family with no bound of its own is refused, not widened: a
 # mirror whose wizard carries one extra `save_answer "probe_$key"` call site.
@@ -1224,6 +1261,29 @@ if [ "$(id -u)" != "0" ] && mp_mutate MP15 "$SEDS/mp15.sed" BL-282-RENDER-STATUS
     fi
   fi
 fi
+
+# MP16–MP19 — each array bound loosened from a whole-line match to a
+# substring one: `grep -x --` becomes `grep --`, so a truncated real key such
+# as gate_phase_0 is minted. N3 and N8's substring keys are what stop them.
+# xdrop_mutant <id> <marker> <substring key> <real key>
+xdrop_mutant() {
+  local id="$1" marker="$2" bad_k="$3" ok_k="$4" pd rc_bad got_bad rc_ok
+  printf '/# %s$/s/| grep -x -- /| grep -- /\n' "$marker" > "$SEDS/$id.sed"
+  mp_mutate "$id" "$SEDS/$id.sed" "$marker" || return 0
+  pd="$(newtmp)/proj"
+  if ! mk_project "$pd" "$MP_TGT"; then fail_ "$id setup" "could not build the mutant's fixture"; return 0; fi
+  wiz "$pd" --set-answer "$bad_k" "minted"; rc_bad=$WIZ_RC; got_bad="$(jq_answer "$bad_k" "$pd")"
+  wiz "$pd" --set-answer "$ok_k" "ok"; rc_ok=$WIZ_RC
+  if [ "$rc_bad" -eq 0 ] && [ "$got_bad" = "minted" ] && [ "$rc_ok" -eq 0 ]; then
+    pass "$id (MUTATION) — with '$marker' matching substrings $bad_k is MINTED (rc=$rc_bad) while $ok_k still works: N3/N8 is what stops it"
+  else
+    fail_ "$id (MUTATION)" "$bad_k rc=$rc_bad written=[$got_bad]; $ok_k rc=$rc_ok — the substring match changed nothing N3/N8 can see"
+  fi
+}
+xdrop_mutant MP16 BL-282-COMPETENCY-DOMAINS competency_sec competency_security
+xdrop_mutant MP17 BL-282-GATE-KEYS gate_phase_0 gate_phase_0_to_phase_1
+xdrop_mutant MP18 BL-282-INFRA-KEYS infra_sso infra_ci_cd_platform
+xdrop_mutant MP19 BL-282-ESCALATION-KEYS escalation_level escalation_level_2
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"

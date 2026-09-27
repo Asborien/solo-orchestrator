@@ -18380,8 +18380,8 @@ and a carriage return in a value cannot split its row (N6). The operator sees
 discards the write's status, is now a diagnosis-only kill: the read-back still refuses, and S1's
 reason assertion sees the message move.
 
-**Suite:** `tests/test-bl282-set-answer.sh`, 72 cases, driving the real wizard from a project
-fixture with stdin closed, under the suite's own interpreter. With this fix it is 72 / 0 under `/bin/bash` 3.2.57.
+**Suite:** `tests/test-bl282-set-answer.sh`, 77 cases, driving the real wizard from a project
+fixture with stdin closed, under the suite's own interpreter. With this fix it is 77 / 0 under `/bin/bash` 3.2.57.
 
 **Residuals, not fixed here.**
 
@@ -18393,6 +18393,10 @@ fixture with stdin closed, under the suite's own interpreter. With this fix it i
    amendment (measured: `"3" -> "3"`, exit 0). The logged state is true.
 3. **The narrower fifth change** (bare-number selection in `prompt_with_suggestions`) is not in this
    fix.
+4. **The index bound admits any digits.** `# BL-282-INDEX-DIGITS` maps `$i` and `$j` to `[0-9]+`, so
+   `input_0_name`, `input_01_name` and `input_999_name` are accepted although the wizard's loops
+   write only their own indices. Bounding each family by its loop's range would add more surface
+   than the leak is worth.
 
 **Logged:** 2026-09-14, from a downstream adoption's `intake-progress.json`, where `monthly_budget`
 is the literal string `"3"`. The operator typed `?` at the budget prompt, was shown a numbered list,
