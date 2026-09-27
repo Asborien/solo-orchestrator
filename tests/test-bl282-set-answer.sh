@@ -299,6 +299,35 @@ else
   fi
 fi
 
+# K4, K5 — the option parser's two refusals: `--reason` with no value, and
+# an argument it does not know. Each prints the usage and writes nothing.
+for kc in 'K4|--reason|--reason needs a value' 'K5|--bogus|unexpected argument'; do
+  kid="${kc%%|*}"; rest="${kc#*|}"; karg="${rest%%|*}"; kwant="${rest#*|}"
+  KD="$(newtmp)/proj"
+  if ! mk_project "$KD"; then fail_ "$kid setup" "could not build the fixture"; continue; fi
+  before_p="$(_cksum "$KD/.claude/intake-progress.json")"
+  wiz "$KD" --set-answer monthly_budget "$NEW_BUDGET" "$karg"
+  if [ "$WIZ_RC" -eq 1 ] && grep -q -F -- "$kwant" "$KD/run.out" && grep -q -i 'usage' "$KD/run.out" \
+     && [ "$before_p" = "$(_cksum "$KD/.claude/intake-progress.json")" ]; then
+    pass "$kid — '$karg' after KEY VALUE is refused (rc=$WIZ_RC) with '$kwant' and the usage; nothing written"
+  else
+    fail_ "$kid" "rc=$WIZ_RC (want 1); message $(grep -q -F -- "$kwant" "$KD/run.out" && echo present || echo missing); progress $([ "$before_p" = "$(_cksum "$KD/.claude/intake-progress.json")" ] && echo unchanged || echo CHANGED)"
+  fi
+done
+
+# H10 — the `--reason=TEXT` spelling records the reason as `--reason TEXT` does.
+H10="$(newtmp)/proj"
+if ! mk_project "$H10"; then
+  fail_ "H10 setup" "could not build the fixture"
+else
+  wiz "$H10" --set-answer monthly_budget "$NEW_BUDGET" "--reason=typed the list number"
+  if [ "$WIZ_RC" -eq 0 ] && [ "$(jq_amend 0 reason "$H10")" = "typed the list number" ]; then
+    pass "H10 — --reason=TEXT records amendments[0].reason (rc=$WIZ_RC)"
+  else
+    fail_ "H10" "rc=$WIZ_RC reason=[$(jq_amend 0 reason "$H10")]"
+  fi
+fi
+
 echo "=== P — no progress file: refuse, do not create one ==="
 
 P1="$(newtmp)/proj"
@@ -437,6 +466,63 @@ fi
 # ok_lines <dir> → how many [OK] lines the run printed.
 ok_lines() { local n; n="$(grep -c '\[OK\]' "$1/run.out")"; case "$n" in ''|*[!0-9]*) n=0 ;; esac; printf '%s\n' "$n"; }
 
+# path_without <dir> <glob> — a PATH directory linking every command on the
+# current PATH except those whose name matches <glob>.
+path_without() {
+  local dir="$1" pat="$2" p f n
+  mkdir -p "$dir" || return 1
+  local IFS=:
+  for p in $PATH; do
+    [ -d "$p" ] || continue
+    for f in "$p"/*; do
+      n="${f##*/}"
+      # shellcheck disable=SC2254
+      case "$n" in $pat) continue ;; esac
+      [ -x "$f" ] && [ ! -e "$dir/$n" ] && ln -s "$f" "$dir/$n" 2>/dev/null
+    done
+  done
+  return 0
+}
+
+# S5 — no python3: every state write goes through it, so refuse up front.
+S5="$(newtmp)/proj"
+if ! mk_project "$S5"; then
+  fail_ "S5 setup" "could not build the fixture"
+else
+  NOPY="$(newtmp)/nopy"; path_without "$NOPY" 'python3*'
+  before_p="$(_cksum "$S5/.claude/intake-progress.json")"
+  PATH="$NOPY" wiz "$S5" --set-answer monthly_budget "$NEW_BUDGET"
+  if [ -e "$NOPY/jq" ] && [ ! -e "$NOPY/python3" ] && [ "$WIZ_RC" -eq 1 ] && grep -q 'needs python3' "$S5/run.out" \
+     && [ "$before_p" = "$(_cksum "$S5/.claude/intake-progress.json")" ] && [ "$(ok_lines "$S5")" -eq 0 ]; then
+    pass "S5 — with no python3 on PATH the flag refuses (rc=$WIZ_RC), says why, and writes nothing"
+  else
+    fail_ "S5" "rc=$WIZ_RC (want 1); jq linked $([ -e "$NOPY/jq" ] && echo yes || echo NO); python3 absent $([ ! -e "$NOPY/python3" ] && echo yes || echo NO); refusal $(grep -q 'needs python3' "$S5/run.out" && echo present || echo missing)"
+  fi
+fi
+
+# S6 — the amendment append fails after the answer landed: refuse, and say
+# the answer was written. A python3 wrapper fails only that one program.
+S6="$(newtmp)/proj"
+if ! mk_project "$S6"; then
+  fail_ "S6 setup" "could not build the fixture"
+else
+  S6BIN="$(newtmp)"; real_py="$(command -v python3)"
+  printf '#!/bin/sh\ncase "$*" in *setdefault\\(\\"amendments\\"*) exit 1 ;; esac\nexec "%s" "$@"\n' "$real_py" > "$S6BIN/python3"
+  chmod +x "$S6BIN/python3"
+  if ! "$S6BIN/python3" -c 'pass' || "$S6BIN/python3" -c 'd={}; d.setdefault("amendments", [])'; then
+    fail_ "S6 setup" "the python3 wrapper does not fail exactly the amendment program"
+  else
+  PATH="$S6BIN:$PATH" wiz "$S6" --set-answer monthly_budget "$NEW_BUDGET"
+  got="$(jq_answer monthly_budget "$S6")"; n="$(jq_amend_n "$S6")"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  if [ "$WIZ_RC" -eq 1 ] && [ "$got" = "$NEW_BUDGET" ] && [ "$n" -eq 0 ] && [ "$(ok_lines "$S6")" -eq 0 ] \
+     && grep -q 'answer written but the amendment could not be recorded' "$S6/run.out"; then
+    pass "S6 — a failed amendment append refuses (rc=$WIZ_RC) and says the answer was written; no amendment, no [OK]"
+  else
+    fail_ "S6" "rc=$WIZ_RC (want 1); answer=[$got] (want [$NEW_BUDGET]); amendments=$n (want 0); [OK] lines=$(ok_lines "$S6"); message $(grep -q 'amendment could not be recorded' "$S6/run.out" && echo present || echo missing)"
+  fi
+  fi
+fi
+
 # S7 — PROJECT_INTAKE.md cannot be rewritten (`# BL-282-RENDER-STATUS`): the
 # answer and amendment are recorded, so the refusal must say the render is
 # what failed, and there is no [OK].
@@ -454,6 +540,24 @@ else
     pass "S7 — an unwritable PROJECT_INTAKE.md refuses (rc=$WIZ_RC) with 'could not be re-rendered' and no [OK]"
   else
     fail_ "S7" "rc=$WIZ_RC (want 1); [OK] lines=$(ok_lines "$S7") (want 0); refusal $(grep -q 'could not be re-rendered' "$S7/run.out" && echo present || echo missing)"
+  fi
+fi
+
+# W2 — no jq: the answer and amendment are recorded, the render is skipped,
+# and a [WARN] says PROJECT_INTAKE.md was not re-rendered.
+W2="$(newtmp)/proj"
+if ! mk_project "$W2"; then
+  fail_ "W2 setup" "could not build the fixture"
+else
+  NOJQ="$(newtmp)/nojq"; path_without "$NOJQ" 'jq'
+  before_i="$(_cksum "$W2/PROJECT_INTAKE.md")"
+  PATH="$NOJQ" wiz "$W2" --set-answer monthly_budget "$NEW_BUDGET"
+  n="$(jq_amend_n "$W2")"
+  if [ ! -e "$NOJQ/jq" ] && [ "$WIZ_RC" -eq 0 ] && [ "$(jq_answer monthly_budget "$W2")" = "$NEW_BUDGET" ] && [ "$n" = "1" ] \
+     && grep -q 'jq not found' "$W2/run.out" && [ "$before_i" = "$(_cksum "$W2/PROJECT_INTAKE.md")" ]; then
+    pass "W2 — with no jq the answer and amendment are recorded (rc=$WIZ_RC), PROJECT_INTAKE.md is left alone, and a [WARN] says so"
+  else
+    fail_ "W2" "rc=$WIZ_RC; amendments=$n; warn $(grep -q 'jq not found' "$W2/run.out" && echo present || echo missing); intake $([ "$before_i" = "$(_cksum "$W2/PROJECT_INTAKE.md")" ] && echo unchanged || echo CHANGED)"
   fi
 fi
 
@@ -629,6 +733,27 @@ refuse_all N9 "keys with a line break" \
   "$(printf 'monthly_budget\nNOT')" "input_1_name
 "
 
+# N10 — a `$key` family with no bound of its own is refused, not widened: a
+# mirror whose wizard carries one extra `save_answer "probe_$key"` call site.
+N10FW="$(newtmp)/fw"
+if ! mkdir -p "$N10FW" || ! cp -Rp "$REPO_ROOT/scripts" "$N10FW/"; then
+  fail_ "N10 setup" "could not mirror scripts/"
+else
+  printf '%s\n' '_bl282_probe_family() { save_answer "probe_$key" "x"; }' >> "$N10FW/scripts/intake-wizard.sh"
+  N10="$(newtmp)/proj"
+  if ! _syntax_ok "$N10FW/scripts/intake-wizard.sh" || ! mk_project "$N10" "$N10FW/scripts/intake-wizard.sh"; then
+    fail_ "N10 setup" "could not build the probe-family fixture"
+  else
+    before_p="$(_cksum "$N10/.claude/intake-progress.json")"
+    wiz "$N10" --set-answer probe_anything "minted"
+    if [ "$WIZ_RC" -eq 1 ] && [ "$before_p" = "$(_cksum "$N10/.claude/intake-progress.json")" ]; then
+      pass "N10 — probe_anything, from an unbounded probe_\$key call site, is refused (rc=$WIZ_RC), nothing written"
+    else
+      fail_ "N10" "rc=$WIZ_RC (want 1) — an unbounded \$key family is still widened to any suffix"
+    fi
+  fi
+fi
+
 echo "=== A — an abort inside run_set_answer must fail CLOSED ==="
 
 # `if run_set_answer "$@"; then` puts the function in a condition, which
@@ -696,6 +821,22 @@ else
     pass "W1 — data_classification is written to answers/ and the [WARN] names process-state.json and --data-classification; that file is untouched"
   else
     fail_ "W1" "rc=$WIZ_RC answers.data_classification=[$got]; warn $(grep -q -- '--data-classification' "$W1/run.out" && echo present || echo missing); process-state $([ "$before_s" = "$after_s" ] && echo unchanged || echo CHANGED)"
+  fi
+fi
+
+# W3 — testing_interval's enforced copy lives in build-progress.json; the
+# [WARN] names it and the setter for it, and that file is not created here.
+W3="$(newtmp)/proj"
+if ! mk_project "$W3"; then
+  fail_ "W3 setup" "could not build the fixture"
+else
+  wiz "$W3" --set-answer testing_interval 7
+  if [ "$WIZ_RC" -eq 0 ] && [ "$(jq_answer testing_interval "$W3")" = "7" ] \
+     && grep -q 'build-progress.json::test_interval' "$W3/run.out" && grep -q -- '--field test_interval' "$W3/run.out" \
+     && [ ! -e "$W3/.claude/build-progress.json" ]; then
+    pass "W3 — testing_interval is written to answers/ and the [WARN] names build-progress.json and --field test_interval; that file is not created"
+  else
+    fail_ "W3" "rc=$WIZ_RC testing_interval=[$(jq_answer testing_interval "$W3")]; warn $(grep -q 'build-progress.json::test_interval' "$W3/run.out" && echo present || echo missing)"
   fi
 fi
 
@@ -956,6 +1097,130 @@ if mp_mutate MP7 "$SEDS/mp7.sed" BL-282-INDEX-DIGITS; then
       pass "MP7 (MUTATION) — with the index widened to [0-9a-z]+ input_x_name is MINTED (rc=$rc_bad) while input_2_name still works: H8N is what stops it"
     else
       fail_ "MP7 (MUTATION)" "input_x_name rc=$rc_bad written=[$got_bad]; input_2_name rc=$rc_ok — the widening changed nothing H8N can see"
+    fi
+  fi
+fi
+
+# MP8–MP10 — each array bound neutered: the arm's membership test becomes
+# `return 0`, so any suffix is admitted. N8 is what stops each; the real key
+# still working inside the mutant is the control.
+# fam_mutant <id> <marker> <invented key> <real key>
+fam_mutant() {
+  local id="$1" marker="$2" bad_k="$3" ok_k="$4" pd rc_bad got_bad rc_ok
+  printf '/# %s$/s/^\\([[:space:]]*\\)_bl282_array_keys .*\\(  # %s\\)$/\\1return 0\\2/\n' "$marker" "$marker" > "$SEDS/$id.sed"
+  mp_mutate "$id" "$SEDS/$id.sed" "$marker" || return 0
+  pd="$(newtmp)/proj"
+  if ! mk_project "$pd" "$MP_TGT"; then fail_ "$id setup" "could not build the mutant's fixture"; return 0; fi
+  wiz "$pd" --set-answer "$bad_k" "minted"; rc_bad=$WIZ_RC; got_bad="$(jq_answer "$bad_k" "$pd")"
+  wiz "$pd" --set-answer "$ok_k" "ok"; rc_ok=$WIZ_RC
+  if [ "$rc_bad" -eq 0 ] && [ "$got_bad" = "minted" ] && [ "$rc_ok" -eq 0 ]; then
+    pass "$id (MUTATION) — with '$marker' neutered $bad_k is MINTED (rc=$rc_bad) while $ok_k still works: N8 is what stops it"
+  else
+    fail_ "$id (MUTATION)" "$bad_k rc=$rc_bad written=[$got_bad]; $ok_k rc=$rc_ok — neutering the bound changed nothing N8 can see"
+  fi
+}
+fam_mutant MP8 BL-282-GATE-KEYS gate_zzz gate_phase_0_to_phase_1
+fam_mutant MP9 BL-282-INFRA-KEYS infra_typo infra_ci_cd_platform
+fam_mutant MP10 BL-282-ESCALATION-KEYS escalation_nonsense escalation_level_2
+
+# MP11 — the `$key` widening restored on the index line: `s/\$key$/[a-z0-9_]+/`.
+# The four bounded families return before the loop, so only a family with no
+# bound shows it. N10's probe family is what stops it.
+cat > "$SEDS/mp11.sed" <<'SED'
+/# BL-282-INDEX-DIGITS$/s|\[0-9\]+/')"|[0-9]+/; s/\\$key$/[a-z0-9_]+/')"|
+SED
+if mp_mutate MP11 "$SEDS/mp11.sed" BL-282-INDEX-DIGITS; then
+  printf '%s\n' '_bl282_probe_family() { save_answer "probe_$key" "x"; }' >> "$MP_TGT"
+  PD="$(newtmp)/proj"
+  if ! _syntax_ok "$MP_TGT" || ! mk_project "$PD" "$MP_TGT"; then fail_ "MP11 setup" "could not build the mutant's probe fixture"; else
+    wiz "$PD" --set-answer probe_anything "minted"; got_bad="$(jq_answer probe_anything "$PD")"
+    if [ "$WIZ_RC" -eq 0 ] && [ "$got_bad" = "minted" ]; then
+      pass "MP11 (MUTATION) — with the \$key widening restored probe_anything is MINTED (rc=$WIZ_RC): N10 is what stops it"
+    else
+      fail_ "MP11 (MUTATION)" "probe_anything rc=$WIZ_RC written=[$got_bad] — restoring the widening changed nothing N10 can see"
+    fi
+  fi
+fi
+
+# MP12 — THE REVIEW'S LINE-BY-LINE CHARSET: the `case` becomes the old
+# `grep -E '^[a-z0-9_]+$'`, which passes a key if any one line does. The
+# arms test membership with grep, line by line, so a key whose FIRST line
+# is a real key is minted. N9 is what stops it. The second key is the
+# control: the loop's `[[ =~ ]]` still refuses it (MP13 is its proof).
+cat > "$SEDS/mp12.sed" <<'SED'
+/# BL-282-KEY-CHARSET$/s/^\([[:space:]]*\)case .*\(  # BL-282-KEY-CHARSET\)$/\1printf '%s' "$key" | grep -E '^[a-z0-9_]+$' >\/dev\/null || return 1\2/
+SED
+NL_ARM="$(printf 'competency_security\nNOT')"
+NL_FAM="$(printf 'NOT A KEY\ninput_1_name')"
+if mp_mutate MP12 "$SEDS/mp12.sed" BL-282-KEY-CHARSET; then
+  PD="$(newtmp)/proj"
+  if ! mk_project "$PD" "$MP_TGT"; then fail_ "MP12 setup" "could not build the mutant's fixture"; else
+    wiz "$PD" --set-answer "$NL_ARM" "minted"; rc_bad=$WIZ_RC; got_bad="$(jq_answer "$NL_ARM" "$PD")"
+    wiz "$PD" --set-answer "$NL_FAM" "minted"; rc_ctl=$WIZ_RC
+    if [ "$rc_bad" -eq 0 ] && [ "$got_bad" = "minted" ] && [ "$rc_ctl" -eq 1 ]; then
+      pass "MP12 (MUTATION) — with the charset matched line by line 'competency_security<LF>NOT' is MINTED (rc=$rc_bad) while the loop's whole-string match still refuses 'NOT A KEY<LF>input_1_name': N9 is what stops it"
+    else
+      fail_ "MP12 (MUTATION)" "arm key rc=$rc_bad written=[$got_bad]; family key rc=$rc_ctl (want 1) — the mutation changed nothing N9 can see"
+    fi
+  fi
+fi
+
+# MP13 — BOTH line-by-line matches restored: MP12's charset and the family's
+# `grep -E "^${pat}\$"`. With the charset `case` in place a key that passes it
+# is one line, so the family's `[[ =~ ]]` alone is held twice and its single
+# mutant is EQUIVALENT; this double mutant is how it is shown live. N9 is
+# what stops it, on the key MP12 could not mint.
+cat "$SEDS/mp12.sed" > "$SEDS/mp13.sed"
+cat >> "$SEDS/mp13.sed" <<'SED'
+/# BL-282-FAMILY-WHOLE$/s/\[\[ \$key =~ \^\${pat}\$ \]\]/printf '%s' "$key" | grep -E "^${pat}\\$" >\/dev\/null/
+SED
+if mp_mutate MP13 "$SEDS/mp13.sed" BL-282-KEY-CHARSET BL-282-FAMILY-WHOLE; then
+  PD="$(newtmp)/proj"
+  if ! mk_project "$PD" "$MP_TGT"; then fail_ "MP13 setup" "could not build the mutant's fixture"; else
+    wiz "$PD" --set-answer "$NL_FAM" "minted"; got_bad="$(jq_answer "$NL_FAM" "$PD")"
+    if [ "$WIZ_RC" -eq 0 ] && [ "$got_bad" = "minted" ]; then
+      pass "MP13 (MUTATION, DOUBLE) — with both matches line by line 'NOT A KEY<LF>input_1_name' is MINTED (rc=$WIZ_RC): N9 is what stops it"
+    else
+      fail_ "MP13 (MUTATION)" "family key rc=$WIZ_RC written=[$got_bad] — the double mutation changed nothing N9 can see"
+    fi
+  fi
+fi
+
+# MP14 — the read-back's refusal discarded (`|| true`). A paused save then
+# logs an amendment that never landed and prints [OK]. S4 is what stops it.
+cat > "$SEDS/mp14.sed" <<'SED'
+/# BL-282-READ-BACK$/s/ || {.*}\(  # BL-282-READ-BACK\)$/ || true\1/
+SED
+if mp_mutate MP14 "$SEDS/mp14.sed" BL-282-READ-BACK; then
+  PD="$(newtmp)/proj"
+  if ! mk_project "$PD" "$MP_TGT"; then fail_ "MP14 setup" "could not build the mutant's fixture"; else
+    wiz_paused "$PD" --set-answer monthly_budget "$NEW_BUDGET"
+    got="$(jq_answer monthly_budget "$PD")"
+    n="$(jq_amend_n "$PD")"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    if [ "$WIZ_RC" -eq 0 ] && [ "$got" = "$OLD_BUDGET" ] && [ "$n" -eq 1 ] && grep -q '\[OK\]' "$PD/run.out"; then
+      pass "MP14 (MUTATION) — with the read-back discarded a paused save logs amendments[0] and prints [OK] (rc=$WIZ_RC) while the answer is still [$got]: S4 is what stops it"
+    else
+      fail_ "MP14 (MUTATION)" "rc=$WIZ_RC answer=[$got] amendments=$n — discarding the read-back changed nothing S4 can see"
+    fi
+  fi
+fi
+
+# MP15 — the render's status discarded again: `return "$rc"` becomes
+# `return 0`, so an unwritable PROJECT_INTAKE.md reports [OK] at exit 0, the
+# defect as first measured. S7 is what stops it.
+cat > "$SEDS/mp15.sed" <<'SED'
+/# BL-282-RENDER-STATUS$/s/return "\$rc"/return 0/
+SED
+if [ "$(id -u)" != "0" ] && mp_mutate MP15 "$SEDS/mp15.sed" BL-282-RENDER-STATUS; then
+  PD="$(newtmp)/proj"
+  if ! mk_project "$PD" "$MP_TGT"; then fail_ "MP15 setup" "could not build the mutant's fixture"; else
+    chmod 0444 "$PD/PROJECT_INTAKE.md"
+    wiz "$PD" --set-answer monthly_budget "$NEW_BUDGET"
+    chmod 0644 "$PD/PROJECT_INTAKE.md" 2>/dev/null
+    if [ "$WIZ_RC" -eq 0 ] && [ "$(ok_lines "$PD")" -ge 1 ] && ! grep -q -F "$NEW_BUDGET" "$PD/PROJECT_INTAKE.md"; then
+      pass "MP15 (MUTATION) — with the render's status discarded an unwritable PROJECT_INTAKE.md prints [OK] at exit 0 and never gains the row: S7 is what stops it"
+    else
+      fail_ "MP15 (MUTATION)" "rc=$WIZ_RC [OK] lines=$(ok_lines "$PD") — discarding the render status changed nothing S7 can see"
     fi
   fi
 fi

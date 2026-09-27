@@ -18380,8 +18380,8 @@ and a carriage return in a value cannot split its row (N6). The operator sees
 discards the write's status, is now a diagnosis-only kill: the read-back still refuses, and S1's
 reason assertion sees the message move.
 
-**Suite:** `tests/test-bl282-set-answer.sh`, 56 cases, driving the real wizard from a project
-fixture with stdin closed, under the suite's own interpreter. With this fix it is 56 / 0 under bash 5.3.15.
+**Suite:** `tests/test-bl282-set-answer.sh`, 72 cases, driving the real wizard from a project
+fixture with stdin closed, under the suite's own interpreter. With this fix it is 72 / 0 under `/bin/bash` 3.2.57.
 
 **Residuals, not fixed here.**
 
