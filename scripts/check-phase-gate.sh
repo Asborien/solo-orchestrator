@@ -1447,9 +1447,13 @@ _cpg_warn_no_gate_section() {
 #
 # _cpg_record_single_authority_attestation <gate_key> <reason>
 #   0 — recorded (or idempotent no-op: same reason AND same head)
-#   2 — could not write (no jq, unwritable or read-only state file, lock
-#       timeout, jq error). Every failure path returns 2; the caller treats
-#       any non-zero as "refuse".
+#   2 — jq is not installed
+#   3 — the state file cannot be written (read-only, not a regular file, or
+#       the temp write / rename in .claude/ failed)
+#   4 — the lock is held: another run, or a stale lockdir from a killed one
+#   5 — jq could not merge the record (the state file is not valid JSON, or
+#       its .attestations is not an object)
+#   Any non-zero is a refusal; the code only selects the remedy printed.
 _cpg_record_single_authority_attestation() {
   local _sa_gate="$1" _sa_reason="$2"
   local file=".claude/process-state.json"
@@ -1461,7 +1465,7 @@ _cpg_record_single_authority_attestation() {
   # refusal text below ("make the state file writable") would describe a
   # case that in fact accepted — measured by the pre-merge review (RV4).
   if [ -e "$file" ]; then
-    [ -w "$file" ] || return 2
+    [ -w "$file" ] || return 3
   fi
 
   # The commit this attestation EXCUSES, recorded so the audit trail says
@@ -1495,7 +1499,7 @@ _cpg_record_single_authority_attestation() {
   while ! mkdir "$lock_dir" 2>/dev/null; do
     attempts=$((attempts + 1))
     if [ "$attempts" -ge 100 ]; then
-      return 2
+      return 4
     fi
     sleep 0.1
   done
@@ -1503,29 +1507,29 @@ _cpg_record_single_authority_attestation() {
   # Created INSIDE the lock, as the sibling recorder's comment requires: a
   # concurrent writer must never observe a half-built file.
   if [ ! -f "$file" ]; then
-    printf '{}\n' > "$file" 2>/dev/null || { rmdir "$lock_dir" 2>/dev/null; return 2; }
+    printf '{}\n' > "$file" 2>/dev/null || { rmdir "$lock_dir" 2>/dev/null; return 3; }
   fi
 
   rc=0
   (
-    tmp=$(mktemp "${file}.XXXXXX") || exit 1
+    tmp=$(mktemp "${file}.XXXXXX") || exit 3
     trap 'rm -f "$tmp"; rmdir "$lock_dir" 2>/dev/null' EXIT INT TERM
     if jq --arg g "$_sa_gate" --arg reason "$_sa_reason" --arg head "$_sa_head" \
           --arg date "$today" --arg by "$actor" \
           '.attestations = ((.attestations // {}) | .single_authority = ((.single_authority // {}) + {($g): {reason: $reason, head: $head, gate: $g, date: $date, by: $by}}))' \
           "$file" > "$tmp" 2>/dev/null; then
-      mv "$tmp" "$file" || exit 1   # BL-274-ATTEST-WRITE: atomic attestation finalize
+      mv "$tmp" "$file" || exit 3   # BL-274-ATTEST-WRITE: atomic attestation finalize
       trap - EXIT INT TERM
       exit 0
     else
       rm -f "$tmp"
       trap - EXIT INT TERM
-      exit 1
+      exit 5
     fi
-  ) || rc=1
+  ) || rc=$?
   rmdir "$lock_dir" 2>/dev/null || true
   if [ "$rc" -ne 0 ]; then
-    return 2
+    return "$rc"
   fi
   return 0
 }
@@ -1535,7 +1539,7 @@ _cpg_record_single_authority_attestation() {
 #   1 — attestation REFUSED (no reason, no key, or unrecordable); caller counts it
 #   2 — no attestation offered; caller proceeds to its normal refusal
 _cpg_single_authority_gate() {
-  local _sa_gate="$1" _sa_label="$2" _sa_reason
+  local _sa_gate="$1" _sa_label="$2" _sa_reason _sa_wrc
 
   [ "${SOLO_SINGLE_AUTHORITY_ATTESTED:-}" = "1" ] || return 2   # BL-274-SINGLE-AUTHORITY
 
@@ -1578,12 +1582,21 @@ _cpg_single_authority_gate() {
     printf '\n'
     echo "        This RECORDS an accepted exception. No check was performed and no independent approval exists."
     echo "        docs/governance-framework.md §XIV item 5 — a second technologist with repository and hosting access — is a BLOCKING pre-condition and REMAINS UNMET. This attestation does not clear it."
-    echo "        Recorded to .claude/process-state.json::attestations.single_authority, pinned to this commit, not silenced. See ## BL-274:."
+    echo "        Recorded to .claude/process-state.json::attestations.single_authority, pinned to this commit, not silenced. See docs/reference/builders-guide.md § \"Single-Authority Attestation\" (framework backlog: ## BL-274:)."
     return 0
+  else
+    _sa_wrc=$?
   fi
 
   echo -e "${RED}[FAIL]${NC} $_sa_label: a single-authority attestation was supplied but COULD NOT BE RECORDED to .claude/process-state.json — refusing it."
-  echo "        An escape that leaves no trace is not an escape, it is the gate being off. Make the state file writable (and install jq), then re-run."
+  echo "        An escape that leaves no trace is not an escape, it is the gate being off."
+  case "$_sa_wrc" in
+    2) echo "        jq is not on PATH, and the record is written with it: install jq, then re-run." ;;
+    3) echo "        .claude/process-state.json cannot be written (read-only, not a regular file, or .claude/ refuses the temp file): make it a writable file, then re-run." ;;
+    4) echo "        .claude/process-state.json.lockdir is held. If no other gate run is in progress it is stale, left by a killed run: remove it and re-run." ;;
+    5) echo "        .claude/process-state.json is not valid JSON, or its .attestations is not an object, so jq could not add the record: repair the file, then re-run." ;;
+    *) echo "        The recorder failed with an unexpected status ($_sa_wrc); nothing was written." ;;
+  esac
   return 1
 }
 

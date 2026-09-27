@@ -21,7 +21,10 @@
 #                                         A9 unrecordable path, A22 no jq on
 #                                         PATH, A23 read-only state file,
 #                                         A20 no gate key, A21 a value other
-#                                         than exactly 1
+#                                         than exactly 1, A24 a state file
+#                                         that is not JSON, A25 a held lockdir
+#   each unrecordable cause names ITS
+#   OWN remedy, and no other ............ A9, A22, A23, A24, A25
 #   it is recorded ...................... A6+A7 per gate and pinned to HEAD,
 #                                         with the SANITISED reason,
 #                                         A8 re-pinned when HEAD moves,
@@ -34,6 +37,8 @@
 #                                         own about the attestation,
 #                                         A10/A15/A16 an operator reason cannot
 #                                         forge an [OK]-led line
+#   it can be found downstream ......... A3 cites the shipped guide section,
+#                                         A26 that section exists and ships
 #   controls, green before the change ... A1, A11, A12, A14, A21
 #
 # The record is an audit trail and an idempotence key. Nothing reads the head
@@ -46,7 +51,7 @@
 # MUTANTS are located by DISTANCE FROM A `# BL-274-*` MARKER, with the literal
 # expected on that line asserted before and the landed literal asserted after.
 # A mutant that cannot be applied is a [SETUP] failure — counted as a failure,
-# never as a kill. On a tree without the change all ten report [SETUP].
+# never as a kill. On a tree without the change every mutant reports [SETUP].
 #
 # Runs on bash 3.2.57 (macOS) and 5.x. No associative arrays, no `mapfile`,
 # no process substitution.
@@ -78,6 +83,8 @@ SOLO_NAME="Sole Director"
 SOLO_MAIL="sole.director@example.test"
 REASON="Example Ltd has one technical director, who is both Senior Technical Authority and Orchestrator."
 ST='.attestations.single_authority'
+GUIDE_HEADING='Single-Authority Attestation'
+GUIDE_CITE="docs/reference/builders-guide.md § \"$GUIDE_HEADING\""
 
 new_repo() {
   TMP=$(mktemp -d)
@@ -172,7 +179,7 @@ state_field() {
 # window a case inspects (RV1 in the pre-merge review appended one and the
 # earlier window, which ended at the citation, never saw it).
 att_block() {
-  printf '%s\n' "$OUT" | awk '/\[ATTESTED\]/{f=1} f{print; if (done) exit} f && /See ## BL-274:/{done=1}'
+  printf '%s\n' "$OUT" | awk '/\[ATTESTED\]/{f=1} f{print; if (done) exit} f && /## BL-274:/{done=1}'
 }
 ok_led()    { grep -cE '^[[:space:]]*(\[OK\]|.\[0;32m[[:space:]]*\[OK\])' || true; }
 self_fail() { printf '%s\n' "$OUT" | grep -qE "\[FAIL\].*self-approval detected"; }
@@ -201,7 +208,9 @@ case_A3() {   # names the unmet pre-condition, in the decided words, on ONE line
   printf '%s\n' "$b" | grep 'XIV item 5' | grep 'BLOCKING pre-condition' | grep -q 'REMAINS UNMET' \
     || { WHY="no single line names §XIV item 5 as a BLOCKING pre-condition that REMAINS UNMET"; return 1; }
   printf '%s\n' "$b" | grep -qi 'second technologist' || { WHY="the unmet pre-condition is not named in words"; return 1; }
-  printf '%s\n' "$b" | grep -q 'See ## BL-274:' || { WHY="the block does not cite ## BL-274:"; return 1; }
+  printf '%s\n' "$b" | grep -q '## BL-274:' || { WHY="the block does not cite ## BL-274:"; return 1; }
+  # A generated project carries the guide, not the backlog (Karl's review of #452).
+  printf '%s\n' "$b" | grep -qF "$GUIDE_CITE" || { WHY="the block does not point at the shipped guide section ($GUIDE_CITE)"; return 1; }
 }
 
 case_A4() {   # never the vocabulary of a finished check, anywhere in the block
@@ -291,6 +300,18 @@ case_A8() {   # same reason, new HEAD → the pin is refreshed
   teardown; return $r
 }
 
+# The remedy must name the cause that fired and no other (Karl's review of
+# #452, finding 2: one catch-all told a stale-lock operator to install jq).
+#   <own token from REMEDIES> <must-match ERE> <what the cause is, for WHY>
+REMEDIES='install jq|cannot be written|not valid JSON|lockdir'
+_remedy_names() {
+  local rem others
+  rem=$(printf '%s\n' "$OUT" | grep -A2 'COULD NOT BE RECORDED' || true)
+  printf '%s\n' "$rem" | grep -qE "$2" || { WHY="the remedy does not name $3: $(printf '%s' "$rem" | tr '\n' ' ')"; return 1; }
+  others=$(printf '%s\n' "$rem" | grep -oE "$REMEDIES" | grep -vxF "$1" | head -1 || true)
+  [ -z "$others" ] || { WHY="the remedy for $3 also names another cause ('$others')"; return 1; }
+}
+
 case_A9() {   # a record that cannot be written → refused, and the gate BLOCKS
   setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
   # A directory where the state file belongs: every write fails, nothing else does.
@@ -301,6 +322,7 @@ case_A9() {   # a record that cannot be written → refused, and the gate BLOCKS
     || { WHY="not refused on the grounds that the attestation could not be recorded"; r=1; }
   [ "$RC" -ne 0 ] || { WHY="the gate exited 0 with an attestation it could not record — a route that leaves no trace"; r=1; }
   if printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]'; then WHY="an unrecordable attestation was ACCEPTED"; r=1; fi
+  _remedy_names 'cannot be written' 'cannot be written' 'an unwritable state file' || r=1
   teardown; return $r
 }
 
@@ -342,6 +364,7 @@ case_A22() {  # jq absent → the record cannot be written → refused, BLOCKS
   printf '%s\n' "$OUT" | grep -q 'COULD NOT BE RECORDED' || { WHY="without jq the attestation was not refused as unrecordable"; r=1; }
   [ "$RC" -ne 0 ] || { WHY="without jq the gate exited 0 — an attestation accepted with no record"; r=1; }
   if printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]'; then WHY="without jq the attestation was ACCEPTED"; r=1; fi
+  _remedy_names 'install jq' 'install jq' 'a missing jq' || r=1
   teardown; return $r
 }
 
@@ -358,6 +381,7 @@ case_A23() {  # a read-only state file → refused, BLOCKS, file untouched
   [ "$RC" -ne 0 ] || { WHY="a read-only state file and the gate exited 0"; r=1; }
   if printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]'; then WHY="the attestation was ACCEPTED over a read-only state file"; r=1; fi
   [ "$before" = "$after" ] || { WHY="the read-only state file was replaced"; r=1; }
+  _remedy_names 'cannot be written' 'cannot be written' 'a read-only state file' || r=1
   chmod 0644 "$PROJ/.claude/process-state.json" 2>/dev/null
   teardown; return $r
 }
@@ -383,6 +407,7 @@ case_A24() {  # the state file is not JSON → refused, BLOCKS, file untouched
   before=$(cksum < "$PROJ/.claude/process-state.json")
   attested "$1" "$REASON"
   _refused_file_untouched "$before" || r=1
+  [ "$r" -ne 0 ] || _remedy_names 'not valid JSON' 'not valid JSON' 'a malformed state file' || r=1
   teardown; return $r
 }
 case_A25() {  # a lock held by another run (or left by a killed one) → refused, BLOCKS, file untouched
@@ -394,6 +419,7 @@ case_A25() {  # a lock held by another run (or left by a killed one) → refused
   attested "$1" "$REASON"
   _refused_file_untouched "$before" || r=1
   [ -d "$PROJ/.claude/process-state.json.lockdir" ] || { WHY="the recorder removed a lock it did not take"; r=1; }
+  [ "$r" -ne 0 ] || _remedy_names lockdir 'process-state\.json\.lockdir.*remove it' 'a held lock, with the instruction to remove a stale one' || r=1
   teardown; return $r
 }
 
@@ -474,6 +500,22 @@ case_A16() {
     || { WHY="the ingest sanitiser is gone"; return 1; }
 }
 
+# A26 reads the framework's own tree: the section the block points at must
+# exist, name both variables, and be copied to where the pointer says.
+case_A26() {
+  local guide="$REPO_ROOT/docs/builders-guide.md" sect
+  sect=$(awk -v h="$GUIDE_HEADING" '
+    f && /^#{1,4} / {exit}
+    /^#{1,4} / { t=$0; sub(/^#+ /, "", t); if (t == h) f=1 }
+    f {print}' "$guide")
+  [ -n "$sect" ] || { WHY="docs/builders-guide.md has no heading '$GUIDE_HEADING'"; return 1; }
+  printf '%s\n' "$sect" | grep -q 'SOLO_SINGLE_AUTHORITY_ATTESTED=1' || { WHY="the section does not name SOLO_SINGLE_AUTHORITY_ATTESTED=1"; return 1; }
+  printf '%s\n' "$sect" | grep -q 'SOLO_SINGLE_AUTHORITY_ATTESTED_REASON' || { WHY="the section does not name SOLO_SINGLE_AUTHORITY_ATTESTED_REASON"; return 1; }
+  printf '%s\n' "$sect" | grep -q 'REMAINS UNMET' || { WHY="the section does not say §XIV item 5 REMAINS UNMET"; return 1; }
+  grep -qF 'cp "$SCRIPT_DIR/docs/builders-guide.md" docs/reference/' "$REPO_ROOT/init.sh" \
+    || { WHY="init.sh no longer copies the guide to docs/reference/, so the block's pointer would not resolve"; return 1; }
+}
+
 case_A18() {  # EVERY time it fires: a second run at the same HEAD says it again
   setup_minimal organizational "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
   attested "$1" "$REASON"
@@ -534,7 +576,7 @@ run_case() {  # <id> <function> <description>
 
 run_case A1    case_A1    "CONTROL — no attestation: the self-approval FAIL still fires"
 run_case A2    case_A2    "attested with a reason: the FAIL is replaced by an [ATTESTED] block"
-run_case A3    case_A3    "the block names §XIV item 5 as a BLOCKING pre-condition that REMAINS UNMET, and cites BL-274"
+run_case A3    case_A3    "the block names §XIV item 5 as a BLOCKING pre-condition that REMAINS UNMET, and cites the shipped guide section and BL-274"
 run_case A4    case_A4    "the block says NOT applied and never uses the vocabulary of a finished check"
 run_case A5    case_A5    "whitespace-only reason: refused by name, exit non-zero, nothing recorded"
 run_case A17   case_A17   "reason variable unset: refused by name, exit non-zero, nothing recorded"
@@ -559,7 +601,8 @@ else
 fi
 run_case A15   case_A15   "a reason of '\\n[OK] fake' adds no [OK]-led line"
 run_case A16   case_A16   "both transcript defences are present in source (structural; they mask each other)"
-run_case A18   case_A18   "fired twice at one HEAD: REMAINS UNMET is printed again, the record is unchanged"
+run_case A26   case_A26   "the guide section the block points at exists, names both variables, and ships to docs/reference/"
+run_case A18   case_A18  "fired twice at one HEAD: REMAINS UNMET is printed again, the record is unchanged"
 run_case A19   case_A19   "two gates: one REMAINS UNMET statement and one record per gate"
 run_case A21   case_A21   "CONTROL — SOLO_SINGLE_AUTHORITY_ATTESTED=yes is not an attestation"
 
@@ -751,7 +794,7 @@ unmirror
 
 echo "MT14: the read-only guard on the state file removed (ATTEST-WRITE -53) → A23"
 mirror
-if mutate_at "$A_WR" -53 '[ -w "$file" ] || return 2' ': # MUTANT: writability not checked'; then
+if mutate_at "$A_WR" -53 '[ -w "$file" ] || return 3' ': # MUTANT: writability not checked'; then
   expect_kill MT14 A23 case_A23 A13 case_A13
 else setup_ MT14 "$WHY"; fi
 unmirror
@@ -760,7 +803,7 @@ echo "MT15: the jq-failure arm reports success (ATTEST-WRITE +6) → A24"
 mirror
 # Karl's review of #452, finding 1: with this mutant a malformed state file
 # printed [ATTESTED] and "Recorded to" while nothing was written.
-if mutate_at "$A_WR" 6 'exit 1' 'exit 0'; then
+if mutate_at "$A_WR" 6 'exit 5' 'exit 0'; then
   expect_kill MT15 A24 case_A24 A13 case_A13
 else setup_ MT15 "$WHY"; fi
 unmirror
@@ -768,9 +811,54 @@ unmirror
 echo "MT16: the lock-timeout arm reports success (ATTEST-WRITE -19) → A25"
 mirror
 # Karl's review of #452, finding 1, the second mutant: a stale lockdir.
-if mutate_at "$A_WR" -19 'return 2' 'return 0'; then
+if mutate_at "$A_WR" -19 'return 4' 'return 0'; then
   expect_kill MT16 A25 case_A25 A13 case_A13
 else setup_ MT16 "$WHY"; fi
+unmirror
+
+# MT17 to MT22: each cause keeps its own code and its own remedy (Karl's
+# review of #452, finding 2). Each mutant still refuses, so only the named
+# remedy tells it apart; the control is a neighbouring cause left intact.
+echo "MT17: lock timeout reported as a jq merge failure (ATTEST-WRITE -19) → A25"
+mirror
+if mutate_at "$A_WR" -19 'return 4' 'return 5'; then
+  expect_kill MT17 A25 case_A25 A24 case_A24
+else setup_ MT17 "$WHY"; fi
+unmirror
+
+echo "MT18: jq merge failure reported as an unwritable file (ATTEST-WRITE +6) → A24"
+mirror
+if mutate_at "$A_WR" 6 'exit 5' 'exit 3'; then
+  expect_kill MT18 A24 case_A24 A23 case_A23
+else setup_ MT18 "$WHY"; fi
+unmirror
+
+echo "MT19: a read-only state file reported as a jq merge failure (ATTEST-WRITE -53) → A23"
+mirror
+if mutate_at "$A_WR" -53 '[ -w "$file" ] || return 3' '[ -w "$file" ] || return 5'; then
+  expect_kill MT19 A23 case_A23 A24 case_A24
+else setup_ MT19 "$WHY"; fi
+unmirror
+
+echo "MT20: a state file that cannot be created reported as a held lock (ATTEST-WRITE -11) → A9"
+mirror
+if mutate_at "$A_WR" -11 'return 3; }' 'return 4; }'; then
+  expect_kill MT20 A9 case_A9 A23 case_A23
+else setup_ MT20 "$WHY"; fi
+unmirror
+
+echo "MT21: the held-lock remedy loses its instruction to remove a stale lockdir (SINGLE-AUTHORITY +52) → A25"
+mirror
+if mutate_at "$A_SA" 52 'remove it and re-run' 'wait and re-run'; then
+  expect_kill MT21 A25 case_A25 A24 case_A24
+else setup_ MT21 "$WHY"; fi
+unmirror
+
+echo "MT22: the malformed-JSON arm unreachable, so its remedy falls to the default (SINGLE-AUTHORITY +53) → A24"
+mirror
+if mutate_at "$A_SA" 53 '    5) echo' '    6) echo'; then
+  expect_kill MT22 A24 case_A24 A25 case_A25
+else setup_ MT22 "$WHY"; fi
 unmirror
 
 # A20 needs a gate whose call site passes no key. No shipped call site does, so
