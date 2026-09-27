@@ -63,6 +63,11 @@
 # copies or executes the scaffolder, so it is a unit-lane test outright and
 # must NOT appear in `lint-tests-registered.sh --list | grep unit-lane-exempt`.
 set -o pipefail
+# #422 — pin git's STOCK template, which is what CI runs with. Without this,
+# `git init` copies the operator's `init.templateDir`, which may carry no
+# hooks/, and this suite's fixtures write into .git/hooks/ without creating it.
+_stock_tpl="$(git --exec-path 2>/dev/null)/../../share/git-core/templates"
+if [ -d "$_stock_tpl/hooks" ]; then export GIT_TEMPLATE_DIR="$_stock_tpl"; fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
