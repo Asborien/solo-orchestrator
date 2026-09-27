@@ -21416,6 +21416,9 @@ signatures are unchecked for authorship whether or not this attestation exists.
 - A TERM delivered to the gate process itself between the `mktemp` of `jq`'s stderr file and its
   removal leaves that file in `TMPDIR`: the recorder's trap is in the subshell and covers only the
   temp state file and the lock.
+- `jq`'s stderr file is made from an explicit `${TMPDIR:-/tmp}/soif-sa-jq.XXXXXX` template. BSD `mktemp`
+  (macOS) ignores `TMPDIR` when given no template, and GNU honours it, so the bare form would put the
+  file outside a fixture's `TMPDIR` on macOS only, and A31's cleanup check would pass there vacuously.
 **Related:** `## BL-275:` (the same control, and why its remedy line cannot be made both true and
 consistent), `## BL-212:` (the same walker, its coverage stopping at Phase 1→2), `## BL-279:` (the
 A13 fixture that exposed the WARN-vs-block drift), `## BL-256:` (a green line read as a check that was
