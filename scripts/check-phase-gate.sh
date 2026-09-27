@@ -1529,8 +1529,8 @@ _cpg_record_single_authority_attestation() {
     fi
   ) || rc=$?
   rmdir "$lock_dir" 2>/dev/null || true
-  # jq's first stderr line, control characters stripped, for arm 5 of the caller.
-  _sa_jq_err=$(head -n 1 "$_sa_errf" 2>/dev/null | LC_ALL=C tr -d '\000-\037')
+  # jq's first stderr line for arm 5, with the `# BL-233-WPB-ONELINE` strip (C0 and `\`).
+  _sa_jq_err=$(head -n 1 "$_sa_errf" 2>/dev/null | LC_ALL=C tr -d '\000-\037\\')
   [ "$_sa_errf" = /dev/null ] || rm -f "$_sa_errf"
   if [ "$rc" -ne 0 ]; then
     return "$rc"

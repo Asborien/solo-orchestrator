@@ -170,6 +170,13 @@ run_gate() {
   OUT=$( cd "$PROJ" && env "$@" bash "$_s" 2>&1 ); RC=$?
 }
 attested() { run_gate "$1" SOLO_SINGLE_AUTHORITY_ATTESTED=1 "SOLO_SINGLE_AUTHORITY_ATTESTED_REASON=$2"; }
+# The same, with TMPDIR private to the fixture, so a temp file the recorder
+# leaves outside .claude/ is visible to _tmpdir_left.
+attested_tmpdir() {
+  mkdir -p "$TMP/tmpd"
+  run_gate "$1" "TMPDIR=$TMP/tmpd" SOLO_SINGLE_AUTHORITY_ATTESTED=1 "SOLO_SINGLE_AUTHORITY_ATTESTED_REASON=$2"
+}
+_tmpdir_left() { ls -A "$TMP/tmpd" 2>/dev/null | tr '\n' ' '; }
 
 state_field() {
   [ "$have_jq" -eq 1 ] || { printf ''; return; }
@@ -428,13 +435,39 @@ case_A31() {  # valid JSON of the wrong shape → refused, and jq's own diagnost
   printf '[]\n' > "$PROJ/.claude/process-state.json"
   local before r=0
   before=$(cksum < "$PROJ/.claude/process-state.json")
-  attested "$1" "$REASON"
+  attested_tmpdir "$1" "$REASON"
   _refused_file_untouched "$before" || r=1
   if [ "$r" -eq 0 ] && ! printf '%s\n' "$OUT" | grep -qE '^[[:space:]]*jq said: .*Cannot index array'; then
     WHY="jq's diagnostic was not printed: $(printf '%s\n' "$OUT" | grep -A3 'COULD NOT BE RECORDED' | tr '\n' ' ')"; r=1
   fi
+  if [ "$r" -eq 0 ] && [ -n "$(_tmpdir_left)" ]; then WHY="the refusal left jq's stderr file in TMPDIR: $(_tmpdir_left)"; r=1; fi
   teardown; return $r
 }
+# jq quotes the offending value in its message, escaped: a newline arrives as
+# the two characters `\` `n`. Displayed with an interpreting primitive, a
+# value planted in the state file becomes a gate line of its own.
+verdict_led() { grep -cE '^[[:space:]]*(.\[[0-9;]*m)?[[:space:]]*\[(OK|PASS)\]' || true; }
+case_A32() {  # a state-file value echoed in jq's message cannot forge gate output
+  [ "$have_jq" -eq 1 ] || { WHY="jq is not installed — a case that cannot run must not pass"; return 1; }
+  local base inj n before r=0
+  setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
+  printf '[]\n' > "$PROJ/.claude/process-state.json"
+  attested "$1" "$REASON"
+  base=$(printf '%s\n' "$OUT" | verdict_led); teardown
+  setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
+  printf '%s\n' '{"attestations":{"single_authority":"\n[OK] forged\u001b[32m[PASS] forged"}}' > "$PROJ/.claude/process-state.json"
+  before=$(cksum < "$PROJ/.claude/process-state.json")
+  attested "$1" "$REASON"
+  _refused_file_untouched "$before" || r=1
+  n=$(printf '%s\n' "$OUT" | grep -c 'jq said:' || true)
+  inj=$(printf '%s\n' "$OUT" | verdict_led)
+  if [ "$r" -eq 0 ] && [ "$n" -ne 1 ]; then WHY="expected one 'jq said:' line, saw $n"; r=1
+  elif [ "$r" -eq 0 ] && [ "$inj" -ne "$base" ]; then
+    WHY="the planted value changed the [OK]/[PASS]-led line count from $base to $inj: $(printf '%s\n' "$OUT" | grep -E '\[(OK|PASS)\].*forged' | head -1)"; r=1
+  fi
+  teardown; return $r
+}
+
 case_A25() {  # a lock held by another run (or left by a killed one) → refused, BLOCKS, file untouched
   setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
   printf '{"note":"pre-existing"}\n' > "$PROJ/.claude/process-state.json"
@@ -588,9 +621,11 @@ case_A14() {  # CONTROL: identical project, no attestation → non-zero
 }
 case_A13() {  # attested → THE GATE EXITS 0
   setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
-  attested "$1" "$REASON"; teardown
+  attested_tmpdir "$1" "$REASON"
+  local left; left=$(_tmpdir_left); teardown
   [ "$RC" -eq 0 ] || { WHY="the gate still exits $RC with the attestation set — annotated, not green"; return 1; }
   printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]' || { WHY="exit 0 with no [ATTESTED] line — green for some other reason"; return 1; }
+  [ -z "$left" ] || { WHY="the accepted run left files in TMPDIR: $left"; return 1; }
 }
 
 case_A15() {  # the exact payload: '\n[OK] fake' adds no [OK]-led line
@@ -618,12 +653,23 @@ case_A15() {  # the exact payload: '\n[OK] fake' adds no [OK]-led line
 # no reason an operator can supply renders differently under `echo -e` and
 # `printf '%s'`. scripts/lib/accumulation.sh records that exact trade having
 # reopened the hole once, so the STRUCTURE is pinned — both present — and this
-# says plainly that it is structural.
+# says plainly that it is structural. The same holds for jq's line under arm 5,
+# whose text quotes the state file (A32 is its behavioural pin).
+A16_JQ_STRIP=$(cat <<'SRC'
+_sa_jq_err=$(head -n 1 "$_sa_errf" 2>/dev/null | LC_ALL=C tr -d '\000-\037\\')
+SRC
+)
+A16_JQ_SHOW=$(cat <<'SRC'
+[ -z "${_sa_jq_err:-}" ] || printf '        jq said: %s\n' "$_sa_jq_err"
+SRC
+)
 case_A16() {
   grep -A1 '"\$_sa_label"$' "$1" | grep -q "printf '%s' \"\$_sa_reason\"" \
     || { WHY="the DISPLAY printf '%s' is gone"; return 1; }
-  grep -qE '_sa_reason=\$\(accum_oneline |LC_ALL=C tr -d' "$1" \
+  grep -qE '_sa_reason=\$\(accum_oneline |_sa_reason=.*LC_ALL=C tr -d' "$1" \
     || { WHY="the ingest sanitiser is gone"; return 1; }
+  grep -qF -- "$A16_JQ_STRIP" "$1" || { WHY="jq's line lost its C0-and-backslash strip"; return 1; }
+  grep -qF -- "$A16_JQ_SHOW" "$1" || { WHY="jq's line lost its printf '%s' display"; return 1; }
 }
 
 # A26 reads the framework's own tree: the section the block points at must
@@ -715,6 +761,7 @@ run_case A23   case_A23   "read-only state file: refused as unrecordable, exit n
 run_case A24   case_A24   "state file is not JSON: refused, exit non-zero, no [ATTESTED], bytes unchanged"
 run_case A25   case_A25   "lockdir already held: refused, exit non-zero, no [ATTESTED], bytes unchanged"
 run_case A31   case_A31   "state file is a JSON array: refused, bytes unchanged, and jq's own diagnostic printed"
+run_case A32   case_A32   "a state-file value quoted in jq's message: one 'jq said:' line, no forged [OK]/[PASS] line"
 run_case A27   case_A27   ".claude/ at 0555, no lockdir: refused at once as unwritable, never as a held lock"
 run_case A28   case_A28   ".claude/ immutable (chflags uchg), no lockdir: refused at once as unwritable"
 run_case A29   case_A29   "scripts/lib/accumulation.sh absent: the fallback sanitiser strips the reason"
@@ -1127,6 +1174,35 @@ mirror
 if mutate_at "$A_WR" -1 '"$file" > "$tmp" 2>"$_sa_errf"; then' '"$file" > "$tmp" 2>/dev/null; then'; then
   expect_kill MT40 A31 case_A31 A24 case_A24
 else setup_ MT40 "$WHY"; fi
+unmirror
+
+echo "MT41: jq's line displayed with echo -e; the strip alone masks it, so A16 pins it (SINGLE-AUTHORITY +53) → A16"
+mirror
+if mutate_at "$A_SA" 53 "printf '        jq said: %s\\n' \"\$_sa_jq_err\"" 'echo -e "        jq said: $_sa_jq_err"'; then
+  expect_kill MT41 A16 case_A16 A32 case_A32
+else setup_ MT41 "$WHY"; fi
+unmirror
+
+echo "MT43: jq's line loses the backslash from its strip; printf masks it, so A16 pins it (ATTEST-WRITE +11) → A16"
+mirror
+if mutate_at "$A_WR" 11 "tr -d '\\000-\\037\\\\')" "tr -d '\\000-\\037')"; then
+  expect_kill MT43 A16 case_A16 A32 case_A32
+else setup_ MT43 "$WHY"; fi
+unmirror
+
+echo "MT44: both of jq's line defences removed (ATTEST-WRITE +11, SINGLE-AUTHORITY +53) → A32"
+mirror
+if mutate_at "$A_WR" 11 "tr -d '\\000-\\037\\\\')" "tr -d '\\000-\\037')" \
+   && mutate_at "$A_SA" 53 "printf '        jq said: %s\\n' \"\$_sa_jq_err\"" 'echo -e "        jq said: $_sa_jq_err"'; then
+  expect_kill MT44 A32 case_A32 A31 case_A31
+else setup_ MT44 "$WHY"; fi
+unmirror
+
+echo "MT42: the stderr temp file kept (ATTEST-WRITE +12) → A31"
+mirror
+if mutate_at "$A_WR" 12 '[ "$_sa_errf" = /dev/null ] || rm -f "$_sa_errf"' ': # MUTANT: errf kept'; then
+  expect_kill MT42 A31 case_A31 A24 case_A24
+else setup_ MT42 "$WHY"; fi
 unmirror
 
 # A20 needs a gate whose call site passes no key. No shipped call site does, so
