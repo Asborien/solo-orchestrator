@@ -21332,8 +21332,9 @@ unchanged (A1, A14).
   names that cause and no other: 2, `jq` not on PATH (A22); 3, the state file cannot be written,
   read-only or not a regular file (A9, A23), or `.claude/` refuses writes, returned at once when the
   lock cannot be made and none exists (A27 at mode 0555, A28 under `chflags uchg`); 4, `.claude/process-state.json.lockdir` is held, with the
-  instruction to remove it if no other gate run holds it (A25); 5, `jq` cannot merge the record, the
-  state file not being valid JSON (A24). On each, exit is non-zero, there is no `[ATTESTED]` line, an
+  instruction to remove it if no other gate run holds it (A25); 5, `jq` cannot merge the record: the
+  state file is not a JSON object, or `.attestations` or `.attestations.single_authority` is not an
+  object (A24, and A31 for a top-level array), and the first line of `jq`'s own message is printed. On each, exit is non-zero, there is no `[ATTESTED]` line, an
   existing state file's bytes are unchanged, and the recorder leaves no lock of its own (A9) and no
   temp file (A24); a TERM during the write leaves neither (A30).
 - With the attestation, a project the gate otherwise clears exits 0 (A13, on the PREMISE that the same
@@ -21371,7 +21372,8 @@ Each property has a precedent here:
 | a solo operator with no second person | `SOLO_UAT_SOLO_ATTESTED`, `scripts/process-checklist.sh` |
 | a governance control met by written exception | `zdr_attestation_reason`, invariant #16 |
 
-**§X.1 remains the home for the underlying acceptance.** It requires the Application Owner and IT
+**`docs/governance-framework.md` §X, Insider Threat Acknowledgment, item 1, remains the home for the
+underlying acceptance.** It requires the Application Owner and IT
 Security to acknowledge the concentrated-access risk in `APPROVAL_LOG.md` at the Phase 0→1 gate. An
 adopter using this attestation records that acknowledgement as well; the attestation unblocks the
 gate and does not discharge the obligation.
