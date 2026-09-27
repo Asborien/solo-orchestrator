@@ -13594,7 +13594,12 @@ read stdin and does not exit before it.
 
 ## BL-242: Brownfield adoption is HALF BUILT and has never had a backlog entry — seven capabilities unbuilt, and the feature's shape is now decided (D1-D8)
 
-**Status:** Open
+**Status:** Closed — 2026-09-27: every designed work package shipped, the last of them in PRs #441–#451,
+and the Development Guardrails install (BL-296 row 33) in PR #455 (merge `f7ff2f5`); `docs/adoption.md`'s
+"What is not built yet" now lists every package as shipped. **The residuals this entry recorded are NOT
+closed with it** — they move to `## BL-310:`, which lists each one and points back to its section here.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 **Filed 2026-08-23 at Karl's direction.** The feature has been able to adopt an
 existing codebase since **PR #337 merged on 2026-08-09**; the last of the
@@ -22165,5 +22170,34 @@ second pass over quoted `line [0-9]+:` diagnostics would find them.
 **Related:** `## BL-233:` (owner of N6 and M23), #420 (the one-suite instance and the
 demonstration), #419 (where the follow-up was asked for), the pending fix for #420 (the three sites in
 `tests/test-bl233-wpb-accumulation.sh`, not yet opened).
+
+---
+
+## BL-310: brownfield adoption's residuals, carried from `## BL-242:` when that entry closed
+
+**Status:** Open — a tracking entry. Each line below was recorded inside `## BL-242:` as found and not
+fixed; closing that entry would otherwise have dropped all of them off the what's-open list. **Verify
+each against `main` before working it** — they were recorded at different commits, and a later package
+may have closed one without saying so here.
+
+**Filed:** 2026-09-27, when BL-242 closed (all designed packages shipped, PR #455 the last).
+
+| # | Residual | Where in `## BL-242:` |
+|---|---|---|
+| 1 | `resolve-tools.sh` files a documentation URL in the `auto_install` bucket, and `init.sh` executes that bucket (the shared resolver's defect) | "BL-242 residual — `resolve-tools.sh` files a documentation URL…" |
+| 2 | the Linux gitleaks recipe adoption offers is an unpinned, unverified root install; CI pins the same artefact by version and checksum | "A SECOND RESIDUAL, FOUND AT THE SAME REVIEW…" |
+| 3 | `# BL-242-RESOLVER-NO-EXEC` tells the operator to "run adoption again", which `# BL-242-PREFLIGHT-ARM1` refuses | its own residual heading |
+| 4 | adoption follows a symlink out of the project and overwrites its target — partly guarded since (22 `-L` / `adopt_path_under_link` sites in `scripts/lib/adopt/` on 2026-09-27), but `adopt_write_file` itself is still `cat >` | "BL-242 residual — adoption follows a SYMLINK…" |
+| 5 | init parity: thirteen `init.sh` effects adoption does not perform and nothing designs (the §8.7a table) | "THE INIT-PARITY RESIDUAL" |
+| 6 | a file of the operator's where a framework *script* goes is left alone, so that script is not installed (named by the run) | `docs/adoption.md`, "What is not built yet" |
+| 7 | the `# BL-242-SECRETS-RESCAN` guard is still correct but no longer observable in the persisted artefact | "Residual carried here from WP10b/2 (PR #437)" |
+| 8 | the no-fingerprint guard refuses ALL-missing fingerprints, not SOME-missing | "Residual — the no-fingerprint guard covers ALL-missing…" |
+| 9 | WP11: the `@sh`-quoted restore line is unpinned; I20's planned-path matching is spelling-dependent | "Residuals from WP11's pre-PR review" |
+| 10 | eight suites still carry the `"test":"npm test"` fixture that hangs a shard once one commits a source file after adoption | "RESIDUAL — the other eight still carry it" |
+| 11 | the `--finish` / commit-hook review list: MANIFEST still says `replaced` after an edited hook is refused; three guard lines unkilled; root `-w` on a `chmod 444` hook; no time bound on the adoptee's test command; a red suite blocks every source commit from day one; `soif_write_precommit_hook` returns `chmod`'s status; hook order against §10 | "RESIDUALS from these reviews, recorded not fixed" |
+| 12 | the real Guardrails installer runs only where a host has the clone; the PR lane exercises it through a stub | `## BL-296:` (closed), its review-round block |
+
+Hook managers (item 11's pre-commit/lefthook line) are **not** a residual: Karl ruled 2026-09-25 that
+adoption replaces them (`## BL-242:`, "Karl's ruling on hook managers").
 
 ---
