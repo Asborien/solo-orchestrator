@@ -1457,7 +1457,7 @@ _cpg_warn_no_gate_section() {
 _cpg_record_single_authority_attestation() {
   local _sa_gate="$1" _sa_reason="$2"
   local file=".claude/process-state.json"
-  local _sa_head _sa_cur_reason _sa_cur_head today actor lock_dir attempts rc
+  local _sa_head _sa_cur_reason _sa_cur_head today actor lock_dir attempts rc _sa_errf
 
   command -v jq >/dev/null 2>&1 || return 2
   # A read-only state file is refused up front. Without this, `mv` of the
@@ -1511,14 +1511,14 @@ _cpg_record_single_authority_attestation() {
     printf '{}\n' > "$file" 2>/dev/null || { rmdir "$lock_dir" 2>/dev/null; return 3; }
   fi
 
-  rc=0
+  rc=0; _sa_jq_err=""; _sa_errf=$(mktemp 2>/dev/null) || _sa_errf=/dev/null
   (
     tmp=$(mktemp "${file}.XXXXXX") || exit 3
     trap 'rm -f "$tmp"; rmdir "$lock_dir" 2>/dev/null' EXIT INT TERM
     if jq --arg g "$_sa_gate" --arg reason "$_sa_reason" --arg head "$_sa_head" \
           --arg date "$today" --arg by "$actor" \
           '.attestations = ((.attestations // {}) | .single_authority = ((.single_authority // {}) + {($g): {reason: $reason, head: $head, gate: $g, date: $date, by: $by}}))' \
-          "$file" > "$tmp" 2>/dev/null; then
+          "$file" > "$tmp" 2>"$_sa_errf"; then
       mv "$tmp" "$file" || exit 3   # BL-274-ATTEST-WRITE: atomic attestation finalize
       trap - EXIT INT TERM
       exit 0
@@ -1529,6 +1529,9 @@ _cpg_record_single_authority_attestation() {
     fi
   ) || rc=$?
   rmdir "$lock_dir" 2>/dev/null || true
+  # jq's first stderr line, control characters stripped, for arm 5 of the caller.
+  _sa_jq_err=$(head -n 1 "$_sa_errf" 2>/dev/null | LC_ALL=C tr -d '\000-\037')
+  [ "$_sa_errf" = /dev/null ] || rm -f "$_sa_errf"
   if [ "$rc" -ne 0 ]; then
     return "$rc"
   fi
@@ -1595,7 +1598,7 @@ _cpg_single_authority_gate() {
     2) echo "        jq is not on PATH, and the record is written with it: install jq, then re-run." ;;
     3) echo "        .claude/process-state.json cannot be written (read-only, not a regular file, or .claude/ refuses writes): make .claude/ writable and the state file a writable file, then re-run." ;;
     4) echo "        .claude/process-state.json.lockdir is held. If no other gate run is in progress it is stale, left by a killed run: remove it and re-run." ;;
-    5) echo "        .claude/process-state.json is not valid JSON, or its .attestations is not an object, so jq could not add the record: repair the file, then re-run." ;;
+    5) echo "        .claude/process-state.json is not a JSON object, or its .attestations or .attestations.single_authority is not an object, so jq could not add the record: repair the file, then re-run."; [ -z "${_sa_jq_err:-}" ] || printf '        jq said: %s\n' "$_sa_jq_err" ;;
     *) echo "        The recorder failed with an unexpected status ($_sa_wrc); nothing was written." ;;
   esac
   return 1

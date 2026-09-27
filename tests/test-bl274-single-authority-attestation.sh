@@ -306,7 +306,7 @@ case_A8() {   # same reason, new HEAD → the pin is refreshed
 # The remedy must name the cause that fired and no other (Karl's review of
 # #452, finding 2: one catch-all told a stale-lock operator to install jq).
 #   <own token from REMEDIES> <must-match ERE> <what the cause is, for WHY>
-REMEDIES='install jq|cannot be written|not valid JSON|lockdir'
+REMEDIES='install jq|cannot be written|not a JSON object|lockdir'
 _remedy_names() {
   local rem others
   rem=$(printf '%s\n' "$OUT" | grep -A2 'COULD NOT BE RECORDED' || true)
@@ -412,13 +412,28 @@ case_A24() {  # the state file is not JSON → refused, BLOCKS, file untouched
   before=$(cksum < "$PROJ/.claude/process-state.json")
   attested "$1" "$REASON"
   _refused_file_untouched "$before" || r=1
-  [ "$r" -ne 0 ] || _remedy_names 'not valid JSON' 'not valid JSON' 'a malformed state file' || r=1
+  [ "$r" -ne 0 ] || _remedy_names 'not a JSON object' 'not a JSON object' 'a malformed state file' || r=1
   if [ "$r" -eq 0 ] && [ -n "$(_leftover_temps)" ]; then WHY="the failed merge left its temp file: $(_leftover_temps)"; r=1; fi
   teardown; return $r
 }
 # The recorder's temp files are process-state.json.XXXXXX beside the state file.
 _leftover_temps() {
   ls -A "$PROJ/.claude" 2>/dev/null | grep -E '^process-state\.json\.[A-Za-z0-9]{6}$' || true
+}
+case_A31() {  # valid JSON of the wrong shape → refused, and jq's own diagnostic is printed
+  [ "$have_jq" -eq 1 ] || { WHY="jq is not installed — a case that cannot run must not pass"; return 1; }
+  setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
+  # A top-level array: valid JSON, so "not valid JSON" alone would send the
+  # operator looking for a syntax error that is not there.
+  printf '[]\n' > "$PROJ/.claude/process-state.json"
+  local before r=0
+  before=$(cksum < "$PROJ/.claude/process-state.json")
+  attested "$1" "$REASON"
+  _refused_file_untouched "$before" || r=1
+  if [ "$r" -eq 0 ] && ! printf '%s\n' "$OUT" | grep -qE '^[[:space:]]*jq said: .*Cannot index array'; then
+    WHY="jq's diagnostic was not printed: $(printf '%s\n' "$OUT" | grep -A3 'COULD NOT BE RECORDED' | tr '\n' ' ')"; r=1
+  fi
+  teardown; return $r
 }
 case_A25() {  # a lock held by another run (or left by a killed one) → refused, BLOCKS, file untouched
   setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
@@ -699,6 +714,7 @@ run_case A22   case_A22   "jq absent from PATH: refused as unrecordable, exit no
 run_case A23   case_A23   "read-only state file: refused as unrecordable, exit non-zero, file untouched"
 run_case A24   case_A24   "state file is not JSON: refused, exit non-zero, no [ATTESTED], bytes unchanged"
 run_case A25   case_A25   "lockdir already held: refused, exit non-zero, no [ATTESTED], bytes unchanged"
+run_case A31   case_A31   "state file is a JSON array: refused, bytes unchanged, and jq's own diagnostic printed"
 run_case A27   case_A27   ".claude/ at 0555, no lockdir: refused at once as unwritable, never as a held lock"
 run_case A28   case_A28   ".claude/ immutable (chflags uchg), no lockdir: refused at once as unwritable"
 run_case A29   case_A29   "scripts/lib/accumulation.sh absent: the fallback sanitiser strips the reason"
@@ -1002,9 +1018,9 @@ if mutate_at "$A_WR" 8 ') || rc=$?' ') || rc=0'; then
 else setup_ MT25 "$WHY"; fi
 unmirror
 
-echo "MT26: the recorder's final refusal returns 0 (ATTEST-WRITE +11) → A24"
+echo "MT26: the recorder's final refusal returns 0 (ATTEST-WRITE +14) → A24"
 mirror
-if mutate_at "$A_WR" 11 'return "$rc"' 'return 0'; then
+if mutate_at "$A_WR" 14 'return "$rc"' 'return 0'; then
   expect_kill MT26 A24 case_A24 A13 case_A13
 else setup_ MT26 "$WHY"; fi
 unmirror
@@ -1104,6 +1120,13 @@ mirror
 if mutate_at "$A_WR" -22 '[ -e "$lock_dir" ] || return 3' ': # MUTANT: every mkdir failure is a held lock'; then
   expect_kill MT39 A27 case_A27 A25 case_A25
 else setup_ MT39 "$WHY"; fi
+unmirror
+
+echo "MT40: jq's stderr discarded again, so arm 5 has no diagnostic to print (ATTEST-WRITE -1) → A31"
+mirror
+if mutate_at "$A_WR" -1 '"$file" > "$tmp" 2>"$_sa_errf"; then' '"$file" > "$tmp" 2>/dev/null; then'; then
+  expect_kill MT40 A31 case_A31 A24 case_A24
+else setup_ MT40 "$WHY"; fi
 unmirror
 
 # A20 needs a gate whose call site passes no key. No shipped call site does, so
