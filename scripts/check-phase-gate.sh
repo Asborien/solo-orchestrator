@@ -1449,7 +1449,7 @@ _cpg_warn_no_gate_section() {
 #   0 — recorded (or idempotent no-op: same reason AND same head)
 #   2 — jq is not installed
 #   3 — the state file cannot be written (read-only, not a regular file, or
-#       the temp write / rename in .claude/ failed)
+#       .claude/ refuses writes: the lock cannot be made and none exists)
 #   4 — the lock is held: another run, or a stale lockdir from a killed one
 #   5 — jq could not merge the record (the state file is not valid JSON, or
 #       its .attestations is not an object)
@@ -1497,6 +1497,7 @@ _cpg_record_single_authority_attestation() {
 
   attempts=0
   while ! mkdir "$lock_dir" 2>/dev/null; do
+    [ -e "$lock_dir" ] || return 3   # no lock to wait on: .claude/ itself refuses writes
     attempts=$((attempts + 1))
     if [ "$attempts" -ge 100 ]; then
       return 4
@@ -1592,7 +1593,7 @@ _cpg_single_authority_gate() {
   echo "        An escape that leaves no trace is not an escape, it is the gate being off."
   case "$_sa_wrc" in
     2) echo "        jq is not on PATH, and the record is written with it: install jq, then re-run." ;;
-    3) echo "        .claude/process-state.json cannot be written (read-only, not a regular file, or .claude/ refuses the temp file): make it a writable file, then re-run." ;;
+    3) echo "        .claude/process-state.json cannot be written (read-only, not a regular file, or .claude/ refuses writes): make .claude/ writable and the state file a writable file, then re-run." ;;
     4) echo "        .claude/process-state.json.lockdir is held. If no other gate run is in progress it is stale, left by a killed run: remove it and re-run." ;;
     5) echo "        .claude/process-state.json is not valid JSON, or its .attestations is not an object, so jq could not add the record: repair the file, then re-run." ;;
     *) echo "        The recorder failed with an unexpected status ($_sa_wrc); nothing was written." ;;

@@ -70,6 +70,9 @@ WHY=""
 pass()   { echo "  [PASS] $1"; PASSED=$((PASSED + 1)); }
 fail_()  { echo "  [FAIL] $1 — $2"; FAILED=$((FAILED + 1)); }
 setup_() { echo "  [SETUP] $1 — $2"; FAILED=$((FAILED + 1)); SETUP_FAILED=$((SETUP_FAILED + 1)); }
+# A case that does not apply on this platform: never a pass, never counted as one.
+SKIPPED=0
+skip_()  { echo "  [SKIP] $1 — $2"; SKIPPED=$((SKIPPED + 1)); }
 
 echo "  suite shell: ${BASH_VERSION}   subject shell: $(bash -c 'echo $BASH_VERSION')"
 
@@ -322,6 +325,8 @@ case_A9() {   # a record that cannot be written → refused, and the gate BLOCKS
     || { WHY="not refused on the grounds that the attestation could not be recorded"; r=1; }
   [ "$RC" -ne 0 ] || { WHY="the gate exited 0 with an attestation it could not record — a route that leaves no trace"; r=1; }
   if printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]'; then WHY="an unrecordable attestation was ACCEPTED"; r=1; fi
+  # A lock left behind here refuses the next run on a valid file as "held".
+  if [ "$r" -eq 0 ] && [ -e "$PROJ/.claude/process-state.json.lockdir" ]; then WHY="the refusal left its lockdir behind"; r=1; fi
   [ "$r" -ne 0 ] || _remedy_names 'cannot be written' 'cannot be written' 'an unwritable state file' || r=1
   teardown; return $r
 }
@@ -408,7 +413,12 @@ case_A24() {  # the state file is not JSON → refused, BLOCKS, file untouched
   attested "$1" "$REASON"
   _refused_file_untouched "$before" || r=1
   [ "$r" -ne 0 ] || _remedy_names 'not valid JSON' 'not valid JSON' 'a malformed state file' || r=1
+  if [ "$r" -eq 0 ] && [ -n "$(_leftover_temps)" ]; then WHY="the failed merge left its temp file: $(_leftover_temps)"; r=1; fi
   teardown; return $r
+}
+# The recorder's temp files are process-state.json.XXXXXX beside the state file.
+_leftover_temps() {
+  ls -A "$PROJ/.claude" 2>/dev/null | grep -E '^process-state\.json\.[A-Za-z0-9]{6}$' || true
 }
 case_A25() {  # a lock held by another run (or left by a killed one) → refused, BLOCKS, file untouched
   setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
@@ -420,6 +430,107 @@ case_A25() {  # a lock held by another run (or left by a killed one) → refused
   _refused_file_untouched "$before" || r=1
   [ -d "$PROJ/.claude/process-state.json.lockdir" ] || { WHY="the recorder removed a lock it did not take"; r=1; }
   [ "$r" -ne 0 ] || _remedy_names lockdir 'process-state\.json\.lockdir.*remove it' 'a held lock, with the instruction to remove a stale one' || r=1
+  teardown; return $r
+}
+
+# Shared by A27 and A28: .claude/ refuses writes and no lock exists. The
+# refusal must name the unwritable path at once, never a lockdir that is not
+# there (Karl's review of #452, finding 2: name the actual cause). It used to
+# wait out the lock loop, about 10 s, and say to remove a lockdir that did not
+# exist.
+#   <script> <lock-command> <unlock-command>
+_refused_unwritable_dir() {
+  setup_clean "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
+  printf '{"note":"pre-existing"}\n' > "$PROJ/.claude/process-state.json"
+  local before t0 secs r=0
+  before=$(cksum < "$PROJ/.claude/process-state.json")
+  $2 "$PROJ/.claude"
+  t0=$SECONDS
+  attested "$1" "$REASON"
+  secs=$((SECONDS - t0))
+  $3 "$PROJ/.claude"
+  _refused_file_untouched "$before" || r=1
+  [ "$r" -ne 0 ] || _remedy_names 'cannot be written' 'cannot be written' 'a .claude/ that refuses writes' || r=1
+  # The lock loop is 100 tries at 0.1 s: 9 s or more means it was waited out.
+  if [ "$r" -eq 0 ] && [ "$secs" -ge 9 ]; then WHY="refused after ${secs}s, waiting on a lock that does not exist"; r=1; fi
+  if [ "$r" -eq 0 ] && [ -e "$PROJ/.claude/process-state.json.lockdir" ]; then WHY="a lockdir appeared in a directory that refuses writes"; r=1; fi
+  teardown; return $r
+}
+_mode_0555() { chmod 0555 "$1"; }
+_mode_0755() { chmod 0755 "$1"; }
+case_A27() {  # .claude/ at 0555, no lockdir → refused at once as unwritable
+  [ "$(id -u)" -ne 0 ] || { WHY="running as root — a 0555 directory is writable to root, so this case cannot measure"; return 3; }
+  _refused_unwritable_dir "$1" _mode_0555 _mode_0755
+}
+_uchg()   { chflags uchg "$1"; }
+_nouchg() { chflags nouchg "$1"; }
+case_A28() {  # .claude/ immutable (chflags uchg), no lockdir → refused at once as unwritable
+  command -v chflags >/dev/null 2>&1 || { WHY="no chflags on this platform"; return 4; }
+  # An immutable directory outlives rm -rf; the trap clears the flag if the
+  # suite is interrupted between setting it and the case's own unlock.
+  trap '[ -n "${PROJ:-}" ] && chflags nouchg "$PROJ/.claude" 2>/dev/null' EXIT INT TERM
+  local r=0
+  _refused_unwritable_dir "$1" _uchg _nouchg || r=1
+  trap - EXIT INT TERM
+  return $r
+}
+
+case_A8b() {  # a NEW reason at the same HEAD is recorded, not dropped as a repeat
+  [ "$have_jq" -eq 1 ] || { WHY="jq is not installed — a case that cannot run must not pass"; return 1; }
+  setup_minimal organizational "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
+  local second="A second reason, given later at the same commit." got r=0
+  attested "$1" "$REASON"
+  attested "$1" "$second"
+  got=$(state_field "$ST.phase_0_to_1.reason")
+  if ! printf '%s\n' "$OUT" | grep -qF "Reason: $second"; then WHY="fixture invalid — the second run did not print the second reason"; r=3
+  elif [ "$got" != "$second" ]; then WHY="printed 'Reason: $second' and 'Recorded to', but the record holds '$got'"; r=1
+  fi
+  teardown; return $r
+}
+
+case_A29() {  # without scripts/lib/accumulation.sh, the fallback sanitiser still strips
+  [ "$have_jq" -eq 1 ] || { WHY="jq is not installed — a case that cannot run must not pass"; return 1; }
+  local d r=0
+  d=$(mktemp -d)
+  cp -R "$(dirname "$1")" "$d/scripts"
+  rm -f "$d/scripts/lib/accumulation.sh"
+  [ ! -e "$d/scripts/lib/accumulation.sh" ] || { WHY="fixture invalid — the lib is still present"; rm -rf "$d"; return 3; }
+  setup_minimal organizational "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
+  attested "$d/scripts/check-phase-gate.sh" "$DIRTY_REASON"
+  if ! printf '%s\n' "$OUT" | grep -q '\[ATTESTED\]'; then WHY="the gate without the lib did not accept the attestation"; r=1
+  elif [ "$(state_field "$ST.phase_0_to_1.reason")" != "$CLEAN_REASON" ]; then
+    WHY="without the lib the recorded reason is not the sanitised text (got: $(state_field "$ST.phase_0_to_1.reason" | od -c | head -1 | tr -s ' '))"; r=1
+  fi
+  teardown; rm -rf "$d"; return $r
+}
+
+case_A30() {  # TERM during the write: the temp file and the lock are cleaned up
+  [ "$have_jq" -eq 1 ] || { WHY="jq is not installed — a case that cannot run must not pass"; return 1; }
+  setup_minimal organizational "$SOLO_NAME" "$SOLO_NAME" "$SOLO_MAIL"
+  local shim="$TMP/shim" pidf="$TMP/jq.pids" realjq bg sub sl i=0 r=0
+  realjq=$(command -v jq)
+  mkdir -p "$shim"
+  # The merge call (the only one passing --arg reason) parks instead of
+  # writing, reporting its parent (the recorder's subshell) and itself.
+  cat > "$shim/jq" <<SH
+#!/bin/sh
+case "\$*" in *"--arg reason"*) echo "\$PPID \$\$" > "$pidf"; exec sleep 60 ;; esac
+exec "$realjq" "\$@"
+SH
+  chmod +x "$shim/jq"
+  ( cd "$PROJ" && env "PATH=$shim:$PATH" SOLO_SINGLE_AUTHORITY_ATTESTED=1 \
+      "SOLO_SINGLE_AUTHORITY_ATTESTED_REASON=$REASON" bash "$1" >"$TMP/out" 2>&1 ) &
+  bg=$!
+  while [ ! -s "$pidf" ] && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
+  if [ ! -s "$pidf" ]; then kill "$bg" 2>/dev/null; wait "$bg" 2>/dev/null; WHY="fixture — the merge was never reached"; teardown; return 3; fi
+  read -r sub sl < "$pidf"
+  if [ -z "$(_leftover_temps)" ]; then kill "$sl" 2>/dev/null; wait "$bg" 2>/dev/null; WHY="fixture — no temp file existed at the signal"; teardown; return 3; fi
+  kill -TERM "$sub" 2>/dev/null
+  kill -TERM "$sl" 2>/dev/null
+  wait "$bg" 2>/dev/null
+  if [ -n "$(_leftover_temps)" ]; then WHY="TERM mid-write left the temp file: $(_leftover_temps)"; r=1
+  elif [ -e "$PROJ/.claude/process-state.json.lockdir" ]; then WHY="TERM mid-write left the lockdir"; r=1
+  fi
   teardown; return $r
 }
 
@@ -571,7 +682,7 @@ run_case() {  # <id> <function> <description>
   echo "$1: $3"
   WHY=""
   "$2" "$SCRIPT" || rc=$?
-  case "$rc" in 0) pass "$1" ;; 3) setup_ "$1" "$WHY" ;; *) fail_ "$1" "$WHY" ;; esac
+  case "$rc" in 0) pass "$1" ;; 3) setup_ "$1" "$WHY" ;; 4) skip_ "$1" "$WHY" ;; *) fail_ "$1" "$WHY" ;; esac
 }
 
 run_case A1    case_A1    "CONTROL — no attestation: the self-approval FAIL still fires"
@@ -582,11 +693,16 @@ run_case A5    case_A5    "whitespace-only reason: refused by name, exit non-zer
 run_case A17   case_A17   "reason variable unset: refused by name, exit non-zero, nothing recorded"
 run_case A6+A7 case_A6A7  "recorded under the gate's key with the SANITISED reason, date, actor, pinned to git rev-parse HEAD"
 run_case A8    case_A8    "same reason at a NEW head: the pin is refreshed"
+run_case A8b   case_A8b   "a NEW reason at the same head: the record holds it, as the transcript says"
 run_case A9    case_A9    "the record cannot be written: refused, exit non-zero"
 run_case A22   case_A22   "jq absent from PATH: refused as unrecordable, exit non-zero, no [ATTESTED]"
 run_case A23   case_A23   "read-only state file: refused as unrecordable, exit non-zero, file untouched"
 run_case A24   case_A24   "state file is not JSON: refused, exit non-zero, no [ATTESTED], bytes unchanged"
 run_case A25   case_A25   "lockdir already held: refused, exit non-zero, no [ATTESTED], bytes unchanged"
+run_case A27   case_A27   ".claude/ at 0555, no lockdir: refused at once as unwritable, never as a held lock"
+run_case A28   case_A28   ".claude/ immutable (chflags uchg), no lockdir: refused at once as unwritable"
+run_case A29   case_A29   "scripts/lib/accumulation.sh absent: the fallback sanitiser strips the reason"
+run_case A30   case_A30   "TERM during the write: no temp file and no lockdir left"
 run_case A10   case_A10   "a reason carrying an escaped newline cannot forge an [OK] line"
 run_case A11   case_A11   "CONTROL — personal deployment: the route never fires"
 run_case A12   case_A12   "attested with nothing to excuse: silent, nothing recorded"
@@ -674,7 +790,7 @@ expect_kill() {
   if [ "$rc" -eq 0 ]; then
     fail_ "$1" "SURVIVED — $2 stays green on the mutant"
     return
-  elif [ "$rc" -eq 3 ]; then
+  elif [ "$rc" -eq 3 ] || [ "$rc" -eq 4 ]; then
     setup_ "$1" "$2 could not run on the mutant: $WHY"
     return
   fi
@@ -708,9 +824,9 @@ if mutate_at "$A_SA" 40 'XIV item 5' 'a governance section'; then
 else setup_ MT2 "$WHY"; fi
 unmirror
 
-echo "MT3: idempotence made reason-only (ATTEST-WRITE -32) → A8"
+echo "MT3: idempotence made reason-only (ATTEST-WRITE -33) → A8"
 mirror
-if mutate_at "$A_WR" -32 '[ "$_sa_cur_reason" = "$_sa_reason" ] && [ "$_sa_cur_head" = "$_sa_head" ]' '[ "$_sa_cur_reason" = "$_sa_reason" ]'; then
+if mutate_at "$A_WR" -33 '[ "$_sa_cur_reason" = "$_sa_reason" ] && [ "$_sa_cur_head" = "$_sa_head" ]' '[ "$_sa_cur_reason" = "$_sa_reason" ]'; then
   expect_kill MT3 A8 case_A8 A6+A7 case_A6A7
 else setup_ MT3 "$WHY"; fi
 unmirror
@@ -775,11 +891,11 @@ if insert_after "$A_SA" 41 'Recorded to .claude/process-state.json' '    echo " 
 else setup_ MT11 "$WHY"; fi
 unmirror
 
-echo "MT12: the recorder returns 0 instead of 2 when jq is absent (ATTEST-WRITE -59) → A22"
+echo "MT12: the recorder returns 0 instead of 2 when jq is absent (ATTEST-WRITE -60) → A22"
 mirror
 # The pre-merge review's RV8: with jq absent the recorder would report
 # success without writing, and a clean project would exit 0 with no record.
-if mutate_at "$A_WR" -59 'command -v jq >/dev/null 2>&1 || return 2' 'command -v jq >/dev/null 2>&1 || return 0'; then
+if mutate_at "$A_WR" -60 'command -v jq >/dev/null 2>&1 || return 2' 'command -v jq >/dev/null 2>&1 || return 0'; then
   expect_kill MT12 A22 case_A22 A13 case_A13
 else setup_ MT12 "$WHY"; fi
 unmirror
@@ -792,9 +908,9 @@ if mutate_at "$A_SA" 28 'if _cpg_record_single_authority_attestation "$_sa_gate"
 else setup_ MT13 "$WHY"; fi
 unmirror
 
-echo "MT14: the read-only guard on the state file removed (ATTEST-WRITE -53) → A23"
+echo "MT14: the read-only guard on the state file removed (ATTEST-WRITE -54) → A23"
 mirror
-if mutate_at "$A_WR" -53 '[ -w "$file" ] || return 3' ': # MUTANT: writability not checked'; then
+if mutate_at "$A_WR" -54 '[ -w "$file" ] || return 3' ': # MUTANT: writability not checked'; then
   expect_kill MT14 A23 case_A23 A13 case_A13
 else setup_ MT14 "$WHY"; fi
 unmirror
@@ -833,9 +949,9 @@ if mutate_at "$A_WR" 6 'exit 5' 'exit 3'; then
 else setup_ MT18 "$WHY"; fi
 unmirror
 
-echo "MT19: a read-only state file reported as a jq merge failure (ATTEST-WRITE -53) → A23"
+echo "MT19: a read-only state file reported as a jq merge failure (ATTEST-WRITE -54) → A23"
 mirror
-if mutate_at "$A_WR" -53 '[ -w "$file" ] || return 3' '[ -w "$file" ] || return 5'; then
+if mutate_at "$A_WR" -54 '[ -w "$file" ] || return 3' '[ -w "$file" ] || return 5'; then
   expect_kill MT19 A23 case_A23 A24 case_A24
 else setup_ MT19 "$WHY"; fi
 unmirror
@@ -865,9 +981,9 @@ unmirror
 # the recorder and the gate has a flip-to-success mutant with its killer.
 # The two arms inside the lock that no fixture reaches (`mktemp` and `mv`
 # failing, ATTEST-WRITE -6 and +0) are named in the entry, not mutated.
-echo "MT23: the read-only arm returns 0 (ATTEST-WRITE -53) → A23"
+echo "MT23: the read-only arm returns 0 (ATTEST-WRITE -54) → A23"
 mirror
-if mutate_at "$A_WR" -53 '[ -w "$file" ] || return 3' '[ -w "$file" ] || return 0'; then
+if mutate_at "$A_WR" -54 '[ -w "$file" ] || return 3' '[ -w "$file" ] || return 0'; then
   expect_kill MT23 A23 case_A23 A13 case_A13
 else setup_ MT23 "$WHY"; fi
 unmirror
@@ -938,6 +1054,58 @@ if mutate_at "$A_SA" 52 '    4) echo' '    7) echo'; then
 else setup_ MT32 "$WHY"; fi
 unmirror
 
+# MT33 to MT37: the idempotence reason half, the lock release on a failed
+# create, the cleanup trap, the temp removal on a failed merge, and the
+# no-lib fallback sanitiser.
+echo "MT33: idempotence made head-only, so a new reason at the same head is dropped (ATTEST-WRITE -33) → A8b"
+mirror
+if mutate_at "$A_WR" -33 '[ "$_sa_cur_reason" = "$_sa_reason" ] && [ "$_sa_cur_head" = "$_sa_head" ]' '[ "$_sa_cur_head" = "$_sa_head" ]'; then
+  expect_kill MT33 A8b case_A8b A8 case_A8
+else setup_ MT33 "$WHY"; fi
+unmirror
+
+echo "MT34: the create-failure arm keeps the lock (ATTEST-WRITE -11) → A9"
+mirror
+if mutate_at "$A_WR" -11 '{ rmdir "$lock_dir" 2>/dev/null; return 3; }' '{ return 3; }'; then
+  expect_kill MT34 A9 case_A9 A13 case_A13
+else setup_ MT34 "$WHY"; fi
+unmirror
+
+echo "MT35: the subshell's cleanup trap removed (ATTEST-WRITE -5) → A30"
+mirror
+if mutate_at "$A_WR" -5 "trap 'rm -f \"\$tmp\"; rmdir \"\$lock_dir\" 2>/dev/null' EXIT INT TERM" ': # MUTANT: no cleanup trap'; then
+  expect_kill MT35 A30 case_A30 A24 case_A24
+else setup_ MT35 "$WHY"; fi
+unmirror
+
+echo "MT36: the temp file kept on a failed merge (ATTEST-WRITE +4) → A24"
+mirror
+if mutate_at "$A_WR" 4 'rm -f "$tmp"' ': # MUTANT: temp kept'; then
+  expect_kill MT36 A24 case_A24 A13 case_A13
+else setup_ MT36 "$WHY"; fi
+unmirror
+
+echo "MT37: the no-lib fallback sanitiser stops stripping control characters (SINGLE-AUTHORITY +10) → A29"
+mirror
+if mutate_at "$A_SA" 10 '\000-\037' '\000-\000'; then
+  expect_kill MT37 A29 case_A29 A6+A7 case_A6A7
+else setup_ MT37 "$WHY"; fi
+unmirror
+
+echo "MT38: the no-lock-to-wait-on arm returns 0 (ATTEST-WRITE -22) → A27"
+mirror
+if mutate_at "$A_WR" -22 '[ -e "$lock_dir" ] || return 3' '[ -e "$lock_dir" ] || return 0'; then
+  expect_kill MT38 A27 case_A27 A25 case_A25
+else setup_ MT38 "$WHY"; fi
+unmirror
+
+echo "MT39: the no-lock-to-wait-on arm removed, so an unwritable .claude/ waits out the loop (ATTEST-WRITE -22) → A27"
+mirror
+if mutate_at "$A_WR" -22 '[ -e "$lock_dir" ] || return 3' ': # MUTANT: every mkdir failure is a held lock'; then
+  expect_kill MT39 A27 case_A27 A25 case_A25
+else setup_ MT39 "$WHY"; fi
+unmirror
+
 # A20 needs a gate whose call site passes no key. No shipped call site does, so
 # the case is run against a mirror with the Phase 0→1 key removed — located by
 # the call's own full literal, which must be unique — and its CONTROL is that
@@ -952,5 +1120,5 @@ else setup_ A20 "$WHY"; fi
 unmirror
 
 echo
-echo "  Passed: $PASSED   Failed: $FAILED   (of which SETUP: $SETUP_FAILED)"
+echo "  Passed: $PASSED   Failed: $FAILED   (of which SETUP: $SETUP_FAILED)   Skipped: $SKIPPED"
 [ "$FAILED" -eq 0 ] || exit 1
