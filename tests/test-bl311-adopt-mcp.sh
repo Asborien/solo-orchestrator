@@ -33,7 +33,8 @@
 #       the note says the check is off; S5 a blank answer is skip; S6 end of
 #       input is skip; S7 the commands fail — the receipt claims nothing;
 #       S8 an answer not offered is refused; S9 a database that never answers
-#       is not registered against
+#       is not registered against; S10 the touched-disk markers follow the
+#       fingerprint, not the attempt
 #   E*  WHOLE ADOPTIONS: E1 both present — no question, the Record row, and
 #       the restart sentence BEFORE "NEXT"; E2 set it up now — no command read
 #       the operator's answers, and the project collection is declared; E3
@@ -98,6 +99,7 @@ st="${STUB_STATE:?}"
 { printf 'claude'; for a in "$@"; do printf ' [%s]' "$a"; done; printf ' cwd=%s\n' "$PWD"; } >> "$st/calls.log"
 if [ ! -t 0 ]; then x="$(cat)"; [ -n "$x" ] && echo "STDIN-HAD-DATA claude" >> "$st/calls.log"; fi
 [ -f "$st/claude-fails" ] && { echo "stub claude: refusing on purpose" >&2; exit 1; }
+[ -n "${STUB_TOUCH:-}" ] && : > "$STUB_TOUCH"
 [ "${1:-}" = mcp ] && [ "${2:-}" = add ] || exit 0
 shift 2
 name=""; envs=""
@@ -205,10 +207,10 @@ adopt_stdin_init
 adopt_mcp_resolve "$3"; rc=$?
 printf 'RC=%s\nRESULT=%s\n' "$rc" "$ADOPT_MCP_RESULT"
 HARN
-_step() {
-  local ans="$1"
+_step() {   # _step ANSWERS [ENV=VAL...]
+  local ans="$1"; shift
   ( cd "$P" && printf "$ans" | env PATH="$RUN_PATH" HOME="$H" CLAUDE_CONFIG_DIR="$CFG" STUB_STATE="$ST" \
-      SOIF_ADOPT_QDRANT_WAIT=2 bash "$WORK/harness.sh" "$FW" "$C/w" "$P" ) > "$C/out" 2>&1
+      SOIF_ADOPT_QDRANT_WAIT=2 "$@" bash "$WORK/harness.sh" "$FW" "$C/w" "$P" ) > "$C/out" 2>&1
   STEP_RC="$(sed -n 's/^RC=//p' "$C/out" | tail -1)"
   STEP_RESULT="$(sed -n 's/^RESULT=//p' "$C/out" | tail -1)"
 }
@@ -407,6 +409,20 @@ s9() {   # the database never answers: not registered against
   [ -z "$bad" ] && pass "S9 a database that never answers is not registered against — that would make it required and block every edit — and Context7 still is" || fail_ "S9" "$bad"
 }
 
+s10() {   # the touched-disk markers follow the evidence, not the attempt
+  local bad=""
+  _case s10a >/dev/null
+  : > "$ST/docker-up"
+  _step "set it up now\n"
+  { [ -e "$C/w/touched" ] || [ -e "$C/w/touched-unbounded" ]; } && bad="$bad [markers raised over a tree the commands did not change]"
+  _case s10b >/dev/null
+  : > "$ST/docker-up"
+  _step "set it up now\n" STUB_TOUCH="$P/left-behind.txt"
+  [ -e "$P/left-behind.txt" ] || bad="$bad [the fixture's stray write did not happen]"
+  { [ -e "$C/w/touched" ] && [ -e "$C/w/touched-unbounded" ]; } || bad="$bad [markers not raised when a command changed the tree]"
+  [ -z "$bad" ] && pass "S10 the touched-disk markers follow the fingerprint: not raised when the commands left the project unchanged, both raised when one wrote into it" || fail_ "S10" "$bad"
+}
+
 # ── E — whole adoptions ─────────────────────────────────────────────────────
 HAVE_GITLEAKS=0; command -v gitleaks >/dev/null 2>&1 && HAVE_GITLEAKS=1
 
@@ -521,7 +537,7 @@ if [ -n "${BL311_ONLY:-}" ]; then
   _done
 fi
 a1; a4; a5; a6
-s1; s2; s3; s4; s5; s6; s7; s8; s9
+s1; s2; s3; s4; s5; s6; s7; s8; s9; s10
 e_cases
 
 # ── M — mutation proofs ─────────────────────────────────────────────────────
@@ -572,7 +588,7 @@ mut() {   # LABEL FILE MARKER REPLACEMENT CASE-FN WANT — WANT is the assertion
 # subshell and M20 does not; the cause is not isolated. They stay because the
 # consent rule asks for them, and they are reported as survivors rather than
 # given a mutant that would pass for the wrong reason.
-if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M20" "BL311_SKIP_MUTANTS=1"; _done; fi
+if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M22" "BL311_SKIP_MUTANTS=1"; _done; fi
 echo "== M — mutation proofs =="
 mut "M1 helpers-core ignores CLAUDE_CONFIG_DIR for settings.json — killed by A4" \
   scripts/lib/helpers-core.sh '# BL-311-CONFIG-DIR' \
@@ -654,5 +670,14 @@ mut "M20 the Docker probe keeps the operator's stdin — killed by E2" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-DOCKER-STDIN' \
   '  run_with_deadline 5 docker info >/dev/null 2>&1   # BL-311-MCP-DOCKER-STDIN' \
   e2 "a command read the operator's answers"
+
+mut "M21 the markers not raised when the tree changed — killed by S10" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-TOUCHED-ON-CHANGE' \
+  '      :   # BL-311-MCP-TOUCHED-ON-CHANGE' \
+  s10 'markers not raised when a command changed the tree'
+mut "M22 the markers raised on the attempt, as the resolver does — killed by S10" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-TOUCHED-IF' \
+  '    if true; then   # BL-311-MCP-TOUCHED-IF' \
+  s10 'markers raised over a tree the commands did not change'
 
 _done

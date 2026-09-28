@@ -59,8 +59,16 @@
 #     of the same call gives that child /dev/null — so the mechanism inside the
 #     driver is NOT isolated, and no probe here relies on it. The real
 #     `docker info` does not read stdin; that is luck, not design;
-#   • `adopt_touched_disk` before running, and the adoptee's path list is
-#     fingerprinted across the run — a difference raises the unbounded marker;
+#   • the adoptee's path list is fingerprinted across the run, and a
+#     difference — or a fingerprint that could not be read — raises BOTH
+#     touched-disk markers. ONE DELIBERATE DIFFERENCE from the resolver, which
+#     raises the coarse marker BEFORE its eval because a matrix recipe is
+#     arbitrary: these commands are fixed strings, run from $ADOPT_WORK, whose
+#     targets are the operator's Claude Code configuration and Docker, never
+#     this project. Raising the marker on the attempt would make any later
+#     refusal say adoption "had already ATTEMPTED writes to this project" over
+#     a tree the fingerprint proves unchanged — `# BL-225-REFUSE-HONEST`'s
+#     over-claim. So the marker follows the evidence (S10 pins both arms);
 #   • a RECEIPT: registration and reachability are re-read afterwards, and only
 #     what the receipt shows is claimed. A zero exit is not evidence.
 #
@@ -251,7 +259,6 @@ EOF
 
   if [ "$ans" = "set it up now" ]; then
     : > "$ADOPT_WORK/mcp-setup.out" 2>/dev/null
-    adopt_touched_disk   # BL-225-TOUCHED-DISK
     fp_before="$(adopt_tree_fingerprint "${root:-}")" || fp_before=""
     for row in "${ADOPT_MCP_PLAN[@]}"; do
       srv="${row%%|*}"; cmd="${row#*|}"
@@ -278,8 +285,8 @@ EOF
       esac
     done
     fp_after="$(adopt_tree_fingerprint "${root:-}")" || fp_after=""
-    if [ -z "$fp_before" ] || [ -z "$fp_after" ] || [ "$fp_before" != "$fp_after" ]; then
-      adopt_touched_disk_unbounded   # BL-225-TOUCHED-UNBOUNDED
+    if [ -z "$fp_before" ] || [ -z "$fp_after" ] || [ "$fp_before" != "$fp_after" ]; then   # BL-311-MCP-TOUCHED-IF
+      adopt_touched_disk; adopt_touched_disk_unbounded   # BL-311-MCP-TOUCHED-ON-CHANGE
     fi
     # THE RECEIPT: what is registered and answering NOW, read the same way the
     # first look was. Only this is claimed.
