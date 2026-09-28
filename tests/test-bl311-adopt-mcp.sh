@@ -34,7 +34,8 @@
 #       input is skip; S7 the commands fail — the receipt claims nothing;
 #       S8 an answer not offered is refused; S9 a database that never answers
 #       is not registered against; S10 the touched-disk markers follow the
-#       fingerprint, not the attempt
+#       fingerprint, not the attempt; S11 the SOIF_ADOPT_MCP=off test seam
+#       skips the whole step in one line, asks nothing and runs nothing
 #   E*  WHOLE ADOPTIONS: E1 both present — no question, the Record row, and
 #       the restart sentence BEFORE "NEXT"; E2 set it up now — no command read
 #       the operator's answers, and the project collection is declared; E3
@@ -60,6 +61,11 @@ for t in git jq; do
   command -v "$t" >/dev/null 2>&1 || { skip "every case" "$t is not on PATH"; _done; }
 done
 WORK="$(mktemp -d)" || exit 1
+# THIS SUITE EXERCISES THE REAL STEP, so the test seam every other adoption
+# suite exports (`SOIF_ADOPT_MCP=off`) is cleared here — a developer who has it
+# in their shell would otherwise run every case against a step that never ran.
+# Only S11 sets it, explicitly, to pin the seam itself.
+unset SOIF_ADOPT_MCP
 # BL311_KEEP=1 keeps the fixtures for a post-mortem and prints where they are.
 if [ "${BL311_KEEP:-0}" = "1" ]; then echo "  (fixtures kept in $WORK)"; else trap 'rm -rf "$WORK"' EXIT; fi
 
@@ -423,6 +429,20 @@ s10() {   # the touched-disk markers follow the evidence, not the attempt
   [ -z "$bad" ] && pass "S10 the touched-disk markers follow the fingerprint: not raised when the commands left the project unchanged, both raised when one wrote into it" || fail_ "S10" "$bad"
 }
 
+s11() {   # the test seam: nothing checked, nothing asked, nothing run — and said
+  local bad="" n=""
+  _case s11 >/dev/null
+  : > "$ST/docker-up"
+  _step "set it up now\n" SOIF_ADOPT_MCP=off
+  [ "$STEP_RC" = 0 ] || bad="$bad [rc $STEP_RC]"
+  grep -q 'Set them up now' "$C/out" && bad="$bad [asked with the seam off]"
+  { [ -s "$ST/calls.log" ] || [ -s "$ST/curl.log" ]; } && bad="$bad [probed or ran something with the seam off: $(cat "$ST/calls.log" "$ST/curl.log" | head -2 | tr '\n' '|')]"
+  n="$(grep -c 'MCP server check skipped (SOIF_ADOPT_MCP=off).' "$C/out")"
+  [ "$n" = 1 ] || bad="$bad [the one-line notice appeared $n time(s)]"
+  [ "$STEP_RESULT" = "not checked (SOIF_ADOPT_MCP=off)" ] || bad="$bad [result '$STEP_RESULT']"
+  [ -z "$bad" ] && pass "S11 SOIF_ADOPT_MCP=off skips the whole step: one line says so, nothing is probed, asked or run, and the Record cell says not checked" || fail_ "S11" "$bad"
+}
+
 # ── E — whole adoptions ─────────────────────────────────────────────────────
 HAVE_GITLEAKS=0; command -v gitleaks >/dev/null 2>&1 && HAVE_GITLEAKS=1
 
@@ -537,7 +557,7 @@ if [ -n "${BL311_ONLY:-}" ]; then
   _done
 fi
 a1; a4; a5; a6
-s1; s2; s3; s4; s5; s6; s7; s8; s9; s10
+s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11
 e_cases
 
 # ── M — mutation proofs ─────────────────────────────────────────────────────
@@ -588,7 +608,7 @@ mut() {   # LABEL FILE MARKER REPLACEMENT CASE-FN WANT — WANT is the assertion
 # subshell and M20 does not; the cause is not isolated. They stay because the
 # consent rule asks for them, and they are reported as survivors rather than
 # given a mutant that would pass for the wrong reason.
-if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M22" "BL311_SKIP_MUTANTS=1"; _done; fi
+if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M23" "BL311_SKIP_MUTANTS=1"; _done; fi
 echo "== M — mutation proofs =="
 mut "M1 helpers-core ignores CLAUDE_CONFIG_DIR for settings.json — killed by A4" \
   scripts/lib/helpers-core.sh '# BL-311-CONFIG-DIR' \
@@ -679,5 +699,9 @@ mut "M22 the markers raised on the attempt, as the resolver does — killed by S
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-TOUCHED-IF' \
   '    if true; then   # BL-311-MCP-TOUCHED-IF' \
   s10 'markers raised over a tree the commands did not change'
+mut "M23 the test seam ignored — killed by S11" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-SEAM' \
+  '  if false; then           # BL-311-MCP-SEAM' \
+  s11 'asked with the seam off'
 
 _done

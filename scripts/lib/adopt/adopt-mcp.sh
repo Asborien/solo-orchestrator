@@ -72,12 +72,14 @@
 #   • a RECEIPT: registration and reachability are re-read afterwards, and only
 #     what the receipt shows is claimed. A zero exit is not evidence.
 #
-# THE COMMANDS ARE THE CLI SETUP ADDENDUM'S, WITH ONE CORRECTION, MEASURED on
-# Claude Code 2.1.283 against a scratch CLAUDE_CONFIG_DIR: `-e` is VARIADIC, so
-# `claude mcp add -s user -e QDRANT_URL=… -e COLLECTION_NAME=claude-memory qdrant -- …`
-# takes `qdrant` as a third environment value and exits 1 with
-# "Invalid environment variable format: qdrant". The server name goes BEFORE
-# the `-e` options; that spelling exits 0 and writes the entry.
+# THE COMMANDS ARE THE CLI SETUP ADDENDUM'S, AND THE QDRANT ONE WAS WRONG
+# THERE TOO, MEASURED on Claude Code 2.1.283 against a scratch
+# CLAUDE_CONFIG_DIR: `-e` is VARIADIC, so the Addendum's spelling — the name
+# `qdrant` written AFTER `-e QDRANT_URL=… -e COLLECTION_NAME=claude-memory` —
+# took the name as a third environment value and exited 1 with "Invalid
+# environment variable format: qdrant". The server name goes BEFORE the `-e`
+# options; that spelling exits 0 and writes the entry. Every tracked copy is
+# now in that order, and tests/test-bl311-mcp-add-order.sh keeps it so.
 #
 # bash-3.2 safe; every local is assigned where it is declared.
 
@@ -178,6 +180,18 @@ adopt_mcp_resolve() {                                  # BL-311-MCP-STEP
   local st="" c7="" q="" qurl="" c7_why="" q_why="" q_db="" raw="" ans="" row="" srv="" cmd=""
   local c7_word="" q_word="" q_failed=0 fp_before="" fp_after="" c7_before="" q_before=""
   ADOPT_MCP_PLAN=()
+  # `SOIF_ADOPT_MCP=off` IS A TEST SEAM, like SOIF_ADOPT_QDRANT and
+  # SOIF_ADOPT_GUARDRAILS_DIR. Every adoption suite written before this step
+  # pipes a fixed answer sequence; on a developer machine that HAS `claude`
+  # and is missing a server, this step would ask its question in the middle of
+  # that sequence and a piped "1" would run real `claude mcp add` / `docker`
+  # commands. The seam skips the whole step and says so in one line. The
+  # step's own suite, tests/test-bl311-adopt-mcp.sh, never sets it.
+  if [ "${SOIF_ADOPT_MCP:-}" = "off" ]; then           # BL-311-MCP-SEAM
+    adopt_note "MCP server check skipped (SOIF_ADOPT_MCP=off)."
+    ADOPT_MCP_RESULT="not checked (SOIF_ADOPT_MCP=off)"
+    return 0
+  fi
   adopt_head "The memory and documentation servers Claude Code uses here"
 
   st="$(_adopt_mcp_state)" || st=""
@@ -383,7 +397,7 @@ adopt_mcp_restart_note() {                             # BL-311-ACT2-RESTART
   adopt_note "only take effect in a session started AFTER adoption — a session that was already"
   adopt_note "open cannot save a file here."
   case "${ADOPT_MCP_RESULT:-}" in
-    *"NOT "*|*"not checked"*)
+    *"NOT "*|*"not checked:"*)
       adopt_note "Qdrant or Context7 is NOT set up — see 'The memory and documentation servers'"
       adopt_note "above for what that means here and the commands that add them." ;;
   esac

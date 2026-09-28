@@ -32,6 +32,12 @@
 #          through `docs -> /elsewhere`, even during the rehearsal)
 #   D12    an intake value carrying a newline cannot reach the renderer's sed
 set -uo pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSED=0; FAILED=0; SKIPPED=0
