@@ -55,10 +55,15 @@
 #     had no redirection, and inside this driver its child READ THE OPERATOR'S
 #     PIPE — the suite's stub docker drained every remaining answer and the
 #     adoption refused at the next question for want of one (E2; M20 pins it).
-#     `run_with_deadline` backgrounds its child, and a standalone reproduction
-#     of the same call gives that child /dev/null — so the mechanism inside the
-#     driver is NOT isolated, and no probe here relies on it. The real
-#     `docker info` does not read stdin; that is luck, not design;
+#     `run_with_deadline` backgrounds its child. MEASURED INSIDE THE DRIVER
+#     (round 2): run bare, that child inherits the operator's pipe; run inside
+#     a `( … )` subshell it gets /dev/null — dropping only the `</dev/null`
+#     from the subshell-wrapped `claude mcp get` changed nothing in a whole
+#     adoption, while dropping the subshell too made the stub drain every
+#     remaining answer (M39 pins that pair). A standalone reproduction gives
+#     even the bare call /dev/null, so WHY is still not isolated, and no call
+#     here relies on either: each has both. The real `docker info` does not
+#     read stdin; that is luck, not design;
 #   • the adoptee's path list is fingerprinted across the run, and a
 #     difference — or a fingerprint that could not be read — raises BOTH
 #     touched-disk markers. ONE DELIBERATE DIFFERENCE from the resolver, which
@@ -141,6 +146,36 @@ _adopt_mcp_qdrant_container() {
   printf '%s\n' "$names" | grep -qx 'qdrant'
 }
 
+# _adopt_mcp_check_open — does the EXISTING `qdrant` container publish a port on
+# every network interface? Sets ADOPT_MCP_QDRANT_OPEN=1 when it does.
+#
+# `docker start` keeps the bindings a container was created with, so the
+# loopback-only `docker run` above protects nothing for a container that
+# already exists. Measured on this host: the operator's own `qdrant` container
+# reads `{"6333/tcp":[{"HostIp":"","HostPort":"6333"}],…}` — an empty HostIp is
+# every interface, with no API key. Adoption does NOT recreate it (that is the
+# operator's database); it says so, with the two commands that fix it. A
+# binding it cannot read is not claimed either way. Bounded, stdin closed.
+ADOPT_MCP_QDRANT_OPEN=0
+_adopt_mcp_check_open() {
+  local out="$ADOPT_WORK/mcp-inspect.out"
+  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
+  if jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "" or . == "0.0.0.0" or . == "::")' "$out" >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT
+    ADOPT_MCP_QDRANT_OPEN=1
+  fi
+  return 0
+}
+
+_adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
+  adopt_note "Your existing qdrant container publishes its ports on EVERY network interface,"
+  adopt_note "with no API key: your session memory is reachable from your network while it runs."
+  adopt_note "Starting it keeps that. To bind it to this machine only, recreate it — the named"
+  adopt_note "volume qdrant_storage keeps the data:"
+  adopt_note "  docker rm -f qdrant"
+  adopt_note "  $ADOPT_MCP_QDRANT_RUN"
+  adopt_note "Adoption does not do this for you."
+}
+
 # _adopt_mcp_wait_qdrant — the database takes a moment to accept connections
 # after `docker run`, so reachability is polled, bounded, before anything is
 # REGISTERED against it. Registering a server whose database never came up
@@ -196,7 +231,7 @@ _adopt_mcp_launch() {
     ADOPT_MCP_LAUNCH_WHY="the claude command is not on PATH"; return 0
   fi
   out="$ADOPT_WORK/mcp-get-$name.out"
-  ( cd "$ADOPT_WORK" 2>/dev/null && run_with_deadline "$secs" claude mcp get "$name" ) </dev/null >"$out" 2>&1 || rc=$?
+  ( cd "$ADOPT_WORK" 2>/dev/null && run_with_deadline "$secs" claude mcp get "$name" ) </dev/null >"$out" 2>&1 || rc=$?   # BL-311-MCP-LAUNCH-STDIN
   line="$(grep -m1 'To remove this server, run:' "$out" 2>/dev/null | LC_ALL=C tr -d '\000-\037\177')"
   case "$line" in *"run: claude mcp remove "*) ADOPT_MCP_LAUNCH_REMOVE="${line#*run: }" ;; esac
   if grep -q 'Status:.*Failed to connect' "$out" 2>/dev/null; then       # BL-311-MCP-LAUNCH-FAILED
@@ -255,6 +290,7 @@ adopt_mcp_resolve() {                                  # BL-311-MCP-STEP
   local st="" c7="" q="" qurl="" c7_why="" q_why="" q_db="" raw="" ans="" row="" srv="" cmd=""
   local c7_word="" q_word="" q_failed=0 fp_before="" fp_after="" c7_before="" q_before=""
   ADOPT_MCP_PLAN=()
+  ADOPT_MCP_QDRANT_OPEN=0
   # `SOIF_ADOPT_MCP=off` IS A TEST SEAM, like SOIF_ADOPT_QDRANT and
   # SOIF_ADOPT_GUARDRAILS_DIR. Every adoption suite written before this step
   # pipes a fixed answer sequence; on a developer machine that HAS `claude`
@@ -296,9 +332,11 @@ EOF
     unregistered)
       if ! command -v claude >/dev/null 2>&1; then q_why="the claude command is not on PATH (set up Claude Code first)"
       elif ! command -v uvx >/dev/null 2>&1; then q_why="uvx is not on PATH, and the server runs through it (uvx comes with uv — set up uv first)"
-      elif _adopt_mcp_local_qdrant; then q_db="already answering at http://localhost:6333"
+      elif _adopt_mcp_local_qdrant; then
+        q_db="already answering at http://localhost:6333"
+        command -v docker >/dev/null 2>&1 && _adopt_mcp_qdrant_container && _adopt_mcp_check_open
       elif ! _adopt_mcp_docker_up; then q_why="Docker is not running (start Docker Desktop, or set Docker up first)"
-      elif _adopt_mcp_qdrant_container; then q_db="$ADOPT_MCP_QDRANT_START"
+      elif _adopt_mcp_qdrant_container; then q_db="$ADOPT_MCP_QDRANT_START"; _adopt_mcp_check_open
       else q_db="$ADOPT_MCP_QDRANT_RUN"
       fi
       if [ -z "$q_why" ]; then
@@ -308,7 +346,7 @@ EOF
     unreachable)
       if ! _adopt_mcp_is_local_url "$qurl"; then q_why="it is registered at $qurl, which is not a database this machine runs — start that server"
       elif ! _adopt_mcp_docker_up; then q_why="Docker is not running (start Docker Desktop, or set Docker up first)"
-      elif _adopt_mcp_qdrant_container; then ADOPT_MCP_PLAN[${#ADOPT_MCP_PLAN[@]}]="qdrant|$ADOPT_MCP_QDRANT_START"
+      elif _adopt_mcp_qdrant_container; then ADOPT_MCP_PLAN[${#ADOPT_MCP_PLAN[@]}]="qdrant|$ADOPT_MCP_QDRANT_START"; _adopt_mcp_check_open
       else ADOPT_MCP_PLAN[${#ADOPT_MCP_PLAN[@]}]="qdrant|$ADOPT_MCP_QDRANT_RUN"
       fi ;;
     unknown)
@@ -317,6 +355,7 @@ EOF
 
   [ -n "$c7_why" ] && adopt_note "Adoption cannot set up Context7 here: $c7_why."
   [ -n "$q_why" ] && adopt_note "Adoption cannot set up Qdrant here: $q_why."
+  [ "$ADOPT_MCP_QDRANT_OPEN" = 1 ] && _adopt_mcp_open_note   # BL-311-MCP-OPEN-SAY
 
   ans="$ADOPT_MCP_SKIP"
   if [ "${#ADOPT_MCP_PLAN[@]}" -gt 0 ]; then            # BL-311-MCP-ASK-ONLY-IF-ACTIONABLE
@@ -433,8 +472,7 @@ EOF
   [ -n "$q_launch" ] && q_word="$q_word$(_adopt_mcp_launch_word "$q_launch")"
   [ -n "$c7_launch" ] && c7_word="$c7_word$(_adopt_mcp_launch_word "$c7_launch")"
   ADOPT_MCP_RESULT="Qdrant: $q_word; Context7: $c7_word"   # BL-311-MCP-RESULT
-  if [ "$c7" = "registered" ] && [ "$q" = "reachable" ] \
-     && [ "$c7_launch" = "connected" ] && [ "$q_launch" = "connected" ]; then
+  if [ "$c7" = "registered" ] && [ "$q" = "reachable" ] && [ "$c7_launch" = "connected" ] && [ "$q_launch" = "connected" ]; then   # BL-311-MCP-EARLY-RETURN
     return 0
   fi
 
@@ -459,16 +497,16 @@ _adopt_mcp_consequence() {                               # BL-311-MCP-LOUD-NOTE
     adopt_note "  Every file edit in this project is blocked until it can. To back the registration out:"
     adopt_note "    $qr"
   fi
-  if [ "$c7l" = "failed" ]; then
+  if [ "$c7l" = "failed" ]; then                                          # BL-311-MCP-NOTE-LAUNCH-C7
     adopt_note "BLOCKED UNTIL FIXED: Context7 IS registered, but Claude Code could NOT start it${c7w:+ ($c7w)}."
     adopt_note "  Every file edit in this project is blocked until it can. To back the registration out:"
     adopt_note "    $c7r"
   fi
-  if [ "$ql" = "unchecked" ] && [ -n "$qw" ] && [ "$qw" != "the claude command is not on PATH" ]; then
+  if [ "$ql" = "unchecked" ] && [ -n "$qw" ] && [ "$qw" != "the claude command is not on PATH" ]; then   # BL-311-MCP-NOTE-UNCHECKED
     adopt_note "Whether Claude Code can start Qdrant could not be checked ($qw). If it cannot, every"
     adopt_note "  file edit here is blocked until it can. Check it with: claude mcp get qdrant"
   fi
-  if [ "$c7l" = "unchecked" ] && [ -n "$c7w" ] && [ "$c7w" != "the claude command is not on PATH" ]; then
+  if [ "$c7l" = "unchecked" ] && [ -n "$c7w" ] && [ "$c7w" != "the claude command is not on PATH" ]; then   # BL-311-MCP-NOTE-UNCHECKED-C7
     adopt_note "Whether Claude Code can start Context7 could not be checked ($c7w). If it cannot, every"
     adopt_note "  file edit here is blocked until it can. Check it with: claude mcp get context7"
   fi
@@ -493,10 +531,12 @@ _adopt_mcp_consequence() {                               # BL-311-MCP-LOUD-NOTE
     unregistered)
       adopt_note "  $ADOPT_MCP_QDRANT_RUN"
       adopt_note "    (or, if a container named qdrant already exists: $ADOPT_MCP_QDRANT_START)"
+      _adopt_mcp_open_hint
       adopt_note "  $ADOPT_MCP_QDRANT_ADD" ;;
     unreachable|unknown)
       if _adopt_mcp_is_local_url "$qurl"; then
         adopt_note "  $ADOPT_MCP_QDRANT_START"
+        _adopt_mcp_open_hint
         adopt_note "    (or, if there is no container named qdrant: $ADOPT_MCP_QDRANT_RUN)"
       else
         adopt_note "  (Qdrant: start the server at $qurl — it is not one this machine runs)"
@@ -504,6 +544,15 @@ _adopt_mcp_consequence() {                               # BL-311-MCP-LOUD-NOTE
   esac
   if [ "$c7" != "registered" ]; then adopt_note "  $ADOPT_MCP_CONTEXT7_ADD"; fi
   return 0
+}
+
+# _adopt_mcp_open_hint — beside every `docker start` hint: the container that
+# starts is the one with the all-interfaces binding.
+_adopt_mcp_open_hint() {
+  [ "$ADOPT_MCP_QDRANT_OPEN" = 1 ] || return 0             # BL-311-MCP-OPEN-HINT
+  adopt_note "    (your existing qdrant container listens on EVERY network interface — to bind it to"
+  adopt_note "     this machine only: docker rm -f qdrant, then the docker run line above; the"
+  adopt_note "     volume keeps the data)"
 }
 
 # adopt_mcp_restart_note — printed at the act boundary, BEFORE "NEXT".

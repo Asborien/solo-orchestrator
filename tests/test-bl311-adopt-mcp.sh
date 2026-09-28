@@ -40,7 +40,12 @@
 #       S14 no npx — Context7 is not offered, and what to install is said;
 #       S15 a failed `docker run` — Qdrant is NOT registered, and it is said;
 #       S16 registered but Claude Code cannot START it (its own `claude mcp
-#       get` check) — said as a block, with Claude Code's remove command
+#       get` check) — said as a block, with Claude Code's remove command;
+#       S17 the same for CONTEXT7; S18 the launch check cannot answer (a hang
+#       past the bound, and no status) — said, never read as either answer;
+#       S19 an EXISTING qdrant container published on every interface — said
+#       before the question and beside every later `docker start` hint, never
+#       recreated; S20 a loopback-bound one — no such note
 #   E*  WHOLE ADOPTIONS: E1 both present — no question, the Record row, and
 #       the restart sentence BEFORE "NEXT"; E2 set it up now — no command read
 #       the operator's answers, and the project collection is declared; E3
@@ -92,6 +97,9 @@ case "${1:-}" in
   info)  [ -f "$st/docker-up" ] ;;
   ps)    if [ "${2:-}" = "-a" ]; then [ -f "$st/qdrant-exists" ] && echo qdrant; else [ -f "$st/qdrant-up" ] && echo qdrant; fi; exit 0 ;;
   start) : > "$st/qdrant-up"; echo qdrant ;;
+  inspect) [ -f "$st/qdrant-exists" ] || { echo "error: no such object: qdrant" >&2; exit 1; }
+           if [ -f "$st/qdrant-open" ]; then echo '{"6333/tcp":[{"HostIp":"","HostPort":"6333"}],"6334/tcp":[{"HostIp":"","HostPort":"6334"}]}'
+           else echo '{"6333/tcp":[{"HostIp":"127.0.0.1","HostPort":"6333"}],"6334/tcp":[{"HostIp":"127.0.0.1","HostPort":"6334"}]}'; fi ;;
   run)   if [ -f "$st/docker-run-fails" ]; then echo "docker: Error response from daemon: stub refusal" >&2; exit 125; fi
          : > "$st/qdrant-exists"; [ -f "$st/docker-run-noop" ] || : > "$st/qdrant-up"; echo 0123abcd ;;
   *)     exit 0 ;;
@@ -123,7 +131,9 @@ if [ "${1:-}" = mcp ] && [ "${2:-}" = get ]; then
   n="${3:-}"
   if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then f="$CLAUDE_CONFIG_DIR/.claude.json"; else f="$HOME/.claude.json"; fi
   jq -e --arg n "$n" '.mcpServers[$n]' "$f" >/dev/null 2>&1 || { echo "No MCP server found with name: $n" >&2; exit 1; }
+  if grep -qx "$n" "$st/launch-hang" 2>/dev/null; then sleep 5; exit 0; fi
   printf '%s:\n  Scope: User config (available in all your projects)\n' "$n"
+  if grep -qx "$n" "$st/launch-silent" 2>/dev/null; then exit 0; fi
   if grep -qx "$n" "$st/launch-fails" 2>/dev/null; then
     printf '  Status: \342\234\230 Failed to connect\n  Issue: stub: %s cannot be started\n' "$n"
   else
@@ -562,6 +572,62 @@ s16() {   # registered, but Claude Code cannot start it — Claude Code's own ch
   [ -z "$bad" ] && pass "S16 registered and answering but Claude Code cannot start it: said as a BLOCK, with Claude Code's own reason and its remove command, and recorded" || fail_ "S16" "$bad"
 }
 
+s17() {   # Context7 registered, but Claude Code cannot start it
+  local bad=""
+  _case s17 >/dev/null
+  _register "$CFG/.claude.json" qdrant; _register "$CFG/.claude.json" context7
+  : > "$ST/docker-up"; : > "$ST/qdrant-up"; printf 'context7\n' > "$ST/launch-fails"
+  _step ""
+  grep -q 'BLOCKED UNTIL FIXED: Context7 IS registered, but Claude Code could NOT start it (stub: context7 cannot be started)' "$C/out" || bad="$bad [the Context7 block is not said]"
+  grep -q 'Every file edit in this project is blocked until it can.' "$C/out" || bad="$bad [the consequence is not said]"
+  grep -qxF '       claude mcp remove context7 -s user' "$C/out" || bad="$bad [Claude Code's own remove command is not printed]"
+  case "$STEP_RESULT" in *"Context7: registered before adoption, Claude Code could NOT start it"*) : ;; *) bad="$bad [result '$STEP_RESULT']" ;; esac
+  [ -z "$bad" ] && pass "S17 Context7 registered but Claude Code cannot start it: said as a BLOCK, with its reason and Claude Code's own remove command, and recorded" || fail_ "S17" "$bad"
+}
+
+s18() {   # the launch check cannot answer: a hang past the bound, and no status
+  local bad=""
+  _case s18 >/dev/null
+  _register "$CFG/.claude.json" qdrant; _register "$CFG/.claude.json" context7
+  : > "$ST/docker-up"; : > "$ST/qdrant-up"
+  printf 'qdrant\n' > "$ST/launch-hang"; printf 'context7\n' > "$ST/launch-silent"
+  _step "" SOIF_ADOPT_MCP_LAUNCH_SECS=1
+  grep -q 'Whether Claude Code can start Qdrant could not be checked (claude mcp get qdrant did not answer within 1s)' "$C/out" || bad="$bad [the Qdrant unchecked note is not said]"
+  grep -q 'file edit here is blocked until it can. Check it with: claude mcp get qdrant' "$C/out" || bad="$bad [the Qdrant consequence and check command are not said]"
+  grep -q 'Whether Claude Code can start Context7 could not be checked (claude mcp get context7 gave no status' "$C/out" || bad="$bad [the Context7 unchecked note is not said]"
+  grep -q 'Check it with: claude mcp get context7' "$C/out" || bad="$bad [the Context7 check command is not said]"
+  grep -q 'BLOCKED UNTIL FIXED' "$C/out" && bad="$bad [a check that could not answer was read as a failure]"
+  [ "$STEP_RESULT" = "Qdrant: registered and answering before adoption, whether Claude Code can start it not checked; Context7: registered before adoption, whether Claude Code can start it not checked" ] || bad="$bad [result '$STEP_RESULT']"
+  [ -z "$bad" ] && pass "S18 a launch check that hangs past its bound or prints no status is said as 'could not be checked', with the command to check it — never read as starts or fails" || fail_ "S18" "$bad"
+}
+
+s19() {   # an EXISTING container published on every interface
+  local bad="" lq="" ln=""
+  _case s19 >/dev/null
+  : > "$ST/docker-up"; : > "$ST/qdrant-exists"; : > "$ST/qdrant-open"
+  _step "skip it\n"
+  grep -q 'docker \[inspect\]' "$ST/calls.log" || bad="$bad [the container's bindings were not read]"
+  lq="$(_line_of "$C/out" 'Set them up now?')"; ln="$(_line_of "$C/out" 'Your existing qdrant container publishes its ports on EVERY network interface')"
+  { [ -n "$ln" ] && [ -n "$lq" ] && [ "$ln" -lt "$lq" ]; } || bad="$bad [the open-bindings note is not said before the question]"
+  grep -qxF '     docker rm -f qdrant' "$C/out" || bad="$bad [the recreate step is not printed]"
+  grep -qxF "     $QRUN" "$C/out" || bad="$bad [the loopback run command is not printed]"
+  grep -qxF "     $QSTART" "$C/out" || bad="$bad [docker start is no longer the offered action]"
+  grep -q 'your existing qdrant container listens on EVERY network interface' "$C/out" || bad="$bad [the later docker start hint does not carry the note]"
+  grep -q 'docker \[rm\]' "$ST/calls.log" && bad="$bad [the container was recreated automatically]"
+  _calls_ran && bad="$bad [something ran on skip]"
+  [ -z "$bad" ] && pass "S19 an existing all-interfaces container: said before the question with the recreate steps, docker start still offered, the later hint carries it, nothing recreated" || fail_ "S19" "$bad"
+}
+
+s20() {   # a loopback-bound existing container: no note
+  local bad=""
+  _case s20 >/dev/null
+  : > "$ST/docker-up"; : > "$ST/qdrant-exists"
+  _step "skip it\n"
+  grep -q 'docker \[inspect\]' "$ST/calls.log" || bad="$bad [the container's bindings were not read]"
+  grep -q 'EVERY network interface' "$C/out" && bad="$bad [a loopback-bound container was reported as open]"
+  [ -z "$bad" ] && pass "S20 an existing loopback-bound container: its bindings are read and no open-interfaces note is printed" || fail_ "S20" "$bad"
+}
+
 # ── E — whole adoptions ─────────────────────────────────────────────────────
 HAVE_GITLEAKS=0; command -v gitleaks >/dev/null 2>&1 && HAVE_GITLEAKS=1
 
@@ -689,7 +755,7 @@ if [ -n "${BL311_ONLY:-}" ]; then
   _done
 fi
 a1; a4; a5; a6; a7; a8
-s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12; s13; s14; s15; s16
+s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12; s13; s14; s15; s16; s17; s18; s19; s20
 e_cases
 
 # ── M — mutation proofs ─────────────────────────────────────────────────────
@@ -731,16 +797,17 @@ mut() {   # LABEL FILE MARKER REPLACEMENT CASE-FN WANT — WANT is the assertion
   rm -rf "$m" "$m.out"
 }
 
-# TWO GUARDS HAVE NO KILLING CASE, AND THAT IS MEASURED, NOT OVERLOOKED. The
-# `</dev/null` on the setup commands (`# BL-311-MCP-RUN`) and on the
-# registration probes (`# BL-311-MCP-PROBE-STDIN`): with either removed, the
-# stubs — which drain and report any stdin they are given — received none,
-# inside a whole adoption, while the Docker probe's identical omission (M20)
-# handed its stub every remaining answer. Both survivors run inside a `( … )`
-# subshell and M20 does not; the cause is not isolated. They stay because the
-# consent rule asks for them, and they are reported as survivors rather than
-# given a mutant that would pass for the wrong reason.
-if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M31" "BL311_SKIP_MUTANTS=1"; _done; fi
+# THREE `</dev/null`s HAVE NO KILLING CASE ON THEIR OWN, AND THAT IS MEASURED:
+# the setup commands (`# BL-311-MCP-RUN`), the registration probes
+# (`# BL-311-MCP-PROBE-STDIN`) and the launch check (`# BL-311-MCP-LAUNCH-STDIN`)
+# all run inside a `( … )` subshell, and inside the driver a backgrounded child
+# of a subshell gets /dev/null regardless — dropping the redirection alone is an
+# equivalent mutant (round 2: the launch one survived E2, a whole adoption with
+# twelve answers still on the pipe and two `claude mcp get` calls, which
+# asserts no stub read them). Dropping the subshell AS WELL is not equivalent:
+# M39 does that to the launch check and E2 kills it, as M20 does for the bare
+# Docker probe. The redirections stay because the consent rule asks for them.
+if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M43" "BL311_SKIP_MUTANTS=1"; _done; fi
 echo "== M — mutation proofs =="
 mut "M1 helpers-core ignores CLAUDE_CONFIG_DIR for settings.json — killed by A4" \
   scripts/lib/helpers-core.sh '# BL-311-CONFIG-DIR' \
@@ -867,5 +934,45 @@ mut "M31 the reminder back on fixed paths — killed by A8" \
   scripts/session-end-qdrant-reminder.sh '# BL-311-REMINDER-CONFIG' \
   '  _cc_set="$HOME/.claude/settings.json"; _cc_json="$HOME/.claude.json"   # BL-311-REMINDER-CONFIG' \
   a8 'registered in $CLAUDE_CONFIG_DIR, no reminder'
+mut "M34 Context7's launch-failed block not said — killed by S17" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-NOTE-LAUNCH-C7' \
+  '  if false; then                                          # BL-311-MCP-NOTE-LAUNCH-C7' \
+  s17 'the Context7 block is not said'
+mut "M35 Qdrant's could-not-be-checked note not said — killed by S18" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-NOTE-UNCHECKED' \
+  '  if false; then   # BL-311-MCP-NOTE-UNCHECKED' \
+  s18 'the Qdrant unchecked note is not said'
+mut "M36 Context7's could-not-be-checked note not said — killed by S18" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-NOTE-UNCHECKED-C7' \
+  '  if false; then   # BL-311-MCP-NOTE-UNCHECKED-C7' \
+  s18 'the Context7 unchecked note is not said'
+mut "M37 the early return ignores the launch check — killed by S16" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-EARLY-RETURN' \
+  '  if [ "$c7" = "registered" ] && [ "$q" = "reachable" ]; then   # BL-311-MCP-EARLY-RETURN' \
+  s16 'the block is not said'
+mut "M38 the Failed-to-connect match broken — killed by S16" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-LAUNCH-FAILED' \
+  "  if grep -q 'Status:.*Failed to konnect' \"\$out\" 2>/dev/null; then       # BL-311-MCP-LAUNCH-FAILED" \
+  s16 'the block is not said'
+mut "M39 the launch check run bare (no subshell, no </dev/null) — killed by E2" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-LAUNCH-STDIN' \
+  '  run_with_deadline "$secs" claude mcp get "$name" >"$out" 2>&1 || rc=$?   # BL-311-MCP-LAUNCH-STDIN' \
+  e2 "a command read the operator's answers"
+mut "M40 open bindings never detected — killed by S19" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT' \
+  '  if false; then   # BL-311-MCP-OPEN-DETECT' \
+  s19 'the open-bindings note is not said before the question'
+mut "M41 open bindings always reported — killed by S20" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT' \
+  '  if true; then   # BL-311-MCP-OPEN-DETECT' \
+  s20 'a loopback-bound container was reported as open'
+mut "M42 the open-bindings note not said before the question — killed by S19" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-SAY' \
+  '  :   # BL-311-MCP-OPEN-SAY' \
+  s19 'the open-bindings note is not said before the question'
+mut "M43 the docker start hint without the note — killed by S19" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-HINT' \
+  '  return 0             # BL-311-MCP-OPEN-HINT' \
+  s19 'the later docker start hint does not carry the note'
 
 _done

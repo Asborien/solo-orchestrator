@@ -372,7 +372,23 @@ says `docker start qdrant` instead of `docker run`; if a database already
 answers on port 6333, only the registration is offered. **The container's ports
 are published on `127.0.0.1` only** — without the address, `-p` would put an
 unauthenticated database on every network interface. A container that already
-existed keeps whatever binding it was created with.
+existed keeps whatever binding it was created with, so adoption reads it
+(`docker inspect`) and, when it listens on every interface, says so before the
+question and beside every later `docker start` hint (recorded with a stand-in
+`docker`):
+
+```text
+   Your existing qdrant container publishes its ports on EVERY network interface,
+   with no API key: your session memory is reachable from your network while it runs.
+   Starting it keeps that. To bind it to this machine only, recreate it — the named
+   volume qdrant_storage keeps the data:
+     docker rm -f qdrant
+     docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+   Adoption does not do this for you.
+```
+
+It never recreates the container itself: `docker start qdrant` stays the offered
+action.
 
 `skip it`, a blank line, or the end of your input all mean skip — this question
 never stops an adoption:
