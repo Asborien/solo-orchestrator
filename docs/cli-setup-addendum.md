@@ -55,7 +55,7 @@ claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
 **3. Qdrant MCP (requires Docker):**
 ```bash
 # Start Qdrant (runs in background)
-docker run -d --name qdrant -p 6333:6333 -p 6334:6334 \
+docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 \
   -v qdrant_storage:/qdrant/storage \
   --restart unless-stopped \
   qdrant/qdrant:latest
@@ -331,7 +331,7 @@ This solves a specific Solo Orchestrator problem: the Builder's Guide acknowledg
 ```bash
 docker run -d \
   --name qdrant \
-  -p 6333:6333 -p 6334:6334 \
+  -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 \
   -v qdrant_storage:/qdrant/storage \
   --restart unless-stopped \
   qdrant/qdrant:latest
@@ -595,7 +595,7 @@ Run this once per development machine:
 - [ ] Superpowers plugin installed (`/plugin install superpowers@claude-plugins-official`)
 - [ ] Auto Mode configured (or granular permissions in settings.json if Auto Mode unavailable)
 - [ ] Context7 MCP added (`claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp`)
-- [ ] Qdrant running in Docker (`docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest`)
+- [ ] Qdrant running in Docker (`docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest`)
 - [ ] Qdrant MCP added (`claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant`)
 - [ ] Development Guardrails for Claude Code cloned and available for project setup
 - [ ] Verify all MCP servers connected (`claude /mcp`)

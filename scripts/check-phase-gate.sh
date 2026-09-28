@@ -3274,7 +3274,7 @@ if [ -f "$TOOL_PREFS" ] && [ -x "$RESOLVER" ] && command -v jq &>/dev/null; then
                 docker start qdrant 2>/dev/null && echo -e "  ${GREEN}[OK]${NC} Existing Qdrant container started"
               else
                 docker run -d --name qdrant \
-                  -p 6333:6333 -p 6334:6334 \
+                  -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 \
                   -v qdrant_storage:/qdrant/storage \
                   --restart unless-stopped \
                   qdrant/qdrant:latest 2>&1 && echo -e "  ${GREEN}[OK]${NC} Qdrant running at http://localhost:6333"

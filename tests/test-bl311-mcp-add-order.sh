@@ -34,6 +34,8 @@
 # controls (single-line, the Addendum's continued form, `--env`, the
 # Context7/name-first forms); OM1/OM2 mutation proofs — a broken copy put back
 # into a mirrored real file, one single-line and one continued, must be found.
+# P1-P3/PM1-PM2 do the same for the second copied-everywhere defect: the Qdrant
+# container's ports must be published on 127.0.0.1, not on every interface.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -198,6 +200,97 @@ _om "OM2 the Addendum's continued command put back to the name on its last line 
   docs/cli-setup-addendum.md \
   'claude mcp add -s user qdrant \' \
   'claude mcp add -s user \'
+
+# ── P — the Qdrant ports are published on LOOPBACK only (`# BL-311-MCP-LOOPBACK`) ──
+# `-p 6333:6333` publishes the database on EVERY interface — no API key, and
+# `--restart unless-stopped` keeps it there for as long as Docker runs. Every
+# tracked `docker run` (and every copy printed for the operator to paste) must
+# say `-p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334`. The scan flags a
+# `6333:6333` / `6334:6334` with no host address in front of it, and an
+# explicit all-interfaces `0.0.0.0:`.
+#
+# ONE MORE ALLOWLISTED PATH, FOR A STATED REASON:
+# docs/superpowers/plans/archive/ — frozen historical plans (the repo keeps its
+#   archives as written; they are not instructions anyone runs).
+PORT_ALLOW_PREFIXES="tests/test-bl311-mcp-add-order.sh docs/superpowers/plans/archive/"
+_scan_ports() {   # FILE... — `file:line: text` for each unbound publication
+  LC_ALL=C awk '{
+      rest = $0; off = 0
+      while (match(rest, /633[34]:633[34]/)) {
+        pos = off + RSTART
+        prev = (pos > 1) ? substr($0, pos - 1, 1) : ""
+        bind = substr($0, 1, pos - 1)
+        if (prev != ":" || bind ~ /0\.0\.0\.0:$/) { printf "%s:%d: %s\n", FILENAME, FNR, substr($0, 1, 160); break }
+        off = pos + RLENGTH - 1; rest = substr($0, off + 1)
+      }
+    }' "$@"
+}
+_port_files() {   # ROOT — tracked files that publish the ports, minus the allowlist
+  local root="$1" f="" a="" skipit=0
+  ( cd "$root" && git ls-files ) | while IFS= read -r f; do
+    [ -f "$root/$f" ] || continue
+    skipit=0
+    for a in $PORT_ALLOW_PREFIXES; do case "$f" in "$a"*) skipit=1 ;; esac; done
+    [ "$skipit" -eq 1 ] && continue
+    command grep -l '633[34]:633[34]' "$root/$f" 2>/dev/null
+  done
+}
+_port_files "$REPO_ROOT" > "$WORK/pfiles"
+p1_files=$(command grep -c . "$WORK/pfiles")
+if [ "$p1_files" -gt 0 ]; then
+  ( while IFS= read -r f; do _scan_ports "$f"; done < "$WORK/pfiles" ) > "$WORK/p1"
+  if [ -s "$WORK/p1" ]; then
+    sed "s#$REPO_ROOT/##; s#^#         (P1) #" "$WORK/p1" | cut -c1-160
+    fail_ "P1 the tracked tree" "$(command grep -c . "$WORK/p1") Qdrant port publication(s) not bound to 127.0.0.1, listed above"
+  else
+    pass "P1 every tracked Qdrant port publication is bound to 127.0.0.1 ($p1_files file(s) publish them; the archive of old plans is allowlisted)"
+  fi
+else
+  fail_ "P1 the tracked tree" "no tracked file publishes the Qdrant ports — the scan cannot be looking at the repository"
+fi
+cat > "$WORK/ports-bad.txt" <<'FIX'
+docker run -d --name qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant:latest
+  -p 6334:6334 \
+docker run -p 0.0.0.0:6333:6333 qdrant/qdrant
+FIX
+cat > "$WORK/ports-fine.txt" <<'FIX'
+docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 qdrant/qdrant:latest
+  -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 \
+the database answers at http://localhost:6333
+FIX
+p2="$(_scan_ports "$WORK/ports-bad.txt" | command grep -c .)"
+[ "$p2" = 3 ] && pass "P2 an unbound pair, an unbound continued line and an explicit 0.0.0.0 are each found" || fail_ "P2" "found $p2 (want 3)"
+p3="$(_scan_ports "$WORK/ports-fine.txt")"
+[ -z "$p3" ] && pass "P3 loopback-bound publications and a plain localhost URL are NOT flagged" || fail_ "P3" "false positive(s): $(printf '%s' "$p3" | tr '\n' '|')"
+_pm() {   # LABEL REL OLD NEW — put ONE unbound publication back into a mirrored real file
+  local label="$1" rel="$2" old="$3" new="$4" m="" n="" hits=""
+  m="$(mktemp -d "$WORK/pm.XXXXXX")"
+  ( cd "$REPO_ROOT" && git ls-files ) | while IFS= read -r f; do
+    [ -f "$REPO_ROOT/$f" ] || continue
+    command grep -q '633[34]:633[34]' "$REPO_ROOT/$f" 2>/dev/null || continue
+    mkdir -p "$m/$(dirname "$f")" && cp -p "$REPO_ROOT/$f" "$m/$f"
+  done
+  ( cd "$m" && git init -q . && git add -A . ) >/dev/null 2>&1
+  n="$(OLD="$old" NEW="$new" awk 'BEGIN{o=ENVIRON["OLD"]; w=ENVIRON["NEW"]; c=0}
+        { i = index($0, o); if (i > 0 && c == 0) { $0 = substr($0, 1, i - 1) w substr($0, i + length(o)); c++ } print }
+        END { print c > "/dev/stderr" }' "$m/$rel" 2>"$m/.n" > "$m/$rel.mut" && cat "$m/.n")"
+  if [ "$n" != 1 ] || ! mv "$m/$rel.mut" "$m/$rel" || ! command grep -qF -- "$new" "$m/$rel"; then
+    fail_ "$label" "the mutation did not apply (sites=$n)"; return
+  fi
+  _port_files "$m" > "$m/.files"
+  hits="$( while IFS= read -r f; do _scan_ports "$f"; done < "$m/.files" )"
+  if [ "$(printf '%s\n' "$hits" | command grep -c .)" = 1 ] && printf '%s' "$hits" | command grep -qF "$rel"; then
+    pass "$label"
+  else fail_ "$label" "the scan found '$(printf '%s' "$hits" | tr '\n' '|' | cut -c1-300)' (want exactly one hit, in $rel)"; fi
+}
+_pm "PM1 adoption's docker run put back to -p 6333:6333 (all interfaces) — found" \
+  scripts/lib/adopt/adopt-mcp.sh \
+  '-p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v' \
+  '-p 6333:6333 -p 6334:6334 -v'
+_pm "PM2 init.sh's continued docker run put back to all interfaces — found" \
+  init.sh \
+  '            -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 \' \
+  '            -p 6333:6333 -p 6334:6334 \'
 
 echo
 echo "Results: $PASSED passed, $FAILED failed"

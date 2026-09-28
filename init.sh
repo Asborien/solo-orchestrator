@@ -1069,7 +1069,7 @@ resolve_and_install_tools() {
           docker start qdrant >/dev/null 2>&1 && _qd_ok=true && print_ok "Existing Qdrant container started"
         else
           if docker run -d --name qdrant \
-            -p 6333:6333 -p 6334:6334 \
+            -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 \
             -v qdrant_storage:/qdrant/storage \
             --restart unless-stopped \
             qdrant/qdrant:latest >/dev/null 2>&1; then
@@ -1124,7 +1124,7 @@ resolve_and_install_tools() {
           docker start qdrant 2>/dev/null && qdrant_running=true && print_ok "Existing Qdrant container started"
         else
           if docker run -d --name qdrant \
-            -p 6333:6333 -p 6334:6334 \
+            -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 \
             -v qdrant_storage:/qdrant/storage \
             --restart unless-stopped \
             qdrant/qdrant:latest >/dev/null 2>&1; then
