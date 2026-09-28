@@ -22210,3 +22210,37 @@ Hook managers (item 11's pre-commit/lefthook line) are **not** a residual: Karl 
 adoption replaces them (`## BL-242:`, "Karl's ruling on hook managers").
 
 ---
+
+## BL-311: brownfield dogfood run 1 (k-pdf, 2026-09-27) — nine things a regular user should never hit
+
+**Status:** Open — Karl approved fixing every row (2026-09-28), then a FULL CLEAN RERUN. Each row closes
+by its own PR; the entry closes when the rerun passes.
+
+**What ran.** A fresh Claude Code session (Sonnet, a clean `CLAUDE_CONFIG_DIR`) played a systems
+technician with one to two years of experience — not a developer — installing Solo Orchestrator from
+the public README and adopting a private copy of k-pdf (Python/uv, 240 commits, scaffolded by an OLDER
+Solo and carrying the Guardrails 4.3.0, no `phase-state.json`). It reached the end of Stage 2 (adopted,
+commit `ec5c7b5`) with 14 findings. **Evidence** (outside the repo, untracked):
+`~/dogfood-evidence-2026-09-27/` — the findings file, the full transcript, a git bundle holding the
+adoption commit, the worktree diff, and the `.claude` tree including Scout's report.
+
+| # | What the user hit | Root cause | Fix | Run findings |
+|---|---|---|---|---|
+| 1 | After adopting, EVERY file write in the session was blocked until a Qdrant call succeeded — impossible, no Qdrant tool in the session | Adoption never checks for, or offers to set up, the Qdrant and Context7 MCP servers the session gate requires (`init.sh` provisions Qdrant); the MCP helpers read `$HOME/.claude.json` by fixed path, so adoption saw a registration the session did not have and wrote `mcp.qdrant_required`; a mid-session adoption leaves `.claude/tool-usage.json` absent until a restart | Adoption checks Docker, the Qdrant container, and the Qdrant and Context7 MCP registrations, offers to set up what is missing, honours `CLAUDE_CONFIG_DIR`, lists them in `docs/adoption.md`, and ends by telling the operator to start a new Claude Code session | 8, 12 |
+| 2 | Adoption refused: "this project already looks framework-managed" | Preflight reads any `.claude/manifest.json` as a possible earlier adoption; a Guardrails-only `.claude/` (a `frameworkVersion` manifest, no Solo keys, no `phase-state.json`) is a known, adoptable shape | Recognise it and adopt; the Guardrails stage already has its "already installed" arm | 5, 6 |
+| 3 | The agent relaying a gate's own documented escape was flagged as a bypass proposal (a pending approval, default "decline") | The bypass detector cannot tell a relayed framework escape from an invented workaround | Exempt text quoting a framework gate's own escape hint; same class as `## BL-277:` | 13 |
+| 4 | Scout reported the tests failing (exit 127) on a suite that passes 1071/0 | The test command ignores the detected package manager: bare `pytest` in a uv project | Prefix the runner (`uv run`, and the poetry/pipenv equivalents) | 4 |
+| 5 | "your ignore rules refuse 24 of the files" — the cause took reading `.gitignore` to find | The refusal is right but does not name the rule (`lib/` matching `scripts/lib/`) | Name the ignoring rule, file and line (`git check-ignore -v`), and the one-line fix | 7 |
+| 6 | Claude Code's auto mode refused the framework's first script ("Code from External"), then refused the agent's attempt to change permissions | Undocumented | An "allow the framework's scripts" step, with the settings snippet, before the first command | 1, 2 |
+| 7 | README and the adoption guide give different clone locations | Two instructions | One path, stated the same way in both | Stage 0 log |
+| 8 | Adoption set `track: full` (enterprise) for a free offline hobby app | The track defaults silently | Derive it from the answers, or ask | 9 |
+| 9 | `check-versions.sh` said Qdrant and Context7 were OK while neither was in the session | It checks installation, not registration | Check the registration the session reads | 14 |
+
+**For the Development Guardrails (CDF), not fixed here:** `enforce-superpowers` blocks source-extension
+writes outside the project (run findings 3, 10); `enforce-evaluate` blocks a read-only `&&`-chained git
+inspection as "a commit" (11); the settings carry `Write(...)` deny rules current Claude Code ignores
+beside their `Edit(...)` twins (startup warnings).
+
+**Test-design lesson, for the rerun:** a clean `CLAUDE_CONFIG_DIR` also drops the user's MCP servers,
+so Stage 0 must register them the way the CLI Setup Addendum says.
+
