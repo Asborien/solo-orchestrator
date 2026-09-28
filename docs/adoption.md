@@ -38,6 +38,8 @@ Everything on this page is output that was observed, pasted as it printed.
 | `gitleaks` | The credential scan of your history | **Organizational**: the adoption stops, with no override. **Personal**: it can continue if you accept that on the record |
 | `semgrep` | The commit-time static-analysis pass | Every commit prints `semgrep not found — pre-commit SAST skipped.`; nothing blocks |
 | A clone of the Development Guardrails at `~/.claude-dev-framework` | The Claude Code rules and hooks a new project gets | Adoption completes without them and prints the two commands that install them later. Adoption never fetches the clone itself. Get it with `git clone https://github.com/kraulerson/claude-dev-framework.git ~/.claude-dev-framework` |
+| Docker running the Qdrant database, and the Qdrant MCP server registered with Claude Code (`uvx` launches it) | Memory across Claude Code sessions. Once it is registered, every session in the project must reach it (a successful `qdrant-find`) before it can change a file | Adoption checks it and, when this machine can (the `claude` command, Docker running, `uvx`), offers to set it up — showing the exact commands first. Skipped or impossible, adoption completes and prints the commands for later. See [The memory and documentation servers](#the-memory-and-documentation-servers) |
+| The Context7 MCP server registered with Claude Code (`npx` launches it) | Current library documentation for the agent. Once it is registered, every session must read documentation through it before it changes a file | Checked and offered the same way (needs the `claude` command and `npx`); otherwise its one command is printed |
 
 Your project must be a normal git repository with at least one commit. A linked
 worktree, a submodule, or a repository with `core.hooksPath` configured is
@@ -83,6 +85,9 @@ Who is this project for?
    2) A company, a client, or people who are paying for it
 ```
 
+If the Qdrant or Context7 server is missing and this machine can set it up, it
+also offers to — an **optional** question; no answer means skip it
+([The memory and documentation servers](#the-memory-and-documentation-servers)).
 Then it confirms what the survey found, writes the project's state at phase 0,
 and commits. **Your uncommitted work is never staged**; the commit contains only
 files adoption wrote. Exit codes: `0` adopted; `1` did not complete (a refusal,
@@ -117,6 +122,13 @@ a stop, or a halt); `2` bad usage.
 
 ### 5. Afterwards
 
+**First, if a Claude Code session is open in this project, close it and start a
+new one.** The checks, and the memory and documentation servers, that adoption
+set up only take effect in a session started after adoption: a session that was
+already open has no record of its own start, and the framework's MCP check
+blocks every file edit in it (measured in the 2026-09-27 dogfood run). The run's
+closing block says so too. Then:
+
 ```bash
 bash scripts/resume.sh
 ```
@@ -146,6 +158,7 @@ bash ~/solo-orchestrator/scripts/adopt-project.sh --re-add .git/hooks/pre-commit
 - [Quick start: install and use](#quick-start-install-and-use)
 - [Before you adopt: run Scout](#before-you-adopt-run-scout)
 - [The one question](#the-one-question)
+- [The memory and documentation servers](#the-memory-and-documentation-servers)
 - [Where it lands: phase 0, always](#where-it-lands-phase-0-always)
 - [The reverse intake](#the-reverse-intake)
 - [What gets written, and in what order](#what-gets-written-and-in-what-order)
@@ -265,6 +278,110 @@ That answer sets your project's **tier**, and the tier decides how strictly the
 framework treats you — most visibly, how hard it stops when a secret scan finds
 something. It is the one thing adoption asks because it is the one thing no
 amount of reading your code can determine.
+
+---
+
+## The memory and documentation servers
+
+A Claude Code session in an adopted project is checked for two MCP servers:
+**Qdrant** (memory across sessions) and **Context7** (current library
+documentation). The check (`scripts/session-mcp-gate.sh`) blocks every file edit
+until each server that is **registered** has answered a call that session — and
+does not require one that is registered nowhere. So what matters is which of
+three states each server is in, and adoption tells you:
+
+| State | What a Claude Code session in this project does |
+|---|---|
+| Registered, and answering | Works. Each session calls it before its first file edit |
+| Registered, but nothing answers | **Blocks every file edit** until it answers |
+| Not registered | Works without it — no memory of earlier sessions, or no library documentation. Its check switches on in the first session after you register it |
+
+Adoption reads the registrations from the files a Claude Code session started
+from the same shell reads: `~/.claude.json` and `~/.claude/settings.json`, or —
+when `CLAUDE_CONFIG_DIR` is set — `.claude.json` and `settings.json` inside that
+directory, **and nothing under your home directory**. That is Claude Code's own
+rule, and before this step adoption did not follow it: it read `~/.claude.json`
+for a session that did not, saw a Qdrant server that session did not have, and
+declared it for the project.
+
+After the credential scan, when something is missing and this machine can act,
+it shows the exact commands and asks. This was recorded with stand-in `claude`
+and `docker` commands, so nothing was registered on the machine that produced
+it; the two paths are shortened (that run's `CLAUDE_CONFIG_DIR` was a scratch
+directory):
+
+```text
+══ The memory and documentation servers Claude Code uses here
+   Read from the two files a Claude Code session started from here reads:
+     …/cfg/.claude.json
+     …/cfg/settings.json
+   Context7 (current library documentation): NOT registered for Claude Code.
+   Qdrant (memory across sessions): NOT registered for Claude Code.
+
+   This would run, exactly as written:
+     claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
+     docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+     claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
+   The claude commands change your Claude Code configuration for every project,
+   not only this one. Nothing is written into this project.
+Set them up now? (No answer means skip it.)
+   1) set it up now
+   2) skip it
+   Answer with the number or the words:
+```
+
+`set it up now` runs them, from the run's own scratch directory, and then reads
+the registrations back — it claims only what it finds:
+
+```text
+   Running: claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
+   Running: docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+   Running: claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
+
+   Afterwards:
+   Context7 (current library documentation): registered for Claude Code.
+   Qdrant (memory across sessions): registered, and answering at http://localhost:6333.
+```
+
+Qdrant is registered only once its database answers: a registered server with
+nothing behind it would block every file edit. If a container named `qdrant`
+already exists, the plan says `docker start qdrant` instead of `docker run`; if a
+database already answers on port 6333, only the registration is offered.
+
+`skip it`, a blank line, or the end of your input all mean skip — this question
+never stops an adoption:
+
+```text
+   Skipped. Nothing was run.
+
+   NOT SET UP — what that means for Claude Code in this project:
+     Qdrant is not registered: sessions here have no memory of earlier sessions. The
+     framework's check for it is off while it is not registered, and ON from the first
+     session after you register it — so have the database running when you do.
+     Context7 is not registered: sessions here cannot read current library documentation.
+     Its check is off until you register it, and ON from the next session after that.
+   To set them up later, run these, then start a new Claude Code session:
+     docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+       (or, if a container named qdrant already exists: docker start qdrant)
+     claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
+     claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
+```
+
+A server that is registered but silent gets the stronger sentence instead —
+`EVERY file edit is BLOCKED until qdrant-find succeeds` — because that is what
+the check then does. When the machine cannot act (no `claude` command, which is
+every CI runner; Docker not running; no `uvx` or `npx`), there is no question:
+the run names what is missing and prints the same commands for later. Either way
+the [Adoption Record](#the-adoption-record) carries one row for it:
+
+```text
+    | MCP servers (Qdrant, Context7) | Qdrant: NOT registered (skipped); Context7: NOT registered (skipped) |
+```
+
+**The Qdrant command puts the server name before the `-e` options.** Measured on
+Claude Code 2.1.283: `-e` takes every value after it, so the spelling with
+`qdrant` after `-e COLLECTION_NAME=claude-memory` exits 1 with `Invalid
+environment variable format: qdrant`.
 
 ---
 
@@ -1409,11 +1526,15 @@ adopted one now gets the same one, from the same code
 - **The four vendored skills** — `session-handoff`, `sweep-triage`, `zoom-out`,
   `grill-with-docs` — in `.claude/skills/`. A copy of yours at one of those
   names is archived and replaced; any other skill of yours is untouched.
-- **The Qdrant MCP declaration**, only where `init.sh` would write one (a
-  registered Qdrant server, or a running container with `uvx`):
+- **The Qdrant MCP declaration**, only when Qdrant is registered for the
+  Claude Code session (read where `CLAUDE_CONFIG_DIR` puts it —
+  [The memory and documentation servers](#the-memory-and-documentation-servers)):
   `.claude/settings.local.json` with this project's collection — machine-local
   and not committed, as in a new project — and the requirement recorded in
-  `.claude/manifest.json`, which is.
+  `.claude/manifest.json`, which is. `init.sh` also writes it for a running
+  container with `uvx`, because it registers the server first; adoption offers
+  that registration in its own step, so a running container alone no longer
+  declares a server the session does not have (`## BL-311:`).
 
 ### The CI carve-out — SHIPS (WP7)
 
