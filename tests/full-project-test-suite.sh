@@ -929,6 +929,9 @@ run_child_suite "tests/test-bl296-adopt-guardrails.sh" \
 run_child_suite "tests/test-bl311-adopt-mcp.sh" \
   "BL-311: the MCP servers on the adoption path, and CLAUDE_CONFIG_DIR" \
   "BL-311 adoption-MCP tests FAILED (run tests/test-bl311-adopt-mcp.sh for details)"
+run_child_suite "tests/test-bl311-mcp-add-order.sh" \
+  "BL-311: every tracked claude mcp add puts the server name before -e" \
+  "BL-311 mcp-add order tests FAILED (run tests/test-bl311-mcp-add-order.sh for details)"
 # BL-284: two verify-install.sh auto-fixers that could never run — has_context()
 # was unsatisfiable on an adopted project, and fix_superpowers ran a CLI verb
 # that does not exist.

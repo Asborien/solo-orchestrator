@@ -1082,11 +1082,11 @@ resolve_and_install_tools() {
         # Register MCP
         if [ "$_qd_ok" = true ]; then
           if command -v uvx &>/dev/null; then
-            if run_with_timeout 30 bash -c 'echo "y" | claude mcp add -s user -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory qdrant -- uvx --python 3.13 mcp-server-qdrant >/dev/null 2>&1'; then
+            if run_with_timeout 30 bash -c 'echo "y" | claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant >/dev/null 2>&1'; then
               print_ok "Qdrant MCP registered"
             else
               print_warn "Failed to register Qdrant MCP (timed out or errored). Register manually:"
-              echo "    claude mcp add -s user -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory qdrant -- uvx --python 3.13 mcp-server-qdrant"
+              echo "    claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant"
             fi
           else
             print_warn "uv/uvx not found — needed for Qdrant MCP server"

@@ -381,7 +381,9 @@ the [Adoption Record](#the-adoption-record) carries one row for it:
 **The Qdrant command puts the server name before the `-e` options.** Measured on
 Claude Code 2.1.283: `-e` takes every value after it, so the spelling with
 `qdrant` after `-e COLLECTION_NAME=claude-memory` exits 1 with `Invalid
-environment variable format: qdrant`.
+environment variable format: qdrant`. Earlier copies of the framework — `init.sh`,
+the phase checks, the tool matrix and the [CLI Setup Addendum](cli-setup-addendum.md)
+— printed and ran that failing order; all of them now use this one.
 
 ---
 

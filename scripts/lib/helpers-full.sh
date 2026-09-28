@@ -394,7 +394,13 @@ is_qdrant_container_running() {
 
 # Register Qdrant MCP with Claude Code (30s timeout).
 # Usage: register_qdrant_mcp [collection_name]
+# `## BL-311:` THE SERVER NAME COMES BEFORE `-e`. `-e, --env <env...>` is
+# variadic (`claude mcp add --help`), so a name written after the `-e` options
+# is read as one more environment value and the command exits 1 ("Invalid
+# environment variable format: qdrant") — measured on Claude Code 2.1.283
+# against a scratch CLAUDE_CONFIG_DIR, in the order this line used to have.
+# tests/test-bl311-mcp-add-order.sh pins every tracked spelling.
 register_qdrant_mcp() {
   local collection="${1:-claude-memory}"
-  run_with_timeout 30 bash -c "echo y | claude mcp add -s user -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=$collection qdrant -- uvx --python 3.13 mcp-server-qdrant >/dev/null 2>&1"
+  run_with_timeout 30 bash -c "echo y | claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=$collection -- uvx --python 3.13 mcp-server-qdrant >/dev/null 2>&1"   # BL-311-MCP-ADD-ORDER
 }

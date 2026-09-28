@@ -604,6 +604,7 @@ jobs:
             tests/test-brownfield-wp9c-session-layer.sh
             tests/test-bl296-adopt-guardrails.sh
             tests/test-bl311-adopt-mcp.sh
+            tests/test-bl311-mcp-add-order.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────
