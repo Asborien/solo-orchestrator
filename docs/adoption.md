@@ -320,33 +320,59 @@ directory):
 
    This would run, exactly as written:
      claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
-     docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+     docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
      claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
    The claude commands change your Claude Code configuration for every project,
    not only this one. Nothing is written into this project.
 Set them up now? (No answer means skip it.)
-   1) set it up now
-   2) skip it
+   1) skip it
+   2) set it up now
    Answer with the number or the words:
 ```
 
-`set it up now` runs them, from the run's own scratch directory, and then reads
-the registrations back — it claims only what it finds:
+**`skip it` is listed first on purpose**: an answer of `1` meant for another
+question — a script that answers `1` to everything — skips, rather than
+registering servers for every project on the machine.
+
+`set it up now` (or `2`) runs them, from the run's own scratch directory, then
+reads the registrations back and asks Claude Code itself whether it can start
+each server (`claude mcp get`, the same check `claude mcp list` runs) — it
+claims only what those show:
 
 ```text
    Running: claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
-   Running: docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+   Running: docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
    Running: claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
 
    Afterwards:
    Context7 (current library documentation): registered for Claude Code.
    Qdrant (memory across sessions): registered, and answering at http://localhost:6333.
+
+   Context7: Claude Code's own check (claude mcp get) says it starts.
+   Qdrant: Claude Code's own check (claude mcp get) says it starts.
 ```
 
-Qdrant is registered only once its database answers: a registered server with
-nothing behind it would block every file edit. If a container named `qdrant`
-already exists, the plan says `docker start qdrant` instead of `docker run`; if a
-database already answers on port 6333, only the registration is offered.
+If Claude Code cannot start a server it now has registered — `uvx` cannot fetch
+its Python, say — that is the worst state, because registered means required,
+and the run says so as a block, with Claude Code's own command to undo it
+(recorded with a stand-in that refuses to start Qdrant):
+
+```text
+   Qdrant: Claude Code's own check says it could NOT start it — stub: qdrant cannot be started.
+
+   BLOCKED UNTIL FIXED: Qdrant IS registered, but Claude Code could NOT start it (stub: qdrant cannot be started).
+     Every file edit in this project is blocked until it can. To back the registration out:
+       claude mcp remove qdrant -s user
+```
+
+Qdrant is registered only once its database answers, and not at all if its
+container fails to start: a registered server with nothing behind it would
+block every file edit. If a container named `qdrant` already exists, the plan
+says `docker start qdrant` instead of `docker run`; if a database already
+answers on port 6333, only the registration is offered. **The container's ports
+are published on `127.0.0.1` only** — without the address, `-p` would put an
+unauthenticated database on every network interface. A container that already
+existed keeps whatever binding it was created with.
 
 `skip it`, a blank line, or the end of your input all mean skip — this question
 never stops an adoption:
@@ -361,7 +387,7 @@ never stops an adoption:
      Context7 is not registered: sessions here cannot read current library documentation.
      Its check is off until you register it, and ON from the next session after that.
    To set them up later, run these, then start a new Claude Code session:
-     docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+     docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
        (or, if a container named qdrant already exists: docker start qdrant)
      claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
      claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
@@ -371,7 +397,8 @@ A server that is registered but silent gets the stronger sentence instead —
 `EVERY file edit is BLOCKED until qdrant-find succeeds` — because that is what
 the check then does. When the machine cannot act (no `claude` command, which is
 every CI runner; Docker not running; no `uvx` or `npx`), there is no question:
-the run names what is missing and prints the same commands for later. Either way
+the run names what is missing and what to install (Node.js for `npx`, uv for
+`uvx`), and prints the same commands for later. Either way
 the [Adoption Record](#the-adoption-record) carries one row for it:
 
 ```text

@@ -35,7 +35,12 @@
 #       S8 an answer not offered is refused; S9 a database that never answers
 #       is not registered against; S10 the touched-disk markers follow the
 #       fingerprint, not the attempt; S11 the SOIF_ADOPT_MCP=off test seam
-#       skips the whole step in one line, asks nothing and runs nothing
+#       skips the whole step in one line, asks nothing and runs nothing;
+#       S12/S13 answers by NUMBER — "1" is skip (nothing runs), "2" is set up;
+#       S14 no npx — Context7 is not offered, and what to install is said;
+#       S15 a failed `docker run` — Qdrant is NOT registered, and it is said;
+#       S16 registered but Claude Code cannot START it (its own `claude mcp
+#       get` check) — said as a block, with Claude Code's remove command
 #   E*  WHOLE ADOPTIONS: E1 both present — no question, the Record row, and
 #       the restart sentence BEFORE "NEXT"; E2 set it up now — no command read
 #       the operator's answers, and the project collection is declared; E3
@@ -44,7 +49,11 @@
 #       completes; E5 registered but silent — the adopted project's own gate
 #       DOES block a Write (the S3 sentence is true); E6 the dogfood shape — a
 #       registration in ~/.claude.json only, a database running, uvx present,
-#       skip — nothing declared for the project and its own gate ALLOWS a Write
+#       skip — nothing declared for the project and its own gate ALLOWS a Write;
+#       E7 the dogfood answers, `1` to every question — the MCP question takes
+#       its `1` as SKIP (it is listed first), nothing runs, adoption completes
+#   A7  verify-install.sh's Qdrant row reads the files the session reads
+#   A8  the Stop-hook Qdrant reminder reads the same files
 #   M*  mutation proofs, one per guard, each required to die by its NAMED
 #       assertion — see the M section.
 set -uo pipefail
@@ -71,8 +80,8 @@ if [ "${BL311_KEEP:-0}" = "1" ]; then echo "  (fixtures kept in $WORK)"; else tr
 
 # ── the stubs ───────────────────────────────────────────────────────────────
 # Each logs its argv, its cwd, and whether its stdin carried anything.
-_mkstubs() {
-  local d="$1" with_claude="${2:-yes}"
+_mkstubs() {   # DIR [with-claude: yes|no] [npx: yes|no]
+  local d="$1" with_claude="${2:-yes}" with_npx="${3:-yes}"
   mkdir -p "$d" || return 1
   cat > "$d/docker" <<'STUB'
 #!/bin/bash
@@ -83,7 +92,8 @@ case "${1:-}" in
   info)  [ -f "$st/docker-up" ] ;;
   ps)    if [ "${2:-}" = "-a" ]; then [ -f "$st/qdrant-exists" ] && echo qdrant; else [ -f "$st/qdrant-up" ] && echo qdrant; fi; exit 0 ;;
   start) : > "$st/qdrant-up"; echo qdrant ;;
-  run)   : > "$st/qdrant-exists"; [ -f "$st/docker-run-noop" ] || : > "$st/qdrant-up"; echo 0123abcd ;;
+  run)   if [ -f "$st/docker-run-fails" ]; then echo "docker: Error response from daemon: stub refusal" >&2; exit 125; fi
+         : > "$st/qdrant-exists"; [ -f "$st/docker-run-noop" ] || : > "$st/qdrant-up"; echo 0123abcd ;;
   *)     exit 0 ;;
 esac
 STUB
@@ -106,6 +116,22 @@ st="${STUB_STATE:?}"
 if [ ! -t 0 ]; then x="$(cat)"; [ -n "$x" ] && echo "STDIN-HAD-DATA claude" >> "$st/calls.log"; fi
 [ -f "$st/claude-fails" ] && { echo "stub claude: refusing on purpose" >&2; exit 1; }
 [ -n "${STUB_TOUCH:-}" ] && : > "$STUB_TOUCH"
+# `claude mcp get NAME` — Claude Code's own health check, in the shape 2.1.283
+# prints it (measured): a Status line, an Issue line when it failed, and the
+# exact command to remove the registration.
+if [ "${1:-}" = mcp ] && [ "${2:-}" = get ]; then
+  n="${3:-}"
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then f="$CLAUDE_CONFIG_DIR/.claude.json"; else f="$HOME/.claude.json"; fi
+  jq -e --arg n "$n" '.mcpServers[$n]' "$f" >/dev/null 2>&1 || { echo "No MCP server found with name: $n" >&2; exit 1; }
+  printf '%s:\n  Scope: User config (available in all your projects)\n' "$n"
+  if grep -qx "$n" "$st/launch-fails" 2>/dev/null; then
+    printf '  Status: \342\234\230 Failed to connect\n  Issue: stub: %s cannot be started\n' "$n"
+  else
+    printf '  Status: \342\234\224 Connected\n'
+  fi
+  printf '\nTo remove this server, run: claude mcp remove %s -s user\n' "$n"
+  exit 0
+fi
 [ "${1:-}" = mcp ] && [ "${2:-}" = add ] || exit 0
 shift 2
 name=""; envs=""
@@ -135,7 +161,7 @@ echo "Added stdio MCP server $name"
 STUB
   fi
   printf '#!/bin/bash\nexit 0\n' > "$d/uvx"
-  printf '#!/bin/bash\nexit 0\n' > "$d/npx"
+  [ "$with_npx" = yes ] && printf '#!/bin/bash\nexit 0\n' > "$d/npx"
   chmod +x "$d"/*
 }
 STUBS="$WORK/stubs"; _mkstubs "$STUBS" yes
@@ -228,7 +254,7 @@ _plan() { grep -A"$1" 'This would run, exactly as written:' "$C/out" | tail -"$1
 
 QADD='claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant'
 C7ADD='claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp'
-QRUN='docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest'
+QRUN='docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest'
 QSTART='docker start qdrant'
 
 # ── A — the config-location helpers, and their three consumers ─────────────
@@ -310,6 +336,33 @@ a6() {   # check-versions.sh, over the two rows the framework SHIPS
     || fail_ "A6" "$bad — $(printf '%s' "$out" | grep -i 'MCP' | tr '\n' '|' | cut -c1-400)"
 }
 
+a7() {   # verify-install.sh's Qdrant row reads the files the session reads
+  local bad="" out=""
+  _case a7 >/dev/null
+  mkdir -p "$C/p7"; ( cd "$C/p7" && git init -q . ) >/dev/null 2>&1
+  printf '{}\n' > "$CFG/settings.json"
+  _register "$CFG/.claude.json" qdrant
+  out="$( cd "$C/p7" && env PATH="$RUN_PATH" HOME="$H" CLAUDE_CONFIG_DIR="$CFG" STUB_STATE="$ST" bash "$FW/scripts/verify-install.sh" --check-only </dev/null 2>&1 )"
+  printf '%s\n' "$out" | grep -q '\[OK\] Qdrant MCP configured' || bad="$bad [registered in \$CLAUDE_CONFIG_DIR/.claude.json, not seen]"
+  rm -f "$CFG/.claude.json"; _register "$H/.claude.json" qdrant
+  out="$( cd "$C/p7" && env PATH="$RUN_PATH" HOME="$H" CLAUDE_CONFIG_DIR="$CFG" STUB_STATE="$ST" bash "$FW/scripts/verify-install.sh" --check-only </dev/null 2>&1 )"
+  printf '%s\n' "$out" | grep -q 'Qdrant MCP not configured' || bad="$bad [registered only in ~/.claude.json, reported configured]"
+  [ -z "$bad" ] && pass "A7 verify-install.sh's Qdrant row reads \$CLAUDE_CONFIG_DIR, not ~/.claude.json — the same files as its Context7 row" || fail_ "A7" "$bad"
+}
+
+a8() {   # the Stop-hook reminder reads the same files
+  local bad="" out=""
+  _case a8 >/dev/null
+  mkdir -p "$C/p8"
+  _register "$CFG/.claude.json" qdrant
+  out="$( cd "$C/p8" && env HOME="$H" CLAUDE_CONFIG_DIR="$CFG" bash "$FW/scripts/session-end-qdrant-reminder.sh" </dev/null 2>&1 )"
+  printf '%s' "$out" | grep -q 'QDRANT REMINDER' || bad="$bad [registered in \$CLAUDE_CONFIG_DIR, no reminder]"
+  rm -f "$CFG/.claude.json"; _register "$H/.claude.json" qdrant
+  out="$( cd "$C/p8" && env HOME="$H" CLAUDE_CONFIG_DIR="$CFG" bash "$FW/scripts/session-end-qdrant-reminder.sh" </dev/null 2>&1 )"
+  printf '%s' "$out" | grep -q 'QDRANT REMINDER' && bad="$bad [registered only in ~/.claude.json, reminded anyway]"
+  [ -z "$bad" ] && pass "A8 the session-end Qdrant reminder reads \$CLAUDE_CONFIG_DIR, not ~/.claude.json" || fail_ "A8" "$bad"
+}
+
 # ── S — the step on its own ─────────────────────────────────────────────────
 s1() {   # nothing missing: no question, nothing run
   _case s1 >/dev/null
@@ -317,7 +370,7 @@ s1() {   # nothing missing: no question, nothing run
   : > "$ST/qdrant-up"; : > "$ST/docker-up"
   _step "set it up now\n"
   if [ "$STEP_RC" = 0 ] && ! grep -q 'Set them up now' "$C/out" && ! _calls_ran \
-     && [ "$STEP_RESULT" = "Qdrant: registered and answering before adoption; Context7: registered before adoption" ]; then
+     && [ "$STEP_RESULT" = "Qdrant: registered and answering before adoption, Claude Code starts it; Context7: registered before adoption, Claude Code starts it" ]; then
     pass "S1 both registered and answering: no question, nothing run"
   else fail_ "S1" "[asked, or ran, with nothing missing] rc=$STEP_RC result='$STEP_RESULT' asked=$(grep -c 'Set them up now' "$C/out")"; fi
 }
@@ -339,7 +392,7 @@ s2() {   # set it up now
   jq -e '.mcpServers.qdrant.env.QDRANT_URL == "http://localhost:6333" and .mcpServers.context7.command == "npx"' "$CFG/.claude.json" >/dev/null 2>&1 \
     || bad="$bad [the registrations are not in \$CLAUDE_CONFIG_DIR/.claude.json]"
   [ -e "$H/.claude.json" ] && bad="$bad [something wrote ~/.claude.json]"
-  [ "$STEP_RESULT" = "Qdrant: set up by adoption, registered and answering; Context7: set up by adoption, registered" ] || bad="$bad [result '$STEP_RESULT']"
+  [ "$STEP_RESULT" = "Qdrant: set up by adoption, registered and answering, Claude Code starts it; Context7: set up by adoption, registered, Claude Code starts it" ] || bad="$bad [result '$STEP_RESULT']"
   [ -z "$bad" ] && pass "S2 set it up now: the three commands shown before the question, run exactly as shown from the work dir, registered in the session's config, and read back by the receipt" || fail_ "S2" "$bad"
 }
 
@@ -352,7 +405,7 @@ s3() {   # registered but silent + skip
   [ "$(_plan 2)" = "     $C7ADD|     $QSTART|" ] || bad="$bad [plan '$(_plan 2)' — the container exists, so 'docker start qdrant']"
   _calls_ran && bad="$bad [something ran]"
   grep -q 'EVERY file edit is BLOCKED until qdrant-find succeeds' "$C/out" || bad="$bad [the note does not say every edit is blocked]"
-  [ "$STEP_RESULT" = "Qdrant: registered, NOT answering (skipped); Context7: NOT registered (skipped)" ] || bad="$bad [result '$STEP_RESULT']"
+  [ "$STEP_RESULT" = "Qdrant: registered, NOT answering (skipped), Claude Code starts it; Context7: NOT registered (skipped)" ] || bad="$bad [result '$STEP_RESULT']"
   [ -z "$bad" ] && pass "S3 registered but not answering + skip: the plan starts the existing container, and the note says every file edit is blocked" || fail_ "S3" "$bad"
 }
 
@@ -443,6 +496,72 @@ s11() {   # the test seam: nothing checked, nothing asked, nothing run — and s
   [ -z "$bad" ] && pass "S11 SOIF_ADOPT_MCP=off skips the whole step: one line says so, nothing is probed, asked or run, and the Record cell says not checked" || fail_ "S11" "$bad"
 }
 
+s12() {   # answer "1" by NUMBER — "skip it" is listed first, so nothing runs
+  local bad=""
+  _case s12 >/dev/null
+  : > "$ST/docker-up"
+  _step "1\n"
+  grep -q '   1) skip it' "$C/out" || bad="$bad [the menu does not list 1) skip it]"
+  _calls_ran && bad="$bad [answer 1 ran commands: $(grep -E 'mcp|docker .(run|start)' "$ST/calls.log" | head -2 | tr '\n' '|')]"
+  [ "$STEP_RESULT" = "Qdrant: NOT registered (skipped); Context7: NOT registered (skipped)" ] || bad="$bad [result '$STEP_RESULT']"
+  [ -z "$bad" ] && pass "S12 answering 1 by number means skip it (listed first): nothing runs" || fail_ "S12" "$bad"
+}
+
+s13() {   # answer "2" by NUMBER — set it up
+  local bad=""
+  _case s13 >/dev/null
+  : > "$ST/docker-up"
+  _step "2\n"
+  grep -q '   2) set it up now' "$C/out" || bad="$bad [the menu does not list 2) set it up now]"
+  grep -q '\[mcp\] \[add\] \[context7\]' "$ST/calls.log" || bad="$bad [answer 2 did not set up Context7]"
+  grep -q '\[mcp\] \[add\] \[-s\] \[user\] \[qdrant\]' "$ST/calls.log" || bad="$bad [answer 2 did not register Qdrant]"
+  [ -z "$bad" ] && pass "S13 answering 2 by number sets them up: the commands run" || fail_ "S13" "$bad"
+}
+
+s14() {   # no npx: Context7 is not offered, and what to install is said
+  local bad=""
+  _case s14 >/dev/null
+  _register "$CFG/.claude.json" qdrant
+  : > "$ST/docker-up"; : > "$ST/qdrant-up"
+  _mkstubs "$C/stubs" yes no
+  _mirror_without "$C/mirror" npx
+  if PATH="$C/stubs:$C/mirror" command -v npx >/dev/null 2>&1; then
+    fail_ "S14" "the isolated PATH still has npx — the fixture cannot measure its absence"; return
+  fi
+  RUN_PATH="$C/stubs:$C/mirror" _step "2\n"
+  grep -q 'Set them up now' "$C/out" && bad="$bad [offered Context7 with no npx to launch it]"
+  grep -q '\[mcp\] \[add\] \[context7\]' "$ST/calls.log" && bad="$bad [registered Context7 with no npx]"
+  grep -q 'Adoption cannot set up Context7 here: npx is not on PATH, and the server runs through it (npx comes with Node.js' "$C/out" || bad="$bad [the reason and what to install are not said]"
+  grep -qF -- "  $C7ADD" "$C/out" || bad="$bad [no command for later]"
+  [ -z "$bad" ] && pass "S14 no npx: Context7 is not offered (registering it would require a server that cannot start), and the run says Node.js is what provides npx" || fail_ "S14" "$bad"
+}
+
+s15() {   # docker run fails: Qdrant must NOT be registered, and it is said
+  local bad=""
+  _case s15 >/dev/null
+  : > "$ST/docker-up"; : > "$ST/docker-run-fails"
+  _step "2\n"
+  grep -qF -- "$(_cmd_line docker "${QRUN#* }")" "$ST/calls.log" || bad="$bad [docker run was not attempted]"
+  grep -q '\[mcp\] \[add\] \[-s\] \[user\] \[qdrant\]' "$ST/calls.log" && bad="$bad [Qdrant was registered after its container failed to start]"
+  grep -q 'So Qdrant will NOT be registered: its database did not start' "$C/out" || bad="$bad [the run does not say Qdrant was not registered]"
+  grep -q '\[mcp\] \[add\] \[context7\]' "$ST/calls.log" || bad="$bad [Context7, independent of it, was not set up]"
+  [ "$STEP_RESULT" = "Qdrant: NOT registered after adoption tried; Context7: set up by adoption, registered, Claude Code starts it" ] || bad="$bad [result '$STEP_RESULT']"
+  [ -z "$bad" ] && pass "S15 a failed docker run: Qdrant is NOT registered (registered would mean required, and every edit blocked), the run says so, and Context7 is still set up" || fail_ "S15" "$bad"
+}
+
+s16() {   # registered, but Claude Code cannot start it — Claude Code's own check
+  local bad=""
+  _case s16 >/dev/null
+  : > "$ST/docker-up"; printf 'qdrant\n' > "$ST/launch-fails"
+  _step "2\n"
+  grep -q '\[mcp\] \[get\] \[qdrant\]' "$ST/calls.log" || bad="$bad [Claude Code's own check was not asked]"
+  grep -q 'BLOCKED UNTIL FIXED: Qdrant IS registered, but Claude Code could NOT start it (stub: qdrant cannot be started)' "$C/out" || bad="$bad [the block is not said with Claude Code's reason]"
+  grep -qxF '       claude mcp remove qdrant -s user' "$C/out" || bad="$bad [Claude Code's own remove command is not printed]"
+  grep -q 'Qdrant: Claude Code.s own check says it could NOT start it' "$C/out" || bad="$bad [the launch line is missing]"
+  case "$STEP_RESULT" in *"Qdrant: set up by adoption, registered and answering, Claude Code could NOT start it;"*) : ;; *) bad="$bad [result '$STEP_RESULT']" ;; esac
+  [ -z "$bad" ] && pass "S16 registered and answering but Claude Code cannot start it: said as a BLOCK, with Claude Code's own reason and its remove command, and recorded" || fail_ "S16" "$bad"
+}
+
 # ── E — whole adoptions ─────────────────────────────────────────────────────
 HAVE_GITLEAKS=0; command -v gitleaks >/dev/null 2>&1 && HAVE_GITLEAKS=1
 
@@ -455,7 +574,7 @@ e1() {   # both present; the Record row; the restart sentence before NEXT
   [ "$RUN_RC" -eq 0 ] || bad="$bad [rc $RUN_RC: $(grep -E 'BLOCKED|REFUSED' "$C/out" | head -1)]"
   grep -q 'Set them up now' "$C/out" && bad="$bad [asked anyway]"
   rec="$(_record)"
-  printf '%s' "$rec" | grep -q 'Qdrant: registered and answering before adoption; Context7: registered before adoption' || bad="$bad [record row: '$rec']"
+  printf '%s' "$rec" | grep -q 'Qdrant: registered and answering before adoption, Claude Code starts it; Context7: registered before adoption, Claude Code starts it' || bad="$bad [record row: '$rec']"
   [ -z "$bad" ] && pass "E1 a whole adoption with both present: no question, and the Adoption Record carries the MCP row" || fail_ "E1" "$bad"
   l1="$(_line_of "$C/out" 'FIRST: if a Claude Code session is open in this project, close it and start a new')"
   l2="$(_line_of "$C/out" 'NEXT: run this, and paste what it prints into Claude Code.')"
@@ -473,7 +592,7 @@ e2() {   # set it up now, whole adoption
   grep -q 'STDIN-HAD-DATA' "$ST/calls.log" && bad="$bad [a command read the operator's answers]"
   grep -E '\[mcp\] \[add\]|docker \[run\]' "$ST/calls.log" | grep -q 'cwd=.*adopt-work\.' || bad="$bad [the commands did not run from the run's work dir]"
   rec="$(_record)"
-  printf '%s' "$rec" | grep -q 'Qdrant: set up by adoption, registered and answering; Context7: set up by adoption, registered' || bad="$bad [record row: '$rec']"
+  printf '%s' "$rec" | grep -q 'Qdrant: set up by adoption, registered and answering, Claude Code starts it; Context7: set up by adoption, registered, Claude Code starts it' || bad="$bad [record row: '$rec']"
   [ -f "$P/.claude/settings.local.json" ] || bad="$bad [the project collection was not declared once Qdrant was registered]"
   [ -z "$bad" ] && pass "E2 set it up now inside a whole adoption: no command read the operator's answers, the Record says set up, and the project collection is declared" || fail_ "E2" "$bad"
 }
@@ -502,8 +621,8 @@ e4() {   # no claude command: the CI shape
   RUN_PATH="$C/stubs:$C/mirror" _adopt "$(_n1 12)"
   [ "$RUN_RC" -eq 0 ] || bad="$bad [rc $RUN_RC: $(grep -E 'BLOCKED|REFUSED' "$C/out" | head -1)]"
   grep -q 'Set them up now' "$C/out" && bad="$bad [asked with nothing it could do]"
-  grep -q 'Adoption cannot set up Context7 here: the claude command is not on PATH.' "$C/out" || bad="$bad [Context7 reason missing]"
-  grep -q 'Adoption cannot set up Qdrant here: the claude command is not on PATH.' "$C/out" || bad="$bad [Qdrant reason missing]"
+  grep -q 'Adoption cannot set up Context7 here: the claude command is not on PATH' "$C/out" || bad="$bad [Context7 reason missing]"
+  grep -q 'Adoption cannot set up Qdrant here: the claude command is not on PATH' "$C/out" || bad="$bad [Qdrant reason missing]"
   grep -qF -- "  $C7ADD" "$C/out" || bad="$bad [no command for later]"
   rec="$(_record)"
   printf '%s' "$rec" | grep -q 'adoption could not act: the claude command is not on PATH' || bad="$bad [record row: '$rec']"
@@ -544,20 +663,33 @@ e6() {   # THE DOGFOOD SHAPE: registered only in ~/.claude.json, a clean
   [ -z "$bad" ] && pass "E6 the dogfood shape: the ~/.claude.json registration is not the session's, nothing is declared for the project, and a session started afterwards can write" || fail_ "E6" "$bad"
 }
 
+e7() {   # THE DOGFOOD ANSWERS: 1 to every question. The MCP question takes its 1 as SKIP.
+  local bad="" rec=""
+  _case e7 >/dev/null
+  : > "$ST/docker-up"
+  _adopt "$(_n1 14)"
+  [ "$RUN_RC" -eq 0 ] || bad="$bad [rc $RUN_RC: $(grep -E 'BLOCKED|REFUSED' "$C/out" | head -1)]"
+  grep -q '   1) skip it' "$C/out" || bad="$bad [the MCP question does not list 1) skip it]"
+  _calls_ran && bad="$bad [a 1 meant for another question registered servers: $(grep -E 'mcp|docker .(run|start)' "$ST/calls.log" | head -2 | tr '\n' '|')]"
+  rec="$(_record)"
+  printf '%s' "$rec" | grep -q 'Qdrant: NOT registered (skipped); Context7: NOT registered (skipped)' || bad="$bad [record row: '$rec']"
+  [ -z "$bad" ] && pass "E7 the dogfood's answers (1 to every question): the MCP question's 1 is skip, nothing is registered, the adoption completes" || fail_ "E7" "$bad"
+}
+
 e_cases() {
   if [ "$HAVE_GITLEAKS" -ne 1 ]; then
     skip "E1-E6" "gitleaks is not on PATH — a personal adoption stops at the secrets check without it"
     return 0
   fi
-  e1; e2; e3; e4; e5; e6
+  e1; e2; e3; e4; e5; e6; e7
 }
 
 if [ -n "${BL311_ONLY:-}" ]; then
   for _f in $BL311_ONLY; do "$_f"; done
   _done
 fi
-a1; a4; a5; a6
-s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11
+a1; a4; a5; a6; a7; a8
+s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12; s13; s14; s15; s16
 e_cases
 
 # ── M — mutation proofs ─────────────────────────────────────────────────────
@@ -608,7 +740,7 @@ mut() {   # LABEL FILE MARKER REPLACEMENT CASE-FN WANT — WANT is the assertion
 # subshell and M20 does not; the cause is not isolated. They stay because the
 # consent rule asks for them, and they are reported as survivors rather than
 # given a mutant that would pass for the wrong reason.
-if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M23" "BL311_SKIP_MUTANTS=1"; _done; fi
+if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M31" "BL311_SKIP_MUTANTS=1"; _done; fi
 echo "== M — mutation proofs =="
 mut "M1 helpers-core ignores CLAUDE_CONFIG_DIR for settings.json — killed by A4" \
   scripts/lib/helpers-core.sh '# BL-311-CONFIG-DIR' \
@@ -703,5 +835,37 @@ mut "M23 the test seam ignored — killed by S11" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-SEAM' \
   '  if false; then           # BL-311-MCP-SEAM' \
   s11 'asked with the seam off'
+mut "M24 the resolver's order swapped (1 would mean set it up) — killed by S12" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-RESOLVE-ORDER' \
+  '      ans="$(adopt_resolve_choice "$raw" "$ADOPT_MCP_SETUP" "$ADOPT_MCP_SKIP")"   # BL-311-MCP-RESOLVE-ORDER' \
+  s12 'answer 1 ran commands'
+mut "M25 the offer's order swapped (set it up listed first) — killed by E7" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OFFER-ORDER' \
+  '    adopt_offer_choice "Set them up now? (No answer means skip it.)" "$ADOPT_MCP_SETUP" "$ADOPT_MCP_SKIP"   # BL-311-MCP-OFFER-ORDER' \
+  e7 'the MCP question does not list 1) skip it'
+mut "M26 a failed docker run does not stop the Qdrant chain — killed by S15" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-FAIL-STOPS-QDRANT' \
+  '        :   # BL-311-MCP-FAIL-STOPS-QDRANT' \
+  s15 'Qdrant was registered after its container failed to start'
+mut "M27 the npx precondition removed — killed by S14" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-NPX-PRECONDITION' \
+  '    elif false; then c7_why=""   # BL-311-MCP-NPX-PRECONDITION' \
+  s14 'offered Context7 with no npx to launch it'
+mut "M28 a failed launch not recognised — killed by S16" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-LAUNCH-FAILED' \
+  '  if false; then       # BL-311-MCP-LAUNCH-FAILED' \
+  s16 'the block is not said'
+mut "M29 the launch block not said — killed by S16" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-NOTE-LAUNCH' \
+  '  if false; then   # BL-311-MCP-NOTE-LAUNCH' \
+  s16 'the block is not said'
+mut "M30 verify-install's Qdrant row back on fixed paths — killed by A7" \
+  scripts/verify-install.sh '# BL-311-VERIFY-QDRANT' \
+  '  if ([ -f "$HOME/.claude/settings.json" ] && jq -e ".mcpServers.qdrant // empty" "$HOME/.claude/settings.json" >/dev/null 2>&1) || ([ -f "$HOME/.claude.json" ] && jq -e ".mcpServers.qdrant // empty" "$HOME/.claude.json" >/dev/null 2>&1); then   # BL-311-VERIFY-QDRANT' \
+  a7 'registered in $CLAUDE_CONFIG_DIR/.claude.json, not seen'
+mut "M31 the reminder back on fixed paths — killed by A8" \
+  scripts/session-end-qdrant-reminder.sh '# BL-311-REMINDER-CONFIG' \
+  '  _cc_set="$HOME/.claude/settings.json"; _cc_json="$HOME/.claude.json"   # BL-311-REMINDER-CONFIG' \
+  a8 'registered in $CLAUDE_CONFIG_DIR, no reminder'
 
 _done

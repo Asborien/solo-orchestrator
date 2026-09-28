@@ -89,7 +89,24 @@ ADOPT_MCP_PLAN=()          # "<server>|<command>" rows this run would execute
 ADOPT_MCP_QDRANT_ADD='claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant'   # BL-311-MCP-QDRANT-ADD
 ADOPT_MCP_CONTEXT7_ADD='claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp'
 ADOPT_MCP_QDRANT_START='docker start qdrant'
-ADOPT_MCP_QDRANT_RUN='docker run -d --name qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest'
+# `## BL-311:` THE PORTS ARE PUBLISHED ON LOOPBACK ONLY. A `-p` with no host
+# address publishes the database on EVERY interface, with no API key and
+# `--restart unless-stopped` — an unauthenticated store of the operator's
+# session memory reachable from their network for as long as Docker runs. The
+# MCP server and every probe here use http://localhost:6333, so nothing needs
+# more than 127.0.0.1 (measured: a 127.0.0.1-only listener answers both curl and
+# Python at `localhost` on this host). `docker start` of a container that
+# already exists keeps the binding it was created with.
+ADOPT_MCP_QDRANT_RUN='docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest'   # BL-311-MCP-LOOPBACK
+
+# THE TWO ANSWERS, SPELLED ONCE AND OFFERED IN THIS ORDER ON PURPOSE. "skip it"
+# is FIRST, so answer `1` means skip: the dogfood run fed `1\n1\n1\n…` to every
+# question, and with "set it up now" first a `1` meant for another question
+# would register user-scope servers for every project and shift every later
+# answer by one. The offer and the resolver read the same two variables in the
+# same order; cases S12/S13 answer by NUMBER so a swap in either is caught.
+ADOPT_MCP_SKIP="skip it"
+ADOPT_MCP_SETUP="set it up now"
 
 # _adopt_mcp_state — "<context7> <qdrant-state> <qdrant-url>" for THIS
 # session's configuration. helpers-full.sh is read in a SUBSHELL, as the session
@@ -154,6 +171,64 @@ _adopt_mcp_last_output() {
   tail -n 1 "$ADOPT_WORK/mcp-setup.out" 2>/dev/null | LC_ALL=C tr -d '\000-\037\177' | cut -c1-200
 }
 
+# _adopt_mcp_launch NAME — CLAUDE CODE'S OWN CHECK that it can start the server.
+#
+# Registered is a line in a config file and "the database answers" is a fact
+# about Docker; neither says Claude Code can LAUNCH the server — `uvx` may be
+# unable to fetch Python 3.13, `npx` may be broken. The only evidence of that is
+# Claude Code's own health check, so that is the receipt. `claude mcp get NAME`
+# runs it for ONE server (`claude mcp list` runs it for every server the
+# operator has, and took 7s against 0s for `get` on a scratch config, measured
+# on 2.1.283); its output carries `Status: ✔ Connected` or
+# `Status: ✘ Failed to connect` with an `Issue:` line, and the exact command to
+# back the registration out (`To remove this server, run: …`). Bounded, output
+# to a FILE (a command substitution would wait out a hung child), stdin
+# detached, run from $ADOPT_WORK.
+#   ADOPT_MCP_LAUNCH         connected | failed | unchecked
+#   ADOPT_MCP_LAUNCH_WHY     the Issue line, or why it could not be checked
+#   ADOPT_MCP_LAUNCH_REMOVE  Claude Code's own remove command, else a plain one
+ADOPT_MCP_LAUNCH=""; ADOPT_MCP_LAUNCH_WHY=""; ADOPT_MCP_LAUNCH_REMOVE=""
+_adopt_mcp_launch() {
+  local name="$1" out="" rc=0 secs="${SOIF_ADOPT_MCP_LAUNCH_SECS:-60}" line=""
+  case "$secs" in ''|*[!0-9]*|0) secs=60 ;; esac
+  ADOPT_MCP_LAUNCH="unchecked"; ADOPT_MCP_LAUNCH_WHY=""; ADOPT_MCP_LAUNCH_REMOVE="claude mcp remove $name"
+  if ! command -v claude >/dev/null 2>&1; then
+    ADOPT_MCP_LAUNCH_WHY="the claude command is not on PATH"; return 0
+  fi
+  out="$ADOPT_WORK/mcp-get-$name.out"
+  ( cd "$ADOPT_WORK" 2>/dev/null && run_with_deadline "$secs" claude mcp get "$name" ) </dev/null >"$out" 2>&1 || rc=$?
+  line="$(grep -m1 'To remove this server, run:' "$out" 2>/dev/null | LC_ALL=C tr -d '\000-\037\177')"
+  case "$line" in *"run: claude mcp remove "*) ADOPT_MCP_LAUNCH_REMOVE="${line#*run: }" ;; esac
+  if grep -q 'Status:.*Failed to connect' "$out" 2>/dev/null; then       # BL-311-MCP-LAUNCH-FAILED
+    ADOPT_MCP_LAUNCH="failed"
+    ADOPT_MCP_LAUNCH_WHY="$(grep -m1 'Issue:' "$out" 2>/dev/null | sed 's/^[[:space:]]*Issue:[[:space:]]*//' | LC_ALL=C tr -d '\000-\037\177' | cut -c1-160)"
+  elif grep -q 'Status:.*Connected' "$out" 2>/dev/null; then
+    ADOPT_MCP_LAUNCH="connected"
+  elif [ "$rc" -eq 124 ]; then
+    ADOPT_MCP_LAUNCH_WHY="claude mcp get $name did not answer within ${secs}s"
+  else
+    ADOPT_MCP_LAUNCH_WHY="claude mcp get $name gave no status Claude Code's check could be read from"
+  fi
+  return 0
+}
+
+# _adopt_mcp_launch_note LABEL — one line saying what the launch check proved.
+_adopt_mcp_launch_note() {
+  case "$ADOPT_MCP_LAUNCH" in
+    connected) adopt_note "$1: Claude Code's own check (claude mcp get) says it starts." ;;
+    failed)    adopt_note "$1: Claude Code's own check says it could NOT start it${ADOPT_MCP_LAUNCH_WHY:+ — $ADOPT_MCP_LAUNCH_WHY}." ;;
+    *)         adopt_note "$1: whether Claude Code can start it was not checked (${ADOPT_MCP_LAUNCH_WHY:-no reason recorded})." ;;
+  esac
+}
+
+_adopt_mcp_launch_word() {   # _adopt_mcp_launch_word STATE
+  case "$1" in
+    connected) printf '%s' ", Claude Code starts it" ;;
+    failed)    printf '%s' ", Claude Code could NOT start it" ;;
+    *)         printf '%s' ", whether Claude Code can start it not checked" ;;
+  esac
+}
+
 _adopt_mcp_is_local_url() {
   case "${1%/}" in http://localhost:6333|http://127.0.0.1:6333) return 0 ;; esac
   return 1
@@ -212,17 +287,17 @@ EOF
 
   # ── WHAT COULD BE DONE HERE, AND WHY NOT WHERE IT CANNOT ──────────────────
   if [ "$c7" != "registered" ]; then
-    if ! command -v claude >/dev/null 2>&1; then c7_why="the claude command is not on PATH"
-    elif ! command -v npx >/dev/null 2>&1; then c7_why="npx (Node.js) is not on PATH, and the server runs through it"
+    if ! command -v claude >/dev/null 2>&1; then c7_why="the claude command is not on PATH (set up Claude Code first)"
+    elif ! command -v npx >/dev/null 2>&1; then c7_why="npx is not on PATH, and the server runs through it (npx comes with Node.js — set up Node.js first)"   # BL-311-MCP-NPX-PRECONDITION
     else ADOPT_MCP_PLAN[${#ADOPT_MCP_PLAN[@]}]="context7|$ADOPT_MCP_CONTEXT7_ADD"
     fi
   fi
   case "$q" in
     unregistered)
-      if ! command -v claude >/dev/null 2>&1; then q_why="the claude command is not on PATH"
-      elif ! command -v uvx >/dev/null 2>&1; then q_why="uvx (from uv) is not on PATH, and the server runs through it"
+      if ! command -v claude >/dev/null 2>&1; then q_why="the claude command is not on PATH (set up Claude Code first)"
+      elif ! command -v uvx >/dev/null 2>&1; then q_why="uvx is not on PATH, and the server runs through it (uvx comes with uv — set up uv first)"
       elif _adopt_mcp_local_qdrant; then q_db="already answering at http://localhost:6333"
-      elif ! _adopt_mcp_docker_up; then q_why="Docker is not running (or not installed), and the database runs in it"
+      elif ! _adopt_mcp_docker_up; then q_why="Docker is not running (start Docker Desktop, or set Docker up first)"
       elif _adopt_mcp_qdrant_container; then q_db="$ADOPT_MCP_QDRANT_START"
       else q_db="$ADOPT_MCP_QDRANT_RUN"
       fi
@@ -232,7 +307,7 @@ EOF
       fi ;;
     unreachable)
       if ! _adopt_mcp_is_local_url "$qurl"; then q_why="it is registered at $qurl, which is not a database this machine runs — start that server"
-      elif ! _adopt_mcp_docker_up; then q_why="Docker is not running (or not installed), and the database runs in it"
+      elif ! _adopt_mcp_docker_up; then q_why="Docker is not running (start Docker Desktop, or set Docker up first)"
       elif _adopt_mcp_qdrant_container; then ADOPT_MCP_PLAN[${#ADOPT_MCP_PLAN[@]}]="qdrant|$ADOPT_MCP_QDRANT_START"
       else ADOPT_MCP_PLAN[${#ADOPT_MCP_PLAN[@]}]="qdrant|$ADOPT_MCP_QDRANT_RUN"
       fi ;;
@@ -243,7 +318,7 @@ EOF
   [ -n "$c7_why" ] && adopt_note "Adoption cannot set up Context7 here: $c7_why."
   [ -n "$q_why" ] && adopt_note "Adoption cannot set up Qdrant here: $q_why."
 
-  ans="skip it"
+  ans="$ADOPT_MCP_SKIP"
   if [ "${#ADOPT_MCP_PLAN[@]}" -gt 0 ]; then            # BL-311-MCP-ASK-ONLY-IF-ACTIONABLE
     adopt_blank
     # SHOWN BEFORE THE QUESTION, not after the answer — consent to run a string
@@ -256,14 +331,14 @@ EOF
         adopt_note "not only this one. Nothing is written into this project." ;;
       *) adopt_note "Nothing is written into this project." ;;
     esac
-    adopt_offer_choice "Set them up now? (No answer means skip it.)" "set it up now" "skip it"
+    adopt_offer_choice "Set them up now? (No answer means skip it.)" "$ADOPT_MCP_SKIP" "$ADOPT_MCP_SETUP"   # BL-311-MCP-OFFER-ORDER
     adopt_read_optional
     raw="$ADOPT_ANSWER"
     printf '\n'
     if [ -z "$raw" ]; then                                   # BL-311-MCP-EOF-SKIP
       adopt_note "No answer — treated as skip it."
     else
-      ans="$(adopt_resolve_choice "$raw" "set it up now" "skip it")"
+      ans="$(adopt_resolve_choice "$raw" "$ADOPT_MCP_SKIP" "$ADOPT_MCP_SETUP")"   # BL-311-MCP-RESOLVE-ORDER
       if [ -z "$ans" ]; then
         adopt_refuse "'$raw' is not one of the answers offered for: setting up the MCP servers"
         return 1
@@ -271,18 +346,25 @@ EOF
     fi
   fi
 
-  if [ "$ans" = "set it up now" ]; then
+  if [ "$ans" = "$ADOPT_MCP_SETUP" ]; then
     : > "$ADOPT_WORK/mcp-setup.out" 2>/dev/null
     fp_before="$(adopt_tree_fingerprint "${root:-}")" || fp_before=""
     for row in "${ADOPT_MCP_PLAN[@]}"; do
       srv="${row%%|*}"; cmd="${row#*|}"
       # A failed Qdrant step stops the Qdrant chain: registering a server whose
       # database did not come up would make it required and block every edit.
-      [ "$srv" = "qdrant" ] && [ "$q_failed" -eq 1 ] && continue
+      if [ "$srv" = "qdrant" ] && [ "$q_failed" -eq 1 ]; then
+        adopt_note "Not run: $cmd"
+        continue
+      fi
       adopt_note "Running: $cmd"
       if ! _adopt_mcp_run "$cmd"; then
         adopt_note "  That did not succeed: $(_adopt_mcp_last_output)"
-        [ "$srv" = "qdrant" ] && q_failed=1
+        [ "$srv" = "qdrant" ] && q_failed=1   # BL-311-MCP-FAIL-STOPS-QDRANT
+        case "$cmd" in
+          docker*) adopt_note "  So Qdrant will NOT be registered: its database did not start, and a registered"
+                   adopt_note "  server with nothing behind it would block every file edit in this project." ;;
+        esac
         continue
       fi
       case "$cmd" in
@@ -315,6 +397,20 @@ EOF
     adopt_note "Skipped. Nothing was run."
   fi
 
+  # ── CLAUDE CODE'S OWN LAUNCH CHECK, for every server that is registered ──
+  local c7_launch="" c7_launch_why="" c7_remove="" q_launch="" q_launch_why="" q_remove=""
+  if [ "$c7" = "registered" ] || [ "$q" != "unregistered" ]; then adopt_blank; fi
+  if [ "$c7" = "registered" ]; then
+    _adopt_mcp_launch context7
+    c7_launch="$ADOPT_MCP_LAUNCH"; c7_launch_why="$ADOPT_MCP_LAUNCH_WHY"; c7_remove="$ADOPT_MCP_LAUNCH_REMOVE"
+    _adopt_mcp_launch_note "Context7"
+  fi
+  if [ "$q" != "unregistered" ]; then
+    _adopt_mcp_launch qdrant
+    q_launch="$ADOPT_MCP_LAUNCH"; q_launch_why="$ADOPT_MCP_LAUNCH_WHY"; q_remove="$ADOPT_MCP_LAUNCH_REMOVE"
+    _adopt_mcp_launch_note "Qdrant"
+  fi
+
   # ── THE RECORD'S CELL — the state the receipt read, and how it got there ──
   case "$q" in
     reachable)   q_word="registered and answering" ;;
@@ -325,19 +421,24 @@ EOF
   if [ "$q" = "reachable" ] && [ "$q_before" = "reachable" ]; then q_word="$q_word before adoption"
   elif [ "$q" = "reachable" ]; then q_word="set up by adoption, $q_word"
   elif [ -n "$q_why" ]; then q_word="$q_word (adoption could not act: $q_why)"
-  elif [ "$ans" = "set it up now" ]; then q_word="$q_word after adoption tried"
+  elif [ "$ans" = "$ADOPT_MCP_SETUP" ]; then q_word="$q_word after adoption tried"
   else q_word="$q_word (skipped)"
   fi
   if [ "$c7" = "registered" ] && [ "$c7_before" = "registered" ]; then c7_word="registered before adoption"
   elif [ "$c7" = "registered" ]; then c7_word="set up by adoption, registered"
   elif [ -n "$c7_why" ]; then c7_word="NOT registered (adoption could not act: $c7_why)"
-  elif [ "$ans" = "set it up now" ]; then c7_word="NOT registered after adoption tried"
+  elif [ "$ans" = "$ADOPT_MCP_SETUP" ]; then c7_word="NOT registered after adoption tried"
   else c7_word="NOT registered (skipped)"
   fi
+  [ -n "$q_launch" ] && q_word="$q_word$(_adopt_mcp_launch_word "$q_launch")"
+  [ -n "$c7_launch" ] && c7_word="$c7_word$(_adopt_mcp_launch_word "$c7_launch")"
   ADOPT_MCP_RESULT="Qdrant: $q_word; Context7: $c7_word"   # BL-311-MCP-RESULT
-  [ "$c7" = "registered" ] && [ "$q" = "reachable" ] && return 0
+  if [ "$c7" = "registered" ] && [ "$q" = "reachable" ] \
+     && [ "$c7_launch" = "connected" ] && [ "$q_launch" = "connected" ]; then
+    return 0
+  fi
 
-  _adopt_mcp_consequence "$c7" "$q" "$qurl"
+  _adopt_mcp_consequence "$c7" "$q" "$qurl" "$c7_launch" "$c7_launch_why" "$c7_remove" "$q_launch" "$q_launch_why" "$q_remove"
   return 0
 }
 
@@ -348,8 +449,30 @@ EOF
 # EVERY edit). Cases E5 and E6 run the adopted project's own hooks to hold each
 # sentence to what the gate really does.
 _adopt_mcp_consequence() {                               # BL-311-MCP-LOUD-NOTE
-  local c7="$1" q="$2" qurl="$3"
+  local c7="$1" q="$2" qurl="$3" c7l="${4:-}" c7w="${5:-}" c7r="${6:-}" ql="${7:-}" qw="${8:-}" qr="${9:-}"
   adopt_blank
+  # REGISTERED BUT CLAUDE CODE CANNOT START IT is the worst state: registered
+  # makes it REQUIRED, and a required tool that never starts blocks every edit.
+  # Said first, plainly, with Claude Code's own command to back it out.
+  if [ "$ql" = "failed" ]; then                                           # BL-311-MCP-NOTE-LAUNCH
+    adopt_note "BLOCKED UNTIL FIXED: Qdrant IS registered, but Claude Code could NOT start it${qw:+ ($qw)}."
+    adopt_note "  Every file edit in this project is blocked until it can. To back the registration out:"
+    adopt_note "    $qr"
+  fi
+  if [ "$c7l" = "failed" ]; then
+    adopt_note "BLOCKED UNTIL FIXED: Context7 IS registered, but Claude Code could NOT start it${c7w:+ ($c7w)}."
+    adopt_note "  Every file edit in this project is blocked until it can. To back the registration out:"
+    adopt_note "    $c7r"
+  fi
+  if [ "$ql" = "unchecked" ] && [ -n "$qw" ] && [ "$qw" != "the claude command is not on PATH" ]; then
+    adopt_note "Whether Claude Code can start Qdrant could not be checked ($qw). If it cannot, every"
+    adopt_note "  file edit here is blocked until it can. Check it with: claude mcp get qdrant"
+  fi
+  if [ "$c7l" = "unchecked" ] && [ -n "$c7w" ] && [ "$c7w" != "the claude command is not on PATH" ]; then
+    adopt_note "Whether Claude Code can start Context7 could not be checked ($c7w). If it cannot, every"
+    adopt_note "  file edit here is blocked until it can. Check it with: claude mcp get context7"
+  fi
+  [ "$q" = "reachable" ] && [ "$c7" = "registered" ] && return 0
   adopt_note "NOT SET UP — what that means for Claude Code in this project:"
   case "$q" in
     unreachable|unknown)
