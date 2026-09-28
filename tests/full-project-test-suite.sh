@@ -924,6 +924,11 @@ run_child_suite "tests/test-brownfield-wp9c-session-layer.sh" \
 run_child_suite "tests/test-bl296-adopt-guardrails.sh" \
   "BL-296 row 33: the Development Guardrails on the adoption path" \
   "BL-296 adoption-Guardrails tests FAILED (run tests/test-bl296-adopt-guardrails.sh for details)"
+# BL-311 fixes 1 and 9: adoption offers the Qdrant and Context7 MCP servers the
+# session is checked for; every MCP reader honours CLAUDE_CONFIG_DIR.
+run_child_suite "tests/test-bl311-adopt-mcp.sh" \
+  "BL-311: the MCP servers on the adoption path, and CLAUDE_CONFIG_DIR" \
+  "BL-311 adoption-MCP tests FAILED (run tests/test-bl311-adopt-mcp.sh for details)"
 # BL-284: two verify-install.sh auto-fixers that could never run — has_context()
 # was unsatisfiable on an adopted project, and fix_superpowers ran a CLI verb
 # that does not exist.

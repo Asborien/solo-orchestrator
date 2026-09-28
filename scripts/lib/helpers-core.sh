@@ -8,6 +8,9 @@
 #   - run_with_timeout
 #   - guard_not_in_framework
 #   - soif_resolve_target_dir / guard_target_not_in_framework (BL-199)
+#   - soif_claude_config_dir / soif_claude_json_path /
+#     soif_claude_settings_path — where THIS Claude Code session keeps its
+#     config, honouring CLAUDE_CONFIG_DIR (BL-311)
 #
 # The heavier "full" surface (init_log/finalize_log log-file rotation
 # and MCP-detection helpers) lives in scripts/lib/helpers-full.sh.
@@ -1036,3 +1039,39 @@ soif_read_deployment() { soif_read_phase_state_key "$1" "deployment" "${2:-}"; }
 # soif_read_poc_mode <state-file> [default]
 soif_read_poc_mode()   { soif_read_phase_state_key "$1" "poc_mode" "${2:-}"; }
 # BL-095-STATE-READERS-END
+
+# ── Where Claude Code keeps THIS session's configuration (`## BL-311:`) ─────
+#
+# `CLAUDE_CONFIG_DIR` MOVES BOTH FILES, AND NOTHING FALLS BACK TO $HOME. With it
+# set, Claude Code keeps `.claude.json` (sign-in, and every user- and
+# local-scope MCP registration) and `settings.json` (user settings, plugins)
+# directly inside that directory. Measured 2026-09-28 on Claude Code 2.1.283:
+# `CLAUDE_CONFIG_DIR=<dir> claude mcp add -s user …` wrote `<dir>/.claude.json`
+# and touched nothing under $HOME; the documentation says the same ("If you've
+# set CLAUDE_CONFIG_DIR, Claude Code reads .claude.json from inside that
+# directory instead" — code.claude.com/docs/en/mcp-quickstart). Unset, the two
+# files are `~/.claude.json` and `~/.claude/settings.json`.
+#
+# WHY THIS IS A HELPER AND NOT FOUR LITERAL PATHS. Every MCP reader used to
+# spell `$HOME/.claude.json` itself, so in a session started with a clean
+# `CLAUDE_CONFIG_DIR` they all read the OPERATOR'S OTHER configuration: the
+# dogfood adoption of 2026-09-27 saw a Qdrant registration the session did not
+# have and declared it for the project, and the SessionStart hook — reading the
+# same wrong file — would have required every later session to call a tool it
+# did not have before any file edit. check-versions.sh reported both servers
+# `[OK]` over the same wrong file. A registration only counts when it is in the
+# files THIS session reads.
+#
+# Readers: scripts/lib/helpers-full.sh (the MCP predicates), scripts/probe-tool.sh
+# (check-versions.sh's MCP rows), the adoption driver's MCP step. The SessionStart
+# hook scripts/session-test-gate-check.sh sources nothing by design and carries
+# the same rule inline — `# BL-311-GATE-CONFIG` there is its sync sibling.
+soif_claude_config_dir() {
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then printf '%s' "$CLAUDE_CONFIG_DIR"; else printf '%s' "$HOME/.claude"; fi   # BL-311-CONFIG-DIR
+}
+soif_claude_json_path() {
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then printf '%s/.claude.json' "$CLAUDE_CONFIG_DIR"; else printf '%s/.claude.json' "$HOME"; fi   # BL-311-CONFIG-JSON
+}
+soif_claude_settings_path() {
+  printf '%s/settings.json' "$(soif_claude_config_dir)"
+}
