@@ -22244,3 +22244,28 @@ beside their `Edit(...)` twins (startup warnings).
 **Test-design lesson, for the rerun:** a clean `CLAUDE_CONFIG_DIR` also drops the user's MCP servers,
 so Stage 0 must register them the way the CLI Setup Addendum says.
 
+## BL-312: an opt-in "TL;DR mode" for the person the agent works for — greenfield and brownfield
+
+**Status:** Open — **DECIDED 2026-09-28 (Karl).** Build after `## BL-311:`'s nine fixes and BEFORE the
+clean dogfood rerun, so the technician persona tests it.
+
+**What it is.** The reply format Karl works with, offered to every project's user as a choice, because
+it is most useful to a non-developer: every reply the agent gives ends with exactly one plain-English
+TL;DR, self-contained (restated in full every time, never "as above"), carrying eight parts —
+
+1. what happened; 2. what it means for them; 3. next steps; 4. what is waiting on them; 5. the options;
+6. pros and cons for each option; 7. a recommendation with its reasoning; 8. what happens if they do
+nothing — plus every command they must run, in a fenced block, never named in prose.
+
+**Decided shape.**
+- **Enforced, not advised:** a Stop hook checks each reply for the TL;DR and its parts and asks the agent
+  to add what is missing — instruction-only formats drift over a long session.
+- **Chosen once, changeable:** one plain question in the greenfield intake and in adoption;
+  `reconfigure-project.sh` switches it afterwards.
+- **Layered on `docs/messaging-standard.md`**, which already requires a five-part plain-English half for
+  every *summary*. TL;DR mode extends that to every reply and adds parts 3, 4 and 6 and the command rule.
+
+**Open for the design:** where the choice is recorded (a manifest or phase-state key the hook and
+`CLAUDE.md` both read); the hook's check (which parts it can verify mechanically, and how it avoids
+re-prompting forever on a reply it cannot parse); and how it coexists with the Guardrails' own Stop hooks.
+
