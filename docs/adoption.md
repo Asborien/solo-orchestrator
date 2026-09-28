@@ -369,26 +369,54 @@ Qdrant is registered only once its database answers, and not at all if its
 container fails to start: a registered server with nothing behind it would
 block every file edit. If a container named `qdrant` already exists, the plan
 says `docker start qdrant` instead of `docker run`; if a database already
-answers on port 6333, only the registration is offered. **The container's ports
-are published on `127.0.0.1` only** — without the address, `-p` would put an
-unauthenticated database on every network interface. A container that already
-existed keeps whatever binding it was created with, so adoption reads it
-(`docker inspect`) and, when it listens on every interface, says so before the
-question and beside every later `docker start` hint (recorded with a stand-in
-`docker`):
+answers on port 6333, only the registration is offered. **A new container's
+ports are published on `127.0.0.1` only** — without an address, `-p` publishes
+on every network interface unless your Docker daemon sets a default bind
+address, and this database has no API key. (Docker's own documentation adds
+that on Docker Engine older than 28.0.0 on Linux, hosts on the same network
+segment can reach even ports published on `127.0.0.1` — moby/moby#45610.)
+
+A container that already exists keeps whatever binding it was created with, so
+whenever adoption finds one it reads it (`docker inspect`: the port bindings and
+what is mounted at `/qdrant/storage`), on every path — even when nothing is
+missing. When the bindings name no host address (or `0.0.0.0` / `::`) it says so
+before the question, and every later `docker start` hint points back at it; when
+Docker is not running, every `docker start` hint says the bindings could not be
+read and how to check them. Recorded with a stand-in `docker` shaped like a real
+container on the `qdrant_storage` volume:
 
 ```text
-   Your existing qdrant container publishes its ports on EVERY network interface,
-   with no API key: your session memory is reachable from your network while it runs.
-   Starting it keeps that. To bind it to this machine only, recreate it — the named
-   volume qdrant_storage keeps the data:
+   Your existing qdrant container's ports name no host address, which Docker
+   publishes on every network interface unless your Docker daemon sets a default
+   bind address — with no API key: while it runs, other machines on your network
+   may be able to reach your session memory.
+   Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it.
+   Its data is in the Docker volume qdrant_storage, which removing the container keeps:
      docker rm -f qdrant
      docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+   (On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment
+   can reach even ports published on 127.0.0.1 — moby/moby#45610.)
    Adoption does not do this for you.
 ```
 
-It never recreates the container itself: `docker start qdrant` stays the offered
-action.
+**The data is read, never assumed.** The volume in the recreate step is the one
+actually mounted — a container made from the framework's older Addendum sits on
+`qdrant_data`, and that is the name printed; a host folder is named and reused.
+If NOTHING is mounted at `/qdrant/storage` the data lives inside the container
+(`qdrant/qdrant:latest` declares no volume), and removing it would delete the
+data — so no `docker rm` is printed at all:
+
+```text
+   Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing
+   the container DELETES it. Copy it out first, while the container still exists:
+     docker cp qdrant:/qdrant/storage ./qdrant-storage-backup
+   then create the new container with a volume and copy that folder into it before
+   removing this one. No remove command is printed for a container whose data it
+   would destroy.
+```
+
+It never recreates or removes a container itself: `docker start qdrant` stays
+the offered action.
 
 `skip it`, a blank line, or the end of your input all mean skip — this question
 never stops an adoption:

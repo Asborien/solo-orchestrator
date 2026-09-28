@@ -146,33 +146,91 @@ _adopt_mcp_qdrant_container() {
   printf '%s\n' "$names" | grep -qx 'qdrant'
 }
 
-# _adopt_mcp_check_open — does the EXISTING `qdrant` container publish a port on
-# every network interface? Sets ADOPT_MCP_QDRANT_OPEN=1 when it does.
+# _adopt_mcp_inspect — HOW the EXISTING `qdrant` container is published, and
+# WHERE its data lives. One bounded `docker inspect`, stdin closed. Sets:
+#   ADOPT_MCP_QDRANT_BIND   open-all (a HostIp of 0.0.0.0 or ::) | open-default
+#                           (an EMPTY HostIp) | loopback | unread
+#   ADOPT_MCP_QDRANT_DATA   volume | bind | none (nothing at /qdrant/storage, or
+#                           a mount that does not outlive the container) | unread
+#   ADOPT_MCP_QDRANT_SRC    the volume's name, or the bind mount's host path
 #
-# `docker start` keeps the bindings a container was created with, so the
-# loopback-only `docker run` above protects nothing for a container that
-# already exists. Measured on this host: the operator's own `qdrant` container
-# reads `{"6333/tcp":[{"HostIp":"","HostPort":"6333"}],…}` — an empty HostIp is
-# every interface, with no API key. Adoption does NOT recreate it (that is the
-# operator's database); it says so, with the two commands that fix it. A
-# binding it cannot read is not claimed either way. Bounded, stdin closed.
-ADOPT_MCP_QDRANT_OPEN=0
-_adopt_mcp_check_open() {
-  local out="$ADOPT_WORK/mcp-inspect.out"
-  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
-  if jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "" or . == "0.0.0.0" or . == "::")' "$out" >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT
-    ADOPT_MCP_QDRANT_OPEN=1
+# WHY. `docker start` keeps the bindings a container was created with, so the
+# loopback-only `docker run` protects nothing for a container that already
+# exists — this host's own reads `{"6333/tcp":[{"HostIp":"","HostPort":"6333"}],…}`.
+# Per Docker's own documentation an EMPTY HostIp means the daemon's default
+# bind address, which is every interface unless the daemon sets `ip` /
+# `host_binding_ipv4` — so an empty one is reported as that, not as a verified
+# exposure. And the recreate step is only safe when the data is outside the
+# container: `qdrant/qdrant:latest` declares no VOLUME, and the framework's own
+# Addendum used `-v qdrant_data:` from 2026-04-04 to 06-28 — so the volume is
+# READ, never assumed. Adoption recreates nothing; it says what it read.
+ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""
+ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""
+_adopt_mcp_inspect() {
+  local out="$ADOPT_WORK/mcp-inspect.out" b="" m="" t=""
+  ADOPT_MCP_QDRANT_BIND="unread"; ADOPT_MCP_QDRANT_BIND_WHY="docker inspect could not read it"
+  ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""
+  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}{{"\n"}}{{json .Mounts}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
+  b="$(sed -n 1p "$out")"; m="$(sed -n 2p "$out")"
+  if printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "0.0.0.0" or . == "::")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT
+    ADOPT_MCP_QDRANT_BIND="open-all"
+  elif printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-DEFAULT
+    ADOPT_MCP_QDRANT_BIND="open-default"
+  elif printf '%s' "$b" | jq -e . >/dev/null 2>&1; then
+    ADOPT_MCP_QDRANT_BIND="loopback"; ADOPT_MCP_QDRANT_BIND_WHY=""
   fi
+  t="$(printf '%s' "$m" | jq -r '[.[]? | select(.Destination == "/qdrant/storage")] | (first // {}) | (.Type // "nothing")' 2>/dev/null)" || t=""
+  case "$t" in
+    volume|bind)                                                           # BL-311-MCP-DATA-KEPT
+      ADOPT_MCP_QDRANT_DATA="$t"
+      ADOPT_MCP_QDRANT_SRC="$(printf '%s' "$m" | jq -r '[.[]? | select(.Destination == "/qdrant/storage")] | first | (if .Type == "volume" then .Name else .Source end) // ""' 2>/dev/null | LC_ALL=C tr -d '\000-\037\177')"
+      [ -n "$ADOPT_MCP_QDRANT_SRC" ] || ADOPT_MCP_QDRANT_DATA="unread" ;;
+    '') : ;;
+    *) ADOPT_MCP_QDRANT_DATA="none" ;;                                   # BL-311-MCP-DATA-NONE
+  esac
   return 0
 }
 
+# _adopt_mcp_run_with SRC — the loopback `docker run`, keeping the data where it is.
+_adopt_mcp_run_with() {
+  printf 'docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v %s --restart unless-stopped qdrant/qdrant:latest' "$1"
+}
+
 _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
-  adopt_note "Your existing qdrant container publishes its ports on EVERY network interface,"
-  adopt_note "with no API key: your session memory is reachable from your network while it runs."
-  adopt_note "Starting it keeps that. To bind it to this machine only, recreate it — the named"
-  adopt_note "volume qdrant_storage keeps the data:"
-  adopt_note "  docker rm -f qdrant"
-  adopt_note "  $ADOPT_MCP_QDRANT_RUN"
+  case "$ADOPT_MCP_QDRANT_BIND" in
+    open-all)
+      adopt_note "Your existing qdrant container publishes its ports on EVERY network interface"
+      adopt_note "(its bindings name 0.0.0.0 or ::), with no API key: while it runs, other"
+      adopt_note "machines on your network may be able to reach your session memory." ;;
+    *)
+      adopt_note "Your existing qdrant container's ports name no host address, which Docker"
+      adopt_note "publishes on every network interface unless your Docker daemon sets a default"   # BL-311-MCP-DEFAULT-BIND-WORDING
+      adopt_note "bind address — with no API key: while it runs, other machines on your network"
+      adopt_note "may be able to reach your session memory." ;;
+  esac
+  adopt_note "Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it."
+  case "$ADOPT_MCP_QDRANT_DATA" in                     # BL-311-MCP-DATA-SAY
+    volume)
+      adopt_note "Its data is in the Docker volume $ADOPT_MCP_QDRANT_SRC, which removing the container keeps:"
+      adopt_note "  docker rm -f qdrant"
+      adopt_note "  $(_adopt_mcp_run_with "$ADOPT_MCP_QDRANT_SRC:/qdrant/storage")" ;;   # BL-311-MCP-DATA-VOLUME-RUN
+    bind)
+      adopt_note "Its data is in the host folder $ADOPT_MCP_QDRANT_SRC, which removing the container keeps:"
+      adopt_note "  docker rm -f qdrant"
+      adopt_note "  $(_adopt_mcp_run_with "\"$ADOPT_MCP_QDRANT_SRC:/qdrant/storage\"")" ;;
+    none)
+      adopt_note "Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing"
+      adopt_note "the container DELETES it. Copy it out first, while the container still exists:"
+      adopt_note "  docker cp qdrant:/qdrant/storage ./qdrant-storage-backup"
+      adopt_note "then create the new container with a volume and copy that folder into it before"
+      adopt_note "removing this one. No remove command is printed for a container whose data it"
+      adopt_note "would destroy." ;;
+    *)
+      adopt_note "Where it keeps its data could not be read, so no remove command is printed."
+      adopt_note "Check it first: docker inspect -f '{{json .Mounts}}' qdrant" ;;
+  esac
+  adopt_note "(On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment"
+  adopt_note "can reach even ports published on 127.0.0.1 — moby/moby#45610.)"   # BL-311-MCP-MOBY-CAVEAT
   adopt_note "Adoption does not do this for you."
 }
 
@@ -231,6 +289,13 @@ _adopt_mcp_launch() {
     ADOPT_MCP_LAUNCH_WHY="the claude command is not on PATH"; return 0
   fi
   out="$ADOPT_WORK/mcp-get-$name.out"
+  # RESIDUAL, recorded by the round-3 review: inside this driver a BARE call
+  # inherits the operator's answer pipe — state an earlier adoption step leaves
+  # behind (fd 0 reads as a PIPE at the first line of adopt_mcp_resolve) — so
+  # any future bare run_with_deadline / run_with_timeout in the driver hands
+  # its child the operator's stdin. The `( … )` subshell here happens to give
+  # the child /dev/null; the `</dev/null` is what this line relies on, and
+  # every new call must carry both.
   ( cd "$ADOPT_WORK" 2>/dev/null && run_with_deadline "$secs" claude mcp get "$name" ) </dev/null >"$out" 2>&1 || rc=$?   # BL-311-MCP-LAUNCH-STDIN
   line="$(grep -m1 'To remove this server, run:' "$out" 2>/dev/null | LC_ALL=C tr -d '\000-\037\177')"
   case "$line" in *"run: claude mcp remove "*) ADOPT_MCP_LAUNCH_REMOVE="${line#*run: }" ;; esac
@@ -290,7 +355,7 @@ adopt_mcp_resolve() {                                  # BL-311-MCP-STEP
   local st="" c7="" q="" qurl="" c7_why="" q_why="" q_db="" raw="" ans="" row="" srv="" cmd=""
   local c7_word="" q_word="" q_failed=0 fp_before="" fp_after="" c7_before="" q_before=""
   ADOPT_MCP_PLAN=()
-  ADOPT_MCP_QDRANT_OPEN=0
+  ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""; ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""
   # `SOIF_ADOPT_MCP=off` IS A TEST SEAM, like SOIF_ADOPT_QDRANT and
   # SOIF_ADOPT_GUARDRAILS_DIR. Every adoption suite written before this step
   # pipes a fixed answer sequence; on a developer machine that HAS `claude`
@@ -321,6 +386,21 @@ EOF
   adopt_note "  $(soif_claude_settings_path)"
   _adopt_mcp_describe "$c7" "$q" "$qurl"
 
+  # ── AN EXISTING qdrant CONTAINER, READ ONCE FOR EVERY PATH BELOW ─────────
+  # Every path that prints or plans `docker start` — whatever the registration
+  # state, and even when nothing is offered (the state this host is in: Qdrant
+  # registered and answering from a container published on every interface) —
+  # reads it here, so the note below is true of all of them.
+  local d_up=0 q_ctr=0
+  if command -v docker >/dev/null 2>&1; then
+    if _adopt_mcp_docker_up; then
+      d_up=1
+      if _adopt_mcp_qdrant_container; then q_ctr=1; _adopt_mcp_inspect; fi   # BL-311-MCP-HOIST
+    else
+      ADOPT_MCP_QDRANT_BIND="unread"; ADOPT_MCP_QDRANT_BIND_WHY="Docker is not running here"
+    fi
+  fi
+
   # ── WHAT COULD BE DONE HERE, AND WHY NOT WHERE IT CANNOT ──────────────────
   if [ "$c7" != "registered" ]; then
     if ! command -v claude >/dev/null 2>&1; then c7_why="the claude command is not on PATH (set up Claude Code first)"
@@ -332,11 +412,9 @@ EOF
     unregistered)
       if ! command -v claude >/dev/null 2>&1; then q_why="the claude command is not on PATH (set up Claude Code first)"
       elif ! command -v uvx >/dev/null 2>&1; then q_why="uvx is not on PATH, and the server runs through it (uvx comes with uv — set up uv first)"
-      elif _adopt_mcp_local_qdrant; then
-        q_db="already answering at http://localhost:6333"
-        command -v docker >/dev/null 2>&1 && _adopt_mcp_qdrant_container && _adopt_mcp_check_open
-      elif ! _adopt_mcp_docker_up; then q_why="Docker is not running (start Docker Desktop, or set Docker up first)"
-      elif _adopt_mcp_qdrant_container; then q_db="$ADOPT_MCP_QDRANT_START"; _adopt_mcp_check_open
+      elif _adopt_mcp_local_qdrant; then q_db="already answering at http://localhost:6333"
+      elif [ "$d_up" != 1 ]; then q_why="Docker is not running (start Docker Desktop, or set Docker up first)"
+      elif [ "$q_ctr" = 1 ]; then q_db="$ADOPT_MCP_QDRANT_START"
       else q_db="$ADOPT_MCP_QDRANT_RUN"
       fi
       if [ -z "$q_why" ]; then
@@ -345,8 +423,8 @@ EOF
       fi ;;
     unreachable)
       if ! _adopt_mcp_is_local_url "$qurl"; then q_why="it is registered at $qurl, which is not a database this machine runs — start that server"
-      elif ! _adopt_mcp_docker_up; then q_why="Docker is not running (start Docker Desktop, or set Docker up first)"
-      elif _adopt_mcp_qdrant_container; then ADOPT_MCP_PLAN[${#ADOPT_MCP_PLAN[@]}]="qdrant|$ADOPT_MCP_QDRANT_START"; _adopt_mcp_check_open
+      elif [ "$d_up" != 1 ]; then q_why="Docker is not running (start Docker Desktop, or set Docker up first)"
+      elif [ "$q_ctr" = 1 ]; then ADOPT_MCP_PLAN[${#ADOPT_MCP_PLAN[@]}]="qdrant|$ADOPT_MCP_QDRANT_START"
       else ADOPT_MCP_PLAN[${#ADOPT_MCP_PLAN[@]}]="qdrant|$ADOPT_MCP_QDRANT_RUN"
       fi ;;
     unknown)
@@ -355,7 +433,7 @@ EOF
 
   [ -n "$c7_why" ] && adopt_note "Adoption cannot set up Context7 here: $c7_why."
   [ -n "$q_why" ] && adopt_note "Adoption cannot set up Qdrant here: $q_why."
-  [ "$ADOPT_MCP_QDRANT_OPEN" = 1 ] && _adopt_mcp_open_note   # BL-311-MCP-OPEN-SAY
+  case "$ADOPT_MCP_QDRANT_BIND" in open-*) _adopt_mcp_open_note ;; esac   # BL-311-MCP-OPEN-SAY
 
   ans="$ADOPT_MCP_SKIP"
   if [ "${#ADOPT_MCP_PLAN[@]}" -gt 0 ]; then            # BL-311-MCP-ASK-ONLY-IF-ACTIONABLE
@@ -531,12 +609,12 @@ _adopt_mcp_consequence() {                               # BL-311-MCP-LOUD-NOTE
     unregistered)
       adopt_note "  $ADOPT_MCP_QDRANT_RUN"
       adopt_note "    (or, if a container named qdrant already exists: $ADOPT_MCP_QDRANT_START)"
-      _adopt_mcp_open_hint
+      _adopt_mcp_open_hint   # BL-311-MCP-OPEN-HINT-UNREGISTERED
       adopt_note "  $ADOPT_MCP_QDRANT_ADD" ;;
     unreachable|unknown)
       if _adopt_mcp_is_local_url "$qurl"; then
         adopt_note "  $ADOPT_MCP_QDRANT_START"
-        _adopt_mcp_open_hint
+        _adopt_mcp_open_hint   # BL-311-MCP-OPEN-HINT-UNREACHABLE
         adopt_note "    (or, if there is no container named qdrant: $ADOPT_MCP_QDRANT_RUN)"
       else
         adopt_note "  (Qdrant: start the server at $qurl — it is not one this machine runs)"
@@ -546,13 +624,22 @@ _adopt_mcp_consequence() {                               # BL-311-MCP-LOUD-NOTE
   return 0
 }
 
-# _adopt_mcp_open_hint — beside every `docker start` hint: the container that
-# starts is the one with the all-interfaces binding.
+# _adopt_mcp_open_hint — beside every `docker start` hint: how the container
+# that starts is published, as read above, or that it could not be read.
 _adopt_mcp_open_hint() {
-  [ "$ADOPT_MCP_QDRANT_OPEN" = 1 ] || return 0             # BL-311-MCP-OPEN-HINT
-  adopt_note "    (your existing qdrant container listens on EVERY network interface — to bind it to"
-  adopt_note "     this machine only: docker rm -f qdrant, then the docker run line above; the"
-  adopt_note "     volume keeps the data)"
+  case "$ADOPT_MCP_QDRANT_BIND" in                           # BL-311-MCP-OPEN-HINT
+    open-all)
+      adopt_note "    (your existing qdrant container is published on every network interface —"
+      adopt_note "     see 'Your existing qdrant container' above before starting it)" ;;
+    open-default)
+      adopt_note "    (your existing qdrant container is published on every network interface unless"
+      adopt_note "     your Docker daemon sets a default bind address — see 'Your existing qdrant"
+      adopt_note "     container' above before starting it)" ;;
+    unread)
+      adopt_note "    (how an existing qdrant container is published could not be read — ${ADOPT_MCP_QDRANT_BIND_WHY:-no reason recorded};"   # BL-311-MCP-UNREAD-HINT
+      adopt_note "     check before starting it: docker inspect -f '{{json .HostConfig.PortBindings}}' qdrant)" ;;
+  esac
+  return 0
 }
 
 # adopt_mcp_restart_note — printed at the act boundary, BEFORE "NEXT".
