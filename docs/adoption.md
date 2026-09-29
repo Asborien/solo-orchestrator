@@ -396,80 +396,53 @@ Recorded with a stand-in `docker` shaped like a real container on the
    Its data is in the Docker volume qdrant_storage, which removing the container keeps:
      docker rm -f qdrant &&
      docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+     # If docker run fails, the data is still where it was: fix what it reports,
+     # then paste the docker run line again.
    (On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment
    can reach even ports published on 127.0.0.1 — moby/moby#45610.)
    Adoption does not do this for you.
 ```
 
-**The data is read, never assumed.** The volume in the recreate step is the one
-mounted AT `/qdrant/storage` — not a snapshots mount listed before it — so a
-container made from the framework's older Addendum gets `qdrant_data`, and a
-host folder is named and reused, shell-quoted. If the mounts cannot be read, no
-remove command is printed. If NOTHING is mounted there the data lives inside the
-container (`qdrant/qdrant:latest` declares no volume), removing it would delete
-the data, and the run prints a sequence that can be followed as written (the
-round-5 review ran it on Docker 29.2.1 and the data survived) — create a new
-backup folder in your home directory (never the project), stop the database so
-the copy is consistent, copy the folder's contents, check `collections` is in
-it, rename rather than remove the old container, and remove it only once the
-new one shows the data. The backup folder AND the new volume are both named to
-the second: `docker create` silently reuses a volume that already exists, and
-with date-only names the round-6 review measured a same-day re-run bring the
-new container up with an earlier run's collections. The steps are safe to paste
-whole into bash or zsh: they are ONE `&&` chain, so the first step that fails
-stops the rest — a `mkdir` that finds the folder already there, or an `ls` that
-finds no `collections` in the copy — and every note is a `#` line above or below
-the chain, never between its links, so pasting runs no prose. (zsh's default
-leaves `INTERACTIVE_COMMENTS` off, so there each `#` line prints `command not
-found: #` and does nothing else.) If `mkdir` refuses, the note says to keep that
-folder, look inside it and paste again under fresh names — never to delete it.
-Nothing checks the volume itself: pasted again after the folder was moved
-aside, the same block gets past `mkdir`. A container started with `--rm` is
-deleted by `docker stop`, so for one of those the copy comes first and the run
-says why. So is one with a tmpfs at `/qdrant/storage` — its data is in memory
-and gone on stop — which `docker inspect` shows only under
-`.HostConfig.Tmpfs`, not among its mounts, and keeps exactly as typed —
-`/qdrant/storage/`, `/qdrant//storage` and `/qdrant/./storage` all arrive
-verbatim, often beside other keys such as `/tmp`. The run reads both places,
-cleans each path the way Go's `path.Clean` does before comparing it exactly
-(so a volume at `/qdrant/storage/snapshots` is not taken for the data), and
-says the data is in memory. `docker cp` copies nothing out of a tmpfs, so for
-one of those the copy is `docker exec qdrant tar -C /qdrant/storage -cf - . >
-<backup>.tar`, then a local untar, taken while it runs — into a file, not
-through a pipe, because under live writes the tar inside can exit 1 ("file
-changed as we read it") and a pipe would report only the local end's 0. A
-failed tar stops the chain with the data still in memory, and the note says to
-paste again. The container is then renamed while it still runs — so a
-`qdrant-old` already there stops the chain before anything is lost — and only
-then stopped. Below the
-chain, a `#` note says how to get back if a step after the stop fails: start
-the old container again (renaming `qdrant-old` back first if the rename step
-ran), or, where stopping emptied it, restore from the backup folder. Recorded
-with a stand-in `docker`; `/Users/you` stands for the operator's home
-directory:
+**The data is read, never assumed — and a recreate is printed only when the
+data is shown to outlive the container.** The volume in the recreate step is the
+one mounted AT `/qdrant/storage` — not a snapshots mount listed before it, and
+not one at a sub-path such as `/qdrant/storage/snapshots` — so a container made
+from the framework's older Addendum gets `qdrant_data`, and a host folder is
+named and reused, shell-quoted. Every path is cleaned the way Go's `path.Clean`
+does before it is compared exactly, because Docker keeps a `--tmpfs` path
+verbatim (`/qdrant/storage/`, `/qdrant//storage`, `/qdrant/x/../storage` all
+arrive as typed). The two commands are printed only when an **allow-list**
+passes: exactly one mount at `/qdrant/storage`, a volume or a host folder; not
+started with `--rm`; no tmpfs key there; for a volume, `docker volume inspect`
+shows no `tmpfs`/`ramfs` backing (a `--opt type=tmpfs` volume keeps nothing
+once the container stops); and, if the container runs, its own
+`/proc/mounts` agrees that `/qdrant/storage` is not a tmpfs. Anything that
+could not be read fails the list. A `#` line below the two commands says what
+to do if `docker run` fails: the data is still where it was.
+
+Every other shape — nothing mounted, `--rm`, a tmpfs in any spelling, a
+tmpfs-backed volume, two mounts, anything unread — gets what was read and a
+pointer to [Recreating an exposed Qdrant container](#recreating-an-exposed-qdrant-container),
+and **no command at all**, not even one inside a sentence. Earlier versions of
+this step printed recovery chains for those shapes; each round of review on
+real Docker found the next storage shape they lost data on, so they were
+replaced by the written procedure below. Recorded with a stand-in `docker` for a
+container with nothing mounted; `/path/to/solo-orchestrator` stands for the
+framework checkout:
 
 ```text
-   Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing
-   the container DELETES it. To move it safely, paste these lines whole — they stop
-   at the first step that fails:
-     # If the mkdir step says the folder exists, nothing after it ran. Never delete
-     # that folder blindly: it may hold an earlier copy. Look inside it, then paste
-     # these again with /Users/you/qdrant-storage-backup-20260928-142501-2 as the folder and qdrant_storage_20260928-142501-2 as the volume.
-     # The ls step stops everything if the copy has no collections folder. Look at
-     # what it lists: those are the collections the new container will hold.
-     mkdir /Users/you/qdrant-storage-backup-20260928-142501 &&
-     docker stop qdrant &&
-     docker cp qdrant:/qdrant/storage/. /Users/you/qdrant-storage-backup-20260928-142501 &&
-     ls /Users/you/qdrant-storage-backup-20260928-142501/collections &&
-     docker rename qdrant qdrant-old &&
-     docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage_20260928-142501:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest &&
-     docker cp /Users/you/qdrant-storage-backup-20260928-142501/. qdrant:/qdrant/storage/ &&
-     docker start qdrant
-     # If a step after docker stop fails, bring the old container back. If the rename
-     # step had not run: docker start qdrant. If it had, the old one is qdrant-old:
-     # docker rm qdrant if docker create made a new one, then docker rename qdrant-old
-     # qdrant, then docker start qdrant.
-     # Only once the new container answers with your data: docker rm qdrant-old
+   Your existing qdrant container's ports name no host address, which Docker
+   publishes on every network interface unless your Docker daemon sets a default
+   bind address: while it runs, other machines on your network may be able to reach
+   it — and no API key is set in its environment (a key in a Qdrant config file would not show here).
+   Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it.
+   What was read about where its data lives: nothing is mounted at /qdrant/storage, so its data is inside the container, and removing the container DELETES it.
+   That is not shown to outlive the container, so NO commands are printed here: one
+   wrong step would lose the data. How to recreate it safely, shape by shape:
+   "Recreating an exposed Qdrant container" in /path/to/solo-orchestrator/docs/adoption.md.
+   (On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment
+   can reach even ports published on 127.0.0.1 — moby/moby#45610.)
+   Adoption does not do this for you.
 ```
 
 It never recreates or removes a container itself: `docker start qdrant` stays
@@ -514,6 +487,120 @@ the phase checks, the tool matrix and the [CLI Setup Addendum](cli-setup-addendu
 — printed and ran that failing order; all of them now use this one.
 
 ---
+
+## Recreating an exposed Qdrant container
+
+Adoption points here when it found an existing `qdrant` container reachable
+beyond `127.0.0.1` and could **not** show that its data outlives the container.
+It printed what it read and changed nothing. Recreating the container on
+loopback is still the fix; this section is how to do it without losing the
+data. Adoption does none of it for you.
+
+**1. Find out where the data lives.** Read these before anything else:
+
+```sh
+docker inspect -f '{{json .Mounts}}' qdrant
+docker inspect -f '{{json .HostConfig.Tmpfs}} {{json .HostConfig.AutoRemove}}' qdrant
+```
+
+For a volume at `/qdrant/storage`, also `docker volume inspect -f '{{json
+.Options}}' <name>`; and while the container runs, `docker exec qdrant awk
+'$2=="/qdrant/storage"{print $3}' /proc/mounts` shows what its own kernel
+mounted there. Compare paths after cleaning them: Docker keeps a `--tmpfs` path
+as typed, so `/qdrant/storage/`, `/qdrant//storage` and `/qdrant/x/../storage`
+are all `/qdrant/storage`. The shapes:
+
+| What you find | Where the data is | What stopping or removing does |
+|---|---|---|
+| nothing at `/qdrant/storage` | inside the container | removing it deletes the data |
+| `AutoRemove` true (`--rm`) | wherever it is mounted | stopping it deletes the container |
+| a tmpfs there, or a volume whose options name `tmpfs`/`ramfs`, or `/proc/mounts` saying tmpfs | in memory | stopping it deletes the data |
+| two mounts claiming it, or anything you cannot read | unknown | do not go on until it is known |
+
+**2. Back it up, then move it.** The rules every sequence below follows: back
+up into a NEW folder in your home directory, never the project; copy while it
+runs whenever stopping deletes something; check the copy has a `collections`
+folder before anything is stopped or removed; rename the old container rather
+than remove it; create the new one with a named volume and copy the backup in;
+remove the old one only once the new one answers with your data. Paste each
+block whole — it is one `&&` chain, so the first step that fails stops the rest,
+and it carries no comments, because zsh's default runs a `#` line as a command.
+If `mkdir` says the folder exists, stop and look inside it; never delete it.
+
+Nothing mounted, not started with `--rm` — stop first, so the copy is
+consistent:
+
+```sh
+S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-storage-backup-$S"
+mkdir "$B" &&
+docker stop qdrant &&
+docker cp qdrant:/qdrant/storage/. "$B" &&
+ls "$B/collections" &&
+docker rename qdrant qdrant-old &&
+docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v "qdrant_storage_$S:/qdrant/storage" --restart unless-stopped qdrant/qdrant:latest &&
+docker cp "$B/." qdrant:/qdrant/storage/ &&
+docker start qdrant
+```
+
+Started with `--rm` — stopping deletes it, so copy while it runs (not a
+point-in-time copy: stop whatever writes to it first), and there is nothing to
+rename:
+
+```sh
+S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-storage-backup-$S"
+mkdir "$B" &&
+docker cp qdrant:/qdrant/storage/. "$B" &&
+ls "$B/collections" &&
+docker stop qdrant &&
+docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v "qdrant_storage_$S:/qdrant/storage" --restart unless-stopped qdrant/qdrant:latest &&
+docker cp "$B/." qdrant:/qdrant/storage/ &&
+docker start qdrant
+```
+
+In memory (a tmpfs, a tmpfs-backed volume, or `/proc/mounts` says tmpfs) —
+`docker cp` copies nothing out of a tmpfs, so the copy is made by `tar` inside
+the container, into a file rather than through a pipe: under live writes that
+`tar` can exit 1 ("file changed as we read it"), and a pipe would hide it. The
+container is renamed while it still runs, so an existing `qdrant-old` stops the
+chain before anything is lost; the new container gets a plain named volume,
+never the tmpfs-backed one. If it was also started with `--rm`, replace the two
+lines `docker rename qdrant qdrant-old &&` and `docker stop qdrant-old &&` with
+`docker stop qdrant &&`.
+
+```sh
+S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-storage-backup-$S"
+mkdir "$B" &&
+docker exec qdrant tar -C /qdrant/storage -cf - . > "$B.tar" &&
+tar -C "$B" -xf "$B.tar" &&
+ls "$B/collections" &&
+docker rename qdrant qdrant-old &&
+docker stop qdrant-old &&
+docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v "qdrant_storage_$S:/qdrant/storage" --restart unless-stopped qdrant/qdrant:latest &&
+docker cp "$B/." qdrant:/qdrant/storage/ &&
+docker start qdrant
+```
+
+**3. If a step fails.** Before `docker stop`, nothing was lost: the data is
+where it was (for the in-memory case, a failed `tar` means stop what writes to
+it and paste the block again). After the stop, when the old container still
+holds the data (nothing mounted, not `--rm`): if the rename had not run,
+`docker start qdrant`; if it had, `docker rm qdrant` if `docker create` made a
+new one, then `docker rename qdrant-old qdrant` and `docker start qdrant`. When
+stopping emptied it (`--rm`, in memory), the data is only in `$B`: paste the
+`docker create`, `docker cp` and `docker start` lines again, leaving out
+`docker create` if it already made the new container.
+
+**4. Finish.** Check the new container answers with your collections
+(`curl -s http://127.0.0.1:6333/collections`, with an `api-key` header if it has
+a key), then `docker rm qdrant-old` if
+there is one, and keep `$B` (and `$B.tar`) until you are sure. Then run the
+adoption's `claude mcp add` line for Qdrant, if it was skipped.
+
+With literal names in place of `$S` and `$B`, these are the sequences the BL-311
+reviews ran on real Docker while this step
+printed them (the nothing-mounted and `--rm` ones, and the tmpfs one with
+`--tmpfs /qdrant/storage` in its uncleaned spellings); the tmpfs-backed volume
+follows the same in-memory sequence and was not run separately.
 
 ## Where it lands: phase 0, always
 
