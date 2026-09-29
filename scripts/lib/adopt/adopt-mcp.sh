@@ -146,87 +146,134 @@ _adopt_mcp_qdrant_container() {
   printf '%s\n' "$names" | grep -qx 'qdrant'
 }
 
-# _adopt_mcp_inspect — HOW the EXISTING `qdrant` container is published, and
-# WHERE its data lives. One bounded `docker inspect`, stdin closed. Sets:
-#   ADOPT_MCP_QDRANT_BIND   open-all (a HostIp of 0.0.0.0 or ::) | open-default
-#                           (an EMPTY HostIp) | loopback | unread
+# _adopt_mcp_inspect — HOW the EXISTING `qdrant` container is published, WHERE
+# its data lives, and WHETHER it has an API key. One bounded `docker inspect`
+# (bindings, mounts, env — one JSON document per line), stdin closed. Sets:
+#   ADOPT_MCP_QDRANT_BIND   open-all (a HostIp of 0.0.0.0) | open-v6 (::, every
+#                           IPv6 address) | open-default (an EMPTY HostIp) |
+#                           loopback | unread (inspect failed or unparseable)
 #   ADOPT_MCP_QDRANT_DATA   volume | bind | none (nothing at /qdrant/storage, or
 #                           a mount that does not outlive the container) | unread
 #   ADOPT_MCP_QDRANT_SRC    the volume's name, or the bind mount's host path
+#   ADOPT_MCP_QDRANT_KEY    set | unset | unread (QDRANT__SERVICE__API_KEY)
+#
+# EVERY FIELD STARTS AT `unread` AND ONLY A PARSED ANSWER MOVES IT: a failed or
+# garbled inspect must never read as "loopback" or "data kept".
 #
 # WHY. `docker start` keeps the bindings a container was created with, so the
 # loopback-only `docker run` protects nothing for a container that already
 # exists — this host's own reads `{"6333/tcp":[{"HostIp":"","HostPort":"6333"}],…}`.
-# Per Docker's own documentation an EMPTY HostIp means the daemon's default
-# bind address, which is every interface unless the daemon sets `ip` /
-# `host_binding_ipv4` — so an empty one is reported as that, not as a verified
-# exposure. And the recreate step is only safe when the data is outside the
-# container: `qdrant/qdrant:latest` declares no VOLUME, and the framework's own
-# Addendum used `-v qdrant_data:` from 2026-04-04 to 06-28 — so the volume is
-# READ, never assumed. Adoption recreates nothing; it says what it read.
+# Per Docker's documentation an EMPTY HostIp means the daemon's default bind
+# address — every interface unless the daemon sets `ip` / `host_binding_ipv4` —
+# so it is reported as that, not as a verified exposure; `::` is every IPv6
+# address. And the recreate advice is only safe when the data is outside the
+# container: `qdrant/qdrant:latest` declares no VOLUME, the framework's own
+# Addendum used `-v qdrant_data:` from 2026-04-04 to 06-28, and a container can
+# mount /qdrant/snapshots while /qdrant/storage stays inside it — so the mount
+# AT /qdrant/storage is read, never assumed. Adoption recreates nothing.
 ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""
-ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""
+ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"
 _adopt_mcp_inspect() {
-  local out="$ADOPT_WORK/mcp-inspect.out" b="" m="" t=""
-  ADOPT_MCP_QDRANT_BIND="unread"; ADOPT_MCP_QDRANT_BIND_WHY="docker inspect could not read it"
-  ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""
-  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}{{"\n"}}{{json .Mounts}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
-  b="$(sed -n 1p "$out")"; m="$(sed -n 2p "$out")"
-  if printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "0.0.0.0" or . == "::")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT
+  local out="$ADOPT_WORK/mcp-inspect.out" b="" m="" e="" sm="" t=""
+  ADOPT_MCP_QDRANT_BIND="unread"; ADOPT_MCP_QDRANT_BIND_WHY="docker inspect could not read it"   # BL-311-MCP-INSPECT-FAILCLOSED
+  ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"
+  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}{{"\n"}}{{json .Mounts}}{{"\n"}}{{json .Config.Env}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
+  b="$(sed -n 1p "$out")"; m="$(sed -n 2p "$out")"; e="$(sed -n 3p "$out")"
+  if printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "0.0.0.0")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT
     ADOPT_MCP_QDRANT_BIND="open-all"
+  elif printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "::")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-V6
+    ADOPT_MCP_QDRANT_BIND="open-v6"
   elif printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-DEFAULT
     ADOPT_MCP_QDRANT_BIND="open-default"
-  elif printf '%s' "$b" | jq -e . >/dev/null 2>&1; then
+  elif printf '%s' "$b" | jq -e 'type == "object" or type == "null"' >/dev/null 2>&1; then
     ADOPT_MCP_QDRANT_BIND="loopback"; ADOPT_MCP_QDRANT_BIND_WHY=""
   fi
-  t="$(printf '%s' "$m" | jq -r '[.[]? | select(.Destination == "/qdrant/storage")] | (first // {}) | (.Type // "nothing")' 2>/dev/null)" || t=""
-  case "$t" in
-    volume|bind)                                                           # BL-311-MCP-DATA-KEPT
-      ADOPT_MCP_QDRANT_DATA="$t"
-      ADOPT_MCP_QDRANT_SRC="$(printf '%s' "$m" | jq -r '[.[]? | select(.Destination == "/qdrant/storage")] | first | (if .Type == "volume" then .Name else .Source end) // ""' 2>/dev/null | LC_ALL=C tr -d '\000-\037\177')"
-      [ -n "$ADOPT_MCP_QDRANT_SRC" ] || ADOPT_MCP_QDRANT_DATA="unread" ;;
-    '') : ;;
-    *) ADOPT_MCP_QDRANT_DATA="none" ;;                                   # BL-311-MCP-DATA-NONE
-  esac
+  # THE MOUNT AT /qdrant/storage, and only that one — selected ONCE.
+  if printf '%s' "$m" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    sm="$(printf '%s' "$m" | jq -c '[.[] | select(.Destination == "/qdrant/storage")] | first // empty' 2>/dev/null)"   # BL-311-MCP-DATA-SELECT
+    t="$(printf '%s' "$sm" | jq -r '.Type // ""' 2>/dev/null)"
+    case "$t" in
+      volume|bind)                                                         # BL-311-MCP-DATA-KEPT
+        ADOPT_MCP_QDRANT_DATA="$t"
+        ADOPT_MCP_QDRANT_SRC="$(printf '%s' "$sm" | jq -r '(if .Type == "volume" then .Name else .Source end) // ""' 2>/dev/null | LC_ALL=C tr -d '\000-\037\177')"
+        [ -n "$ADOPT_MCP_QDRANT_SRC" ] || ADOPT_MCP_QDRANT_DATA="unread" ;;
+      *) ADOPT_MCP_QDRANT_DATA="none" ;;                                 # BL-311-MCP-DATA-NONE
+    esac
+  fi
+  # AN API KEY IS READ, NOT ASSUMED ABSENT. The value is never printed.
+  if printf '%s' "$e" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    if printf '%s' "$e" | jq -e 'any(.[]; (type == "string") and test("^QDRANT__SERVICE__API_KEY=."))' >/dev/null 2>&1; then   # BL-311-MCP-KEY-DETECT
+      ADOPT_MCP_QDRANT_KEY="set"
+    else
+      ADOPT_MCP_QDRANT_KEY="unset"
+    fi
+  fi
   return 0
 }
 
+# _adopt_mcp_q ARG — ARG quoted for a shell (`printf %q`), so a path carrying
+# `$`, a backtick, a quote or a space is pasted as the literal it is.
+_adopt_mcp_q() { printf '%q' "$1"; }   # BL-311-MCP-QUOTE
+
 # _adopt_mcp_run_with SRC — the loopback `docker run`, keeping the data where it is.
 _adopt_mcp_run_with() {
-  printf 'docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v %s --restart unless-stopped qdrant/qdrant:latest' "$1"
+  printf 'docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v %s --restart unless-stopped qdrant/qdrant:latest' "$(_adopt_mcp_q "$1:/qdrant/storage")"
 }
 
 _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
+  local key="" bk="" vol="" day=""
+  case "$ADOPT_MCP_QDRANT_KEY" in
+    set)   key="it has an API key set (QDRANT__SERVICE__API_KEY), so reaching it is not the same as reading it" ;;
+    unset) key="it has NO API key, so anything that reaches it can read your session memory" ;;
+    *)     key="whether it has an API key could not be read" ;;
+  esac
   case "$ADOPT_MCP_QDRANT_BIND" in
     open-all)
-      adopt_note "Your existing qdrant container publishes its ports on EVERY network interface"
-      adopt_note "(its bindings name 0.0.0.0 or ::), with no API key: while it runs, other"
-      adopt_note "machines on your network may be able to reach your session memory." ;;
+      adopt_note "Your existing qdrant container publishes its ports on every network interface"
+      adopt_note "(its bindings name 0.0.0.0): while it runs, other machines on your network may be"
+      adopt_note "able to reach it — and $key." ;;
+    open-v6)
+      adopt_note "Your existing qdrant container publishes its ports on every IPv6 address of this"
+      adopt_note "machine (its bindings name ::): while it runs, other machines that reach it over"
+      adopt_note "IPv6 may be able to reach it — and $key." ;;
     *)
       adopt_note "Your existing qdrant container's ports name no host address, which Docker"
       adopt_note "publishes on every network interface unless your Docker daemon sets a default"   # BL-311-MCP-DEFAULT-BIND-WORDING
-      adopt_note "bind address — with no API key: while it runs, other machines on your network"
-      adopt_note "may be able to reach your session memory." ;;
+      adopt_note "bind address: while it runs, other machines on your network may be able to reach"
+      adopt_note "it — and $key." ;;
   esac
   adopt_note "Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it."
   case "$ADOPT_MCP_QDRANT_DATA" in                     # BL-311-MCP-DATA-SAY
     volume)
       adopt_note "Its data is in the Docker volume $ADOPT_MCP_QDRANT_SRC, which removing the container keeps:"
       adopt_note "  docker rm -f qdrant"
-      adopt_note "  $(_adopt_mcp_run_with "$ADOPT_MCP_QDRANT_SRC:/qdrant/storage")" ;;   # BL-311-MCP-DATA-VOLUME-RUN
+      adopt_note "  $(_adopt_mcp_run_with "$ADOPT_MCP_QDRANT_SRC")" ;;   # BL-311-MCP-DATA-VOLUME-RUN
     bind)
       adopt_note "Its data is in the host folder $ADOPT_MCP_QDRANT_SRC, which removing the container keeps:"
       adopt_note "  docker rm -f qdrant"
-      adopt_note "  $(_adopt_mcp_run_with "\"$ADOPT_MCP_QDRANT_SRC:/qdrant/storage\"")" ;;
+      adopt_note "  $(_adopt_mcp_run_with "$ADOPT_MCP_QDRANT_SRC")" ;;
     none)
+      # A SEQUENCE THAT CAN BE FOLLOWED LITERALLY: stop first (a point-in-time
+      # copy, not a running database copied file by file), back up to an
+      # absolute path under $HOME (never the cwd, which may be the adopted
+      # repo), free the name by RENAMING the old container, create the new one
+      # without starting it, copy the backup in, start it — and remove the old
+      # one only once the new one shows the data.
+      day="$(date +%Y%m%d 2>/dev/null)"; [ -n "$day" ] || day="backup"
+      bk="$HOME/qdrant-storage-backup-$day"; vol="qdrant_storage_$day"
       adopt_note "Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing"
-      adopt_note "the container DELETES it. Copy it out first, while the container still exists:"
-      adopt_note "  docker cp qdrant:/qdrant/storage ./qdrant-storage-backup"
-      adopt_note "then create the new container with a volume and copy that folder into it before"
-      adopt_note "removing this one. No remove command is printed for a container whose data it"
-      adopt_note "would destroy." ;;
+      adopt_note "the container DELETES it. To move it safely, run these in this order:"
+      adopt_note "  docker stop qdrant"                                                   # BL-311-MCP-BACKUP-STOP
+      adopt_note "  docker cp qdrant:/qdrant/storage $(_adopt_mcp_q "$bk")"              # BL-311-MCP-BACKUP-PATH
+      adopt_note "  ls $(_adopt_mcp_q "$bk")"
+      adopt_note "     (go on only if that lists your collections)"
+      adopt_note "  docker rename qdrant qdrant-old"
+      adopt_note "  docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v $(_adopt_mcp_q "$vol:/qdrant/storage") --restart unless-stopped qdrant/qdrant:latest"
+      adopt_note "  docker cp $(_adopt_mcp_q "$bk/.") qdrant:/qdrant/storage/"
+      adopt_note "  docker start qdrant"
+      adopt_note "Only once the new container answers with your data: docker rm qdrant-old" ;;
     *)
-      adopt_note "Where it keeps its data could not be read, so no remove command is printed."
+      adopt_note "Where it keeps its data could not be read, so no remove command is printed."   # BL-311-MCP-DATA-UNREAD
       adopt_note "Check it first: docker inspect -f '{{json .Mounts}}' qdrant" ;;
   esac
   adopt_note "(On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment"
@@ -355,7 +402,7 @@ adopt_mcp_resolve() {                                  # BL-311-MCP-STEP
   local st="" c7="" q="" qurl="" c7_why="" q_why="" q_db="" raw="" ans="" row="" srv="" cmd=""
   local c7_word="" q_word="" q_failed=0 fp_before="" fp_after="" c7_before="" q_before=""
   ADOPT_MCP_PLAN=()
-  ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""; ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""
+  ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""; ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"
   # `SOIF_ADOPT_MCP=off` IS A TEST SEAM, like SOIF_ADOPT_QDRANT and
   # SOIF_ADOPT_GUARDRAILS_DIR. Every adoption suite written before this step
   # pipes a fixed answer sequence; on a developer machine that HAS `claude`
@@ -628,9 +675,9 @@ _adopt_mcp_consequence() {                               # BL-311-MCP-LOUD-NOTE
 # that starts is published, as read above, or that it could not be read.
 _adopt_mcp_open_hint() {
   case "$ADOPT_MCP_QDRANT_BIND" in                           # BL-311-MCP-OPEN-HINT
-    open-all)
-      adopt_note "    (your existing qdrant container is published on every network interface —"
-      adopt_note "     see 'Your existing qdrant container' above before starting it)" ;;
+    open-all|open-v6)
+      adopt_note "    (your existing qdrant container is published beyond this machine — see"
+      adopt_note "     'Your existing qdrant container' above before starting it)" ;;
     open-default)
       adopt_note "    (your existing qdrant container is published on every network interface unless"
       adopt_note "     your Docker daemon sets a default bind address — see 'Your existing qdrant"

@@ -49,7 +49,10 @@
 #       before the question and beside every later `docker start` hint, never
 #       recreated; S20 a loopback-bound one — no such note; S21-S23 where its
 #       data lives — a host folder (named, reused), nothing mounted (removal
-#       DELETES it: backup, no `docker rm`), an old volume name (read, reused)
+#       DELETES it: backup, no `docker rm`), an old volume name (read, reused);
+#       S21b a hostile host path is shell-quoted (pasted, it executes nothing);
+#       S24a/b two mounts with /qdrant/snapshots FIRST; S25 inspect fails; S26
+#       unparseable mounts; S27 an API key read from the container's env
 #   E*  WHOLE ADOPTIONS: E1 both present — no question, the Record row, and
 #       the restart sentence BEFORE "NEXT"; E2 set it up now — no command read
 #       the operator's answers, and the project collection is declared; E3
@@ -107,14 +110,26 @@ case "${1:-}" in
   # volume:<name> | bind:<path> | none — default volume:qdrant_storage, this
   # host's real shape.
   inspect) [ -f "$st/qdrant-exists" ] || { echo "error: no such object: qdrant" >&2; exit 1; }
+           [ -f "$st/inspect-fails" ] && { echo "error: stub inspect failure" >&2; exit 1; }
            hip='127.0.0.1'; [ -f "$st/qdrant-open" ] && hip="$(cat "$st/qdrant-open")"
-           printf '{"6333/tcp":[{"HostIp":"%s","HostPort":"6333"}],"6334/tcp":[{"HostIp":"%s","HostPort":"6334"}]}\n' "$hip" "$hip"
-           mnt='volume:qdrant_storage'; [ -f "$st/qdrant-mount" ] && mnt="$(cat "$st/qdrant-mount")"
-           case "$mnt" in
-             volume:*) printf '[{"Type":"volume","Name":"%s","Source":"/var/lib/docker/volumes/%s/_data","Destination":"/qdrant/storage","Driver":"local","Mode":"z","RW":true,"Propagation":""}]\n' "${mnt#volume:}" "${mnt#volume:}" ;;
-             bind:*)   printf '[{"Type":"bind","Source":"%s","Destination":"/qdrant/storage","Mode":"","RW":true,"Propagation":"rprivate"}]\n' "${mnt#bind:}" ;;
-             *)        printf '[]\n' ;;
-           esac ;;
+           jq -cn --arg h "$hip" '{"6333/tcp":[{"HostIp":$h,"HostPort":"6333"}],"6334/tcp":[{"HostIp":$h,"HostPort":"6334"}]}'
+           # qdrant-mount: one `type|source|destination` per line (none = empty
+           # file); default this host's real shape. mounts-garbage: unparseable.
+           if [ -f "$st/mounts-garbage" ]; then echo 'not json'
+           else
+             mf="$st/qdrant-mount"; [ -f "$mf" ] || { mf="$st/.default-mount"; printf 'volume|qdrant_storage|/qdrant/storage\n' > "$mf"; }
+             arr='[]'
+             while IFS='|' read -r mt ms md; do
+               case "$mt" in
+                 volume) arr="$(printf '%s' "$arr" | jq -c --arg n "$ms" --arg d "$md" '. + [{Type:"volume",Name:$n,Source:("/var/lib/docker/volumes/"+$n+"/_data"),Destination:$d,Driver:"local",Mode:"z",RW:true,Propagation:""}]')" ;;
+                 bind)   arr="$(printf '%s' "$arr" | jq -c --arg s "$ms" --arg d "$md" '. + [{Type:"bind",Source:$s,Destination:$d,Mode:"",RW:true,Propagation:"rprivate"}]')" ;;
+               esac
+             done < "$mf"
+             printf '%s\n' "$arr"
+           fi
+           # qdrant-env: one VAR=value per line; default: no API key.
+           ef="$st/qdrant-env"; [ -f "$ef" ] || { ef="$st/.default-env"; printf 'PATH=/usr/local/sbin:/usr/local/bin\nRUN_MODE=production\n' > "$ef"; }
+           jq -cR -s 'split("\n") | map(select(length > 0))' < "$ef" ;;
   run)   if [ -f "$st/docker-run-fails" ]; then echo "docker: Error response from daemon: stub refusal" >&2; exit 125; fi
          : > "$st/qdrant-exists"; [ -f "$st/docker-run-noop" ] || : > "$st/qdrant-up"; echo 0123abcd ;;
   *)     exit 0 ;;
@@ -619,11 +634,13 @@ s18() {   # the launch check cannot answer: a hang past the bound, and no status
 # ── S19-S23: an EXISTING qdrant container — how it is published, where its data is ──
 # _open_case TAG HOSTIP MOUNT — a stopped container with those bindings and that
 # mount, Docker up, nothing registered; the step is answered "skip it".
-_open_case() {
+_open_case() {   # TAG HOSTIP MOUNT-LINE... (type|source|destination; none = no line)
   _case "$1" >/dev/null
   : > "$ST/docker-up"; : > "$ST/qdrant-exists"
   [ "$2" = loopback ] || printf '%s' "$2" > "$ST/qdrant-open"
-  printf '%s' "$3" > "$ST/qdrant-mount"
+  shift 2
+  : > "$ST/qdrant-mount"
+  while [ $# -gt 0 ]; do [ "$1" = none ] || printf '%s\n' "$1" >> "$ST/qdrant-mount"; shift; done
 }
 _open_note_before_q() {   # the note is printed, and before the question if there is one
   local ln="" lq=""
@@ -635,12 +652,13 @@ _open_note_before_q() {   # the note is printed, and before the question if ther
 
 s19() {   # unregistered + stopped + no host address + the host's real volume
   local bad=""
-  _open_case s19 "" "volume:qdrant_storage"
+  _open_case s19 "" "volume|qdrant_storage|/qdrant/storage"
   _step "skip it\n"
   grep -q 'docker \[inspect\]' "$ST/calls.log" || bad="$bad [the container was not inspected]"
   _open_note_before_q || bad="$bad [the open-bindings note is not said before the question]"
   grep -q 'publishes on every network interface unless your Docker daemon sets a default' "$C/out" || bad="$bad [an empty HostIp is not worded as the daemon default]"
   grep -q 'can reach even ports published on 127.0.0.1 — moby/moby#45610' "$C/out" || bad="$bad [the pre-28.0.0 caveat is missing]"
+  grep -q 'it has NO API key' "$C/out" || bad="$bad [the absence of an API key, read from its env, is not said]"
   grep -q 'Its data is in the Docker volume qdrant_storage, which removing the container keeps:' "$C/out" || bad="$bad [the volume is not named as keeping the data]"
   grep -qxF '     docker rm -f qdrant' "$C/out" || bad="$bad [the recreate step is not printed]"
   grep -qxF "     $QRUN" "$C/out" || bad="$bad [the loopback run command with that volume is not printed]"
@@ -654,7 +672,7 @@ s19() {   # unregistered + stopped + no host address + the host's real volume
 
 s19b() {   # REGISTERED + stopped + open: the unreachable path
   local bad=""
-  _open_case s19b "" "volume:qdrant_storage"
+  _open_case s19b "" "volume|qdrant_storage|/qdrant/storage"
   _register "$CFG/.claude.json" qdrant; _register "$CFG/.claude.json" context7
   _step "skip it\n"
   _open_note_before_q || bad="$bad [the note is not said on the unreachable path]"
@@ -665,7 +683,7 @@ s19b() {   # REGISTERED + stopped + open: the unreachable path
 
 s19c() {   # unregistered, the database already ANSWERING from an open container
   local bad=""
-  _open_case s19c "" "volume:qdrant_storage"; : > "$ST/qdrant-up"
+  _open_case s19c "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/qdrant-up"
   _step "skip it\n"
   _open_note_before_q || bad="$bad [the note is not said when the database already answers]"
   [ -z "$bad" ] && pass "S19c the database already answering from an open container: the note is said" || fail_ "S19c" "$bad"
@@ -673,7 +691,7 @@ s19c() {   # unregistered, the database already ANSWERING from an open container
 
 s19d() {   # THIS HOST'S STATE: both registered, answering, from an open container — nothing asked
   local bad=""
-  _open_case s19d "" "volume:qdrant_storage"; : > "$ST/qdrant-up"
+  _open_case s19d "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/qdrant-up"
   _register "$CFG/.claude.json" qdrant; _register "$CFG/.claude.json" context7
   _step ""
   grep -q 'Set them up now' "$C/out" && bad="$bad [asked with nothing missing]"
@@ -682,18 +700,18 @@ s19d() {   # THIS HOST'S STATE: both registered, answering, from an open contain
 }
 
 s19e() {   # an explicit 0.0.0.0
-  _open_case s19e "0.0.0.0" "volume:qdrant_storage"
+  _open_case s19e "0.0.0.0" "volume|qdrant_storage|/qdrant/storage"
   _step "skip it\n"
-  if _open_note_before_q && grep -q '(its bindings name 0.0.0.0 or ::)' "$C/out"; then
-    pass "S19e HostIp 0.0.0.0: reported as published on every interface"
+  if _open_note_before_q && grep -q '(its bindings name 0.0.0.0)' "$C/out"; then
+    pass "S19e HostIp 0.0.0.0: reported as published on every network interface"
   else fail_ "S19e" "[HostIp 0.0.0.0 not reported as every interface]"; fi
 }
 
 s19f() {   # an explicit ::
-  _open_case s19f "::" "volume:qdrant_storage"
+  _open_case s19f "::" "volume|qdrant_storage|/qdrant/storage"
   _step "skip it\n"
-  if _open_note_before_q && grep -q '(its bindings name 0.0.0.0 or ::)' "$C/out"; then
-    pass "S19f HostIp :: reported as published on every interface"
+  if _open_note_before_q && grep -q 'every IPv6 address of this' "$C/out" && ! grep -q 'every network interface' "$C/out"; then
+    pass "S19f HostIp :: reported as every IPv6 address — not as every interface"
   else fail_ "S19f" "[HostIp :: not reported as every interface]"; fi
 }
 
@@ -709,7 +727,7 @@ s19g() {   # Docker DOWN: the bindings cannot be read, and every docker start hi
 
 s20() {   # a loopback-bound existing container: no note
   local bad=""
-  _open_case s20 loopback "volume:qdrant_storage"
+  _open_case s20 loopback "volume|qdrant_storage|/qdrant/storage"
   _step "skip it\n"
   grep -q 'docker \[inspect\]' "$ST/calls.log" || bad="$bad [the container's bindings were not read]"
   grep -q 'Your existing qdrant container' "$C/out" && bad="$bad [a loopback-bound container was reported as open]"
@@ -718,33 +736,103 @@ s20() {   # a loopback-bound existing container: no note
 
 s21() {   # data in a HOST FOLDER: that folder is named, and reused in the run line
   local bad=""
-  _open_case s21 "" "bind:/srv/qdrant data"
+  _open_case s21 "" "bind|/srv/qdrant data|/qdrant/storage"
   _step "skip it\n"
   grep -q 'Its data is in the host folder /srv/qdrant data, which removing the container keeps:' "$C/out" || bad="$bad [the host folder is not named]"
-  grep -qF -- '-v "/srv/qdrant data:/qdrant/storage"' "$C/out" || bad="$bad [the run line does not reuse that folder]"
+  grep -qF -- '-v /srv/qdrant\ data:/qdrant/storage' "$C/out" || bad="$bad [the run line does not reuse that folder, shell-quoted]"
   grep -qxF '     docker rm -f qdrant' "$C/out" || bad="$bad [the recreate step is not printed]"
-  [ -z "$bad" ] && pass "S21 data in a host folder: the folder is named as keeping it and reused, quoted, in the run line" || fail_ "S21" "$bad"
+  [ -z "$bad" ] && pass "S21 data in a host folder: the folder is named as keeping it and reused, shell-quoted, in the run line" || fail_ "S21" "$bad"
 }
 
-s22() {   # NOTHING mounted at /qdrant/storage: removing the container deletes the data
-  local bad=""
-  _open_case s22 "" "none"
+s22() {   # NOTHING mounted at /qdrant/storage: a sequence that can be followed literally
+  local bad="" prev=0 n="" step=""
+  _open_case s22 "" none
   _step "skip it\n"
   grep -q 'NOT on a Docker volume or a host folder: removing' "$C/out" || bad="$bad [the data loss is not said]"
-  grep -q 'the container DELETES it' "$C/out" || bad="$bad [the data loss is not said plainly]"
-  grep -qxF '     docker cp qdrant:/qdrant/storage ./qdrant-storage-backup' "$C/out" || bad="$bad [the backup command is not printed]"
   grep -q 'docker rm -f qdrant' "$C/out" && bad="$bad [a remove command was printed for a container whose data it would destroy]"
-  [ -z "$bad" ] && pass "S22 nothing mounted at /qdrant/storage: says removing the container DELETES the data, prints the docker cp backup, prints no docker rm" || fail_ "S22" "$bad"
+  grep -qF './qdrant-storage-backup' "$C/out" && bad="$bad [the backup goes into the current directory]"
+  grep -qF "     docker cp qdrant:/qdrant/storage $H/qdrant-storage-backup-" "$C/out" || bad="$bad [the backup is not an absolute path under \$HOME]"
+  for step in '     docker stop qdrant' '     docker cp qdrant:/qdrant/storage ' '     ls ' '     docker rename qdrant qdrant-old' \
+              '     docker create --name qdrant -p 127.0.0.1:6333:6333' '     docker cp ' '     docker start qdrant' \
+              '   Only once the new container answers with your data: docker rm qdrant-old'; do
+    n="$(grep -nF -- "$step" "$C/out" | cut -d: -f1 | while read -r l; do [ "$l" -gt "$prev" ] && { echo "$l"; break; }; done)"
+    if [ -z "$n" ]; then bad="$bad [step out of order or missing: '$step']"; break; fi
+    prev="$n"
+  done
+  [ -z "$bad" ] && pass "S22 nothing mounted at /qdrant/storage: DELETES said, and a followable order — stop, back up to an absolute \$HOME path, check, rename, create, copy in, start, and only then remove the old one; no docker rm -f" || fail_ "S22" "$bad"
 }
 
 s23() {   # the OLD Addendum's volume name is read, not assumed
   local bad=""
-  _open_case s23 "" "volume:qdrant_data"
+  _open_case s23 "" "volume|qdrant_data|/qdrant/storage"
   _step "skip it\n"
   grep -q 'Its data is in the Docker volume qdrant_data, which removing the container keeps:' "$C/out" || bad="$bad [the real volume is not named]"
   grep -qF -- '-v qdrant_data:/qdrant/storage' "$C/out" || bad="$bad [the run line does not reuse that volume]"
   grep -q 'removing the container keeps:' "$C/out" && grep -A2 'removing the container keeps:' "$C/out" | grep -q 'qdrant_storage' && bad="$bad [the recreate step names qdrant_storage, a volume that holds none of this data]"
   [ -z "$bad" ] && pass "S23 a container on the old Addendum's qdrant_data volume: that volume is named and reused — never a hard-coded qdrant_storage" || fail_ "S23" "$bad"
+}
+
+s21b() {   # a host path carrying $, a backtick and a quote: the printed line is inert
+  local bad="" line="" hostile=""
+  hostile='/srv/a b$HOME`touch PWNED`"q'
+  _open_case s21b "" "bind|$hostile|/qdrant/storage"
+  _step "skip it\n"
+  line="$(grep -F -- '     docker run -d --name qdrant' "$C/out" | grep -F 'PWNED' | head -1 | sed 's/^     //')"
+  if [ -z "$line" ]; then fail_ "S21b" "[no run line carries the hostile path]"; return; fi
+  mkdir -p "$C/argv" "$C/paste"
+  printf '#!/bin/bash\nfor a in "$@"; do printf "%%s\\n" "$a"; done > "%s/argv.out"\n' "$C" > "$C/argv/docker"; chmod +x "$C/argv/docker"
+  ( cd "$C/paste" && PATH="$C/argv:$PATH" bash -c "$line" ) >/dev/null 2>&1
+  [ -e "$C/paste/PWNED" ] && bad="$bad [pasting the line EXECUTED the backtick]"
+  grep -qxF -- "$hostile:/qdrant/storage" "$C/argv.out" 2>/dev/null || bad="$bad [the pasted -v argument is not the literal path: $(tr '\n' '|' < "$C/argv.out" 2>/dev/null | cut -c1-200)]"
+  [ -z "$bad" ] && pass "S21b a bind path with \$, a backtick and a quote: the printed docker run line, pasted into a shell, passes the literal path and executes nothing" || fail_ "S21b" "$bad"
+}
+
+s24a() {   # snapshots mounted FIRST, nothing at /qdrant/storage — data is NOT kept
+  local bad=""
+  _open_case s24a "" "volume|snaps|/qdrant/snapshots"
+  _step "skip it\n"
+  grep -q 'NOT on a Docker volume or a host folder: removing' "$C/out" || bad="$bad [the deletion warning is not said]"
+  grep -q 'docker rm -f qdrant' "$C/out" && bad="$bad [docker rm -f printed although /qdrant/storage is not mounted]"
+  grep -q 'Docker volume snaps' "$C/out" && bad="$bad [the snapshots volume was taken for the data]"
+  [ -z "$bad" ] && pass "S24a /qdrant/snapshots mounted, /qdrant/storage not: the deletion warning and backup sequence, no docker rm -f" || fail_ "S24a" "$bad"
+}
+
+s24b() {   # snapshots mounted FIRST, a volume at /qdrant/storage second — that one named
+  local bad=""
+  _open_case s24b "" "volume|snaps|/qdrant/snapshots" "volume|qstore|/qdrant/storage"
+  _step "skip it\n"
+  grep -q 'Its data is in the Docker volume qstore, which removing the container keeps:' "$C/out" || bad="$bad [the /qdrant/storage volume is not the one named]"
+  grep -qF -- '-v qstore:/qdrant/storage' "$C/out" || bad="$bad [the run line does not reuse qstore]"
+  [ -z "$bad" ] && pass "S24b two mounts, snapshots first: the volume AT /qdrant/storage is the one named and reused" || fail_ "S24b" "$bad"
+}
+
+s25() {   # docker inspect fails for an existing container: fail closed, said
+  local bad=""
+  _open_case s25 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/inspect-fails"
+  _step "skip it\n"
+  grep -q 'how an existing qdrant container is published could not be read — docker inspect could not read it' "$C/out" || bad="$bad [the could-not-be-read hint is missing]"
+  grep -q 'Your existing qdrant container' "$C/out" && bad="$bad [a binding was claimed that was never read]"
+  [ -z "$bad" ] && pass "S25 docker inspect fails: the bindings are 'could not be read' beside docker start — never treated as loopback" || fail_ "S25" "$bad"
+}
+
+s26() {   # the mounts line cannot be parsed: no data claim, no remove command
+  local bad=""
+  _open_case s26 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/mounts-garbage"
+  _step "skip it\n"
+  grep -q 'Where it keeps its data could not be read, so no remove command is printed.' "$C/out" || bad="$bad [the data-unreadable line is missing]"
+  grep -q 'docker rm' "$C/out" && bad="$bad [a remove command was printed with the data location unread]"
+  [ -z "$bad" ] && pass "S26 an unparseable mounts line: 'could not be read', and no docker rm" || fail_ "S26" "$bad"
+}
+
+s27() {   # an API key IS set: said, never printed, and 'NO API key' not claimed
+  local bad=""
+  _open_case s27 "" "volume|qdrant_storage|/qdrant/storage"
+  printf 'PATH=/usr/local/bin\nQDRANT__SERVICE__API_KEY=s3cr3t-value\n' > "$ST/qdrant-env"
+  _step "skip it\n"
+  grep -q 'it has an API key set (QDRANT__SERVICE__API_KEY)' "$C/out" || bad="$bad [the API key is not recognised]"
+  grep -q 'NO API key' "$C/out" && bad="$bad ['NO API key' claimed for a container that has one]"
+  grep -q 's3cr3t-value' "$C/out" && bad="$bad [the key's value was printed]"
+  [ -z "$bad" ] && pass "S27 a container with QDRANT__SERVICE__API_KEY: the key is recognised from its env, its value never printed" || fail_ "S27" "$bad"
 }
 
 # ── E — whole adoptions ─────────────────────────────────────────────────────
@@ -875,7 +963,7 @@ if [ -n "${BL311_ONLY:-}" ]; then
 fi
 a1; a4; a5; a6; a7; a8
 s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12; s13; s14; s15; s16; s17; s18
-s19; s19b; s19c; s19d; s19e; s19f; s19g; s20; s21; s22; s23
+s19; s19b; s19c; s19d; s19e; s19f; s19g; s20; s21; s21b; s22; s23; s24a; s24b; s25; s26; s27
 e_cases
 
 # ── M — mutation proofs ─────────────────────────────────────────────────────
@@ -927,7 +1015,7 @@ mut() {   # LABEL FILE MARKER REPLACEMENT CASE-FN WANT — WANT is the assertion
 # asserts no stub read them). Dropping the subshell AS WELL is not equivalent:
 # M39 does that to the launch check and E2 kills it, as M20 does for the bare
 # Docker probe. The redirections stay because the consent rule asks for them.
-if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M54" "BL311_SKIP_MUTANTS=1"; _done; fi
+if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M61" "BL311_SKIP_MUTANTS=1"; _done; fi
 echo "== M — mutation proofs =="
 mut "M1 helpers-core ignores CLAUDE_CONFIG_DIR for settings.json — killed by A4" \
   scripts/lib/helpers-core.sh '# BL-311-CONFIG-DIR' \
@@ -1096,11 +1184,11 @@ mut "M43 the unregistered arm's docker start hint without the note — killed by
   s19 'the later docker start hint does not carry the note'
 mut "M44 (X1) 0.0.0.0 not detected — killed by S19e" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT' \
-  "  if printf '%s' \"\$b\" | jq -e '[.[]?[]? | (.HostIp // \"\")] | any(. == \"::\")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT" \
+  '  if false; then   # BL-311-MCP-OPEN-DETECT' \
   s19e 'HostIp 0.0.0.0 not reported'
 mut "M45 (X2) :: not detected — killed by S19f" \
-  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT' \
-  "  if printf '%s' \"\$b\" | jq -e '[.[]?[]? | (.HostIp // \"\")] | any(. == \"0.0.0.0\")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT-V6' \
+  '  elif false; then   # BL-311-MCP-OPEN-DETECT-V6' \
   s19f 'HostIp :: not reported'
 mut "M46 (X3/X4) the one hoisted read dropped — killed by S19c (the already-answering path)" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-HOIST' \
@@ -1138,5 +1226,33 @@ mut "M54 (R-16) the pre-28.0.0 caveat dropped — killed by S19" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-MOBY-CAVEAT' \
   '  :   # BL-311-MCP-MOBY-CAVEAT' \
   s19 'the pre-28.0.0 caveat is missing'
+mut "M55 (R-1/N1) any mount taken for /qdrant/storage — killed by S24a" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-DATA-SELECT' \
+  "    sm=\"\$(printf '%s' \"\$m\" | jq -c '[.[] | select(true)] | first // empty' 2>/dev/null)\"   # BL-311-MCP-DATA-SELECT" \
+  s24a 'docker rm -f printed although /qdrant/storage is not mounted'
+mut "M56 (R-2/N2) a failed inspect defaults to loopback — killed by S25" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-INSPECT-FAILCLOSED' \
+  '  ADOPT_MCP_QDRANT_BIND="loopback"; ADOPT_MCP_QDRANT_BIND_WHY=""   # BL-311-MCP-INSPECT-FAILCLOSED' \
+  s25 'the could-not-be-read hint is missing'
+mut "M57 (R-3/N3) unreadable data given docker rm -f — killed by S26" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-DATA-UNREAD' \
+  '      adopt_note "  docker rm -f qdrant"   # BL-311-MCP-DATA-UNREAD' \
+  s26 'the data-unreadable line is missing'
+mut "M58 (R-4) the backup no longer stops the database first — killed by S22" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BACKUP-STOP' \
+  '      :   # BL-311-MCP-BACKUP-STOP' \
+  s22 "step out of order or missing: '     docker stop qdrant'"
+mut "M59 (R-4) the backup written into the current directory — killed by S22" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BACKUP-PATH' \
+  '      adopt_note "  docker cp qdrant:/qdrant/storage ./qdrant-storage-backup"   # BL-311-MCP-BACKUP-PATH' \
+  s22 'the backup is not an absolute path under $HOME'
+mut "M60 (R-5) the path double-quoted instead of shell-quoted — killed by S21b" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-QUOTE' \
+  "_adopt_mcp_q() { printf '\"%s\"' \"\$1\"; }   # BL-311-MCP-QUOTE" \
+  s21b 'the pasted -v argument is not the literal path'
+mut "M61 (R-6) an API key never detected — killed by S27" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-KEY-DETECT' \
+  '    if false; then   # BL-311-MCP-KEY-DETECT' \
+  s27 'the API key is not recognised'
 
 _done

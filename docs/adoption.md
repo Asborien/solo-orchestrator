@@ -377,19 +377,21 @@ that on Docker Engine older than 28.0.0 on Linux, hosts on the same network
 segment can reach even ports published on `127.0.0.1` — moby/moby#45610.)
 
 A container that already exists keeps whatever binding it was created with, so
-whenever adoption finds one it reads it (`docker inspect`: the port bindings and
-what is mounted at `/qdrant/storage`), on every path — even when nothing is
-missing. When the bindings name no host address (or `0.0.0.0` / `::`) it says so
-before the question, and every later `docker start` hint points back at it; when
-Docker is not running, every `docker start` hint says the bindings could not be
-read and how to check them. Recorded with a stand-in `docker` shaped like a real
-container on the `qdrant_storage` volume:
+whenever adoption finds one it reads it (`docker inspect`: the port bindings,
+what is mounted at `/qdrant/storage`, and whether `QDRANT__SERVICE__API_KEY` is
+set — never its value), on every path — even when nothing is missing. When the
+bindings name no host address, `0.0.0.0` (every interface) or `::` (every IPv6
+address) it says so before the question, and every later `docker start` hint
+points back at it; when Docker is not running or the inspect fails, every
+`docker start` hint says the bindings could not be read and how to check them.
+Recorded with a stand-in `docker` shaped like a real container on the
+`qdrant_storage` volume with no API key:
 
 ```text
    Your existing qdrant container's ports name no host address, which Docker
    publishes on every network interface unless your Docker daemon sets a default
-   bind address — with no API key: while it runs, other machines on your network
-   may be able to reach your session memory.
+   bind address: while it runs, other machines on your network may be able to reach
+   it — and it has NO API key, so anything that reaches it can read your session memory.
    Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it.
    Its data is in the Docker volume qdrant_storage, which removing the container keeps:
      docker rm -f qdrant
@@ -400,19 +402,29 @@ container on the `qdrant_storage` volume:
 ```
 
 **The data is read, never assumed.** The volume in the recreate step is the one
-actually mounted — a container made from the framework's older Addendum sits on
-`qdrant_data`, and that is the name printed; a host folder is named and reused.
-If NOTHING is mounted at `/qdrant/storage` the data lives inside the container
-(`qdrant/qdrant:latest` declares no volume), and removing it would delete the
-data — so no `docker rm` is printed at all:
+mounted AT `/qdrant/storage` — not a snapshots mount listed before it — so a
+container made from the framework's older Addendum gets `qdrant_data`, and a
+host folder is named and reused, shell-quoted. If the mounts cannot be read, no
+remove command is printed. If NOTHING is mounted there the data lives inside the
+container (`qdrant/qdrant:latest` declares no volume), removing it would delete
+the data, and the run prints a sequence that can be followed as written — stop
+the database first so the copy is consistent, back it up to a dated folder in
+your home directory (never the project), rename rather than remove the old
+container, and remove it only once the new one shows the data. Recorded with a
+stand-in `docker`; `/Users/you` stands for the operator's home directory:
 
 ```text
    Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing
-   the container DELETES it. Copy it out first, while the container still exists:
-     docker cp qdrant:/qdrant/storage ./qdrant-storage-backup
-   then create the new container with a volume and copy that folder into it before
-   removing this one. No remove command is printed for a container whose data it
-   would destroy.
+   the container DELETES it. To move it safely, run these in this order:
+     docker stop qdrant
+     docker cp qdrant:/qdrant/storage /Users/you/qdrant-storage-backup-20260928
+     ls /Users/you/qdrant-storage-backup-20260928
+        (go on only if that lists your collections)
+     docker rename qdrant qdrant-old
+     docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage_20260928:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+     docker cp /Users/you/qdrant-storage-backup-20260928/. qdrant:/qdrant/storage/
+     docker start qdrant
+   Only once the new container answers with your data: docker rm qdrant-old
 ```
 
 It never recreates or removes a container itself: `docker start qdrant` stays
