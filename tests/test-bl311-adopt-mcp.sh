@@ -57,7 +57,13 @@
 #       and the steps PASTED verbatim into bash and zsh (plain and -i; the zsh
 #       half skipped when zsh is absent) against a stub docker: rm then run,
 #       nothing after a failed rm, no error signature, no file in the cwd;
-#       S22x every shape NOT confirmed (nothing mounted, --rm with and without
+#       S22i a pinned image reproduced exactly, never latest; S22y every
+#       unreadable or odd read (running state, an empty exec answer, volume
+#       options, AutoRemove, Tmpfs, ramfs, a tmpfs device option, the image,
+#       a re-pulled tag, --mount settings) refused — no command;
+#       S22x every shape NOT confirmed (an API key or other QDRANT__ setting,
+#       a volume subpath, a --mount elsewhere, storage split under
+#       /qdrant/storage, and: nothing mounted, --rm with and without
 #       a volume, a --tmpfs, a tmpfs in .Mounts, a tmpfs-backed volume,
 #       unreadable volume options, two mounts, a running container whose own
 #       /proc/mounts says tmpfs or cannot be read, a volume beside a tmpfs
@@ -66,8 +72,11 @@
 #       spelling of a --tmpfs key (incl. three with `..`) and two keys; S22s a
 #       volume at a SUB-path is not the data; S22v a trailing-slash
 #       Destination (belt and braces: Docker cleans those);
-#       S24a/b two mounts with /qdrant/snapshots FIRST; S25 inspect fails; S26
-#       unparseable mounts; S27 an API key read from the container's env
+#       S24a/b /qdrant/snapshots mounted FIRST — alone, then beside a volume at
+#       /qdrant/storage (a second mount: refused); S25 inspect fails; S26
+#       unparseable mounts; S27 an API key read from the container's env;
+#       S28 the written procedure's command blocks pinned exactly (snapshots,
+#       never a file copy)
 #   E*  WHOLE ADOPTIONS: E1 both present — no question, the Record row, and
 #       the restart sentence BEFORE "NEXT"; E2 set it up now — no command read
 #       the operator's answers, and the project collection is declared; E3
@@ -147,17 +156,35 @@ case "${1:-}" in
            ef="$st/qdrant-env"; [ -f "$ef" ] || { ef="$st/.default-env"; printf 'PATH=/usr/local/sbin:/usr/local/bin\nRUN_MODE=production\n' > "$ef"; }
            jq -cR -s 'split("\n") | map(select(length > 0))' < "$ef"
            # qdrant-autoremove: the container was started with --rm.
-           if [ -f "$st/qdrant-autoremove" ]; then echo true; else echo false; fi
+           # autoremove-garbage: an AutoRemove that is not true/false.
+           if [ -f "$st/autoremove-garbage" ]; then echo '"maybe"'
+           elif [ -f "$st/qdrant-autoremove" ]; then echo true; else echo false; fi
            # qdrant-tmpfs: started with --tmpfs /qdrant/storage — which real Docker
            # shows ONLY here, in .HostConfig.Tmpfs, never in .Mounts.
            # The file holds the keys, one per line, VERBATIM as Docker stores them
            # (real Docker: --tmpfs /tmp --tmpfs /qdrant/storage gives TWO keys).
-           if [ -f "$st/qdrant-tmpfs" ]; then
+           if [ -f "$st/tmpfs-garbage" ]; then echo '{bad'
+           elif [ -f "$st/qdrant-tmpfs" ]; then
              if [ -s "$st/qdrant-tmpfs" ]; then jq -cR -s 'split("\n") | map(select(length > 0)) | map({(.): ""}) | add' < "$st/qdrant-tmpfs"
              else echo '{"/qdrant/storage":""}'; fi
            else echo null; fi
            # .State.Running: qdrant-up is the stub's running container.
-           if [ -f "$st/qdrant-up" ]; then echo true; else echo false; fi ;;
+           # running-garbage: a State.Running that is not true/false.
+           if [ -f "$st/running-garbage" ]; then echo '"unknown"'
+           elif [ -f "$st/qdrant-up" ]; then echo true; else echo false; fi
+           # .Config.Image (qdrant-image, default the tag the Addendum used; image-garbage:
+           # not a string), .Image (the ID it runs), .HostConfig.Mounts (qdrant-hcmounts,
+           # default null: a -v mount leaves it empty).
+           if [ -f "$st/image-garbage" ]; then echo null
+           elif [ -f "$st/qdrant-image" ]; then jq -cn --arg i "$(cat "$st/qdrant-image")" '$i'
+           else echo '"qdrant/qdrant:latest"'; fi
+           echo '"sha256:1111"'
+           if [ -f "$st/qdrant-hcmounts" ]; then cat "$st/qdrant-hcmounts"; else echo null; fi ;;
+  # `docker image inspect -f '{{json .Id}}' REF`: the ID the tag names now —
+  # the one the container runs, unless image-retagged (re-pulled since).
+  image)  [ "${2:-}" = inspect ] || exit 0
+          [ -f "$st/image-inspect-fails" ] && { echo "error: stub image inspect failure" >&2; exit 1; }
+          if [ -f "$st/image-retagged" ]; then echo '"sha256:2222"'; else echo '"sha256:1111"'; fi ;;
   # `docker volume inspect -f '{{json .Options}}' NAME`: qdrant-volopts holds the
   # options (default null, a plain local volume); volume-inspect-fails fails it.
   volume) [ "${2:-}" = inspect ] || exit 0
@@ -969,7 +996,62 @@ s22x() {   # every shape NOT shown to persist: the finding, the pointer, and NO 
   bad="$bad$(_expect_no_steps 'running, kernel unread' '/qdrant/storage could not be checked from inside the running container')"
   _open_case s22x11 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/qdrant-tmpfs"; _step "skip it\n"
   bad="$bad$(_expect_no_steps 'a volume and a tmpfs key' 'a tmpfs is also mounted at /qdrant/storage')"
-  [ -z "$bad" ] && pass "S22x every shape not shown to persist — nothing mounted, --rm (with and without a volume), a --tmpfs, a tmpfs in .Mounts, a tmpfs-backed volume, unreadable volume options, two mounts at it, a running container whose kernel says tmpfs or cannot be asked, a volume beside a tmpfs key — says what was read and points to the written procedure, with NO command line and no docker command in a sentence" || fail_ "S22x" "$bad"
+  # Round 12 — VANILLA ONLY: a recreate that would drop a setting or a mount is refused.
+  _open_case s22x12 "" "volume|qdrant_storage|/qdrant/storage"; printf 'PATH=/usr/local/bin\nQDRANT__SERVICE__API_KEY=s3cr3t-value\n' > "$ST/qdrant-env"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'an API key' 'its environment sets QDRANT__ variables')"
+  grep -qF 's3cr3t-value' "$C/out" && bad="$bad [the API key's VALUE was printed]"
+  _open_case s22x13 "" "volume|qdrant_storage|/qdrant/storage"; printf 'PATH=/usr/local/bin\nQDRANT__LOG_LEVEL=DEBUG\n' > "$ST/qdrant-env"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'another QDRANT__ setting' 'its environment sets QDRANT__ variables')"
+  _open_case s22x14 "" "volume|qdrant_storage|/qdrant/storage"; printf '[{"Type":"volume","Source":"qdrant_storage","Target":"/qdrant/storage","VolumeOptions":{"Subpath":"sub"}}]\n' > "$ST/qdrant-hcmounts"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'a volume subpath' 'its volume is mounted with a subpath')"
+  _open_case s22x15 "" "volume|qdrant_storage|/qdrant/storage"; printf '[{"Type":"volume","Source":"qdrant_storage","Target":"/qdrant/storage"},{"Type":"bind","Source":"/srv/x","Target":"/data"}]\n' > "$ST/qdrant-hcmounts"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'a --mount elsewhere' 'its --mount settings name a path other than /qdrant/storage')"
+  _open_case s22x16 "" none; printf '/qdrant/storage/collections\n' > "$ST/qdrant-tmpfs"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'a tmpfs under it' 'the storage is split across mounts: /qdrant/storage/collections is mounted under /qdrant/storage')"
+  [ -z "$bad" ] && pass "S22x every shape not shown to persist — nothing mounted, --rm (with and without a volume), a --tmpfs, a tmpfs in .Mounts, a tmpfs-backed volume, unreadable volume options, two mounts at it, a running container whose kernel says tmpfs or cannot be asked, a volume beside a tmpfs key, an API key, another QDRANT__ setting, a volume subpath, a --mount elsewhere, a tmpfs under it — says what was read and points to the written procedure, with NO command line and no docker command in a sentence" || fail_ "S22x" "$bad"
+}
+
+
+s22i() {   # a PINNED image is reproduced exactly — never switched to latest
+  local bad="" miss=""
+  _open_case s22i "" "volume|qdrant_storage|/qdrant/storage"; printf 'qdrant/qdrant:v1.12.4' > "$ST/qdrant-image"
+  _step "skip it\n"
+  _note_pre > "$C/expect"
+  printf '%s\n' '   Its data is in the Docker volume qdrant_storage, which removing the container keeps:' '     docker rm -f qdrant &&' \
+    '     docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:v1.12.4' \
+    '     # If docker run fails, the data is still where it was: fix what it reports,' \
+    '     # then paste the docker run line again.' >> "$C/expect"
+  _note_tail >> "$C/expect"
+  miss="$(_block_diff "$C/expect" "$C/out")"
+  [ -z "$miss" ] || bad="$bad [$miss]"
+  [ -z "$bad" ] && pass "S22i a container on qdrant/qdrant:v1.12.4: the recreate runs qdrant/qdrant:v1.12.4, exactly — the whole note compared" || fail_ "S22i" "$bad"
+}
+
+s22y() {   # every UNREADABLE or odd read fails the allow-list: no command
+  local bad=""
+  _open_case s22y1 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/running-garbage"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'running state unread' 'whether it is running could not be read')"
+  _open_case s22y2 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/qdrant-up"; : > "$ST/qdrant-procfs"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'exec answers nothing' '/qdrant/storage could not be checked from inside the running container')"
+  _open_case s22y3 "" "volume|qdrant_storage|/qdrant/storage"; printf 'not json\n' > "$ST/qdrant-volopts"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'volume options not JSON' 'the options of its Docker volume qdrant_storage could not be read')"
+  _open_case s22y4 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/autoremove-garbage"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'AutoRemove unread' 'whether it was started with --rm could not be read')"
+  _open_case s22y5 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/tmpfs-garbage"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'Tmpfs unparseable' 'its tmpfs mounts could not be read')"
+  _open_case s22y6 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/qdrant-up"; printf 'ramfs\n' > "$ST/qdrant-procfs"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'kernel says ramfs' 'inside the running container, /qdrant/storage is a ramfs')"
+  _open_case s22y7 "" "volume|qdrant_storage|/qdrant/storage"; printf '{"device":"tmpfs","o":"size=64m","type":""}\n' > "$ST/qdrant-volopts"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'volume device tmpfs' 'it is in the Docker volume qdrant_storage, which is backed by tmpfs')"
+  _open_case s22y8 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/image-garbage"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'image unread' 'its image could not be read')"
+  _open_case s22y9 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/image-retagged"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'tag re-pulled' 'its image qdrant/qdrant:latest could not be shown to still name the image it runs')"
+  _open_case s22y10 "" "volume|qdrant_storage|/qdrant/storage"; : > "$ST/image-inspect-fails"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps 'image inspect fails' 'its image qdrant/qdrant:latest could not be shown to still name the image it runs')"
+  _open_case s22y11 "" "volume|qdrant_storage|/qdrant/storage"; printf '{bad\n' > "$ST/qdrant-hcmounts"; _step "skip it\n"
+  bad="$bad$(_expect_no_steps '--mount settings unread' 'its --mount settings could not be read')"
+  [ -z "$bad" ] && pass "S22y every unreadable or odd read — running state, an exec that answers nothing, volume options that are not JSON, AutoRemove, Tmpfs, a ramfs kernel view, a tmpfs device option, the image, a re-pulled tag, a failing image inspect, the --mount settings — fails the allow-list: no command" || fail_ "S22y" "$bad"
 }
 
 s22o() {   # a --tmpfs key is stored VERBATIM: every spelling of /qdrant/storage is a tmpfs
@@ -986,13 +1068,19 @@ s22o() {   # a --tmpfs key is stored VERBATIM: every spelling of /qdrant/storage
   [ -z "$bad" ] && pass "S22o a tmpfs keyed /qdrant/storage/, /qdrant/storage//, /qdrant//storage, /qdrant/./storage, /qdrant/x/../storage, /../qdrant/storage or /qdrant/storage/x/.. — Docker keeps --tmpfs verbatim — or listed second after /tmp, is read as a tmpfs: no command" || fail_ "S22o" "$bad"
 }
 
-s22s() {   # a volume at a SUB-path of /qdrant/storage, nothing AT it: the data is not in that volume
+s22s() {   # a volume at a SUB-path, or at a path that merely STARTS with /qdrant/storage: not the data
   local bad=""
   _open_case s22s "" "volume|r10snaps|/qdrant/storage/snapshots"
   _step "skip it\n"
   grep -q 'Docker volume r10snaps' "$C/out" && bad="$bad [a volume at /qdrant/storage/snapshots was taken for the data]"
-  bad="$bad$(_expect_no_steps 'a sub-path volume only' 'nothing is mounted at /qdrant/storage')"
-  [ -z "$bad" ] && pass "S22s a volume at /qdrant/storage/snapshots with nothing at /qdrant/storage: not taken for the data, no command" || fail_ "S22s" "$bad"
+  bad="$bad$(_expect_no_steps 'a sub-path volume only' 'the storage is split across mounts: /qdrant/storage/snapshots is mounted under /qdrant/storage')"
+  # A sibling that shares the prefix is neither the data nor under it — the
+  # case a prefix match gets wrong once split storage is its own class.
+  _open_case s22s2 "" "volume|qold|/qdrant/storage-old"
+  _step "skip it\n"
+  grep -q 'Docker volume qold' "$C/out" && bad="$bad [a volume at /qdrant/storage-old was taken for the data]"
+  bad="$bad$(_expect_no_steps 'a prefix sibling only' 'nothing is mounted at /qdrant/storage')"
+  [ -z "$bad" ] && pass "S22s a volume at /qdrant/storage/snapshots (split storage) or at /qdrant/storage-old (a sibling), nothing at /qdrant/storage: neither taken for the data, no command" || fail_ "S22s" "$bad"
 }
 
 # BELT AND BRACES, KEPT DELIBERATELY: Docker cleans `-v`/`--mount` destinations,
@@ -1043,13 +1131,12 @@ s24a() {   # snapshots mounted FIRST, nothing at /qdrant/storage — data is NOT
   [ -z "$bad" ] && pass "S24a /qdrant/snapshots mounted, /qdrant/storage not: nothing mounted said, no command, no docker rm -f" || fail_ "S24a" "$bad"
 }
 
-s24b() {   # snapshots mounted FIRST, a volume at /qdrant/storage second — that one named
+s24b() {   # snapshots mounted FIRST, a volume at /qdrant/storage second: a second mount the recreate would drop
   local bad=""
   _open_case s24b "" "volume|snaps|/qdrant/snapshots" "volume|qstore|/qdrant/storage"
   _step "skip it\n"
-  grep -q 'Its data is in the Docker volume qstore, which removing the container keeps:' "$C/out" || bad="$bad [the /qdrant/storage volume is not the one named]"
-  grep -qF -- '-v qstore:/qdrant/storage' "$C/out" || bad="$bad [the run line does not reuse qstore]"
-  [ -z "$bad" ] && pass "S24b two mounts, snapshots first: the volume AT /qdrant/storage is the one named and reused" || fail_ "S24b" "$bad"
+  bad="$bad$(_expect_no_steps 'snapshots beside it' 'it has other mounts besides /qdrant/storage, which a recreate would drop')"
+  [ -z "$bad" ] && pass "S24b two mounts, snapshots first: the recreate would drop one, so no command — the reason said" || fail_ "S24b" "$bad"
 }
 
 s25() {   # docker inspect fails for an existing container: fail closed, said
@@ -1203,13 +1290,63 @@ e_cases() {
   e1; e2; e3; e4; e5; e6; e7
 }
 
+
+# s28 — THE WRITTEN PROCEDURE IS PINNED (round 12): the pointer sends every
+# unconfirmed shape to "Recreating an exposed Qdrant container" in
+# docs/adoption.md, so its commands are compared EXACTLY, block by block, the
+# way the printed note is — a doc edit cannot silently bring back a route that
+# lost data. It is the snapshot route (Qdrant's own API, through the running
+# server); the file-copy route is refused outright.
+_doc_blocks() {
+  awk '/^## Recreating an exposed Qdrant container$/ { on = 1; next } on && /^## / { exit }
+       on && /^```sh$/ { inb = 1; print "--- block"; next } inb && /^```$/ { inb = 0; next } inb { print }' "$1"
+}
+s28() {
+  local bad="" d="$REPO_ROOT/docs/adoption.md" sec=""
+  cat > "$WORK/s28.expect" <<'DOCEOF'
+--- block
+Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"
+mkdir "$B" &&
+curl -sf "$Q/collections" > "$B/collections.json" &&
+jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt" &&
+while IFS= read -r c; do
+  n="$(curl -sf -X POST "$Q/collections/$c/snapshots" | jq -r '.result.name // empty')" &&
+  [ -n "$n" ] &&
+  curl -sf "$Q/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
+  [ -s "$B/$c.snapshot" ] || { echo "SNAPSHOT FAILED: $c"; break; }
+done < "$B/collections.txt"
+--- block
+m=0; while IFS= read -r c; do [ -s "$B/$c.snapshot" ] || { echo "MISSING: $c"; m=1; }; done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
+--- block
+I="$(docker inspect -f '{{.Config.Image}}' qdrant)" &&
+docker rename qdrant qdrant-old &&
+docker stop qdrant-old &&
+docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v "qdrant_storage_$S:/qdrant/storage" --restart unless-stopped "$I"
+--- block
+until curl -sf "$Q/collections" >/dev/null; do sleep 1; done &&
+while IFS= read -r c; do
+  curl -sf -X POST "$Q/collections/$c/snapshots/upload?priority=snapshot" -F "snapshot=@$B/$c.snapshot" >/dev/null || { echo "RESTORE FAILED: $c"; break; }
+done < "$B/collections.txt"
+--- block
+curl -sf "$Q/collections" | jq -r '.result.collections[].name' | sort > "$B/restored.txt" &&
+sort "$B/collections.txt" | diff - "$B/restored.txt" && echo "ALL COLLECTIONS RESTORED"
+DOCEOF
+  _doc_blocks "$d" > "$WORK/s28.got"
+  sec="$(awk '/^## Recreating an exposed Qdrant container$/ { on = 1; next } on && /^## / { exit } on' "$d")"
+  [ -n "$sec" ] || { fail_ "S28" "[the section \"Recreating an exposed Qdrant container\" is missing]"; return; }
+  cmp -s "$WORK/s28.expect" "$WORK/s28.got" || bad="$bad [the procedure's commands changed: $(diff "$WORK/s28.expect" "$WORK/s28.got" | head -4 | tr '\n' '|' | cut -c1-240)]"
+  printf '%s\n' "$sec" | grep -qE 'docker cp qdrant:|tar -C /qdrant/storage' && bad="$bad [a file-copy command is back in the procedure]"
+  printf '%s\n' "$sec" | grep -qF 'snapshots/upload?priority=snapshot' || bad="$bad [the snapshot restore is not the route]"
+  [ -z "$bad" ] && pass "S28 the written procedure's five command blocks match exactly — snapshot every collection, check each is non-empty, recreate with the same image, restore, check — and no file-copy command is in it" || fail_ "S28" "$bad"
+}
+
 if [ -n "${BL311_ONLY:-}" ]; then
   for _f in $BL311_ONLY; do "$_f"; done
   _done
 fi
 a1; a4; a5; a6; a7; a8
 s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12; s13; s14; s15; s16; s17; s18
-s19; s19b; s19c; s19d; s19e; s19f; s19g; s20; s21; s21b; s22; s22b; s22x; s22o; s22s; s22v; s23; s24a; s24b; s25; s26; s27
+s19; s19b; s19c; s19d; s19e; s19f; s19g; s20; s21; s21b; s22; s22b; s22i; s22x; s22y; s22o; s22s; s22v; s23; s24a; s24b; s25; s26; s27; s28
 e_cases
 
 # ── M — mutation proofs ─────────────────────────────────────────────────────
@@ -1261,7 +1398,7 @@ mut() {   # LABEL FILE MARKER REPLACEMENT CASE-FN WANT — WANT is the assertion
 # asserts no stub read them). Dropping the subshell AS WELL is not equivalent:
 # M39 does that to the launch check and E2 kills it, as M20 does for the bare
 # Docker probe. The redirections stay because the consent rule asks for them.
-if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M118" "BL311_SKIP_MUTANTS=1"; _done; fi
+if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M134" "BL311_SKIP_MUTANTS=1"; _done; fi
 echo "== M — mutation proofs =="
 mut "M1 helpers-core ignores CLAUDE_CONFIG_DIR for settings.json — killed by A4" \
   scripts/lib/helpers-core.sh '# BL-311-CONFIG-DIR' \
@@ -1459,7 +1596,7 @@ mut "M50 (R-14) a volume or bind mount not recognised as keeping the data — ki
 mut "M51 (R-14) nothing mounted, assumed to be qdrant_storage — killed by S22x" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-DATA-NONE' \
   '    *) ADOPT_MCP_QDRANT_DATA="volume"; ADOPT_MCP_QDRANT_SRC="qdrant_storage" ;;   # BL-311-MCP-DATA-NONE' \
-  s22x 'nothing mounted: the note prints a command line'
+  s22x 'nothing mounted: the finding does not say'
 mut "M52 (R-14) the recreate step hard-codes qdrant_storage — killed by S23" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-DATA-VOLUME-RUN' \
   '      adopt_note "  $ADOPT_MCP_QDRANT_RUN"   # BL-311-MCP-DATA-VOLUME-RUN' \
@@ -1536,10 +1673,10 @@ mut "M97 (R-439-18) Tmpfs keys matched by pattern, not cleaned — killed by S22
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-TMPFS-KEY' \
   "    if [ \"\$ADOPT_MCP_QDRANT_DATA\" = \"none\" ] && printf '%s' \"\$f\" | jq -e 'type == \"object\" and (keys | any(test(\"^/qdrant/storage/*\$\")))' >/dev/null 2>&1; then   # BL-311-MCP-TMPFS-KEY" \
   s22o "a tmpfs keyed '/qdrant//storage' is not read as a tmpfs"
-mut "M98 (R-439-17) a Destination matched by prefix, so a sub-path volume is the data — killed by S22s" \
+mut "M98 (R-439-17) a Destination matched by prefix, so a sibling volume is the data — killed by S22s" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-DATA-SELECT' \
   "    sm=\"\$(printf '%s' \"\$m\" | jq -c '[.[] | select((.Destination // \"\") | test(\"^/qdrant/storage\"))] | first // empty' 2>/dev/null)\"   # BL-311-MCP-DATA-SELECT" \
-  s22s 'a volume at /qdrant/storage/snapshots was taken for the data'
+  s22s 'a volume at /qdrant/storage-old was taken for the data'
 # ── round 11: `..` in a Tmpfs key (MX1-MX3, the reviewer's survivors) ───────
 mut "M103 (R-439-21/MX1) \`..\` dropped instead of resolved — killed by S22o" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-PATH-CLEAN' \
@@ -1577,7 +1714,7 @@ mut "M110 (allow-list) the kernel saying tmpfs not believed — killed by S22x" 
 mut "M111 (allow-list) two mounts at /qdrant/storage guessed between — killed by S22x" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-DATA-MULTI' \
   '    :   # BL-311-MCP-DATA-MULTI' \
-  s22x 'two mounts at it: the note prints a command line'
+  s22x 'two mounts at it: the finding does not say'
 mut "M112 (allow-list) an unconfirmed shape given a command anyway — killed by S22x" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-NO-STEPS' \
   '  adopt_note "  docker stop qdrant"; adopt_note "That is not shown to outlive the container, so NO commands are printed here: one"   # BL-311-MCP-NO-STEPS' \
@@ -1611,5 +1748,72 @@ mut "M118 (R-439-23) a quote in a # note — killed by S22's zsh -f -i paste" \
   "  adopt_note \"  # If docker run fails, the container's data is still where it was: fix it,\"   # BL-311-MCP-RECOVER-KEPT" \
   s22 'the pasted steps printed an error under zsh -f -i'
 else skip "M118" "zsh is not installed — only an interactive zsh can kill it"; fi
+
+# ── round 12: VANILLA ONLY (R-1), --mount settings (R-2), split storage (R-3),
+#    and every unread arm (R-4) ────────────────────────────────────────────
+mut "M119 (R-1) a QDRANT__ environment accepted — the API key dropped on recreate — killed by S22x" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-ENV' \
+  '  if false; then   # BL-311-MCP-CONFIRM-ENV' \
+  s22x 'an API key: the note prints a command line'
+mut "M120 (R-1) a second mount accepted — dropped on recreate — killed by S24b" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-ONE-MOUNT' \
+  '  if false; then   # BL-311-MCP-CONFIRM-ONE-MOUNT' \
+  s24b 'snapshots beside it: the note prints a command line'
+mut "M121 (R-1) the recreate switched to qdrant/qdrant:latest — killed by S22i" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-RUN-IMAGE' \
+  "  printf 'docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v %s --restart unless-stopped qdrant/qdrant:latest' \"\$(_adopt_mcp_q \"\$1:/qdrant/storage\")\"   # BL-311-MCP-RUN-IMAGE" \
+  s22i 'qdrant/qdrant:v1.12.4", printed "'
+mut "M122 (R-2) a volume subpath accepted — the recreate served an empty store — killed by S22x" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-SUBPATH' \
+  '  if false; then   # BL-311-MCP-CONFIRM-SUBPATH' \
+  s22x 'a volume subpath: the note prints a command line'
+mut "M123 (R-2) unreadable --mount settings accepted — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-HCMOUNTS' \
+  '  if false; then   # BL-311-MCP-CONFIRM-HCMOUNTS' \
+  s22y '--mount settings unread: the note prints a command line'
+mut "M124 (R-2) a --mount elsewhere accepted — killed by S22x" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-HCMOUNTS-ELSEWHERE' \
+  '  if false; then   # BL-311-MCP-CONFIRM-HCMOUNTS-ELSEWHERE' \
+  s22x 'a --mount elsewhere: the note prints a command line'
+mut "M125 (R-3) storage split under /qdrant/storage called nothing mounted — killed by S22x" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-DATA-SPLIT' \
+  '  :   # BL-311-MCP-DATA-SPLIT' \
+  s22x 'a tmpfs under it: the finding does not say'
+mut "M126 (R-4/X1) an unread running state accepted — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-RUNNING-UNREAD' \
+  '    *) ;;   # BL-311-MCP-CONFIRM-RUNNING-UNREAD' \
+  s22y 'running state unread: the note prints a command line'
+mut "M127 (R-4/X2) an exec that answers nothing accepted — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-KERNEL-EMPTY' \
+  '        "") ;;   # BL-311-MCP-CONFIRM-KERNEL-EMPTY' \
+  s22y 'exec answers nothing: the note prints a command line'
+mut "M128 (R-4/X5) volume options that are not JSON accepted — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-VOLUME-READ' \
+  '    if false; then   # BL-311-MCP-CONFIRM-VOLUME-READ' \
+  s22y 'volume options not JSON: the note prints a command line'
+mut "M129 (R-4) an unread AutoRemove accepted — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-AUTORM-UNREAD' \
+  '    *) ;;   # BL-311-MCP-CONFIRM-AUTORM-UNREAD' \
+  s22y 'AutoRemove unread: the note prints a command line'
+mut "M130 (R-4) unparseable tmpfs mounts accepted — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-TMPFS-READ' \
+  '  if false; then   # BL-311-MCP-CONFIRM-TMPFS-READ' \
+  s22y 'Tmpfs unparseable: the note prints a command line'
+mut "M131 (R-4) a ramfs kernel view not believed — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-KERNEL-TMPFS' \
+  '        tmpfs) _adopt_mcp_unconfirmed "inside the running container, /qdrant/storage is a $k, so its data is held in MEMORY"; return 0 ;;   # BL-311-MCP-CONFIRM-KERNEL-TMPFS' \
+  s22y 'kernel says ramfs: the note prints a command line'
+mut "M132 (R-4) the volume device option not read — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-VOLUME-TMPFS' \
+  "    if printf '%s' \"\$o\" | jq -e '(. // {}) | [(.type // \"\")] | map(ascii_downcase) | any(. == \"tmpfs\" or . == \"ramfs\")' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-VOLUME-TMPFS" \
+  s22y 'volume device tmpfs: the note prints a command line'
+mut "M133 (R-1) a re-pulled tag accepted — a version jump on recreate — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-IMAGE-SAME' \
+  '  if false; then   # BL-311-MCP-CONFIRM-IMAGE-SAME' \
+  s22y 'tag re-pulled: the note prints a command line'
+mut "M134 (R-1) an unread image accepted — killed by S22y" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-CONFIRM-IMAGE' \
+  '  if false; then   # BL-311-MCP-CONFIRM-IMAGE' \
+  s22y 'image unread: the note prints a command line'
 
 _done
