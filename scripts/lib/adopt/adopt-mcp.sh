@@ -147,16 +147,25 @@ _adopt_mcp_qdrant_container() {
 }
 
 # _adopt_mcp_inspect — HOW the EXISTING `qdrant` container is published, and
-# WHETHER it has an API key. One bounded `docker inspect` (bindings, env — one
-# JSON document per line), stdin closed. Sets:
-#   ADOPT_MCP_QDRANT_BIND   open-all (a HostIp of 0.0.0.0) | open-v6 (::, every
-#                           IPv6 address) | open-default (an EMPTY HostIp) |
-#                           loopback | unread (inspect failed or unparseable)
-#   ADOPT_MCP_QDRANT_KEY    set | unset | unread (QDRANT__SERVICE__API_KEY in
-#                           its ENVIRONMENT — a key in a config file is not seen)
+# WHETHER it has an API key. One bounded `docker inspect` (bindings, env,
+# publish-all, network mode — one JSON document per line), stdin closed. Sets:
+#   ADOPT_MCP_QDRANT_BIND   open-host (--network host: every interface of the
+#                           host) | open-all (a HostIp of 0.0.0.0) | open-v6
+#                           (::, every IPv6 address) | open-default (an EMPTY
+#                           HostIp) | open-addr (any other HostIp that is not
+#                           127.0.0.1 or ::1 — named in ADOPT_MCP_QDRANT_ADDRS)
+#                           | open-publish-all (-P) | loopback | unread
+#                           (inspect failed, or its bindings, publish-all or
+#                           network mode did not parse)
+#   ADOPT_MCP_QDRANT_KEY    set | unset | unread (QDRANT__SERVICE__API_KEY, in
+#                           ANY letter case — Qdrant honours a lowercase one —
+#                           in its ENVIRONMENT; a key in a config file is not seen)
 #
 # EVERY FIELD STARTS AT `unread` AND ONLY A PARSED ANSWER MOVES IT: a failed or
-# garbled inspect must never read as "loopback".
+# garbled inspect must never read as "loopback" (`# BL-311-MCP-BIND-PARSE`
+# checks all of it parses, as the type Docker gives it, before any arm reads it).
+# `loopback` is only what is left when nothing above it matched: no host
+# network, no -P, and every HostIp 127.0.0.1 or ::1 (or nothing published).
 #
 # WHY. `docker start` keeps the bindings a container was created with, so the
 # loopback-only `docker run` protects nothing for a container that already
@@ -177,30 +186,42 @@ _adopt_mcp_qdrant_container() {
 # says what it found and points to the written, snapshot-based procedure in
 # docs/adoption.md ("Recreating an exposed Qdrant container", pinned by S28),
 # and adoption recreates nothing.
-ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""; ADOPT_MCP_QDRANT_KEY="unread"
+ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""; ADOPT_MCP_QDRANT_KEY="unread"; ADOPT_MCP_QDRANT_ADDRS=""
 _adopt_mcp_inspect() {
-  local out="$ADOPT_WORK/mcp-inspect.out" b="" e=""
+  local out="$ADOPT_WORK/mcp-inspect.out" b="" e="" pa="" nm=""
   ADOPT_MCP_QDRANT_BIND="unread"; ADOPT_MCP_QDRANT_BIND_WHY="docker inspect could not read it"   # BL-311-MCP-INSPECT-FAILCLOSED
-  ADOPT_MCP_QDRANT_KEY="unread"
-  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}{{"\n"}}{{json .Config.Env}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
-  b="$(sed -n 1p "$out")"; e="$(sed -n 2p "$out")"
-  if printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "0.0.0.0")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT
+  ADOPT_MCP_QDRANT_KEY="unread"; ADOPT_MCP_QDRANT_ADDRS=""
+  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}{{"\n"}}{{json .Config.Env}}{{"\n"}}{{json .HostConfig.PublishAllPorts}}{{"\n"}}{{json .HostConfig.NetworkMode}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
+  b="$(sed -n 1p "$out")"; e="$(sed -n 2p "$out")"; pa="$(sed -n 3p "$out")"; nm="$(sed -n 4p "$out")"
+  if ! printf '%s\n%s\n%s\n' "$b" "$pa" "$nm" | jq -e -s 'length == 3 and (.[0] | type == "object" or type == "null") and (.[1] | type == "boolean") and (.[2] | type == "string")' >/dev/null 2>&1; then   # BL-311-MCP-BIND-PARSE
+    ADOPT_MCP_QDRANT_BIND_WHY="docker inspect's answer about its ports could not be parsed"
+  elif printf '%s' "$nm" | jq -e '. == "host"' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-HOST
+    ADOPT_MCP_QDRANT_BIND="open-host"
+  elif printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "0.0.0.0")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT
     ADOPT_MCP_QDRANT_BIND="open-all"
   elif printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "::")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-V6
     ADOPT_MCP_QDRANT_BIND="open-v6"
   elif printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-DEFAULT
     ADOPT_MCP_QDRANT_BIND="open-default"
-  elif printf '%s' "$b" | jq -e 'type == "object" or type == "null"' >/dev/null 2>&1; then
+  elif printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. != "127.0.0.1" and . != "::1")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-ADDR
+    ADOPT_MCP_QDRANT_BIND="open-addr"
+    ADOPT_MCP_QDRANT_ADDRS="$(printf '%s' "$b" | jq -r '[.[]?[]? | (.HostIp // "") | select(. != "127.0.0.1" and . != "::1")] | unique | join(", ")' 2>/dev/null | tr -cd '0-9A-Za-z.:%, ')"
+  elif printf '%s' "$pa" | jq -e '. == true' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-PUBLISH-ALL
+    ADOPT_MCP_QDRANT_BIND="open-publish-all"
+  else
     ADOPT_MCP_QDRANT_BIND="loopback"; ADOPT_MCP_QDRANT_BIND_WHY=""
   fi
   # AN API KEY IS READ, NOT ASSUMED ABSENT. The value is never printed. Only the
   # ENVIRONMENT is read — a key set in a Qdrant config file is not visible here,
-  # which is why "unset" is worded as "not set in its environment". The
+  # which is why "unset" is worded as "not set in its environment". The name is
+  # matched in ANY letter case: Qdrant honours `qdrant__service__api_key` (401
+  # without it, 200 with it — measured by the round-14 review). An EMPTY value is not read
+  # as a key — the note then warns rather than reassures. The
   # "could not be read" outcome needs an inspect whose second line is not JSON
   # while the first parsed; that is practically unreachable, and it is not
   # given a case of its own.
   if printf '%s' "$e" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    if printf '%s' "$e" | jq -e 'any(.[]; (type == "string") and test("^QDRANT__SERVICE__API_KEY=."))' >/dev/null 2>&1; then   # BL-311-MCP-KEY-DETECT
+    if printf '%s' "$e" | jq -e 'any(.[]; (type == "string") and test("^QDRANT__SERVICE__API_KEY=."; "i"))' >/dev/null 2>&1; then   # BL-311-MCP-KEY-DETECT
       ADOPT_MCP_QDRANT_KEY="set"
     else
       ADOPT_MCP_QDRANT_KEY="unset"
@@ -222,6 +243,10 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
     *)     key="whether it has an API key could not be read" ;;
   esac
   case "$ADOPT_MCP_QDRANT_BIND" in
+    open-host)
+      adopt_note "Your existing qdrant container runs on the host's network (--network host), so its"
+      adopt_note "ports are open on every network interface of this machine, whatever it publishes:"
+      adopt_note "while it runs, other machines on your network may be able to reach it — and $key." ;;
     open-all)
       adopt_note "Your existing qdrant container publishes its ports on every network interface"
       adopt_note "(its bindings name 0.0.0.0): while it runs, other machines on your network may be"
@@ -230,6 +255,15 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
       adopt_note "Your existing qdrant container publishes its ports on every IPv6 address of this"
       adopt_note "machine (its bindings name ::): while it runs, other machines that reach it over"
       adopt_note "IPv6 may be able to reach it — and $key." ;;
+    open-addr)
+      adopt_note "Your existing qdrant container publishes its ports on an address other than"
+      adopt_note "loopback (127.0.0.1 or ::1) — its bindings name ${ADOPT_MCP_QDRANT_ADDRS:-one it could not print}: while it runs,"
+      adopt_note "other machines that can reach that address may be able to reach it — and $key." ;;
+    open-publish-all)
+      adopt_note "Your existing qdrant container was created with -P (--publish-all), which publishes"
+      adopt_note "its ports on random ports of every network interface unless your Docker daemon"
+      adopt_note "sets a default bind address: while it runs, other machines on your network may be"
+      adopt_note "able to reach it — and $key." ;;
     *)
       adopt_note "Your existing qdrant container's ports name no host address, which Docker"
       adopt_note "publishes on every network interface unless your Docker daemon sets a default"   # BL-311-MCP-DEFAULT-BIND-WORDING
@@ -643,16 +677,16 @@ _adopt_mcp_consequence() {                               # BL-311-MCP-LOUD-NOTE
 # that starts is published, as read above, or that it could not be read.
 _adopt_mcp_open_hint() {
   case "$ADOPT_MCP_QDRANT_BIND" in                           # BL-311-MCP-OPEN-HINT
-    open-all|open-v6)
-      adopt_note "    (your existing qdrant container is published beyond this machine — see"
-      adopt_note "     'Your existing qdrant container' above before starting it)" ;;
-    open-default)
+    open-default|open-publish-all)
       adopt_note "    (your existing qdrant container is published on every network interface unless"
       adopt_note "     your Docker daemon sets a default bind address — see 'Your existing qdrant"
       adopt_note "     container' above before starting it)" ;;
+    open-*)
+      adopt_note "    (your existing qdrant container is published beyond this machine — see"
+      adopt_note "     'Your existing qdrant container' above before starting it)" ;;
     unread)
       adopt_note "    (how an existing qdrant container is published could not be read — ${ADOPT_MCP_QDRANT_BIND_WHY:-no reason recorded};"   # BL-311-MCP-UNREAD-HINT
-      adopt_note "     check before starting it: docker inspect -f '{{json .HostConfig.PortBindings}}' qdrant)" ;;
+      adopt_note "     check before starting it: docker inspect -f '{{json .HostConfig.PortBindings}} {{.HostConfig.PublishAllPorts}} {{.HostConfig.NetworkMode}}' qdrant)" ;;
   esac
   return 0
 }

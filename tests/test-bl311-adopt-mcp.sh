@@ -57,7 +57,13 @@
 #       nothing mounted, --rm, a pinned image, an API key, 0.0.0.0 and ::, the
 #       note points to that procedure and has no paste-shaped line and no
 #       `docker `, `&&` or `$(`; with no API key it is one text, whatever the
-#       storage
+#       storage; S30/S31 MIXED bindings (one port open, one on loopback) are
+#       open; S32 an EMPTY API key is not a key; S33 bindings that do not
+#       parse are "could not be read", never loopback; S34 -P, S35 --network
+#       host and S36 a LAN address are exposed, each in its own words (and S20
+#       holds ::1 as loopback); S37 a lowercase key is a key; S38 the written
+#       procedure RUN against a stand-in Qdrant — jq missing, the empty list
+#       that lost data in round 14, a lost API key, a failed upload
 #   E*  WHOLE ADOPTIONS: E1 both present — no question, the Record row, and
 #       the restart sentence BEFORE "NEXT"; E2 set it up now — no command read
 #       the operator's answers, and the project collection is declared; E3
@@ -116,6 +122,11 @@ case "${1:-}" in
   # handed these). Fields in the shape Docker 29.2.1 prints them (measured on
   # this host's own container); a field not modelled answers null. The knobs:
   #   qdrant-open        the HostIp ("" = none named, 0.0.0.0, ::); default 127.0.0.1
+  #   qdrant-bindings    the WHOLE .HostConfig.PortBindings line, verbatim — for
+  #                      MIXED bindings (one port open, one on loopback) and for
+  #                      an answer that does not parse; overrides qdrant-open
+  #   qdrant-publish-all created with -P (.HostConfig.PublishAllPorts true)
+  #   qdrant-network     .HostConfig.NetworkMode (e.g. host); default bridge
   #   qdrant-mount       one `type|source|destination` per line (an empty file =
   #                      nothing mounted); default this host's real shape, the
   #                      qdrant_storage volume at /qdrant/storage
@@ -132,8 +143,13 @@ case "${1:-}" in
            printf '%s\n' "$fmt" | grep -o '{{json [^}]*}}' | sed 's/^{{json //; s/}}$//' | while IFS= read -r fld; do
              case "$fld" in
                .HostConfig.PortBindings)
+                 if [ -f "$st/qdrant-bindings" ]; then printf '%s\n' "$(cat "$st/qdrant-bindings")"; continue; fi
                  hip='127.0.0.1'; [ -f "$st/qdrant-open" ] && hip="$(cat "$st/qdrant-open")"
                  jq -cn --arg h "$hip" '{"6333/tcp":[{"HostIp":$h,"HostPort":"6333"}],"6334/tcp":[{"HostIp":$h,"HostPort":"6334"}]}' ;;
+               .HostConfig.PublishAllPorts)
+                 if [ -f "$st/qdrant-publish-all" ]; then echo true; else echo false; fi ;;
+               .HostConfig.NetworkMode)
+                 if [ -f "$st/qdrant-network" ]; then jq -cn --arg n "$(cat "$st/qdrant-network")" '$n'; else echo '"bridge"'; fi ;;
                .Mounts)
                  mf="$st/qdrant-mount"; [ -f "$mf" ] || { mf="$st/.default-mount"; printf 'volume|qdrant_storage|/qdrant/storage\n' > "$mf"; }
                  arr='[]'
@@ -762,7 +778,12 @@ s20() {   # a loopback-bound existing container: no note
   _step "skip it\n"
   grep -q 'docker \[inspect\]' "$ST/calls.log" || bad="$bad [the container's bindings were not read]"
   grep -q 'Your existing qdrant container' "$C/out" && bad="$bad [a loopback-bound container was reported as open]"
-  [ -z "$bad" ] && pass "S20 an existing loopback-bound container: its bindings are read and no open-interfaces note is printed" || fail_ "S20" "$bad"
+  # ::1 IS LOOPBACK TOO: the any-other-address arm (round 14) must not flag it.
+  _open_case s20b loopback "volume|qdrant_storage|/qdrant/storage"
+  printf '%s' '{"6333/tcp":[{"HostIp":"::1","HostPort":"6333"}],"6334/tcp":[{"HostIp":"127.0.0.1","HostPort":"6334"}]}' > "$ST/qdrant-bindings"
+  _step "skip it\n"
+  grep -q 'Your existing qdrant container' "$C/out" && bad="$bad [a ::1 binding was reported as open]"
+  [ -z "$bad" ] && pass "S20 an existing loopback-bound container (127.0.0.1, and ::1 beside it): its bindings are read and no open-interfaces note is printed" || fail_ "S20" "$bad"
 }
 
 # _block OUT — the WHOLE printed note, from its first line ("Your existing
@@ -873,6 +894,91 @@ s27() {   # an API key IS set: said, never printed, and its absence not claimed
   grep -q 'no API key is set' "$C/out" && bad="$bad [no key claimed for a container that has one]"
   grep -q 's3cr3t-value' "$C/out" && bad="$bad [the key's value was printed]"
   [ -z "$bad" ] && pass "S27 a container with QDRANT__SERVICE__API_KEY: the key is recognised from its env, its value never printed" || fail_ "S27" "$bad"
+}
+
+# ── S30-S37 (round 14): mixed bindings, -P, host network, other addresses, the
+# key's spelling, and an answer that does not parse. The stub's
+# `qdrant-bindings` knob hands the step a WHOLE bindings line, so a set where
+# one port is open and the other on loopback can be tested — the uniform
+# bindings every earlier case used let `any` → `all` survive on two arms.
+_bind_case() {   # TAG BINDINGS-JSON — an open-case container with exactly these bindings
+  _open_case "$1" loopback "volume|qdrant_storage|/qdrant/storage"
+  printf '%s' "$2" > "$ST/qdrant-bindings"
+}
+s30() {   # port 6333 published on 0.0.0.0, port 6334 on 127.0.0.1
+  local bad=""
+  _bind_case s30 '{"6333/tcp":[{"HostIp":"0.0.0.0","HostPort":"6333"}],"6334/tcp":[{"HostIp":"127.0.0.1","HostPort":"6334"}]}'
+  _step "skip it\n"
+  _open_note_before_q || bad="$bad [a 0.0.0.0 binding beside a loopback one is not reported at all]"
+  grep -q '(its bindings name 0.0.0.0)' "$C/out" || bad="$bad [a 0.0.0.0 binding beside a loopback one is not reported as every interface]"
+  [ -z "$bad" ] && pass "S30 mixed bindings (6333 on 0.0.0.0, 6334 on 127.0.0.1): reported as every interface — ONE open port is enough" || fail_ "S30" "$bad"
+}
+s31() {   # an empty HostIp beside a loopback one
+  local bad=""
+  _bind_case s31 '{"6333/tcp":[{"HostIp":"","HostPort":"6333"}],"6334/tcp":[{"HostIp":"127.0.0.1","HostPort":"6334"}]}'
+  _step "skip it\n"
+  _open_note_before_q || bad="$bad [an empty HostIp beside a loopback one is not reported at all]"
+  grep -q 'publishes on every network interface unless your Docker daemon sets a default' "$C/out" || bad="$bad [an empty HostIp beside a loopback one is not reported as the daemon default]"
+  [ -z "$bad" ] && pass "S31 mixed bindings (no host address on one port, 127.0.0.1 on the other): reported as the daemon default" || fail_ "S31" "$bad"
+}
+s32() {   # QDRANT__SERVICE__API_KEY= with NO value is not read as a key
+  local bad=""
+  _open_case s32 "" "volume|qdrant_storage|/qdrant/storage"
+  printf 'PATH=/usr/local/bin\nQDRANT__SERVICE__API_KEY=\n' > "$ST/qdrant-env"
+  _step "skip it\n"
+  grep -q 'it has an API key set' "$C/out" && bad="$bad [an EMPTY API key was read as a key]"
+  grep -q 'no API key is set in its environment' "$C/out" || bad="$bad [an empty API key is not worded as no key]"
+  [ -z "$bad" ] && pass "S32 QDRANT__SERVICE__API_KEY= with no value: not read as a key, so the note warns rather than reassures" || fail_ "S32" "$bad"
+}
+s33() {   # bindings that do not parse: said to be unreadable, NEVER loopback
+  local bad=""
+  _bind_case s33 '{"6333/tcp":[{"HostIp":"0.0.0.0"'
+  _step "skip it\n"
+  grep -qxF "     $QSTART" "$C/out" || bad="$bad [no docker start hint to check]"
+  grep -q "how an existing qdrant container is published could not be read — docker inspect's answer about its ports could not be parsed" "$C/out" || bad="$bad [unparseable bindings are not said to be unreadable]"
+  grep -q 'Your existing qdrant container' "$C/out" && bad="$bad [a binding was claimed from an answer that did not parse]"
+  [ -z "$bad" ] && pass "S33 bindings that do not parse: 'could not be read' beside docker start — never read as loopback" || fail_ "S33" "$bad"
+}
+s34() {   # -P: PublishAllPorts, nothing in PortBindings
+  local bad=""
+  _bind_case s34 '{}'; : > "$ST/qdrant-publish-all"
+  _step "skip it\n"
+  _open_note_before_q || bad="$bad [-P is not reported at all]"
+  grep -q 'was created with -P (--publish-all), which publishes' "$C/out" || bad="$bad [-P is not reported as publishing on every interface]"
+  grep -q 'your existing qdrant container is published on every network interface unless' "$C/out" || bad="$bad [the docker start hint does not carry the -P note]"
+  bad="$bad$(_note_is_prose '-P')"
+  [ -z "$bad" ] && pass "S34 a container created with -P: reported as random ports on every interface, the hint carries it, no command printed" || fail_ "S34" "$bad"
+}
+s35() {   # --network host: every interface of the host, whatever is published
+  local bad=""
+  _bind_case s35 '{}'; printf 'host' > "$ST/qdrant-network"
+  _step "skip it\n"
+  _open_note_before_q || bad="$bad [the host network is not reported at all]"
+  grep -q "runs on the host's network (--network host)" "$C/out" || bad="$bad [the host network is not reported as every interface of the host]"
+  grep -q 'every network interface of this machine' "$C/out" || bad="$bad [the host network note does not say every interface of this machine]"
+  grep -q 'your existing qdrant container is published beyond this machine' "$C/out" || bad="$bad [the docker start hint does not carry the host-network note]"
+  bad="$bad$(_note_is_prose '--network host')"
+  [ -z "$bad" ] && pass "S35 a container on the host's network: reported as every interface of this machine, the hint carries it, no command printed" || fail_ "S35" "$bad"
+}
+s36() {   # a LAN address
+  local bad=""
+  _bind_case s36 '{"6333/tcp":[{"HostIp":"192.168.1.5","HostPort":"6333"}],"6334/tcp":[{"HostIp":"127.0.0.1","HostPort":"6334"}]}'
+  _step "skip it\n"
+  _open_note_before_q || bad="$bad [a LAN address is not reported at all]"
+  grep -q 'loopback (127.0.0.1 or ::1) — its bindings name 192.168.1.5:' "$C/out" || bad="$bad [a LAN address is not reported as an address other than loopback, by name]"
+  grep -q 'your existing qdrant container is published beyond this machine' "$C/out" || bad="$bad [the docker start hint does not carry the LAN-address note]"
+  bad="$bad$(_note_is_prose 'a LAN address')"
+  [ -z "$bad" ] && pass "S36 a binding on a LAN address (192.168.1.5): reported by name as other than loopback, the hint carries it, no command printed" || fail_ "S36" "$bad"
+}
+s37() {   # the key in LOWERCASE — Qdrant honours it (measured, round 14)
+  local bad=""
+  _open_case s37 "" "volume|qdrant_storage|/qdrant/storage"
+  printf 'PATH=/usr/local/bin\nqdrant__service__api_key=l0wer-s3cret\n' > "$ST/qdrant-env"
+  _step "skip it\n"
+  grep -q 'it has an API key set (QDRANT__SERVICE__API_KEY)' "$C/out" || bad="$bad [a lowercase API key is not recognised]"
+  grep -q 'no API key is set' "$C/out" && bad="$bad [no key claimed for a container that has a lowercase one]"
+  grep -q 'l0wer-s3cret' "$C/out" && bad="$bad [the key's value was printed]"
+  [ -z "$bad" ] && pass "S37 qdrant__service__api_key in lowercase: recognised as a key, its value never printed" || fail_ "S37" "$bad"
 }
 
 # ── E — whole adoptions ─────────────────────────────────────────────────────
@@ -1016,21 +1122,28 @@ s28() {
   local bad="" d="$REPO_ROOT/docs/adoption.md" sec=""
   cat > "$WORK/s28.expect" <<'DOCEOF'
 --- block
-docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}}' qdrant
+docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}} {{json .Mounts}}' qdrant
 --- block
-Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"
-mkdir "$B" &&
-curl -sf "$Q/aliases" > "$B/aliases.json" &&
-curl -sf "$Q/collections" > "$B/collections.json" &&
-jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt" &&
-while IFS= read -r c; do
-  n="$(curl -sf -X POST "$Q/collections/$c/snapshots" | jq -r '.result.name // empty')" &&
-  [ -n "$n" ] &&
-  curl -sf "$Q/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
-  [ -s "$B/$c.snapshot" ] || { echo "SNAPSHOT FAILED: $c"; break; }
-done < "$B/collections.txt"
+Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"; H=()
+if ! command -v jq >/dev/null 2>&1; then echo "STEP 1 FAILED: jq is not installed — install it, then paste this block again"
+elif mkdir "$B" &&
+  curl -s -o /dev/null -w '%{http_code}' "$Q/collections" > "$B/nokey-status.txt" &&
+  curl -sf "${H[@]}" "$Q/aliases" > "$B/aliases.json" &&
+  curl -sf "${H[@]}" "$Q/collections" > "$B/collections.json" &&
+  jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt"; then
+  while IFS= read -r c; do
+    n="$(curl -sf "${H[@]}" -X POST "$Q/collections/$c/snapshots" | jq -r '.result.name // empty')" &&
+    [ -n "$n" ] &&
+    curl -sf "${H[@]}" "$Q/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
+    [ -s "$B/$c.snapshot" ] || { echo "SNAPSHOT FAILED: $c"; break; }
+  done < "$B/collections.txt"
+else echo "STEP 1 FAILED: the old container did not answer, or it needs its API key (set H in the first line)"
+fi
 --- block
-m=0; [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
+m=0; command -v jq >/dev/null 2>&1 || { echo "STEP 2 FAILED: jq is not installed"; m=1; }
+[ -s "$B/nokey-status.txt" ] && [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] && [ -f "$B/collections.txt" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
+e="$(jq '.result.collections | length' "$B/collections.json" 2>/dev/null)"; g="$(grep -c '' "$B/collections.txt" 2>/dev/null)"
+[ "$e" -gt 0 ] 2>/dev/null && [ "$e" = "$g" ] || { echo "COUNT MISMATCH: the server listed ${e:-?} collections, collections.txt has ${g:-?} (they must match, and not be 0)"; m=1; }
 while IFS= read -r c; do [ -s "$B/$c.snapshot" ] || { echo "MISSING: $c"; m=1; }; done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
 --- block
 docker cp qdrant:/qdrant/snapshots "$B/old-snapshots" && echo "SNAPSHOT FILES COPIED"
@@ -1040,18 +1153,22 @@ docker rename qdrant qdrant-old &&
 docker stop qdrant-old &&
 docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v "qdrant_storage_$S:/qdrant/storage" --restart unless-stopped "$I"
 --- block
-until curl -sf "$Q/collections" >/dev/null; do sleep 1; done &&
+until curl -sf "${H[@]}" "$Q/collections" >/dev/null; do sleep 1; done &&
+f=0 &&
 while IFS= read -r c; do
-  curl -sf -X POST "$Q/collections/$c/snapshots/upload?priority=snapshot" -F "snapshot=@$B/$c.snapshot" >/dev/null || { echo "RESTORE FAILED: $c"; break; }
+  curl -sf "${H[@]}" -X POST "$Q/collections/$c/snapshots/upload?priority=snapshot" -F "snapshot=@$B/$c.snapshot" >/dev/null ||
+    { echo "RESTORE FAILED: $c — the collections after it were NOT tried; fix the cause and paste this block again"; f=1; break; }
 done < "$B/collections.txt" &&
+[ "$f" = 0 ] &&
 jq -c '{actions: [.result.aliases[] | {create_alias: {collection_name, alias_name}}]}' "$B/aliases.json" > "$B/alias-actions.json" &&
 { [ "$(jq '.actions | length' "$B/alias-actions.json")" = 0 ] ||
-  curl -sf -X POST "$Q/collections/aliases" -H 'Content-Type: application/json' --data-binary "@$B/alias-actions.json" >/dev/null ||
+  curl -sf "${H[@]}" -X POST "$Q/collections/aliases" -H 'Content-Type: application/json' --data-binary "@$B/alias-actions.json" >/dev/null ||
   echo "ALIAS RESTORE FAILED"; }
 --- block
-[ -f "$B/collections.txt" ] && curl -sf "$Q/collections" | jq -r '.result.collections[].name' | sort > "$B/restored.txt" &&
+k=0; [ "$(cat "$B/nokey-status.txt" 2>/dev/null)" = 200 ] || [ "$(curl -s -o /dev/null -w '%{http_code}' "$Q/collections")" != 200 ] || { echo "API KEY LOST: the new container answers without the API key the old one required"; k=1; }
+[ "$k" = 0 ] && [ -f "$B/collections.txt" ] && curl -sf "${H[@]}" "$Q/collections" | jq -r '.result.collections[].name' | sort > "$B/restored.txt" &&
 sort "$B/collections.txt" | diff - "$B/restored.txt" && echo "ALL COLLECTIONS RESTORED"
-curl -sf "$Q/aliases" | jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' > "$B/aliases-restored.json" &&
+[ "$k" = 0 ] && curl -sf "${H[@]}" "$Q/aliases" | jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' > "$B/aliases-restored.json" &&
 jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' "$B/aliases.json" | diff - "$B/aliases-restored.json" && echo "ALL ALIASES RESTORED"
 DOCEOF
   _doc_blocks "$d" > "$WORK/s28.got"
@@ -1062,14 +1179,151 @@ DOCEOF
   printf '%s\n' "$sec" | grep -qF 'snapshots/upload?priority=snapshot' || bad="$bad [the snapshot restore is not the route]"
   printf '%s\n' "$sec" | grep -qF '.Config.Image' && bad="$bad [(a) the recreate names the tag (.Config.Image), not the image the container runs]"
   grep -qxF "I=\"\$(docker inspect -f '{{.Image}}' qdrant)\" &&" "$WORK/s28.got" || bad="$bad [(a) the recreate does not reuse the running image ID]"
-  grep -qF 'curl -sf "$Q/aliases" > "$B/aliases.json" &&' "$WORK/s28.got" || bad="$bad [(b) the aliases are not saved]"
+  grep -qF 'curl -sf "${H[@]}" "$Q/aliases" > "$B/aliases.json" &&' "$WORK/s28.got" || bad="$bad [(b) the aliases are not saved]"
   grep -qF '"$Q/collections/aliases"' "$WORK/s28.got" || bad="$bad [(b) the aliases are not restored]"
   grep -qF 'echo "ALL ALIASES RESTORED"' "$WORK/s28.got" || bad="$bad [(b) the restored aliases are not checked]"
-  grep -qxF "docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}}' qdrant" "$WORK/s28.got" || bad="$bad [(c) the settings are not listed before the recreate]"
+  grep -qxF "docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}} {{json .Mounts}}' qdrant" "$WORK/s28.got" || bad="$bad [(c) the settings, mounts included, are not listed before the recreate]"
   printf '%s\n' "$sec" | grep -qF 'prints their values, an API key included' || bad="$bad [(c) it is not said that listing the settings prints a key's value]"
   grep -qxF 'docker cp qdrant:/qdrant/snapshots "$B/old-snapshots" && echo "SNAPSHOT FILES COPIED"' "$WORK/s28.got" || bad="$bad [(d) snapshot files kept in the container are not copied out]"
   printf '%s\n' "$sec" | grep -qF 'until step 6 passes it is your way back' || bad="$bad [(e) the old container is not kept until the check passes]"
-  [ -z "$bad" ] && pass "S28 the written procedure's seven command blocks match exactly — list the settings, snapshot every collection and save the aliases, check, copy out kept snapshot files, recreate from the running image ID with rename before stop, restore collections and aliases, check both — and no file copy of the storage is in it" || fail_ "S28" "$bad"
+  # ROUND 14. R-BL311-1: jq missing is said by step 1, and step 2 compares the
+  # server's count with the names saved. R-BL311-3: the mounts are listed, a
+  # config file is re-mounted, and step 6 fails when a request WITHOUT the key
+  # is answered where the old container refused one. R-BL311-6: step 5 says
+  # the collections after a failed upload were not tried.
+  grep -qxF 'if ! command -v jq >/dev/null 2>&1; then echo "STEP 1 FAILED: jq is not installed — install it, then paste this block again"' "$WORK/s28.got" || bad="$bad [(f) step 1 does not say jq is missing]"
+  grep -qxF 'm=0; command -v jq >/dev/null 2>&1 || { echo "STEP 2 FAILED: jq is not installed"; m=1; }' "$WORK/s28.got" || bad="$bad [(g) step 2 does not fail without jq]"
+  grep -qF "e=\"\$(jq '.result.collections | length' \"\$B/collections.json\" 2>/dev/null)\"; g=\"\$(grep -c '' \"\$B/collections.txt\" 2>/dev/null)\"" "$WORK/s28.got" || bad="$bad [(g) step 2 does not count the server's collections and the names saved]"
+  grep -qF '[ "$e" -gt 0 ] 2>/dev/null && [ "$e" = "$g" ] || { echo "COUNT MISMATCH:' "$WORK/s28.got" || bad="$bad [(g) step 2 does not require the two counts to match and be above 0]"
+  printf '%s\n' "$sec" | grep -qF 'a config file mounted into it' || bad="$bad [(h) the settings do not name a mounted config file]"
+  printf '%s\n' "$sec" | grep -qF 'a config file above all' || bad="$bad [(h) step 4 does not say to re-mount a config file]"
+  grep -qF '> "$B/nokey-status.txt" &&' "$WORK/s28.got" || bad="$bad [(h) step 1 does not record what a request without the key gets]"
+  grep -qF '|| { echo "API KEY LOST:' "$WORK/s28.got" || bad="$bad [(h) step 6 does not check a request without the key]"
+  grep -qF '[ "$k" = 0 ] && [ -f "$B/collections.txt" ]' "$WORK/s28.got" || bad="$bad [(h) step 6's success lines do not wait on the key check]"
+  printf '%s\n' "$sec" | grep -qF 'were NOT tried, and no alias was restored' || bad="$bad [(i) step 5 does not say the collections after a failed upload were not tried]"
+  printf '%s\n' "$sec" | grep -qF 'paste this block' || bad="$bad [(i) step 5 does not say to paste it again for the rest]"
+  [ -z "$bad" ] && pass "S28 the written procedure's seven command blocks match exactly — list the settings and mounts, snapshot every collection and save the aliases (saying so when jq is missing), check the counts match, copy out kept snapshot files, recreate from the running image ID with rename before stop, restore collections and aliases (saying what was not tried), check both and that the API key survived — and no file copy of the storage is in it" || fail_ "S28" "$bad"
+}
+
+# s38 — THE WRITTEN PROCEDURE, RUN (round 14). S28 pins the text; this runs
+# steps 1, 2 and 6 — and 5 on a failed upload — as the doc prints them, in
+# bash, against a stand-in Qdrant (a `curl` that answers the procedure's
+# requests: the collections, the aliases, snapshot create/download/upload, and
+# 401 for a request without the API key while one is required). Round 14
+# measured data loss on real Docker: with `jq` absent, step 1 left an EMPTY
+# collections.txt, step 2 printed ALL SNAPSHOTS PRESENT over nothing, and step
+# 4 then stopped a tmpfs container. So:
+#   (a) jq present, no key — steps 1, 2 and 6 all print their success lines
+#       (the check is not vacuous);
+#   (b) jq ABSENT — step 1 says so, step 2 says so, and no success line;
+#   (c) THE MEASURED STATE — collections.json lists two, collections.txt is
+#       empty — step 2 prints no success line, with jq absent AND present;
+#   (d) a key the old container required is LOST on the new one — step 6
+#       prints API KEY LOST and neither success line; kept, both print;
+#   (e) step 5 with its first upload failing — says the rest were not tried,
+#       and uploads nothing after it and restores no alias.
+_mk_qapi() {   # DIR — the stand-in Qdrant curl
+  mkdir -p "$1" || return 1
+  cat > "$1/curl" <<'QAPI'
+#!/bin/bash
+# a stand-in Qdrant HTTP API, as curl sees it, for running the written procedure
+d="${QSTUB:?}"
+method=GET out="" url="" key="" fmt="" failflag=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X) method="$2"; shift 2 ;;
+    -H) case "$2" in api-key:*) key="${2#api-key:}"; key="${key# }" ;; esac; shift 2 ;;
+    -o|--output) out="$2"; shift 2 ;;
+    -w) fmt="$2"; shift 2 ;;
+    -F|--data-binary) shift 2 ;;
+    -sf|-fs|-f) failflag=1; shift ;;
+    http://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+echo "$method $url key=${key:-none}" >> "$d/requests.log"
+p="${url#http://127.0.0.1:6333}"; p="${p%%\?*}"
+need=""; [ -f "$d/key" ] && [ ! -f "$d/key-lost" ] && need="$(cat "$d/key")"
+if [ -n "$need" ] && [ "$key" != "$need" ]; then
+  code=401; body='{"status":{"error":"Must provide an API key or an Authorization bearer token"}}'
+else
+  code=200
+  case "$method $p" in
+    "GET /aliases")                   body="$(cat "$d/aliases.json")" ;;
+    "GET /collections")               body="$(cat "$d/collections.json")" ;;
+    "POST /collections/aliases")      body='{"result":true,"status":"ok"}' ;;
+    "POST /collections/"*/snapshots)  c="${p#/collections/}"; c="${c%/snapshots}"; body="{\"result\":{\"name\":\"$c-1.snapshot\"},\"status\":\"ok\"}" ;;
+    "GET /collections/"*/snapshots/*) body="snapshot bytes of ${p#/collections/}" ;;
+    "POST /collections/"*/snapshots/upload)
+      c="${p#/collections/}"; c="${c%/snapshots/upload}"; body='{"result":true,"status":"ok"}'
+      [ -f "$d/upload-fails" ] && [ "$(cat "$d/upload-fails")" = "$c" ] && { code=500; body='{"status":{"error":"stub upload failure"}}'; } ;;
+    *) code=404; body='{"status":{"error":"Not found"}}' ;;
+  esac
+fi
+case "$code" in 2*) ok=1 ;; *) ok=0 ;; esac
+if [ "$ok" = 1 ] || [ "$failflag" = 0 ]; then
+  if [ -n "$out" ]; then printf '%s' "$body" > "$out"; elif [ -z "$fmt" ]; then printf '%s' "$body"; fi
+fi
+[ -n "$fmt" ] && printf '%s' "$code"
+[ "$ok" = 0 ] && [ "$failflag" = 1 ] && exit 22
+exit 0
+QAPI
+  chmod +x "$1/curl"
+}
+_doc_block() { _doc_blocks "$2" | awk -v n="$1" '/^--- block$/ { k++; next } k == n'; }   # N FILE
+_qrun() {   # SCRIPT PATH — run SCRIPT in bash with that PATH, a fresh HOME, this case's stand-in state
+  local h=""
+  h="$(mktemp -d "$C/home.XXXXXX")" || return 1
+  env PATH="$2" HOME="$h" QSTUB="$C/qs" bash "$1" </dev/null 2>&1
+}
+s38() {
+  local bad="" d="$FW/docs/adoption.md" b1="" b2="" b5="" b6="" b1k="" o="" pj="" pn=""
+  _case s38 >/dev/null
+  b1="$(_doc_block 2 "$d")"; b2="$(_doc_block 3 "$d")"; b5="$(_doc_block 6 "$d")"; b6="$(_doc_block 7 "$d")"
+  if [ -z "$b1" ] || [ -z "$b2" ] || [ -z "$b5" ] || [ -z "$b6" ]; then fail_ "S38" "[the procedure's blocks could not be read from $d]"; return; fi
+  [ -x "$WORK/qapi/curl" ] || _mk_qapi "$WORK/qapi" || { fail_ "S38" "[the stand-in Qdrant could not be made]"; return; }
+  [ -d "$WORK/nojq" ] || _mirror_without "$WORK/nojq" jq
+  pj="$WORK/qapi:$PATH"; pn="$WORK/qapi:$WORK/nojq"
+  # Asked of a FRESH shell on that PATH: this one has jq in its command hash,
+  # and `PATH=… command -v jq` answers from the hash (measured: /usr/bin/jq).
+  if env PATH="$pn" bash -c 'command -v jq' </dev/null >/dev/null 2>&1; then fail_ "S38" "[jq is still on the no-jq PATH: $(env PATH="$pn" bash -c 'command -v jq' </dev/null)]"; return; fi
+  mkdir -p "$C/qs"
+  printf '%s' '{"result":{"aliases":[{"alias_name":"mem","collection_name":"claude-memory"}]},"status":"ok"}' > "$C/qs/aliases.json"
+  printf '%s' '{"result":{"collections":[{"name":"claude-memory"},{"name":"acme"}]},"status":"ok"}' > "$C/qs/collections.json"
+  # (a)
+  printf '%s\n%s\n%s\n' "$b1" "$b2" "$b6" > "$C/a.sh"; o="$(_qrun "$C/a.sh" "$pj")"
+  printf '%s\n' "$o" | grep -qx 'ALL SNAPSHOTS PRESENT' || bad="$bad [(a) with jq and no key, step 2 did not print ALL SNAPSHOTS PRESENT: $(printf '%s' "$o" | head -3 | tr '\n' '|' | cut -c1-160)]"
+  printf '%s\n' "$o" | grep -qx 'ALL COLLECTIONS RESTORED' && printf '%s\n' "$o" | grep -qx 'ALL ALIASES RESTORED' || bad="$bad [(a) with jq and no key, step 6 did not print both success lines]"
+  # (b)
+  printf '%s\n%s\n' "$b1" "$b2" > "$C/b.sh"; o="$(_qrun "$C/b.sh" "$pn")"
+  printf '%s\n' "$o" | grep -q '^STEP 1 FAILED: jq is not installed' || bad="$bad [(b) without jq, step 1 did not say jq is missing]"
+  printf '%s\n' "$o" | grep -q '^STEP 2 FAILED: jq is not installed' || bad="$bad [(b) without jq, step 2 did not say jq is missing]"
+  printf '%s\n' "$o" | grep -q 'ALL SNAPSHOTS PRESENT' && bad="$bad [(b) without jq, step 2 printed ALL SNAPSHOTS PRESENT]"
+  # (c)
+  mkdir -p "$C/meas"; cp "$C/qs/aliases.json" "$C/qs/collections.json" "$C/meas/"; : > "$C/meas/collections.txt"; printf 200 > "$C/meas/nokey-status.txt"
+  printf "B='%s'\n%s\n" "$C/meas" "$b2" > "$C/c.sh"
+  _qrun "$C/c.sh" "$pn" | grep -q 'ALL SNAPSHOTS PRESENT' && bad="$bad [(c) jq missing and step 1's collections.txt empty: step 2 still printed ALL SNAPSHOTS PRESENT]"
+  _qrun "$C/c.sh" "$pj" | grep -q 'ALL SNAPSHOTS PRESENT' && bad="$bad [(c) step 1's collections.txt empty: step 2 printed ALL SNAPSHOTS PRESENT with jq present]"
+  # (d) — the key set the way the doc says: H=() at the end of step 1's first line
+  b1k="${b1%%"; H=()"*}; H=(-H 'api-key: k1')${b1#*"; H=()"}"
+  if ! printf '%s\n' "$b1k" | head -1 | grep -qF "; H=(-H 'api-key: k1')"; then bad="$bad [(d) H=() is not at the end of step 1's first line]"
+  else
+    printf 'k1' > "$C/qs/key"
+    printf '%s\n%s\n%s\n' "$b1k" "$b2" "$b6" > "$C/d-kept.sh"; o="$(_qrun "$C/d-kept.sh" "$pj")"
+    printf '%s\n' "$o" | grep -qx 'ALL COLLECTIONS RESTORED' && printf '%s\n' "$o" | grep -qx 'ALL ALIASES RESTORED' || bad="$bad [(d) the key kept: step 6 did not print both success lines: $(printf '%s' "$o" | head -3 | tr '\n' '|' | cut -c1-160)]"
+    printf '%s\n' "$o" | grep -q 'API KEY LOST' && bad="$bad [(d) the key kept: step 6 said it was lost]"
+    printf '%s\n%s\n%s\n%s\n' "$b1k" "$b2" ': > "$QSTUB/key-lost"' "$b6" > "$C/d-lost.sh"; o="$(_qrun "$C/d-lost.sh" "$pj")"
+    printf '%s\n' "$o" | grep -q '^API KEY LOST' || bad="$bad [(d) the key was lost and step 6 did not say API KEY LOST]"
+    printf '%s\n' "$o" | grep -qE 'ALL (COLLECTIONS|ALIASES) RESTORED' && bad="$bad [(d) the key was lost and step 6 still printed a success line]"
+    mv "$C/qs/key" "$C/qs/key.off"   # (e) runs with no key required
+  fi
+  # (e)
+  printf 'claude-memory' > "$C/qs/upload-fails"; : > "$C/qs/requests.log"
+  printf '%s\n%s\n' "$b1" "$b5" > "$C/e.sh"; o="$(_qrun "$C/e.sh" "$pj")"
+  printf '%s\n' "$o" | grep -q '^RESTORE FAILED: claude-memory — the collections after it were NOT tried' || bad="$bad [(e) a failed upload does not say the collections after it were not tried]"
+  grep -q 'acme/snapshots/upload' "$C/qs/requests.log" && bad="$bad [(e) a collection after the failed upload was uploaded]"
+  grep -q 'POST .*/collections/aliases' "$C/qs/requests.log" && bad="$bad [(e) the aliases were restored after a failed upload]"
+  [ -z "$bad" ] && pass "S38 the written procedure run against a stand-in Qdrant: jq missing is said by steps 1 and 2 with no success line, step 1's empty list no longer passes step 2, a lost API key fails step 6, a failed upload stops step 5 and says the rest were not tried — and with jq and the key kept, every success line prints" || fail_ "S38" "$bad"
 }
 
 if [ -n "${BL311_ONLY:-}" ]; then
@@ -1079,6 +1333,7 @@ fi
 a1; a4; a5; a6; a7; a8
 s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12; s13; s14; s15; s16; s17; s18
 s19; s19b; s19c; s19d; s19e; s19f; s19g; s20; s25; s27; s28; s29
+s30; s31; s32; s33; s34; s35; s36; s37; s38
 e_cases
 
 # ── M — mutation proofs ─────────────────────────────────────────────────────
@@ -1102,11 +1357,15 @@ _mutate() {   # FILE MARKER REPLACEMENT
   return 0
 }
 mut() {   # LABEL FILE MARKER REPLACEMENT CASE-FN WANT — WANT is the assertion text that must kill it
-  local label="$1" rel="$2" marker="$3" repl="$4" fn="$5" want="$6" m="" r="" p0="" f0="" s0="" why=""
+  local label="$1" rel="$2" marker="$3" repl="$4" fn="$5" want="$6" m="" r=""
   case "$fn" in e*) if [ "$HAVE_GITLEAKS" -ne 1 ]; then skip "$label" "its killing case needs gitleaks"; return; fi ;; esac
   m="$WORK/mut-$(printf '%s' "$marker" | tr -c 'A-Za-z0-9' '-')"
   _mirror_fw "$m" || { fail_ "$label" "could not mirror the framework"; return; }
   r="$(_mutate "$m/$rel" "$marker" "$repl")" || { fail_ "$label" "the mutation did not apply ($r)"; return; }
+  _mut_judge "$label" "$m" "$fn" "$want"
+}
+_mut_judge() {   # LABEL MIRROR CASE-FN WANT — run the case on the mutated mirror; the kill must be WANT
+  local label="$1" m="$2" fn="$3" want="$4" p0="" f0="" s0="" why=""
   p0=$PASSED; f0=$FAILED; s0=$SKIPPED
   FW="$m"; "$fn" > "$m.out" 2>&1; FW="$REPO_ROOT"
   # THE KILL MUST BE THE INTENDED ASSERTION. The first draft of this section
@@ -1130,7 +1389,45 @@ mut() {   # LABEL FILE MARKER REPLACEMENT CASE-FN WANT — WANT is the assertion
 # asserts no stub read them). Dropping the subshell AS WELL is not equivalent:
 # M39 does that to the launch check and E2 kills it, as M20 does for the bare
 # Docker probe. The redirections stay because the consent rule asks for them.
-if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M136" "BL311_SKIP_MUTANTS=1"; _done; fi
+
+# _mline MARKER FROM TO — the adopt-mcp.sh line ending in MARKER with its ONE
+# occurrence of FROM replaced by TO (split on FROM, never ${var/pat/rep}: see
+# CLAUDE.md's `&` trap). Fails when the line or FROM is not there exactly once.
+_mline() {
+  local line="" n=""
+  line="$(awk -v m="$1" '{ L = length($0); K = length(m); if (L >= K && substr($0, L - K + 1) == m) print }' "$REPO_ROOT/scripts/lib/adopt/adopt-mcp.sh")"
+  n="$(printf '%s\n' "$line" | grep -c .)"; [ "$n" = 1 ] || return 1
+  case "$line" in *"$2"*"$2"*) return 1 ;; *"$2"*) ;; *) return 1 ;; esac
+  printf '%s%s%s' "${line%%"$2"*}" "$3" "${line#*"$2"}"
+}
+mut_sub() {   # LABEL MARKER FROM TO CASE-FN WANT — mut, on a line built by _mline
+  local repl=""
+  repl="$(_mline "$2" "$3" "$4")" || { fail_ "$1" "the mutant line could not be built (marker $2, '$3' not there exactly once)"; return; }
+  mut "$1" scripts/lib/adopt/adopt-mcp.sh "$2" "$repl" "$5" "$6"
+}
+# mut_doc LABEL N REPLACEMENT-FILE CASE-FN WANT — the Nth sh block of
+# "Recreating an exposed Qdrant container", in a mirror's docs/adoption.md,
+# becomes REPLACEMENT-FILE; the replacement must land, and must change it.
+_mutate_doc_block() {   # FILE N REPLACEMENT-FILE
+  awk -v n="$2" -v rf="$3" '
+    /^## Recreating an exposed Qdrant container$/ { on = 1 }
+    on && /^## / && !/^## Recreating an exposed Qdrant container$/ { on = 0 }
+    on && /^```sh$/ { k++; if (k == n) { print; while ((getline l < rf) > 0) print l; skip = 1; next } }
+    skip && /^```$/ { skip = 0; print; next }
+    skip { next }
+    { print }' "$1" > "$1.mut" && mv "$1.mut" "$1" || { echo "awk failed"; return 1; }
+  _doc_block "$2" "$1" | cmp -s - "$3" || { echo "replacement not found"; return 1; }
+  return 0
+}
+mut_doc() {
+  local label="$1" n="$2" rf="$3" m="$WORK/mutdoc-$2" r=""
+  { _mirror_fw "$m" && mkdir -p "$m/docs" && cp -p "$REPO_ROOT/docs/adoption.md" "$m/docs/"; } || { fail_ "$label" "could not mirror the framework"; return; }
+  if _doc_block "$n" "$m/docs/adoption.md" | cmp -s - "$rf"; then fail_ "$label" "the mutation is a no-op: block $n already reads that way"; return; fi
+  r="$(_mutate_doc_block "$m/docs/adoption.md" "$n" "$rf")" || { fail_ "$label" "the mutation did not apply ($r)"; return; }
+  _mut_judge "$label" "$m" "$4" "$5"
+}
+
+if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M147" "BL311_SKIP_MUTANTS=1"; _done; fi
 echo "== M — mutation proofs =="
 mut "M1 helpers-core ignores CLAUDE_CONFIG_DIR for settings.json — killed by A4" \
   scripts/lib/helpers-core.sh '# BL-311-CONFIG-DIR' \
@@ -1281,13 +1578,15 @@ mut "M39 the launch check run bare (no subshell, no </dev/null) — killed by E2
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-LAUNCH-STDIN' \
   '  run_with_deadline "$secs" claude mcp get "$name" >"$out" 2>&1 || rc=$?   # BL-311-MCP-LAUNCH-STDIN' \
   e2 "a command read the operator's answers"
+# M40: since round 14 the any-other-address arm catches what the DEFAULT arm
+# misses, so the mutant prints a note in the WRONG words — killed by the wording.
 mut "M40 an empty HostIp never detected — killed by S19" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT-DEFAULT' \
   '  elif false; then   # BL-311-MCP-OPEN-DETECT-DEFAULT' \
-  s19 'the open-bindings note is not said before the question'
+  s19 'an empty HostIp is not worded as the daemon default'
 mut "M41 open bindings always reported — killed by S20" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT' \
-  '  if true; then   # BL-311-MCP-OPEN-DETECT' \
+  '  elif true; then   # BL-311-MCP-OPEN-DETECT' \
   s20 'a loopback-bound container was reported as open'
 mut "M42 the open-bindings note not said — killed by S19" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-SAY' \
@@ -1299,7 +1598,7 @@ mut "M43 the unregistered arm's docker start hint without the note — killed by
   s19 'the later docker start hint does not carry the note'
 mut "M44 (X1) 0.0.0.0 not detected — killed by S19e" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT' \
-  '  if false; then   # BL-311-MCP-OPEN-DETECT' \
+  '  elif false; then   # BL-311-MCP-OPEN-DETECT' \
   s19e 'HostIp 0.0.0.0 not reported'
 mut "M45 (X2) :: not detected — killed by S19f" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT-V6' \
@@ -1356,5 +1655,54 @@ mut "M136 (round 13) the pointer to the written procedure dropped — killed by 
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-POINTER' \
   '    :   # BL-311-MCP-POINTER' \
   s29 'the pointer to the written procedure is missing'
+
+# M137-M147 (round 14): R-BL311-2's four survivors, R-BL311-4's three new arms,
+# R-BL311-5's letter case, and R-BL311-1/-3 in the written procedure itself.
+mut_sub "M137 (R-BL311-2) 0.0.0.0 detected only when EVERY binding names it (any → all) — killed by S30" \
+  '# BL-311-MCP-OPEN-DETECT' 'any(. == "0.0.0.0")' 'all(. == "0.0.0.0")' \
+  s30 'a 0.0.0.0 binding beside a loopback one is not reported as every interface'
+mut_sub "M138 (R-BL311-2) an empty HostIp detected only when EVERY binding has one (any → all) — killed by S31" \
+  '# BL-311-MCP-OPEN-DETECT-DEFAULT' 'any(. == "")' 'all(. == "")' \
+  s31 'an empty HostIp beside a loopback one is not reported as the daemon default'
+mut_sub "M139 (R-BL311-2) the API-key pattern loses its '.', so an EMPTY value is a key — killed by S32" \
+  '# BL-311-MCP-KEY-DETECT' 'API_KEY=."' 'API_KEY="' \
+  s32 'an EMPTY API key was read as a key'
+mut "M140 (R-BL311-2) an answer that does not parse is not caught, and falls through to loopback — killed by S33" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BIND-PARSE' \
+  '  if false; then   # BL-311-MCP-BIND-PARSE' \
+  s33 'unparseable bindings are not said to be unreadable'
+mut "M141 (R-BL311-4) -P not detected — killed by S34" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT-PUBLISH-ALL' \
+  '  elif false; then   # BL-311-MCP-OPEN-DETECT-PUBLISH-ALL' \
+  s34 '-P is not reported at all'
+mut "M142 (R-BL311-4) --network host not detected — killed by S35" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT-HOST' \
+  '  elif false; then   # BL-311-MCP-OPEN-DETECT-HOST' \
+  s35 'the host network is not reported at all'
+mut "M143 (R-BL311-4) an address other than loopback not detected — killed by S36" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-OPEN-DETECT-ADDR' \
+  '  elif false; then   # BL-311-MCP-OPEN-DETECT-ADDR' \
+  s36 'a LAN address is not reported at all'
+mut_sub "M144 (R-BL311-5) the key's name matched in upper case only — killed by S37" \
+  '# BL-311-MCP-KEY-DETECT' '; "i")' ')' \
+  s37 'a lowercase API key is not recognised'
+mut_sub "M147 (R-BL311-4) ::1 read as an address other than loopback — killed by S20" \
+  '# BL-311-MCP-OPEN-DETECT-ADDR' 'any(. != "127.0.0.1" and . != "::1")' 'any(. != "127.0.0.1")' \
+  s20 'a ::1 binding was reported as open'
+# M145: step 2 as it was before round 14 — no jq check, no count — the block
+# that printed ALL SNAPSHOTS PRESENT over an empty list and lost the data.
+cat > "$WORK/m145.block" <<'M145'
+m=0; [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
+while IFS= read -r c; do [ -s "$B/$c.snapshot" ] || { echo "MISSING: $c"; m=1; }; done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
+M145
+mut_doc "M145 (R-BL311-1) step 2 back to its round-13 text — killed by S38 (c)" \
+  3 "$WORK/m145.block" \
+  s38 "(c) jq missing and step 1's collections.txt empty: step 2 still printed ALL SNAPSHOTS PRESENT"
+# M146: step 6 with its key check removed — the first line gone and nothing
+# waiting on it; every other character as the doc prints it.
+_doc_block 7 "$REPO_ROOT/docs/adoption.md" | sed -n '2,$p' | awk '{ p = "[ \"$k\" = 0 ] && "; if (index($0, p) == 1) $0 = substr($0, length(p) + 1); print }' > "$WORK/m146.block"
+mut_doc "M146 (R-BL311-3) step 6 without the request made without the key — killed by S38 (d)" \
+  7 "$WORK/m146.block" \
+  s38 '(d) the key was lost and step 6 still printed a success line'
 
 _done

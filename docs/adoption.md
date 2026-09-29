@@ -378,12 +378,18 @@ segment can reach even ports published on `127.0.0.1` — moby/moby#45610.)
 
 A container that already exists keeps whatever binding it was created with, so
 whenever adoption finds one it reads it (`docker inspect`: the port bindings,
-and whether `QDRANT__SERVICE__API_KEY` is set in its environment — never its
-value), on every path — even when nothing is missing. When the bindings name no
-host address, `0.0.0.0` (every interface) or `::` (every IPv6 address) it says
-so before the question, and every later `docker start` hint points back at it;
-when Docker is not running or the inspect fails, every `docker start` hint says
-the bindings could not be read and how to check them. Recorded with a stand-in
+whether it was created with `-P` (`--publish-all`) or on the host's network,
+and whether `QDRANT__SERVICE__API_KEY` — in any letter case, as Qdrant reads
+it — is set in its environment, never its value), on every path — even when
+nothing is missing. It says so before the question, and every later
+`docker start` hint points back at it, when the container runs on the host's
+network (every interface of this machine), when a binding names `0.0.0.0`
+(every interface), `::` (every IPv6 address), no host address, or any address
+other than `127.0.0.1` and `::1`, and when it was created with `-P`, which
+publishes on random ports of every interface. Loopback is only what is left
+when none of those holds. When Docker is not running, the inspect fails or its
+answer cannot be parsed, every `docker start` hint says the bindings could not
+be read and how to check them. Recorded with a stand-in
 `docker` shaped like a real container on the `qdrant_storage` volume with no
 API key in its environment; `/path/to/solo-orchestrator` stands for the
 framework checkout:
@@ -461,10 +467,12 @@ the phase checks, the tool matrix and the [CLI Setup Addendum](cli-setup-addendu
 ## Recreating an exposed Qdrant container
 
 Adoption points here whenever it finds an existing `qdrant` container whose
-ports are published beyond `127.0.0.1`. It says what it read and changes
-nothing, and it prints no commands to recreate the container: a recreate
-printed without knowing everything the container was created with can lose its
-data or drop a setting it relies on (see
+ports are published beyond loopback — a binding on `0.0.0.0`, `::`, no host
+address or any address other than `127.0.0.1` and `::1`, a container created
+with `-P`, or one on the host's network (`--network host`). It says what it
+read and changes nothing, and it prints no commands to recreate the container:
+a recreate printed without knowing everything the container was created with
+can lose its data or drop a setting it relies on (see
 [The memory and documentation servers](#the-memory-and-documentation-servers)
 for the list review found). Recreating the container on loopback is still the
 fix; this is how to do it without losing the data. Adoption does none of it for
@@ -479,25 +487,32 @@ snapshot documentation (<https://qdrant.tech/documentation/snapshots/>:
 `POST /collections/{name}/snapshots/upload?priority=snapshot` to restore it,
 which creates the collection) and its alias API (`GET /aliases`;
 `POST /collections/aliases` with `create_alias` actions). It needs `curl` and
-`jq`, and the old container **running** — start it if it is stopped, unless it
+`jq` — steps 1 and 2 stop and say so when `jq` is missing — and the old
+container **running** — start it if it is stopped, unless it
 was started with `--rm` and is already gone.
 
 **Before you start, list the settings it was created with — the new container
 must be created with the SAME ones.** That is its environment — an API key,
-every `QDRANT__` variable whatever its case, `RUN_MODE` — and any command or
-entrypoint flags. A recreate that drops one does not behave like the old
-container: a dropped API key leaves the new one open, and a dropped setting can
-move where it stores its data. This lists them and changes nothing — **but it
-prints their values, an API key included**, so run it where no one can read
-your screen, and do not paste its output anywhere:
+every `QDRANT__` variable whatever its case, `RUN_MODE` — any command or
+entrypoint flags, and its mounts: **a config file mounted into it** (such as
+`/qdrant/config/production.yaml`) can hold an API key or any other setting, and
+none of that shows in its environment. A recreate that drops one does not
+behave like the old container: a dropped API key leaves the new one open, and a
+dropped setting can move where it stores its data. This lists them and changes
+nothing — **but it prints their values, an API key included**, so run it where
+no one can read your screen, and do not paste its output anywhere:
 
 ```sh
-docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}}' qdrant
+docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}} {{json .Mounts}}' qdrant
 ```
 
 Step 4 says where each one goes; what the image sets itself, such as `PATH`, comes
-back with the same image. If it has an API key, also add
-`-H "api-key: <the key>"` to every `curl` below. And:
+back with the same image. **If it has an API key** — in its environment or in a
+mounted config file — change `H=()` at the end of step 1's first line to
+`H=(-H 'api-key: <the key>')`. Every `curl` below passes `"${H[@]}"`, except the
+two that check what a request made WITHOUT the key gets: step 1 records whether
+the old container answers one, and step 6 fails if the new one answers where
+the old one refused. And:
 
 - **Keep the same image.** Step 4 reuses the image the container RUNS (its
   image ID, `{{.Image}}`), not the tag it was created from: a tag may have
@@ -511,28 +526,39 @@ back with the same image. If it has an API key, also add
 
 **1. Snapshot and download every collection, and save the aliases,** into a
 new folder in your home directory (never the project). Paste the numbered
-blocks into the SAME shell — they share `$Q`, `$S` and `$B` — and each block
-whole; this one stops at the first failure and says which collection:
+blocks into the SAME shell — they share `$Q`, `$S`, `$B` and `$H` — and each
+block whole. This one stops at the first failure and says so: `STEP 1 FAILED`
+when `jq` is missing or the old container did not answer, `SNAPSHOT FAILED`
+with the collection it stopped at:
 
 ```sh
-Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"
-mkdir "$B" &&
-curl -sf "$Q/aliases" > "$B/aliases.json" &&
-curl -sf "$Q/collections" > "$B/collections.json" &&
-jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt" &&
-while IFS= read -r c; do
-  n="$(curl -sf -X POST "$Q/collections/$c/snapshots" | jq -r '.result.name // empty')" &&
-  [ -n "$n" ] &&
-  curl -sf "$Q/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
-  [ -s "$B/$c.snapshot" ] || { echo "SNAPSHOT FAILED: $c"; break; }
-done < "$B/collections.txt"
+Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"; H=()
+if ! command -v jq >/dev/null 2>&1; then echo "STEP 1 FAILED: jq is not installed — install it, then paste this block again"
+elif mkdir "$B" &&
+  curl -s -o /dev/null -w '%{http_code}' "$Q/collections" > "$B/nokey-status.txt" &&
+  curl -sf "${H[@]}" "$Q/aliases" > "$B/aliases.json" &&
+  curl -sf "${H[@]}" "$Q/collections" > "$B/collections.json" &&
+  jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt"; then
+  while IFS= read -r c; do
+    n="$(curl -sf "${H[@]}" -X POST "$Q/collections/$c/snapshots" | jq -r '.result.name // empty')" &&
+    [ -n "$n" ] &&
+    curl -sf "${H[@]}" "$Q/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
+    [ -s "$B/$c.snapshot" ] || { echo "SNAPSHOT FAILED: $c"; break; }
+  done < "$B/collections.txt"
+else echo "STEP 1 FAILED: the old container did not answer, or it needs its API key (set H in the first line)"
+fi
 ```
 
-**2. Check the aliases were saved and every collection has a non-empty
-snapshot.** Go on only if this prints `ALL SNAPSHOTS PRESENT`:
+**2. Check that step 1 finished:** `jq` is installed, the number of collections
+the server listed matches the number of names step 1 saved — and is not 0 —
+and every one of them has a non-empty snapshot. Go on only if this prints
+`ALL SNAPSHOTS PRESENT`:
 
 ```sh
-m=0; [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
+m=0; command -v jq >/dev/null 2>&1 || { echo "STEP 2 FAILED: jq is not installed"; m=1; }
+[ -s "$B/nokey-status.txt" ] && [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] && [ -f "$B/collections.txt" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
+e="$(jq '.result.collections | length' "$B/collections.json" 2>/dev/null)"; g="$(grep -c '' "$B/collections.txt" 2>/dev/null)"
+[ "$e" -gt 0 ] 2>/dev/null && [ "$e" = "$g" ] || { echo "COUNT MISMATCH: the server listed ${e:-?} collections, collections.txt has ${g:-?} (they must match, and not be 0)"; m=1; }
 while IFS= read -r c; do [ -s "$B/$c.snapshot" ] || { echo "MISSING: $c"; m=1; }; done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
 ```
 
@@ -549,10 +575,14 @@ docker cp qdrant:/qdrant/snapshots "$B/old-snapshots" && echo "SNAPSHOT FILES CO
 **4. Recreate it on loopback** with the same image and the same settings. The
 old container is renamed while it still runs, so a name clash stops this before
 anything is stopped. Before you paste it, add the settings you listed before
-you started: each environment variable as `-e NAME=value` before `"$I"`, and
-the command after `"$I"` (and `--entrypoint`, before `"$I"`) if you started it
-with one. If a setting moves the storage path away from `/qdrant/storage`,
-mount the volume at that path instead:
+you started: each environment variable as `-e NAME=value` before `"$I"`; each
+mount that is not the storage — **a config file above all** — as
+`-v <source>:<destination>` before `"$I"`, at the same destination (a key or
+setting kept in a config file is lost without it); and the command after `"$I"`
+(and `--entrypoint`, before `"$I"`) if you started it with one. Do not mount the
+old storage again: the new container gets a fresh volume, which step 5 fills.
+If a setting moves the storage path away from `/qdrant/storage`, mount the
+volume at that path instead:
 
 ```sh
 I="$(docker inspect -f '{{.Image}}' qdrant)" &&
@@ -562,27 +592,39 @@ docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v "qd
 ```
 
 **5. Restore every collection, then the aliases,** once the new container
-answers:
+answers. **It stops at the first upload that fails** and prints
+`RESTORE FAILED` with that collection: the collections after it in the list
+were NOT tried, and no alias was restored. Fix the cause and paste this block
+again for the rest — it uploads every collection again, which replaces the ones
+already restored with the same snapshot; step 6 shows what is still missing:
 
 ```sh
-until curl -sf "$Q/collections" >/dev/null; do sleep 1; done &&
+until curl -sf "${H[@]}" "$Q/collections" >/dev/null; do sleep 1; done &&
+f=0 &&
 while IFS= read -r c; do
-  curl -sf -X POST "$Q/collections/$c/snapshots/upload?priority=snapshot" -F "snapshot=@$B/$c.snapshot" >/dev/null || { echo "RESTORE FAILED: $c"; break; }
+  curl -sf "${H[@]}" -X POST "$Q/collections/$c/snapshots/upload?priority=snapshot" -F "snapshot=@$B/$c.snapshot" >/dev/null ||
+    { echo "RESTORE FAILED: $c — the collections after it were NOT tried; fix the cause and paste this block again"; f=1; break; }
 done < "$B/collections.txt" &&
+[ "$f" = 0 ] &&
 jq -c '{actions: [.result.aliases[] | {create_alias: {collection_name, alias_name}}]}' "$B/aliases.json" > "$B/alias-actions.json" &&
 { [ "$(jq '.actions | length' "$B/alias-actions.json")" = 0 ] ||
-  curl -sf -X POST "$Q/collections/aliases" -H 'Content-Type: application/json' --data-binary "@$B/alias-actions.json" >/dev/null ||
+  curl -sf "${H[@]}" -X POST "$Q/collections/aliases" -H 'Content-Type: application/json' --data-binary "@$B/alias-actions.json" >/dev/null ||
   echo "ALIAS RESTORE FAILED"; }
 ```
 
 **6. Check.** Go on only if this prints BOTH `ALL COLLECTIONS RESTORED` and
 `ALL ALIASES RESTORED`, and compare the `points_count` of each collection
-(`curl -s "$Q/collections/<name>"`) with the old one's if you noted them:
+(`curl -s "${H[@]}" "$Q/collections/<name>"`) with the old one's if you noted
+them. If the old container refused a request made without its API key, this
+first makes one such request to the new one; if that is answered it prints
+`API KEY LOST` and neither success line — the key, from its environment or a
+mounted config file, did not reach the new container:
 
 ```sh
-[ -f "$B/collections.txt" ] && curl -sf "$Q/collections" | jq -r '.result.collections[].name' | sort > "$B/restored.txt" &&
+k=0; [ "$(cat "$B/nokey-status.txt" 2>/dev/null)" = 200 ] || [ "$(curl -s -o /dev/null -w '%{http_code}' "$Q/collections")" != 200 ] || { echo "API KEY LOST: the new container answers without the API key the old one required"; k=1; }
+[ "$k" = 0 ] && [ -f "$B/collections.txt" ] && curl -sf "${H[@]}" "$Q/collections" | jq -r '.result.collections[].name' | sort > "$B/restored.txt" &&
 sort "$B/collections.txt" | diff - "$B/restored.txt" && echo "ALL COLLECTIONS RESTORED"
-curl -sf "$Q/aliases" | jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' > "$B/aliases-restored.json" &&
+[ "$k" = 0 ] && curl -sf "${H[@]}" "$Q/aliases" | jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' > "$B/aliases-restored.json" &&
 jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' "$B/aliases.json" | diff - "$B/aliases-restored.json" && echo "ALL ALIASES RESTORED"
 ```
 
@@ -596,8 +638,13 @@ are intact: fix what it reports and run that line again, or bring the old one
 back with `docker rename qdrant-old qdrant` and `docker start qdrant` — which
 restores the data only if it lived on a volume or in the container itself, not
 if it was in memory or the container was started with `--rm`. In step 5, a
-failed upload leaves the others in place: fix the cause and upload that one
-again. A collection name with characters that are not safe in a URL needs
+failed upload stops the loop: the uploads before it stay in place, the
+collections after it were not tried — fix the cause and paste step 5 again for
+the rest, and step 6 shows what is still missing. In step 6, `API KEY LOST`
+means the new container was created without the key: remove the NEW one
+(`docker rm -f qdrant` — the old one is still `qdrant-old`), paste step 4's
+last line again with the key's `-e` setting or its config file's `-v` added,
+then steps 5 and 6. A collection name with characters that are not safe in a URL needs
 percent-encoding in these URLs.
 
 There is deliberately **no file-copy route for the data**: copying
