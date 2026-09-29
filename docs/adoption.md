@@ -426,8 +426,15 @@ folder, look inside it and paste again under fresh names — never to delete it.
 Nothing checks the volume itself: pasted again after the folder was moved
 aside, the same block gets past `mkdir`. A container started with `--rm` is
 deleted by `docker stop`, so for one of those the copy comes first and the run
-says why. Recorded with a stand-in `docker`; `/Users/you` stands for the
-operator's home directory:
+says why. So is one with a tmpfs at `/qdrant/storage` — its data is in memory
+and gone on stop — which `docker inspect` shows only under
+`.HostConfig.Tmpfs`, not among its mounts: the run reads both, says the data
+is in memory, copies while it runs, then stops and renames it. Below the
+chain, a `#` note says how to get back if a step after the stop fails: start
+the old container again (renaming `qdrant-old` back first if the rename step
+ran), or, where stopping emptied it, restore from the backup folder. Recorded
+with a stand-in `docker`; `/Users/you` stands for the operator's home
+directory:
 
 ```text
    Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing
@@ -446,6 +453,10 @@ operator's home directory:
      docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage_20260928-142501:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest &&
      docker cp /Users/you/qdrant-storage-backup-20260928-142501/. qdrant:/qdrant/storage/ &&
      docker start qdrant
+     # If a step after docker stop fails, bring the old container back. If the rename
+     # step had not run: docker start qdrant. If it had, the old one is qdrant-old:
+     # docker rm qdrant if docker create made a new one, then docker rename qdrant-old
+     # qdrant, then docker start qdrant.
      # Only once the new container answers with your data: docker rm qdrant-old
 ```
 

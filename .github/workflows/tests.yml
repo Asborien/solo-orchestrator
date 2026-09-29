@@ -292,6 +292,19 @@ jobs:
           sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
+      - name: Install zsh (BL-311 paste-into-zsh cases)
+        # The ubuntu runner image ships no zsh, so without this step the BL-311
+        # suite's S22p/S22q/S22m paste the printed Qdrant steps into bash only
+        # and SKIP the zsh half — the half that matters on macOS, whose default
+        # zsh (INTERACTIVE_COMMENTS off) runs a `#` line as a command and so
+        # ENDS an `&&` chain wherever a note sits between two links, letting
+        # the rest run after a refused mkdir. The suite's shell-free shape
+        # check still holds without zsh; this is what lets the real
+        # `zsh -f -i` paste run here too. Installed in every shard, like
+        # semgrep, so the pin map stays free to move; a failed install fails
+        # the shard loudly rather than quietly dropping back to bash only.
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
       - name: Run fast unit tests — shard ${{ matrix.shard }}
         env:
           SHARD: ${{ matrix.shard }}
