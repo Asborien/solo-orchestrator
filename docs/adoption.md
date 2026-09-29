@@ -428,14 +428,20 @@ aside, the same block gets past `mkdir`. A container started with `--rm` is
 deleted by `docker stop`, so for one of those the copy comes first and the run
 says why. So is one with a tmpfs at `/qdrant/storage` — its data is in memory
 and gone on stop — which `docker inspect` shows only under
-`.HostConfig.Tmpfs`, not among its mounts, and keeps exactly as typed, so
-`--tmpfs /qdrant/storage/` arrives with its trailing slash: the run reads both
-places, matches the path with or without trailing slashes, and says the data
-is in memory. `docker cp` copies nothing out of a tmpfs, so for one of those
-the copy is `docker exec qdrant tar -C /qdrant/storage -cf - . | tar -C <backup>
--xf -`, taken while it runs; a failed `docker exec` is stopped by the `ls
-<backup>/collections` step after it (a pipe reports only its last command),
-and only then is the container stopped and renamed. Below the
+`.HostConfig.Tmpfs`, not among its mounts, and keeps exactly as typed —
+`/qdrant/storage/`, `/qdrant//storage` and `/qdrant/./storage` all arrive
+verbatim, often beside other keys such as `/tmp`. The run reads both places,
+cleans each path the way Go's `path.Clean` does before comparing it exactly
+(so a volume at `/qdrant/storage/snapshots` is not taken for the data), and
+says the data is in memory. `docker cp` copies nothing out of a tmpfs, so for
+one of those the copy is `docker exec qdrant tar -C /qdrant/storage -cf - . >
+<backup>.tar`, then a local untar, taken while it runs — into a file, not
+through a pipe, because under live writes the tar inside can exit 1 ("file
+changed as we read it") and a pipe would report only the local end's 0. A
+failed tar stops the chain with the data still in memory, and the note says to
+paste again. The container is then renamed while it still runs — so a
+`qdrant-old` already there stops the chain before anything is lost — and only
+then stopped. Below the
 chain, a `#` note says how to get back if a step after the stop fails: start
 the old container again (renaming `qdrant-old` back first if the rename step
 ran), or, where stopping emptied it, restore from the backup folder. Recorded
