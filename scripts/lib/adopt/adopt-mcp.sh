@@ -197,7 +197,12 @@ _adopt_mcp_inspect() {
   fi
   # THE MOUNT AT /qdrant/storage, and only that one — selected ONCE.
   if printf '%s' "$m" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    sm="$(printf '%s' "$m" | jq -c '[.[] | select(.Destination == "/qdrant/storage")] | first // empty' 2>/dev/null)"   # BL-311-MCP-DATA-SELECT
+    # A DESTINATION IS MATCHED WITH ANY TRAILING SLASHES (round 9): Docker keeps
+    # `--tmpfs /qdrant/storage/` VERBATIM, and an exact match classed that
+    # in-memory store as nothing mounted — the steps then stopped it before
+    # copying (measured on real Docker: the collection was gone). Every
+    # comparison below uses the same pattern.
+    sm="$(printf '%s' "$m" | jq -c '[.[] | select((.Destination // "") | test("^/qdrant/storage/*$"))] | first // empty' 2>/dev/null)"   # BL-311-MCP-DATA-SELECT
     t="$(printf '%s' "$sm" | jq -r '.Type // ""' 2>/dev/null)"
     case "$t" in
       volume|bind)                                                         # BL-311-MCP-DATA-KEPT
@@ -209,7 +214,7 @@ _adopt_mcp_inspect() {
     esac
     # `--tmpfs /qdrant/storage` is NOT in .Mounts (the round-8 review measured it) — only in
     # .HostConfig.Tmpfs, keyed by path. Data there is in MEMORY: gone on stop.
-    if [ "$ADOPT_MCP_QDRANT_DATA" = "none" ] && printf '%s' "$f" | jq -e 'type == "object" and has("/qdrant/storage")' >/dev/null 2>&1; then
+    if [ "$ADOPT_MCP_QDRANT_DATA" = "none" ] && printf '%s' "$f" | jq -e 'type == "object" and (keys | any(test("^/qdrant/storage/*$")))' >/dev/null 2>&1; then   # BL-311-MCP-TMPFS-KEY
       ADOPT_MCP_QDRANT_DATA="tmpfs"                                                 # BL-311-MCP-TMPFS-DETECT
     fi
   fi
@@ -310,7 +315,13 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
       # nothing mounted, the chain stopped the container before copying and the
       # collection was gone on restart) holds the data in MEMORY, so it is
       # handled like --rm — copy while it runs, then stop — plus a rename, since
-      # the stopped container still holds the name. And a step failing AFTER
+      # the stopped container still holds the name. The copy OUT of a tmpfs is
+      # `docker exec … tar | tar`, never `docker cp`, which copies nothing from
+      # a tmpfs (Docker's cp docs say so; round 9 measured `ls …/collections: No
+      # such file or directory`). A pipe's status is its LAST command's, and a
+      # local tar fed nothing exits 0 (bsdtar 3.5.3, measured) — so a failed
+      # `docker exec` is stopped by the `ls <backup>/collections` link that
+      # follows, not by the pipe. And a step failing AFTER
       # the stop leaves Qdrant down, so a `#` note below the chain says how to
       # get back: start the old one (un-renaming it first), or, where stopping
       # emptied it (--rm, tmpfs), restore from the backup folder.
@@ -347,6 +358,10 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
           adopt_note "  # The docker stop step empties it: from then on the copy is the only one."
           ;;
       esac
+      if [ "$ADOPT_MCP_QDRANT_DATA" = "tmpfs" ]; then
+        adopt_note "  # docker cp cannot read a tmpfs, so the copy is made by tar inside the container."   # BL-311-MCP-TMPFS-TAR-NOTE
+        adopt_note "  # If that fails, the ls step finds no collections and stops everything."
+      fi
       adopt_note "  # If the mkdir step says the folder exists, nothing after it ran. Never delete"   # BL-311-MCP-BACKUP-MKDIR-REFUSED
       adopt_note "  # that folder blindly: it may hold an earlier copy. Look inside it, then paste"
       adopt_note "  # these again with $(_adopt_mcp_q "$bk-2") as the folder and $(_adopt_mcp_q "$vol-2") as the volume."
@@ -356,7 +371,11 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
       if [ -z "$live" ]; then
         adopt_note "  docker stop qdrant &&"                                              # BL-311-MCP-BACKUP-STOP
       fi
-      adopt_note "  docker cp qdrant:/qdrant/storage/. $(_adopt_mcp_q "$bk") &&"         # BL-311-MCP-BACKUP-PATH
+      if [ "$ADOPT_MCP_QDRANT_DATA" = "tmpfs" ]; then
+        adopt_note "  docker exec qdrant tar -C /qdrant/storage -cf - . | tar -C $(_adopt_mcp_q "$bk") -xf - &&"   # BL-311-MCP-TMPFS-COPYOUT
+      else
+        adopt_note "  docker cp qdrant:/qdrant/storage/. $(_adopt_mcp_q "$bk") &&"       # BL-311-MCP-BACKUP-PATH
+      fi
       adopt_note "  ls $(_adopt_mcp_q "$bk/collections") &&"                            # BL-311-MCP-BACKUP-LS
       case "$live" in
         rm)

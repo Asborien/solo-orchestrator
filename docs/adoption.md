@@ -428,8 +428,14 @@ aside, the same block gets past `mkdir`. A container started with `--rm` is
 deleted by `docker stop`, so for one of those the copy comes first and the run
 says why. So is one with a tmpfs at `/qdrant/storage` — its data is in memory
 and gone on stop — which `docker inspect` shows only under
-`.HostConfig.Tmpfs`, not among its mounts: the run reads both, says the data
-is in memory, copies while it runs, then stops and renames it. Below the
+`.HostConfig.Tmpfs`, not among its mounts, and keeps exactly as typed, so
+`--tmpfs /qdrant/storage/` arrives with its trailing slash: the run reads both
+places, matches the path with or without trailing slashes, and says the data
+is in memory. `docker cp` copies nothing out of a tmpfs, so for one of those
+the copy is `docker exec qdrant tar -C /qdrant/storage -cf - . | tar -C <backup>
+-xf -`, taken while it runs; a failed `docker exec` is stopped by the `ls
+<backup>/collections` step after it (a pipe reports only its last command),
+and only then is the container stopped and renamed. Below the
 chain, a `#` note says how to get back if a step after the stop fails: start
 the old container again (renaming `qdrant-old` back first if the rename step
 ran), or, where stopping emptied it, restore from the backup folder. Recorded
