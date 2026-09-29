@@ -255,11 +255,11 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
   case "$ADOPT_MCP_QDRANT_DATA" in                     # BL-311-MCP-DATA-SAY
     volume)
       adopt_note "Its data is in the Docker volume $ADOPT_MCP_QDRANT_SRC, which removing the container keeps:"
-      adopt_note "  docker rm -f qdrant"
+      adopt_note "  docker rm -f qdrant &&"                                            # BL-311-MCP-DATA-VOLUME-RM
       adopt_note "  $(_adopt_mcp_run_with "$ADOPT_MCP_QDRANT_SRC")" ;;   # BL-311-MCP-DATA-VOLUME-RUN
     bind)
       adopt_note "Its data is in the host folder $ADOPT_MCP_QDRANT_SRC, which removing the container keeps:"
-      adopt_note "  docker rm -f qdrant"
+      adopt_note "  docker rm -f qdrant &&"                                            # BL-311-MCP-DATA-BIND-RM
       adopt_note "  $(_adopt_mcp_run_with "$ADOPT_MCP_QDRANT_SRC")" ;;
     none)
       # A SEQUENCE THAT CAN BE FOLLOWED LITERALLY — followed on real Docker 29.2.1
@@ -280,45 +280,62 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
       # `docker create -v qdrant_storage_<date>` silently reuses a volume that
       # already exists. mkdir guards the folder, not the volume; a per-second
       # stamp on both gives a re-run of adoption a second or more later two new
-      # names. It does NOT guard a re-paste of the SAME printed block (same
-      # names) after the folder was moved aside — so when mkdir refuses, the
-      # note says to keep the folder and take fresh names, not to move it.
-      # tests/test-bl311-adopt-mcp.sh S22/S22r compare this whole printed block
-      # line for line (no extra, missing or reordered line); S22t pins the stamp
-      # (SOIF_ADOPT_MCP_STAMP is its seam: two runs a second apart, no sleep).
+      # names.
+      #
+      # SAFE TO PASTE WHOLE (round 7, measured on real bash and zsh): prose
+      # between the steps ran as commands — in zsh an "(if mkdir says …" line
+      # ran mkdir and left a dozen folders in the cwd — and a pasted block ran
+      # on past a refusing mkdir and past "(go on only if …)". So every note is
+      # a `#` line ABOVE or BELOW the commands, never between them (zsh without
+      # INTERACTIVE_COMMENTS, the macOS default, runs a `#` line as a command
+      # named `#`: between two `&&` links it would END the chain and let the
+      # rest run), note text carries no ( ) ' " ; & | < > $ ` * ? [ ] !, and the
+      # commands are ONE `&&` chain, so the first failing step — a refusing
+      # mkdir, or `ls <backup>/collections` finding no collections — stops the
+      # rest. What the chain does NOT do is make a volume name single-use: a
+      # re-paste after the folder was moved aside gets past mkdir, and nothing
+      # checks the volume. (Reasoned, not measured: `docker rename` refuses
+      # while qdrant-old exists, and `docker create` refuses a taken name.)
+      # tests/test-bl311-adopt-mcp.sh S22/S22r compare the WHOLE printed note
+      # line for line; S22p/S22q paste it verbatim into bash and zsh (plain and
+      # -i) against a stub docker; S22t pins the stamp (SOIF_ADOPT_MCP_STAMP is
+      # its seam: two runs a second apart, no sleep).
       stamp="${SOIF_ADOPT_MCP_STAMP:-}"                                          # test seam: a fixed stamp
       [ -n "$stamp" ] || stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null)"                # BL-311-MCP-BACKUP-STAMP
       [ -n "$stamp" ] || stamp="backup-$$"
       bk="$HOME/qdrant-storage-backup-$stamp"                                     # BL-311-MCP-BACKUP-BK-NAME
       vol="qdrant_storage_$stamp"                                                 # BL-311-MCP-BACKUP-VOL-NAME
-      adopt_note "Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing"
-      adopt_note "the container DELETES it. To move it safely, run these in this order:"
-      adopt_note "  mkdir $(_adopt_mcp_q "$bk")"                                          # BL-311-MCP-BACKUP-MKDIR
-      adopt_note "     (if mkdir says the folder exists, STOP — never delete it blindly: it may hold"   # BL-311-MCP-BACKUP-MKDIR-REFUSED
-      adopt_note "     an earlier copy. Look inside it, then use fresh names: start again at this mkdir"
-      adopt_note "     with $(_adopt_mcp_q "$bk-2") as the folder and $(_adopt_mcp_q "$vol-2") as the volume, in every step)"
+      adopt_note "Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing"   # BL-311-MCP-DATA-NONE-HEAD
+      adopt_note "the container DELETES it. To move it safely, paste these lines whole — they stop"   # BL-311-MCP-DATA-NONE-SAY
+      adopt_note "at the first step that fails:"
       if [ "$ADOPT_MCP_QDRANT_AUTORM" = "true" ]; then
-        adopt_note "     (it was started with --rm, so STOPPING it DELETES it: the copy below is"   # BL-311-MCP-RM-NOTE
-        adopt_note "     taken while it runs — not a point-in-time copy, so stop anything writing to it)"
-      else
-        adopt_note "  docker stop qdrant"                                                 # BL-311-MCP-BACKUP-STOP
+        adopt_note "  # It was started with --rm, so STOPPING it DELETES it: the copy is taken while"   # BL-311-MCP-RM-NOTE
+        adopt_note "  # it runs, not at one point in time, so stop anything writing to it first."
+        adopt_note "  # The docker stop step removes it: from then on the copy is the only one."
       fi
-      adopt_note "  docker cp qdrant:/qdrant/storage/. $(_adopt_mcp_q "$bk")"            # BL-311-MCP-BACKUP-PATH
-      adopt_note "  ls $(_adopt_mcp_q "$bk/collections")"                               # BL-311-MCP-BACKUP-LS
-      adopt_note "     (go on only if that lists your collections)"                    # BL-311-MCP-BACKUP-GOON
-      if [ "$ADOPT_MCP_QDRANT_AUTORM" = "true" ]; then
-        adopt_note "  docker stop qdrant"
-        adopt_note "     (this removes the old container — the copy above is now the only one)"
-      else
-        adopt_note "  docker rename qdrant qdrant-old"                                   # BL-311-MCP-BACKUP-RENAME
+      adopt_note "  # If the mkdir step says the folder exists, nothing after it ran. Never delete"   # BL-311-MCP-BACKUP-MKDIR-REFUSED
+      adopt_note "  # that folder blindly: it may hold an earlier copy. Look inside it, then paste"
+      adopt_note "  # these again with $(_adopt_mcp_q "$bk-2") as the folder and $(_adopt_mcp_q "$vol-2") as the volume."
+      adopt_note "  # The ls step stops everything if the copy has no collections folder. Look at"   # BL-311-MCP-BACKUP-GOON
+      adopt_note "  # what it lists: those are the collections the new container will hold."
+      adopt_note "  mkdir $(_adopt_mcp_q "$bk") &&"                                       # BL-311-MCP-BACKUP-MKDIR
+      if [ "$ADOPT_MCP_QDRANT_AUTORM" != "true" ]; then
+        adopt_note "  docker stop qdrant &&"                                              # BL-311-MCP-BACKUP-STOP
       fi
-      adopt_note "  docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v $(_adopt_mcp_q "$vol:/qdrant/storage") --restart unless-stopped qdrant/qdrant:latest"   # BL-311-MCP-BACKUP-CREATE
-      adopt_note "  docker cp $(_adopt_mcp_q "$bk/.") qdrant:/qdrant/storage/"          # BL-311-MCP-BACKUP-COPYIN
-      adopt_note "  docker start qdrant"
+      adopt_note "  docker cp qdrant:/qdrant/storage/. $(_adopt_mcp_q "$bk") &&"         # BL-311-MCP-BACKUP-PATH
+      adopt_note "  ls $(_adopt_mcp_q "$bk/collections") &&"                            # BL-311-MCP-BACKUP-LS
       if [ "$ADOPT_MCP_QDRANT_AUTORM" = "true" ]; then
-        adopt_note "Keep $(_adopt_mcp_q "$bk") until the new container answers with your data."   # BL-311-MCP-BACKUP-KEEP
+        adopt_note "  docker stop qdrant &&"                                              # BL-311-MCP-RM-STOP
       else
-        adopt_note "Only once the new container answers with your data: docker rm qdrant-old"
+        adopt_note "  docker rename qdrant qdrant-old &&"                                # BL-311-MCP-BACKUP-RENAME
+      fi
+      adopt_note "  docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v $(_adopt_mcp_q "$vol:/qdrant/storage") --restart unless-stopped qdrant/qdrant:latest &&"   # BL-311-MCP-BACKUP-CREATE
+      adopt_note "  docker cp $(_adopt_mcp_q "$bk/.") qdrant:/qdrant/storage/ &&"       # BL-311-MCP-BACKUP-COPYIN
+      adopt_note "  docker start qdrant"                                                  # BL-311-MCP-BACKUP-START
+      if [ "$ADOPT_MCP_QDRANT_AUTORM" = "true" ]; then
+        adopt_note "  # Keep $(_adopt_mcp_q "$bk") until the new container answers with your data."   # BL-311-MCP-BACKUP-KEEP
+      else
+        adopt_note "  # Only once the new container answers with your data: docker rm qdrant-old"
       fi ;;
     *)
       adopt_note "Where it keeps its data could not be read, so no remove command is printed."   # BL-311-MCP-DATA-UNREAD

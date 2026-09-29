@@ -394,7 +394,7 @@ Recorded with a stand-in `docker` shaped like a real container on the
    it — and no API key is set in its environment (a key in a Qdrant config file would not show here).
    Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it.
    Its data is in the Docker volume qdrant_storage, which removing the container keeps:
-     docker rm -f qdrant
+     docker rm -f qdrant &&
      docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
    (On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment
    can reach even ports published on 127.0.0.1 — moby/moby#45610.)
@@ -415,29 +415,38 @@ it, rename rather than remove the old container, and remove it only once the
 new one shows the data. The backup folder AND the new volume are both named to
 the second: `docker create` silently reuses a volume that already exists, and
 with date-only names the round-6 review measured a same-day re-run bring the
-new container up with an earlier run's collections. If `mkdir` still refuses,
-the run says to keep that folder, look inside it and start again under fresh
-names — never to delete it. A container started with `--rm` is deleted by
-`docker stop`, so for one of those the copy comes first and the run says why.
-Recorded with a stand-in `docker`; `/Users/you` stands for the operator's home
-directory:
+new container up with an earlier run's collections. The steps are safe to paste
+whole into bash or zsh: they are ONE `&&` chain, so the first step that fails
+stops the rest — a `mkdir` that finds the folder already there, or an `ls` that
+finds no `collections` in the copy — and every note is a `#` line above or below
+the chain, never between its links, so pasting runs no prose. (zsh's default
+leaves `INTERACTIVE_COMMENTS` off, so there each `#` line prints `command not
+found: #` and does nothing else.) If `mkdir` refuses, the note says to keep that
+folder, look inside it and paste again under fresh names — never to delete it.
+Nothing checks the volume itself: pasted again after the folder was moved
+aside, the same block gets past `mkdir`. A container started with `--rm` is
+deleted by `docker stop`, so for one of those the copy comes first and the run
+says why. Recorded with a stand-in `docker`; `/Users/you` stands for the
+operator's home directory:
 
 ```text
    Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing
-   the container DELETES it. To move it safely, run these in this order:
-     mkdir /Users/you/qdrant-storage-backup-20260928-142501
-        (if mkdir says the folder exists, STOP — never delete it blindly: it may hold
-        an earlier copy. Look inside it, then use fresh names: start again at this mkdir
-        with /Users/you/qdrant-storage-backup-20260928-142501-2 as the folder and qdrant_storage_20260928-142501-2 as the volume, in every step)
-     docker stop qdrant
-     docker cp qdrant:/qdrant/storage/. /Users/you/qdrant-storage-backup-20260928-142501
-     ls /Users/you/qdrant-storage-backup-20260928-142501/collections
-        (go on only if that lists your collections)
-     docker rename qdrant qdrant-old
-     docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage_20260928-142501:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
-     docker cp /Users/you/qdrant-storage-backup-20260928-142501/. qdrant:/qdrant/storage/
+   the container DELETES it. To move it safely, paste these lines whole — they stop
+   at the first step that fails:
+     # If the mkdir step says the folder exists, nothing after it ran. Never delete
+     # that folder blindly: it may hold an earlier copy. Look inside it, then paste
+     # these again with /Users/you/qdrant-storage-backup-20260928-142501-2 as the folder and qdrant_storage_20260928-142501-2 as the volume.
+     # The ls step stops everything if the copy has no collections folder. Look at
+     # what it lists: those are the collections the new container will hold.
+     mkdir /Users/you/qdrant-storage-backup-20260928-142501 &&
+     docker stop qdrant &&
+     docker cp qdrant:/qdrant/storage/. /Users/you/qdrant-storage-backup-20260928-142501 &&
+     ls /Users/you/qdrant-storage-backup-20260928-142501/collections &&
+     docker rename qdrant qdrant-old &&
+     docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage_20260928-142501:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest &&
+     docker cp /Users/you/qdrant-storage-backup-20260928-142501/. qdrant:/qdrant/storage/ &&
      docker start qdrant
-   Only once the new container answers with your data: docker rm qdrant-old
+     # Only once the new container answers with your data: docker rm qdrant-old
 ```
 
 It never recreates or removes a container itself: `docker start qdrant` stays
