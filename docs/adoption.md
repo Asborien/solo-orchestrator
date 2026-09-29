@@ -385,13 +385,13 @@ address) it says so before the question, and every later `docker start` hint
 points back at it; when Docker is not running or the inspect fails, every
 `docker start` hint says the bindings could not be read and how to check them.
 Recorded with a stand-in `docker` shaped like a real container on the
-`qdrant_storage` volume with no API key:
+`qdrant_storage` volume with no API key in its environment:
 
 ```text
    Your existing qdrant container's ports name no host address, which Docker
    publishes on every network interface unless your Docker daemon sets a default
    bind address: while it runs, other machines on your network may be able to reach
-   it — and it has NO API key, so anything that reaches it can read your session memory.
+   it — and no API key is set in its environment (a key in a Qdrant config file would not show here).
    Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it.
    Its data is in the Docker volume qdrant_storage, which removing the container keeps:
      docker rm -f qdrant
@@ -407,18 +407,23 @@ container made from the framework's older Addendum gets `qdrant_data`, and a
 host folder is named and reused, shell-quoted. If the mounts cannot be read, no
 remove command is printed. If NOTHING is mounted there the data lives inside the
 container (`qdrant/qdrant:latest` declares no volume), removing it would delete
-the data, and the run prints a sequence that can be followed as written — stop
-the database first so the copy is consistent, back it up to a dated folder in
-your home directory (never the project), rename rather than remove the old
-container, and remove it only once the new one shows the data. Recorded with a
+the data, and the run prints a sequence that can be followed as written (the
+round-5 review ran it on Docker 29.2.1 and the data survived) — create a new,
+dated backup folder in your home directory (never the project; `mkdir` refuses
+if a same-day copy is already there), stop the database so the copy is
+consistent, copy the folder's contents, check `collections` is in it, rename
+rather than remove the old container, and remove it only once the new one shows
+the data. A container started with `--rm` is deleted by `docker stop`, so for
+one of those the copy comes first and the run says why. Recorded with a
 stand-in `docker`; `/Users/you` stands for the operator's home directory:
 
 ```text
    Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing
    the container DELETES it. To move it safely, run these in this order:
+     mkdir /Users/you/qdrant-storage-backup-20260928
      docker stop qdrant
-     docker cp qdrant:/qdrant/storage /Users/you/qdrant-storage-backup-20260928
-     ls /Users/you/qdrant-storage-backup-20260928
+     docker cp qdrant:/qdrant/storage/. /Users/you/qdrant-storage-backup-20260928
+     ls /Users/you/qdrant-storage-backup-20260928/collections
         (go on only if that lists your collections)
      docker rename qdrant qdrant-old
      docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage_20260928:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest

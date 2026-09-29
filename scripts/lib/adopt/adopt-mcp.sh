@@ -155,7 +155,10 @@ _adopt_mcp_qdrant_container() {
 #   ADOPT_MCP_QDRANT_DATA   volume | bind | none (nothing at /qdrant/storage, or
 #                           a mount that does not outlive the container) | unread
 #   ADOPT_MCP_QDRANT_SRC    the volume's name, or the bind mount's host path
-#   ADOPT_MCP_QDRANT_KEY    set | unset | unread (QDRANT__SERVICE__API_KEY)
+#   ADOPT_MCP_QDRANT_KEY    set | unset | unread (QDRANT__SERVICE__API_KEY in
+#                           its ENVIRONMENT — a key in a config file is not seen)
+#   ADOPT_MCP_QDRANT_AUTORM true | false | unread (started with --rm: stopping it
+#                           DELETES it)
 #
 # EVERY FIELD STARTS AT `unread` AND ONLY A PARSED ANSWER MOVES IT: a failed or
 # garbled inspect must never read as "loopback" or "data kept".
@@ -172,13 +175,14 @@ _adopt_mcp_qdrant_container() {
 # mount /qdrant/snapshots while /qdrant/storage stays inside it — so the mount
 # AT /qdrant/storage is read, never assumed. Adoption recreates nothing.
 ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""
-ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"
+ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"; ADOPT_MCP_QDRANT_AUTORM="unread"
 _adopt_mcp_inspect() {
-  local out="$ADOPT_WORK/mcp-inspect.out" b="" m="" e="" sm="" t=""
+  local out="$ADOPT_WORK/mcp-inspect.out" b="" m="" e="" r="" sm="" t=""
   ADOPT_MCP_QDRANT_BIND="unread"; ADOPT_MCP_QDRANT_BIND_WHY="docker inspect could not read it"   # BL-311-MCP-INSPECT-FAILCLOSED
-  ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"
-  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}{{"\n"}}{{json .Mounts}}{{"\n"}}{{json .Config.Env}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
-  b="$(sed -n 1p "$out")"; m="$(sed -n 2p "$out")"; e="$(sed -n 3p "$out")"
+  ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"; ADOPT_MCP_QDRANT_AUTORM="unread"
+  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}{{"\n"}}{{json .Mounts}}{{"\n"}}{{json .Config.Env}}{{"\n"}}{{json .HostConfig.AutoRemove}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
+  b="$(sed -n 1p "$out")"; m="$(sed -n 2p "$out")"; e="$(sed -n 3p "$out")"; r="$(sed -n 4p "$out")"
+  case "$r" in true|false) ADOPT_MCP_QDRANT_AUTORM="$r" ;; esac   # BL-311-MCP-AUTOREMOVE-DETECT
   if printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "0.0.0.0")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT
     ADOPT_MCP_QDRANT_BIND="open-all"
   elif printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "::")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-V6
@@ -200,7 +204,12 @@ _adopt_mcp_inspect() {
       *) ADOPT_MCP_QDRANT_DATA="none" ;;                                 # BL-311-MCP-DATA-NONE
     esac
   fi
-  # AN API KEY IS READ, NOT ASSUMED ABSENT. The value is never printed.
+  # AN API KEY IS READ, NOT ASSUMED ABSENT. The value is never printed. Only the
+  # ENVIRONMENT is read — a key set in a Qdrant config file is not visible here,
+  # which is why "unset" is worded as "not set in its environment". The
+  # "could not be read" outcome needs an inspect whose third line is not JSON
+  # while the first two parsed; that is practically unreachable, and it is
+  # not given a case of its own.
   if printf '%s' "$e" | jq -e 'type == "array"' >/dev/null 2>&1; then
     if printf '%s' "$e" | jq -e 'any(.[]; (type == "string") and test("^QDRANT__SERVICE__API_KEY=."))' >/dev/null 2>&1; then   # BL-311-MCP-KEY-DETECT
       ADOPT_MCP_QDRANT_KEY="set"
@@ -224,7 +233,7 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
   local key="" bk="" vol="" day=""
   case "$ADOPT_MCP_QDRANT_KEY" in
     set)   key="it has an API key set (QDRANT__SERVICE__API_KEY), so reaching it is not the same as reading it" ;;
-    unset) key="it has NO API key, so anything that reaches it can read your session memory" ;;
+    unset) key="no API key is set in its environment (a key in a Qdrant config file would not show here)" ;;   # BL-311-MCP-KEY-WORDING
     *)     key="whether it has an API key could not be read" ;;
   esac
   case "$ADOPT_MCP_QDRANT_BIND" in
@@ -253,25 +262,44 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
       adopt_note "  docker rm -f qdrant"
       adopt_note "  $(_adopt_mcp_run_with "$ADOPT_MCP_QDRANT_SRC")" ;;
     none)
-      # A SEQUENCE THAT CAN BE FOLLOWED LITERALLY: stop first (a point-in-time
-      # copy, not a running database copied file by file), back up to an
-      # absolute path under $HOME (never the cwd, which may be the adopted
-      # repo), free the name by RENAMING the old container, create the new one
-      # without starting it, copy the backup in, start it — and remove the old
-      # one only once the new one shows the data.
+      # A SEQUENCE THAT CAN BE FOLLOWED LITERALLY — followed on real Docker 29.2.1
+      # by the round-5 review, data intact. The backup folder is CREATED first
+      # (mkdir fails if it exists, so a same-day re-run cannot nest a second copy
+      # inside the first); the copy takes the folder's CONTENTS
+      # (`qdrant:/qdrant/storage/.`) and the check looks for `collections` at the
+      # top of it. Stop first for a point-in-time copy — unless the container was
+      # started with --rm, where stopping DELETES it: then copy while it runs.
+      # Free the name by RENAMING, create the new container without starting it,
+      # copy the backup's contents in, start it, and remove the old one only once
+      # the new one shows the data.
       day="$(date +%Y%m%d 2>/dev/null)"; [ -n "$day" ] || day="backup"
       bk="$HOME/qdrant-storage-backup-$day"; vol="qdrant_storage_$day"
       adopt_note "Its data at /qdrant/storage is NOT on a Docker volume or a host folder: removing"
       adopt_note "the container DELETES it. To move it safely, run these in this order:"
-      adopt_note "  docker stop qdrant"                                                   # BL-311-MCP-BACKUP-STOP
-      adopt_note "  docker cp qdrant:/qdrant/storage $(_adopt_mcp_q "$bk")"              # BL-311-MCP-BACKUP-PATH
-      adopt_note "  ls $(_adopt_mcp_q "$bk")"
+      adopt_note "  mkdir $(_adopt_mcp_q "$bk")"                                          # BL-311-MCP-BACKUP-MKDIR
+      if [ "$ADOPT_MCP_QDRANT_AUTORM" = "true" ]; then
+        adopt_note "     (it was started with --rm, so STOPPING it DELETES it: the copy below is"
+        adopt_note "     taken while it runs — not a point-in-time copy, so stop anything writing to it)"
+      else
+        adopt_note "  docker stop qdrant"                                                 # BL-311-MCP-BACKUP-STOP
+      fi
+      adopt_note "  docker cp qdrant:/qdrant/storage/. $(_adopt_mcp_q "$bk")"            # BL-311-MCP-BACKUP-PATH
+      adopt_note "  ls $(_adopt_mcp_q "$bk/collections")"                               # BL-311-MCP-BACKUP-LS
       adopt_note "     (go on only if that lists your collections)"
-      adopt_note "  docker rename qdrant qdrant-old"
-      adopt_note "  docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v $(_adopt_mcp_q "$vol:/qdrant/storage") --restart unless-stopped qdrant/qdrant:latest"
-      adopt_note "  docker cp $(_adopt_mcp_q "$bk/.") qdrant:/qdrant/storage/"
+      if [ "$ADOPT_MCP_QDRANT_AUTORM" = "true" ]; then
+        adopt_note "  docker stop qdrant"
+        adopt_note "     (this removes the old container — the copy above is now the only one)"
+      else
+        adopt_note "  docker rename qdrant qdrant-old"
+      fi
+      adopt_note "  docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v $(_adopt_mcp_q "$vol:/qdrant/storage") --restart unless-stopped qdrant/qdrant:latest"   # BL-311-MCP-BACKUP-CREATE
+      adopt_note "  docker cp $(_adopt_mcp_q "$bk/.") qdrant:/qdrant/storage/"          # BL-311-MCP-BACKUP-COPYIN
       adopt_note "  docker start qdrant"
-      adopt_note "Only once the new container answers with your data: docker rm qdrant-old" ;;
+      if [ "$ADOPT_MCP_QDRANT_AUTORM" = "true" ]; then
+        adopt_note "Keep $(_adopt_mcp_q "$bk") until the new container answers with your data."
+      else
+        adopt_note "Only once the new container answers with your data: docker rm qdrant-old"
+      fi ;;
     *)
       adopt_note "Where it keeps its data could not be read, so no remove command is printed."   # BL-311-MCP-DATA-UNREAD
       adopt_note "Check it first: docker inspect -f '{{json .Mounts}}' qdrant" ;;

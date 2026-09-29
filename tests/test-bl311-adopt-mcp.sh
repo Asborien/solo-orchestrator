@@ -51,6 +51,8 @@
 #       data lives — a host folder (named, reused), nothing mounted (removal
 #       DELETES it: backup, no `docker rm`), an old volume name (read, reused);
 #       S21b a hostile host path is shell-quoted (pasted, it executes nothing);
+#       S22 the nothing-mounted sequence matched WHOLE-LINE and in order; S22r
+#       the same for a container started with --rm (copy before the stop);
 #       S24a/b two mounts with /qdrant/snapshots FIRST; S25 inspect fails; S26
 #       unparseable mounts; S27 an API key read from the container's env
 #   E*  WHOLE ADOPTIONS: E1 both present — no question, the Record row, and
@@ -129,7 +131,9 @@ case "${1:-}" in
            fi
            # qdrant-env: one VAR=value per line; default: no API key.
            ef="$st/qdrant-env"; [ -f "$ef" ] || { ef="$st/.default-env"; printf 'PATH=/usr/local/sbin:/usr/local/bin\nRUN_MODE=production\n' > "$ef"; }
-           jq -cR -s 'split("\n") | map(select(length > 0))' < "$ef" ;;
+           jq -cR -s 'split("\n") | map(select(length > 0))' < "$ef"
+           # qdrant-autoremove: the container was started with --rm.
+           if [ -f "$st/qdrant-autoremove" ]; then echo true; else echo false; fi ;;
   run)   if [ -f "$st/docker-run-fails" ]; then echo "docker: Error response from daemon: stub refusal" >&2; exit 125; fi
          : > "$st/qdrant-exists"; [ -f "$st/docker-run-noop" ] || : > "$st/qdrant-up"; echo 0123abcd ;;
   *)     exit 0 ;;
@@ -658,7 +662,7 @@ s19() {   # unregistered + stopped + no host address + the host's real volume
   _open_note_before_q || bad="$bad [the open-bindings note is not said before the question]"
   grep -q 'publishes on every network interface unless your Docker daemon sets a default' "$C/out" || bad="$bad [an empty HostIp is not worded as the daemon default]"
   grep -q 'can reach even ports published on 127.0.0.1 — moby/moby#45610' "$C/out" || bad="$bad [the pre-28.0.0 caveat is missing]"
-  grep -q 'it has NO API key' "$C/out" || bad="$bad [the absence of an API key, read from its env, is not said]"
+  grep -q 'no API key is set in its environment (a key in a Qdrant config file would not show here)' "$C/out" || bad="$bad [the absence of an API key is not worded as read from its environment only]"
   grep -q 'Its data is in the Docker volume qdrant_storage, which removing the container keeps:' "$C/out" || bad="$bad [the volume is not named as keeping the data]"
   grep -qxF '     docker rm -f qdrant' "$C/out" || bad="$bad [the recreate step is not printed]"
   grep -qxF "     $QRUN" "$C/out" || bad="$bad [the loopback run command with that volume is not printed]"
@@ -744,22 +748,60 @@ s21() {   # data in a HOST FOLDER: that folder is named, and reused in the run l
   [ -z "$bad" ] && pass "S21 data in a host folder: the folder is named as keeping it and reused, shell-quoted, in the run line" || fail_ "S21" "$bad"
 }
 
-s22() {   # NOTHING mounted at /qdrant/storage: a sequence that can be followed literally
-  local bad="" prev=0 n="" step=""
+# _exact_order FILE LINE... — every LINE appears, WHOLE (grep -x), in this order.
+# Prints the first that is missing or out of order; nothing when all hold.
+_exact_order() {
+  local f="$1" prev=0 n="" i=0 l=""; shift
+  for l in "$@"; do
+    i=$((i + 1))
+    n="$(grep -nxF -- "$l" "$f" | cut -d: -f1 | while read -r x; do [ "$x" -gt "$prev" ] && { echo "$x"; break; }; done)"
+    [ -n "$n" ] || { printf 'step %s missing or out of order: %s' "$i" "$l"; return 0; }
+    prev="$n"
+  done
+}
+
+s22() {   # NOTHING mounted at /qdrant/storage: the WHOLE sequence, exactly, in order
+  local bad="" d="" bk="" miss=""
   _open_case s22 "" none
   _step "skip it\n"
   grep -q 'NOT on a Docker volume or a host folder: removing' "$C/out" || bad="$bad [the data loss is not said]"
   grep -q 'docker rm -f qdrant' "$C/out" && bad="$bad [a remove command was printed for a container whose data it would destroy]"
-  grep -qF './qdrant-storage-backup' "$C/out" && bad="$bad [the backup goes into the current directory]"
-  grep -qF "     docker cp qdrant:/qdrant/storage $H/qdrant-storage-backup-" "$C/out" || bad="$bad [the backup is not an absolute path under \$HOME]"
-  for step in '     docker stop qdrant' '     docker cp qdrant:/qdrant/storage ' '     ls ' '     docker rename qdrant qdrant-old' \
-              '     docker create --name qdrant -p 127.0.0.1:6333:6333' '     docker cp ' '     docker start qdrant' \
-              '   Only once the new container answers with your data: docker rm qdrant-old'; do
-    n="$(grep -nF -- "$step" "$C/out" | cut -d: -f1 | while read -r l; do [ "$l" -gt "$prev" ] && { echo "$l"; break; }; done)"
-    if [ -z "$n" ]; then bad="$bad [step out of order or missing: '$step']"; break; fi
-    prev="$n"
-  done
-  [ -z "$bad" ] && pass "S22 nothing mounted at /qdrant/storage: DELETES said, and a followable order — stop, back up to an absolute \$HOME path, check, rename, create, copy in, start, and only then remove the old one; no docker rm -f" || fail_ "S22" "$bad"
+  d="$(sed -n "s#^     mkdir $H/qdrant-storage-backup-\([0-9]\{8\}\)\$#\1#p" "$C/out" | head -1)"
+  if [ -z "$d" ]; then fail_ "S22" "$bad [no mkdir of a dated backup folder under \$HOME]"; return; fi
+  bk="$H/qdrant-storage-backup-$d"
+  miss="$(_exact_order "$C/out" \
+    "     mkdir $bk" \
+    "     docker stop qdrant" \
+    "     docker cp qdrant:/qdrant/storage/. $bk" \
+    "     ls $bk/collections" \
+    "     docker rename qdrant qdrant-old" \
+    "     docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage_$d:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest" \
+    "     docker cp $bk/. qdrant:/qdrant/storage/" \
+    "     docker start qdrant" \
+    "   Only once the new container answers with your data: docker rm qdrant-old")"
+  [ -z "$miss" ] || bad="$bad [$miss]"
+  [ -z "$bad" ] && pass "S22 nothing mounted at /qdrant/storage: DELETES said, and the whole sequence exact and in order — mkdir, stop, copy the CONTENTS, check collections, rename, create WITH the volume, copy the contents in, start, only then remove the old one; no docker rm -f" || fail_ "S22" "$bad"
+}
+
+s22r() {   # started with --rm: stopping DELETES it, so the copy comes first
+  local bad="" d="" bk="" miss=""
+  _open_case s22r "" none; : > "$ST/qdrant-autoremove"
+  _step "skip it\n"
+  d="$(sed -n "s#^     mkdir $H/qdrant-storage-backup-\([0-9]\{8\}\)\$#\1#p" "$C/out" | head -1)"
+  [ -n "$d" ] || { fail_ "S22r" "[no mkdir of a dated backup folder under \$HOME]"; return; }
+  bk="$H/qdrant-storage-backup-$d"
+  grep -q 'it was started with --rm, so STOPPING it DELETES it' "$C/out" || bad="$bad [the --rm deletion is not said]"
+  grep -q 'docker rename qdrant qdrant-old' "$C/out" && bad="$bad [a rename was printed for a container that stopping deletes]"
+  miss="$(_exact_order "$C/out" \
+    "     mkdir $bk" \
+    "     docker cp qdrant:/qdrant/storage/. $bk" \
+    "     ls $bk/collections" \
+    "     docker stop qdrant" \
+    "     docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage_$d:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest" \
+    "     docker cp $bk/. qdrant:/qdrant/storage/" \
+    "     docker start qdrant")"
+  [ -z "$miss" ] || bad="$bad [$miss]"
+  [ -z "$bad" ] && pass "S22r a container started with --rm: said, and the copy comes BEFORE the stop that deletes it; no rename" || fail_ "S22r" "$bad"
 }
 
 s23() {   # the OLD Addendum's volume name is read, not assumed
@@ -824,13 +866,13 @@ s26() {   # the mounts line cannot be parsed: no data claim, no remove command
   [ -z "$bad" ] && pass "S26 an unparseable mounts line: 'could not be read', and no docker rm" || fail_ "S26" "$bad"
 }
 
-s27() {   # an API key IS set: said, never printed, and 'NO API key' not claimed
+s27() {   # an API key IS set: said, never printed, and its absence not claimed
   local bad=""
   _open_case s27 "" "volume|qdrant_storage|/qdrant/storage"
   printf 'PATH=/usr/local/bin\nQDRANT__SERVICE__API_KEY=s3cr3t-value\n' > "$ST/qdrant-env"
   _step "skip it\n"
   grep -q 'it has an API key set (QDRANT__SERVICE__API_KEY)' "$C/out" || bad="$bad [the API key is not recognised]"
-  grep -q 'NO API key' "$C/out" && bad="$bad ['NO API key' claimed for a container that has one]"
+  grep -q 'no API key is set' "$C/out" && bad="$bad [no key claimed for a container that has one]"
   grep -q 's3cr3t-value' "$C/out" && bad="$bad [the key's value was printed]"
   [ -z "$bad" ] && pass "S27 a container with QDRANT__SERVICE__API_KEY: the key is recognised from its env, its value never printed" || fail_ "S27" "$bad"
 }
@@ -963,7 +1005,7 @@ if [ -n "${BL311_ONLY:-}" ]; then
 fi
 a1; a4; a5; a6; a7; a8
 s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12; s13; s14; s15; s16; s17; s18
-s19; s19b; s19c; s19d; s19e; s19f; s19g; s20; s21; s21b; s22; s23; s24a; s24b; s25; s26; s27
+s19; s19b; s19c; s19d; s19e; s19f; s19g; s20; s21; s21b; s22; s22r; s23; s24a; s24b; s25; s26; s27
 e_cases
 
 # ── M — mutation proofs ─────────────────────────────────────────────────────
@@ -1015,7 +1057,7 @@ mut() {   # LABEL FILE MARKER REPLACEMENT CASE-FN WANT — WANT is the assertion
 # asserts no stub read them). Dropping the subshell AS WELL is not equivalent:
 # M39 does that to the launch check and E2 kills it, as M20 does for the bare
 # Docker probe. The redirections stay because the consent rule asks for them.
-if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M61" "BL311_SKIP_MUTANTS=1"; _done; fi
+if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M68" "BL311_SKIP_MUTANTS=1"; _done; fi
 echo "== M — mutation proofs =="
 mut "M1 helpers-core ignores CLAUDE_CONFIG_DIR for settings.json — killed by A4" \
   scripts/lib/helpers-core.sh '# BL-311-CONFIG-DIR' \
@@ -1240,12 +1282,12 @@ mut "M57 (R-3/N3) unreadable data given docker rm -f — killed by S26" \
   s26 'the data-unreadable line is missing'
 mut "M58 (R-4) the backup no longer stops the database first — killed by S22" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BACKUP-STOP' \
-  '      :   # BL-311-MCP-BACKUP-STOP' \
-  s22 "step out of order or missing: '     docker stop qdrant'"
+  '        :   # BL-311-MCP-BACKUP-STOP' \
+  s22 'missing or out of order:      docker stop qdrant'
 mut "M59 (R-4) the backup written into the current directory — killed by S22" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BACKUP-PATH' \
-  '      adopt_note "  docker cp qdrant:/qdrant/storage ./qdrant-storage-backup"   # BL-311-MCP-BACKUP-PATH' \
-  s22 'the backup is not an absolute path under $HOME'
+  '      adopt_note "  docker cp qdrant:/qdrant/storage/. ./qdrant-storage-backup"   # BL-311-MCP-BACKUP-PATH' \
+  s22 'missing or out of order:      docker cp qdrant:/qdrant/storage/.'
 mut "M60 (R-5) the path double-quoted instead of shell-quoted — killed by S21b" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-QUOTE' \
   "_adopt_mcp_q() { printf '\"%s\"' \"\$1\"; }   # BL-311-MCP-QUOTE" \
@@ -1254,5 +1296,33 @@ mut "M61 (R-6) an API key never detected — killed by S27" \
   scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-KEY-DETECT' \
   '    if false; then   # BL-311-MCP-KEY-DETECT' \
   s27 'the API key is not recognised'
+mut "M62 (R-439-1/R7) docker create without the volume — killed by S22" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BACKUP-CREATE' \
+  '      adopt_note "  docker create --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 --restart unless-stopped qdrant/qdrant:latest"   # BL-311-MCP-BACKUP-CREATE' \
+  s22 'missing or out of order:      docker create --name qdrant'
+mut "M63 (R-439-1/R6) the backup folder copied in, not its contents — killed by S22" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BACKUP-COPYIN' \
+  '      adopt_note "  docker cp $(_adopt_mcp_q "$bk") qdrant:/qdrant/storage/"          # BL-311-MCP-BACKUP-COPYIN' \
+  s22 '/. qdrant:/qdrant/storage/'
+mut "M64 (R-439-3) no mkdir, so a re-run nests — killed by S22" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BACKUP-MKDIR' \
+  '      :   # BL-311-MCP-BACKUP-MKDIR' \
+  s22 'no mkdir of a dated backup folder'
+mut "M65 (R-439-3) copy-out takes the folder, not its contents — killed by S22" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BACKUP-PATH' \
+  '      adopt_note "  docker cp qdrant:/qdrant/storage $(_adopt_mcp_q "$bk")"            # BL-311-MCP-BACKUP-PATH' \
+  s22 'missing or out of order:      docker cp qdrant:/qdrant/storage/.'
+mut "M66 (R-439-3) the check lists the backup's top level, not collections — killed by S22" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-BACKUP-LS' \
+  '      adopt_note "  ls $(_adopt_mcp_q "$bk")"                               # BL-311-MCP-BACKUP-LS' \
+  s22 '/collections'
+mut "M67 (R-439-2) --rm never detected — killed by S22r" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-AUTOREMOVE-DETECT' \
+  '  :   # BL-311-MCP-AUTOREMOVE-DETECT' \
+  s22r 'the --rm deletion is not said'
+mut "M68 (R-439-4) the environment-only key reading worded as fact — killed by S19" \
+  scripts/lib/adopt/adopt-mcp.sh '# BL-311-MCP-KEY-WORDING' \
+  '    unset) key="it has NO API key, so anything that reaches it can read your session memory" ;;   # BL-311-MCP-KEY-WORDING' \
+  s19 'the absence of an API key is not worded as read from its environment only'
 
 _done
