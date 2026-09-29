@@ -378,62 +378,14 @@ segment can reach even ports published on `127.0.0.1` — moby/moby#45610.)
 
 A container that already exists keeps whatever binding it was created with, so
 whenever adoption finds one it reads it (`docker inspect`: the port bindings,
-what is mounted at `/qdrant/storage`, and whether `QDRANT__SERVICE__API_KEY` is
-set — never its value), on every path — even when nothing is missing. When the
-bindings name no host address, `0.0.0.0` (every interface) or `::` (every IPv6
-address) it says so before the question, and every later `docker start` hint
-points back at it; when Docker is not running or the inspect fails, every
-`docker start` hint says the bindings could not be read and how to check them.
-Recorded with a stand-in `docker` shaped like a real container on the
-`qdrant_storage` volume with no API key in its environment:
-
-```text
-   Your existing qdrant container's ports name no host address, which Docker
-   publishes on every network interface unless your Docker daemon sets a default
-   bind address: while it runs, other machines on your network may be able to reach
-   it — and no API key is set in its environment (a key in a Qdrant config file would not show here).
-   Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it.
-   Its data is in the Docker volume qdrant_storage, which removing the container keeps:
-     docker rm -f qdrant &&
-     docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
-     # If docker run fails, the data is still where it was: fix what it reports,
-     # then paste the docker run line again.
-   (On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment
-   can reach even ports published on 127.0.0.1 — moby/moby#45610.)
-   Adoption does not do this for you.
-```
-
-**The data is read, never assumed — and a recreate is printed only when the
-data is shown to outlive the container.** The volume in the recreate step is the
-one mounted AT `/qdrant/storage` — not a snapshots mount listed before it, and
-not one at a sub-path such as `/qdrant/storage/snapshots` — so a container made
-from the framework's older Addendum gets `qdrant_data`, and a host folder is
-named and reused, shell-quoted. Every path is cleaned the way Go's `path.Clean`
-does before it is compared exactly, because Docker keeps a `--tmpfs` path
-verbatim (`/qdrant/storage/`, `/qdrant//storage`, `/qdrant/x/../storage` all
-arrive as typed). The two commands are printed only for a container they
-reproduce WHOLE — an **allow-list**, vanilla only: exactly one mount in total,
-a volume or a host folder at `/qdrant/storage`, with no subpath and no other
-`--mount` setting; not started with `--rm`; no tmpfs there or under it; for a
-volume, `docker volume inspect` shows no `tmpfs`/`ramfs` backing (a
-`--opt type=tmpfs` volume keeps nothing once the container stops); no
-`QDRANT__` variable in its environment (a recreate would drop an API key or
-any other setting); its image read, and its tag still naming the image it
-runs — the `docker run` line reuses that reference, never `latest`; and, if the
-container runs, its own `/proc/mounts` agrees that `/qdrant/storage` is not a
-tmpfs. Anything that could not be read fails the list. A `#` line below the
-two commands says what to do if `docker run` fails: the data is still where it
-was.
-
-Every other shape — nothing mounted, `--rm`, a tmpfs in any spelling, a
-tmpfs-backed volume, storage split across mounts, a second mount, a subpath, an
-API key or other `QDRANT__` setting, a changed image, anything unread — gets
-what was read and a pointer to [Recreating an exposed Qdrant container](#recreating-an-exposed-qdrant-container),
-and **no command at all**, not even one inside a sentence. Earlier versions of
-this step printed recovery chains for those shapes; each round of review on
-real Docker found the next storage shape they lost data on, so they were
-replaced by the written procedure below. Recorded with a stand-in `docker` for a
-container with nothing mounted; `/path/to/solo-orchestrator` stands for the
+and whether `QDRANT__SERVICE__API_KEY` is set in its environment — never its
+value), on every path — even when nothing is missing. When the bindings name no
+host address, `0.0.0.0` (every interface) or `::` (every IPv6 address) it says
+so before the question, and every later `docker start` hint points back at it;
+when Docker is not running or the inspect fails, every `docker start` hint says
+the bindings could not be read and how to check them. Recorded with a stand-in
+`docker` shaped like a real container on the `qdrant_storage` volume with no
+API key in its environment; `/path/to/solo-orchestrator` stands for the
 framework checkout:
 
 ```text
@@ -441,18 +393,30 @@ framework checkout:
    publishes on every network interface unless your Docker daemon sets a default
    bind address: while it runs, other machines on your network may be able to reach
    it — and no API key is set in its environment (a key in a Qdrant config file would not show here).
-   Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it.
-   What was read about where its data lives: nothing is mounted at /qdrant/storage, so its data is inside the container, and removing the container DELETES it.
-   That is not shown to outlive the container, so NO commands are printed here: one
-   wrong step would lose the data. How to recreate it safely, shape by shape:
-   "Recreating an exposed Qdrant container" in /path/to/solo-orchestrator/docs/adoption.md.
+   Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, it has to
+   be recreated, and removing a container can delete its data.
    (On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment
    can reach even ports published on 127.0.0.1 — moby/moby#45610.)
-   Adoption does not do this for you.
+   Adoption changed nothing about this container, and prints no commands to recreate
+   it. How to do that without losing its data:
+   "Recreating an exposed Qdrant container" in /path/to/solo-orchestrator/docs/adoption.md.
 ```
 
-It never recreates or removes a container itself: `docker start qdrant` stays
-the offered action.
+**It prints no command to recreate the container — for any container.**
+Recreating it on loopback means removing it, and whether the data survives that
+depends on how the container was made. Earlier versions of this step printed a
+recreate, first for every shape and then only for the shapes an allow-list
+confirmed; each round of review on real Docker found another setting the printed
+commands lost or broke — where the data lives (nothing mounted, `--rm`, a tmpfs
+in any spelling, a tmpfs-backed volume, storage split across mounts, a volume
+subpath), an API key or another setting, lowercase setting names, `RUN_MODE`,
+command-line flags, a tag that had moved since the container was made, snapshot
+files kept inside the container. So the note says what it found, that adoption
+changed nothing, and where the written procedure is:
+[Recreating an exposed Qdrant container](#recreating-an-exposed-qdrant-container),
+which goes through Qdrant's own snapshot API and so does not depend on how the
+storage is mounted. The note is the same whatever the storage, and carries no
+line to paste. `docker start qdrant` stays the offered action.
 
 `skip it`, a blank line, or the end of your input all mean skip — this question
 never stops an adoption:
@@ -496,14 +460,15 @@ the phase checks, the tool matrix and the [CLI Setup Addendum](cli-setup-addendu
 
 ## Recreating an exposed Qdrant container
 
-Adoption points here when it found an existing `qdrant` container reachable
-beyond `127.0.0.1` and could **not** show that its two printed commands would
-reproduce it whole: its data may not outlive the container (nothing mounted,
-`--rm`, a tmpfs, a tmpfs-backed volume, storage split across mounts), or a
-plain recreate would drop something (an API key or other `QDRANT__` setting, a
-second mount, a volume subpath, a changed image). It printed what it read and
-changed nothing. Recreating the container on loopback is still the fix; this
-is how to do it without losing the data. Adoption does none of it for you.
+Adoption points here whenever it finds an existing `qdrant` container whose
+ports are published beyond `127.0.0.1`. It says what it read and changes
+nothing, and it prints no commands to recreate the container: a recreate
+printed without knowing everything the container was created with can lose its
+data or drop a setting it relies on (see
+[The memory and documentation servers](#the-memory-and-documentation-servers)
+for the list review found). Recreating the container on loopback is still the
+fix; this is how to do it without losing the data. Adoption does none of it for
+you.
 
 **The route does not depend on how the storage is mounted.** It uses Qdrant's
 own snapshot API: each collection is snapshotted and downloaded through the
@@ -512,28 +477,47 @@ snapshot documentation (<https://qdrant.tech/documentation/snapshots/>:
 `POST /collections/{name}/snapshots`, whose response carries `result.name`;
 `GET /collections/{name}/snapshots/{snapshot}` to download it;
 `POST /collections/{name}/snapshots/upload?priority=snapshot` to restore it,
-which creates the collection). It needs `curl` and `jq`, and the old container
-**running** — start it if it is stopped, unless it was started with `--rm` and
-is already gone.
+which creates the collection) and its alias API (`GET /aliases`;
+`POST /collections/aliases` with `create_alias` actions). It needs `curl` and
+`jq`, and the old container **running** — start it if it is stopped, unless it
+was started with `--rm` and is already gone.
 
-Before you start:
+**Before you start, list the settings it was created with — the new container
+must be created with the SAME ones.** That is its environment — an API key,
+every `QDRANT__` variable whatever its case, `RUN_MODE` — and any command or
+entrypoint flags. A recreate that drops one does not behave like the old
+container: a dropped API key leaves the new one open, and a dropped setting can
+move where it stores its data. This lists them and changes nothing — **but it
+prints their values, an API key included**, so run it where no one can read
+your screen, and do not paste its output anywhere:
 
-- **Keep the same image.** `docker inspect -f '{{.Config.Image}}' qdrant` is
-  the one to reuse; a version change is a separate upgrade, not part of this.
-- **Keep its settings.** `docker inspect -f '{{json .Config.Env}}' qdrant`
-  lists them: pass every `QDRANT__` variable to the new container with `-e`,
-  where the `docker run` line below says so. If it has an API key, add
-  `-H "api-key: <the key>"` to every `curl` below.
-- **Aliases are not in a collection snapshot.** List them first
-  (`curl -s "http://127.0.0.1:6333/aliases"`) and re-create them afterwards.
+```sh
+docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}}' qdrant
+```
 
-**1. Snapshot and download every collection** into a new folder in your home
-directory (never the project). Paste all five blocks into the SAME shell — they share `$Q`, `$S` and `$B` — and each block whole; this one stops at the first
-failure and says which collection:
+Step 4 says where each one goes; what the image sets itself, such as `PATH`, comes
+back with the same image. If it has an API key, also add
+`-H "api-key: <the key>"` to every `curl` below. And:
+
+- **Keep the same image.** Step 4 reuses the image the container RUNS (its
+  image ID, `{{.Image}}`), not the tag it was created from: a tag may have
+  moved since (a later pull), and recreating from it would run a different
+  Qdrant version. A version change is a separate upgrade, not part of this.
+- **Aliases are not in a collection snapshot.** Step 1 saves them to
+  `$B/aliases.json`, step 5 re-creates them and step 6 checks them.
+- **Snapshot files you keep inside the container** — at `/qdrant/snapshots`,
+  not on a volume or a host folder — are copied out in step 3, before the old
+  container is stopped.
+
+**1. Snapshot and download every collection, and save the aliases,** into a
+new folder in your home directory (never the project). Paste the numbered
+blocks into the SAME shell — they share `$Q`, `$S` and `$B` — and each block
+whole; this one stops at the first failure and says which collection:
 
 ```sh
 Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"
 mkdir "$B" &&
+curl -sf "$Q/aliases" > "$B/aliases.json" &&
 curl -sf "$Q/collections" > "$B/collections.json" &&
 jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt" &&
 while IFS= read -r c; do
@@ -544,60 +528,84 @@ while IFS= read -r c; do
 done < "$B/collections.txt"
 ```
 
-**2. Check every collection has a non-empty snapshot.** Go on only if this
-prints `ALL SNAPSHOTS PRESENT`:
+**2. Check the aliases were saved and every collection has a non-empty
+snapshot.** Go on only if this prints `ALL SNAPSHOTS PRESENT`:
 
 ```sh
-m=0; while IFS= read -r c; do [ -s "$B/$c.snapshot" ] || { echo "MISSING: $c"; m=1; }; done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
+m=0; [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
+while IFS= read -r c; do [ -s "$B/$c.snapshot" ] || { echo "MISSING: $c"; m=1; }; done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
 ```
 
-**3. Recreate it on loopback** with the same image. The old container is
-renamed while it still runs, so a name clash stops this before anything is
-stopped; add your `-e QDRANT__…` settings before `"$I"`:
+**3. Copy out the snapshot files you keep inside the container** — skip this
+if you keep none there, or keep them on a volume or a host folder. The old
+container is stopped in step 4, and one started with `--rm` is deleted when it
+stops. The copy also holds the snapshots step 1 just made. Go on only if this
+prints `SNAPSHOT FILES COPIED`:
 
 ```sh
-I="$(docker inspect -f '{{.Config.Image}}' qdrant)" &&
+docker cp qdrant:/qdrant/snapshots "$B/old-snapshots" && echo "SNAPSHOT FILES COPIED"
+```
+
+**4. Recreate it on loopback** with the same image and the same settings. The
+old container is renamed while it still runs, so a name clash stops this before
+anything is stopped. Before you paste it, add the settings you listed before
+you started: each environment variable as `-e NAME=value` before `"$I"`, and
+the command after `"$I"` (and `--entrypoint`, before `"$I"`) if you started it
+with one. If a setting moves the storage path away from `/qdrant/storage`,
+mount the volume at that path instead:
+
+```sh
+I="$(docker inspect -f '{{.Image}}' qdrant)" &&
 docker rename qdrant qdrant-old &&
 docker stop qdrant-old &&
 docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v "qdrant_storage_$S:/qdrant/storage" --restart unless-stopped "$I"
 ```
 
-**4. Restore every collection** once the new container answers:
+**5. Restore every collection, then the aliases,** once the new container
+answers:
 
 ```sh
 until curl -sf "$Q/collections" >/dev/null; do sleep 1; done &&
 while IFS= read -r c; do
   curl -sf -X POST "$Q/collections/$c/snapshots/upload?priority=snapshot" -F "snapshot=@$B/$c.snapshot" >/dev/null || { echo "RESTORE FAILED: $c"; break; }
-done < "$B/collections.txt"
+done < "$B/collections.txt" &&
+jq -c '{actions: [.result.aliases[] | {create_alias: {collection_name, alias_name}}]}' "$B/aliases.json" > "$B/alias-actions.json" &&
+{ [ "$(jq '.actions | length' "$B/alias-actions.json")" = 0 ] ||
+  curl -sf -X POST "$Q/collections/aliases" -H 'Content-Type: application/json' --data-binary "@$B/alias-actions.json" >/dev/null ||
+  echo "ALIAS RESTORE FAILED"; }
 ```
 
-**5. Check.** Go on only if this prints `ALL COLLECTIONS RESTORED`, and compare
-the `points_count` of each collection (`curl -s "$Q/collections/<name>"`) with
-the old one's if you noted them:
+**6. Check.** Go on only if this prints BOTH `ALL COLLECTIONS RESTORED` and
+`ALL ALIASES RESTORED`, and compare the `points_count` of each collection
+(`curl -s "$Q/collections/<name>"`) with the old one's if you noted them:
 
 ```sh
-curl -sf "$Q/collections" | jq -r '.result.collections[].name' | sort > "$B/restored.txt" &&
+[ -f "$B/collections.txt" ] && curl -sf "$Q/collections" | jq -r '.result.collections[].name' | sort > "$B/restored.txt" &&
 sort "$B/collections.txt" | diff - "$B/restored.txt" && echo "ALL COLLECTIONS RESTORED"
+curl -sf "$Q/aliases" | jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' > "$B/aliases-restored.json" &&
+jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' "$B/aliases.json" | diff - "$B/aliases-restored.json" && echo "ALL ALIASES RESTORED"
 ```
 
-Then re-create the aliases, remove the old container (`docker rm qdrant-old`,
-if it is still there), and keep `$B` until you are sure. Run the adoption's
-`claude mcp add` line for Qdrant, if it was skipped.
+Only then remove the old container (`docker rm qdrant-old`, if it is still
+there) — until step 6 passes it is your way back — and keep `$B` until you are
+sure. Run the adoption's `claude mcp add` line for Qdrant, if it was skipped.
 
-**If a step fails.** Nothing is lost before step 3: the old container still
-runs with its data. In step 3, if `docker run` fails, the snapshots in `$B`
+**If a step fails.** Nothing is lost before step 4: the old container still
+runs with its data. In step 4, if `docker run` fails, the snapshots in `$B`
 are intact: fix what it reports and run that line again, or bring the old one
 back with `docker rename qdrant-old qdrant` and `docker start qdrant` — which
 restores the data only if it lived on a volume or in the container itself, not
-if it was in memory or the container was started with `--rm`. In step 4, a
+if it was in memory or the container was started with `--rm`. In step 5, a
 failed upload leaves the others in place: fix the cause and upload that one
 again. A collection name with characters that are not safe in a URL needs
 percent-encoding in these URLs.
 
-There is deliberately **no file-copy route** here: copying `/qdrant/storage`
-by hand misses whatever is mounted under it (a tmpfs at
+There is deliberately **no file-copy route for the data**: copying
+`/qdrant/storage` by hand misses whatever is mounted under it (a tmpfs at
 `/qdrant/storage/collections` comes back empty), and `docker cp` reads nothing
 from a tmpfs. The snapshot goes through the server, which sees all of it.
+Step 3's `docker cp` copies only snapshot files you keep yourself, never the
+storage.
 
 ## Where it lands: phase 0, always
 

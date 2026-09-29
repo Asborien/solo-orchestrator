@@ -146,25 +146,17 @@ _adopt_mcp_qdrant_container() {
   printf '%s\n' "$names" | grep -qx 'qdrant'
 }
 
-# _adopt_mcp_inspect — HOW the EXISTING `qdrant` container is published, WHERE
-# its data lives, and WHETHER it has an API key. One bounded `docker inspect`
-# (bindings, mounts, env, --rm, tmpfs — one JSON document per line), stdin
-# closed. Sets:
+# _adopt_mcp_inspect — HOW the EXISTING `qdrant` container is published, and
+# WHETHER it has an API key. One bounded `docker inspect` (bindings, env — one
+# JSON document per line), stdin closed. Sets:
 #   ADOPT_MCP_QDRANT_BIND   open-all (a HostIp of 0.0.0.0) | open-v6 (::, every
 #                           IPv6 address) | open-default (an EMPTY HostIp) |
 #                           loopback | unread (inspect failed or unparseable)
-#   ADOPT_MCP_QDRANT_DATA   volume | bind | none (nothing at /qdrant/storage, or
-#                           a mount that does not outlive the container) | tmpfs
-#                           (a tmpfs there: the data is in MEMORY, gone on stop) |
-#                           unread
-#   ADOPT_MCP_QDRANT_SRC    the volume's name, or the bind mount's host path
 #   ADOPT_MCP_QDRANT_KEY    set | unset | unread (QDRANT__SERVICE__API_KEY in
 #                           its ENVIRONMENT — a key in a config file is not seen)
-#   ADOPT_MCP_QDRANT_AUTORM true | false | unread (started with --rm: stopping it
-#                           DELETES it)
 #
 # EVERY FIELD STARTS AT `unread` AND ONLY A PARSED ANSWER MOVES IT: a failed or
-# garbled inspect must never read as "loopback" or "data kept".
+# garbled inspect must never read as "loopback".
 #
 # WHY. `docker start` keeps the bindings a container was created with, so the
 # loopback-only `docker run` protects nothing for a container that already
@@ -172,30 +164,26 @@ _adopt_mcp_qdrant_container() {
 # Per Docker's documentation an EMPTY HostIp means the daemon's default bind
 # address — every interface unless the daemon sets `ip` / `host_binding_ipv4` —
 # so it is reported as that, not as a verified exposure; `::` is every IPv6
-# address. And the recreate advice is only safe when the data is outside the
-# container: `qdrant/qdrant:latest` declares no VOLUME, the framework's own
-# Addendum used `-v qdrant_data:` from 2026-04-04 to 06-28, and a container can
-# mount /qdrant/snapshots while /qdrant/storage stays inside it — so the mount
-# AT /qdrant/storage is read, never assumed. Adoption recreates nothing.
-ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""
-ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"; ADOPT_MCP_QDRANT_AUTORM="unread"
-# A PATH IS CLEANED BEFORE IT IS COMPARED (rounds 9-10, measured on real Docker):
-# Docker keeps a `--tmpfs` path VERBATIM — `/qdrant/storage/`, `/qdrant//storage`,
-# `/qdrant/./storage` all arrive as typed, and an exact match classed each one
-# as nothing mounted, so the steps stopped an in-memory store before copying
-# it. `clean` drops empty and `.` segments and resolves `..`, as Go's
-# path.Clean does; a prefix match would be wrong the other way, taking a
-# volume at /qdrant/storage/snapshots for the data. `-v`/`--mount`
-# destinations arrive already cleaned; they go through `clean` all the same.
-_ADOPT_MCP_JQ_CLEAN='def clean: "/" + (reduce (split("/")[] | select(. != "" and . != ".")) as $s ([]; if $s == ".." then .[:-1] else . + [$s] end) | join("/"));'   # BL-311-MCP-PATH-CLEAN
+# address.
+#
+# NOTHING IS READ TO BUILD A RECREATE, BECAUSE NONE IS PRINTED (round 13). Rounds
+# 4-12 printed paste-ready commands to recreate an exposed container on
+# loopback, and read its mounts, tmpfs, --rm, image, volume options, --mount
+# settings and its own /proc/mounts to decide when they were safe. Every round's
+# review on real Docker found another setting the printed recreate lost or broke
+# — where the data lives, --rm, tmpfs in many spellings, tmpfs-backed volumes,
+# subpaths, API keys, image tags, RUN_MODE moving the storage path, lowercase
+# env keys, CLI flags, snapshot files inside the container. So the note now
+# says what it found and points to the written, snapshot-based procedure in
+# docs/adoption.md ("Recreating an exposed Qdrant container", pinned by S28),
+# and adoption recreates nothing.
+ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""; ADOPT_MCP_QDRANT_KEY="unread"
 _adopt_mcp_inspect() {
-  local out="$ADOPT_WORK/mcp-inspect.out" b="" m="" e="" r="" sm="" t="" f="" n="" u="" img="" iid="" hm="" sp=""
+  local out="$ADOPT_WORK/mcp-inspect.out" b="" e=""
   ADOPT_MCP_QDRANT_BIND="unread"; ADOPT_MCP_QDRANT_BIND_WHY="docker inspect could not read it"   # BL-311-MCP-INSPECT-FAILCLOSED
-  ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"; ADOPT_MCP_QDRANT_AUTORM="unread"; ADOPT_MCP_QDRANT_IMAGE=""; ADOPT_MCP_QDRANT_WHY=""
-  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}{{"\n"}}{{json .Mounts}}{{"\n"}}{{json .Config.Env}}{{"\n"}}{{json .HostConfig.AutoRemove}}{{"\n"}}{{json .HostConfig.Tmpfs}}{{"\n"}}{{json .State.Running}}{{"\n"}}{{json .Config.Image}}{{"\n"}}{{json .Image}}{{"\n"}}{{json .HostConfig.Mounts}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
-  b="$(sed -n 1p "$out")"; m="$(sed -n 2p "$out")"; e="$(sed -n 3p "$out")"; r="$(sed -n 4p "$out")"; f="$(sed -n 5p "$out")"; u="$(sed -n 6p "$out")"
-  img="$(sed -n 7p "$out")"; iid="$(sed -n 8p "$out")"; hm="$(sed -n 9p "$out")"
-  case "$r" in true|false) ADOPT_MCP_QDRANT_AUTORM="$r" ;; esac   # BL-311-MCP-AUTOREMOVE-DETECT
+  ADOPT_MCP_QDRANT_KEY="unread"
+  ( run_with_deadline 10 docker inspect -f '{{json .HostConfig.PortBindings}}{{"\n"}}{{json .Config.Env}}' qdrant ) </dev/null >"$out" 2>/dev/null || return 0
+  b="$(sed -n 1p "$out")"; e="$(sed -n 2p "$out")"
   if printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "0.0.0.0")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT
     ADOPT_MCP_QDRANT_BIND="open-all"
   elif printf '%s' "$b" | jq -e '[.[]?[]? | (.HostIp // "")] | any(. == "::")' >/dev/null 2>&1; then   # BL-311-MCP-OPEN-DETECT-V6
@@ -205,44 +193,12 @@ _adopt_mcp_inspect() {
   elif printf '%s' "$b" | jq -e 'type == "object" or type == "null"' >/dev/null 2>&1; then
     ADOPT_MCP_QDRANT_BIND="loopback"; ADOPT_MCP_QDRANT_BIND_WHY=""
   fi
-  # THE MOUNT AT /qdrant/storage — every path CLEANED, then compared EXACTLY (see
-  # _ADOPT_MCP_JQ_CLEAN): never a prefix, never the raw string. Counted, so that
-  # two mounts claiming it are said, not guessed between.
-  if printf '%s' "$m" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    n="$(printf '%s' "$m" | jq "$_ADOPT_MCP_JQ_CLEAN"' [.[] | select(((.Destination // "") | clean) == "/qdrant/storage")] | length' 2>/dev/null)"   # BL-311-MCP-DATA-COUNT
-    sm="$(printf '%s' "$m" | jq -c "$_ADOPT_MCP_JQ_CLEAN"' [.[] | select(((.Destination // "") | clean) == "/qdrant/storage")] | first // empty' 2>/dev/null)"   # BL-311-MCP-DATA-SELECT
-    t="$(printf '%s' "$sm" | jq -r '.Type // ""' 2>/dev/null)"
-    case "$t" in
-      volume|bind)                                                         # BL-311-MCP-DATA-KEPT
-        ADOPT_MCP_QDRANT_DATA="$t"
-        ADOPT_MCP_QDRANT_SRC="$(printf '%s' "$sm" | jq -r '(if .Type == "volume" then .Name else .Source end) // ""' 2>/dev/null | LC_ALL=C tr -d '\000-\037\177')"
-        [ -n "$ADOPT_MCP_QDRANT_SRC" ] || ADOPT_MCP_QDRANT_DATA="unread" ;;
-      tmpfs) ADOPT_MCP_QDRANT_DATA="tmpfs" ;;                            # BL-311-MCP-TMPFS-MOUNT
-      *) ADOPT_MCP_QDRANT_DATA="none" ;;                                 # BL-311-MCP-DATA-NONE
-    esac
-    case "$n" in 0|1) ;; *) ADOPT_MCP_QDRANT_DATA="multi" ;; esac      # BL-311-MCP-DATA-MULTI
-    # `--tmpfs /qdrant/storage` is NOT in .Mounts (the round-8 review measured it) — only in
-    # .HostConfig.Tmpfs, keyed by path. Data there is in MEMORY: gone on stop.
-    if [ "$ADOPT_MCP_QDRANT_DATA" = "none" ] && printf '%s' "$f" | jq -e "$_ADOPT_MCP_JQ_CLEAN"' type == "object" and (keys | any(clean == "/qdrant/storage"))' >/dev/null 2>&1; then   # BL-311-MCP-TMPFS-KEY
-      ADOPT_MCP_QDRANT_DATA="tmpfs"                                                 # BL-311-MCP-TMPFS-DETECT
-    fi
-  fi
-  # SPLIT STORAGE (round 12, measured): a mount or tmpfs UNDER /qdrant/storage/
-  # — `--tmpfs /qdrant/storage/collections` — means part of the data lives
-  # elsewhere. Classed as nothing mounted, the note said the data was inside
-  # the container, which was false, and a file copy of the rest came back
-  # empty. It has its own class, and it is said.
-  sp="$( { printf '%s' "$m" | jq -r "$_ADOPT_MCP_JQ_CLEAN"' .[]? | (.Destination // "") | clean | select(startswith("/qdrant/storage/"))' 2>/dev/null
-          printf '%s' "$f" | jq -r "$_ADOPT_MCP_JQ_CLEAN"' (. // {}) | keys[]? | clean | select(startswith("/qdrant/storage/"))' 2>/dev/null
-          printf '%s' "$hm" | jq -r "$_ADOPT_MCP_JQ_CLEAN"' .[]? | (.Target // "") | clean | select(startswith("/qdrant/storage/"))' 2>/dev/null; } | head -1 | LC_ALL=C tr -d '\000-\037\177')"
-  if [ -n "$sp" ]; then ADOPT_MCP_QDRANT_DATA="split"; ADOPT_MCP_QDRANT_SRC="$sp"; fi   # BL-311-MCP-DATA-SPLIT
-  _adopt_mcp_confirm "$f" "$u" "$e" "$img" "$iid" "$hm" "$m"
   # AN API KEY IS READ, NOT ASSUMED ABSENT. The value is never printed. Only the
   # ENVIRONMENT is read — a key set in a Qdrant config file is not visible here,
   # which is why "unset" is worded as "not set in its environment". The
-  # "could not be read" outcome needs an inspect whose third line is not JSON
-  # while the first two parsed; that is practically unreachable, and it is
-  # not given a case of its own.
+  # "could not be read" outcome needs an inspect whose second line is not JSON
+  # while the first parsed; that is practically unreachable, and it is not
+  # given a case of its own.
   if printf '%s' "$e" | jq -e 'type == "array"' >/dev/null 2>&1; then
     if printf '%s' "$e" | jq -e 'any(.[]; (type == "string") and test("^QDRANT__SERVICE__API_KEY=."))' >/dev/null 2>&1; then   # BL-311-MCP-KEY-DETECT
       ADOPT_MCP_QDRANT_KEY="set"
@@ -253,151 +209,11 @@ _adopt_mcp_inspect() {
   return 0
 }
 
-# _adopt_mcp_q ARG — ARG quoted for a shell (`printf %q`), so a path carrying
-# `$`, a backtick, a quote or a space is pasted as the literal it is.
-_adopt_mcp_q() { printf '%q' "$1"; }   # BL-311-MCP-QUOTE
-
-# THE ALLOW-LIST (round 11 — the supervisor's decision after ten rounds in which
-# each fix for one shape of non-persistent storage exposed the next; tightened
-# to VANILLA ONLY in round 12): a paste-ready recreate is printed ONLY for a
-# container the two printed commands reproduce WHOLE. volume|bind survives here
-# only if EVERY check passes:
-#   - not started with --rm;
-#   - its tmpfs mounts read, and none at /qdrant/storage;
-#   - exactly ONE mount in total — a second one would be dropped (round 12);
-#   - its --mount settings (.HostConfig.Mounts) read, none with a volume or
-#     bind SUBPATH (round 12 measured one serve an empty store: .Mounts does
-#     not show it), none pointing anywhere but /qdrant/storage;
-#   - NO `QDRANT__*` variable in its environment — the recreate would drop an
-#     API key (round 12 measured 401 → 200) or any other setting;
-#   - its image read, and its tag still naming the image it runs: the recreate
-#     reuses that reference, never `latest` (round 12: a version jump has no
-#     way back);
-#   - for a volume, options naming no tmpfs/ramfs backing (round 11 measured a
-#     `--opt type=tmpfs` volume leave `{"collections":[]}`);
-#   - when it runs, its own /proc/mounts agreeing /qdrant/storage is not
-#     tmpfs/ramfs.
-# Anything unread fails. A shape that fails is DATA=unconfirmed with WHY said,
-# and the note prints no command. Each read is bounded, stdin closed.
-ADOPT_MCP_QDRANT_WHY=""; ADOPT_MCP_QDRANT_IMAGE=""
-_adopt_mcp_unconfirmed() { ADOPT_MCP_QDRANT_DATA="unconfirmed"; ADOPT_MCP_QDRANT_WHY="$1"; }
-_adopt_mcp_confirm() {   # TMPFS RUNNING ENV IMAGE IMAGE-ID HOSTCONFIG-MOUNTS MOUNTS (JSON each)
-  local f="$1" u="$2" e="$3" img="$4" iid="$5" hm="$6" m="$7" out="$ADOPT_WORK/mcp-confirm.out" o="" k="" tid=""
-  case "$ADOPT_MCP_QDRANT_DATA" in volume|bind) ;; *) return 0 ;; esac
-  case "$ADOPT_MCP_QDRANT_AUTORM" in                                                     # BL-311-MCP-CONFIRM-AUTORM
-    false) ;;
-    true) _adopt_mcp_unconfirmed "it was started with --rm, so stopping it DELETES the container"; return 0 ;;
-    *)    _adopt_mcp_unconfirmed "whether it was started with --rm could not be read"; return 0 ;;   # BL-311-MCP-CONFIRM-AUTORM-UNREAD
-  esac
-  if ! printf '%s' "$f" | jq -e 'type == "object" or type == "null"' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-TMPFS-READ
-    _adopt_mcp_unconfirmed "its tmpfs mounts could not be read"; return 0
-  fi
-  if printf '%s' "$f" | jq -e "$_ADOPT_MCP_JQ_CLEAN"' (. // {}) | keys | any(clean == "/qdrant/storage")' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-TMPFS-KEY
-    _adopt_mcp_unconfirmed "a tmpfs is also mounted at /qdrant/storage, so its data may be held in MEMORY"; return 0
-  fi
-  if ! printf '%s' "$m" | jq -e 'type == "array" and length == 1' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-ONE-MOUNT
-    _adopt_mcp_unconfirmed "it has other mounts besides /qdrant/storage, which a recreate would drop"; return 0
-  fi
-  if ! printf '%s' "$hm" | jq -e 'type == "array" or type == "null"' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-HCMOUNTS
-    _adopt_mcp_unconfirmed "its --mount settings could not be read"; return 0
-  fi
-  if printf '%s' "$hm" | jq -e '[.[]? | ((.VolumeOptions.Subpath // "") + (.BindOptions.Subpath // ""))] | any(. != "")' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-SUBPATH
-    _adopt_mcp_unconfirmed "its volume is mounted with a subpath, which a plain recreate would not reproduce"; return 0
-  fi
-  if printf '%s' "$hm" | jq -e "$_ADOPT_MCP_JQ_CLEAN"' [.[]? | (.Target // "") | clean] | any(. != "/qdrant/storage")' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-HCMOUNTS-ELSEWHERE
-    _adopt_mcp_unconfirmed "its --mount settings name a path other than /qdrant/storage"; return 0
-  fi
-  if ! printf '%s' "$e" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    _adopt_mcp_unconfirmed "its environment could not be read"; return 0
-  fi
-  if printf '%s' "$e" | jq -e 'any(.[]; type == "string" and startswith("QDRANT__"))' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-ENV
-    _adopt_mcp_unconfirmed "its environment sets QDRANT__ variables (an API key or other settings), which a recreate would drop"; return 0
-  fi
-  ADOPT_MCP_QDRANT_IMAGE="$(printf '%s' "$img" | jq -r 'if type == "string" then . else empty end' 2>/dev/null | LC_ALL=C tr -d '\000-\037\177')"
-  if [ -z "$ADOPT_MCP_QDRANT_IMAGE" ]; then                                              # BL-311-MCP-CONFIRM-IMAGE
-    _adopt_mcp_unconfirmed "its image could not be read"; return 0
-  fi
-  iid="$(printf '%s' "$iid" | jq -r 'if type == "string" then . else empty end' 2>/dev/null)"
-  if ! ( run_with_deadline 10 docker image inspect -f '{{json .Id}}' "$ADOPT_MCP_QDRANT_IMAGE" ) </dev/null >"$out" 2>/dev/null; then
-    tid=""
-  else
-    tid="$(sed -n 1p "$out" | jq -r 'if type == "string" then . else empty end' 2>/dev/null)"
-  fi
-  if [ -z "$iid" ] || [ "$tid" != "$iid" ]; then                                         # BL-311-MCP-CONFIRM-IMAGE-SAME
-    _adopt_mcp_unconfirmed "its image $ADOPT_MCP_QDRANT_IMAGE could not be shown to still name the image it runs, so a recreate could change its Qdrant version"; return 0
-  fi
-  if [ "$ADOPT_MCP_QDRANT_DATA" = "volume" ]; then
-    if ! ( run_with_deadline 10 docker volume inspect -f '{{json .Options}}' "$ADOPT_MCP_QDRANT_SRC" ) </dev/null >"$out" 2>/dev/null; then   # BL-311-MCP-CONFIRM-VOLUME
-      _adopt_mcp_unconfirmed "the options of its Docker volume $ADOPT_MCP_QDRANT_SRC could not be read"; return 0
-    fi
-    o="$(sed -n 1p "$out")"
-    if ! printf '%s' "$o" | jq -e 'type == "object" or type == "null"' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-VOLUME-READ
-      _adopt_mcp_unconfirmed "the options of its Docker volume $ADOPT_MCP_QDRANT_SRC could not be read"; return 0
-    fi
-    if printf '%s' "$o" | jq -e '(. // {}) | [(.type // ""), (.device // "")] | map(ascii_downcase) | any(. == "tmpfs" or . == "ramfs")' >/dev/null 2>&1; then   # BL-311-MCP-CONFIRM-VOLUME-TMPFS
-      _adopt_mcp_unconfirmed "it is in the Docker volume $ADOPT_MCP_QDRANT_SRC, which is backed by tmpfs: that volume holds the data in MEMORY, and loses it when the container stops"; return 0
-    fi
-  fi
-  case "$u" in
-    false) ;;
-    true)
-      if ! ( run_with_deadline 10 docker exec qdrant awk '$2=="/qdrant/storage"{print $3}' /proc/mounts ) </dev/null >"$out" 2>/dev/null; then   # BL-311-MCP-CONFIRM-KERNEL
-        _adopt_mcp_unconfirmed "/qdrant/storage could not be checked from inside the running container"; return 0
-      fi
-      k="$(sed -n 1p "$out" | LC_ALL=C tr -d '\000-\037\177')"
-      case "$k" in
-        "") _adopt_mcp_unconfirmed "/qdrant/storage could not be checked from inside the running container"; return 0 ;;   # BL-311-MCP-CONFIRM-KERNEL-EMPTY
-        tmpfs|ramfs) _adopt_mcp_unconfirmed "inside the running container, /qdrant/storage is a $k, so its data is held in MEMORY"; return 0 ;;   # BL-311-MCP-CONFIRM-KERNEL-TMPFS
-      esac ;;
-    *) _adopt_mcp_unconfirmed "whether it is running could not be read"; return 0 ;;   # BL-311-MCP-CONFIRM-RUNNING-UNREAD
-  esac
-  return 0
-}
-
-# _adopt_mcp_run_with SRC IMAGE — the loopback `docker run`, keeping the data
-# where it is and the image the container runs (never `latest`).
-_adopt_mcp_run_with() {
-  printf 'docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v %s --restart unless-stopped %s' "$(_adopt_mcp_q "$1:/qdrant/storage")" "$(_adopt_mcp_q "$2")"   # BL-311-MCP-RUN-IMAGE
-}
-
-# _adopt_mcp_way_back — below a volume/bind recreate. The data stays where it is,
-# so a failed `docker run` is fixed and run again. `#` lines only, and no quote
-# character in them: zsh with INTERACTIVE_COMMENTS off (the macOS default) runs
-# a `#` line as a command named `#`, and a `'` there opens a quote that
-# swallows the next paste (the round-11 review measured `quote>`).
-_adopt_mcp_way_back() {
-  adopt_note "  # If docker run fails, the data is still where it was: fix what it reports,"   # BL-311-MCP-RECOVER-KEPT
-  adopt_note "  # then paste the docker run line again."
-}
-
-# _adopt_mcp_no_steps — every shape the allow-list (_adopt_mcp_confirm) did not
-# confirm: what was read, and a pointer to the written procedure. NO command —
-# not a chain, not one inside a sentence. Rounds 4-10 printed recovery chains
-# for nothing-mounted, --rm and tmpfs containers; each round's real-Docker
-# review found the next storage shape they lost data on, so they are gone.
-_adopt_mcp_no_steps() {
-  local why=""
-  case "$ADOPT_MCP_QDRANT_DATA" in
-    none)        why="nothing is mounted at /qdrant/storage, so its data is inside the container, and removing the container DELETES it" ;;
-    tmpfs)       why="/qdrant/storage is a tmpfs, so its data is held in MEMORY, and stopping the container DELETES it" ;;   # BL-311-MCP-TMPFS-SAY
-    multi)       why="more than one mount claims /qdrant/storage" ;;
-    split)       why="the storage is split across mounts: $ADOPT_MCP_QDRANT_SRC is mounted under /qdrant/storage, so part of the data lives there and the rest elsewhere" ;;   # BL-311-MCP-SPLIT-SAY
-    unconfirmed) why="$ADOPT_MCP_QDRANT_WHY" ;;
-    *)           why="where it keeps its data could not be read" ;;                                                    # BL-311-MCP-DATA-UNREAD
-  esac
-  adopt_note "What was read about where its data lives: $why."
-  if [ "$ADOPT_MCP_QDRANT_AUTORM" = "true" ] && [ "$ADOPT_MCP_QDRANT_DATA" != "unconfirmed" ]; then
-    adopt_note "It was also started with --rm, so stopping it DELETES the container."           # BL-311-MCP-RM-SAY
-  fi
-  adopt_note "That is not shown to outlive the container, so NO commands are printed here: one"   # BL-311-MCP-NO-STEPS
-  adopt_note "wrong step would lose the data. How to recreate it safely, shape by shape:"
-  if [ -n "${ADOPT_FRAMEWORK_ROOT:-}" ]; then
-    adopt_note "\"Recreating an exposed Qdrant container\" in $ADOPT_FRAMEWORK_ROOT/docs/adoption.md."
-  else
-    adopt_note "\"Recreating an exposed Qdrant container\" in the framework's docs/adoption.md."
-  fi
-}
-
+# _adopt_mcp_open_note — the finding, and a pointer. NO command, for ANY
+# container: no recreate, no way back, no docker verb a reader could paste
+# (S29 checks that over a set of container shapes). The one runnable string
+# near it is the read-only `docker inspect` in the could-not-be-read hint
+# (`# BL-311-MCP-UNREAD-HINT`), which is never printed with this note.
 _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
   local key=""
   case "$ADOPT_MCP_QDRANT_KEY" in
@@ -420,24 +236,17 @@ _adopt_mcp_open_note() {                                 # BL-311-MCP-OPEN-NOTE
       adopt_note "bind address: while it runs, other machines on your network may be able to reach"
       adopt_note "it — and $key." ;;
   esac
-  adopt_note "Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, recreate it."
-  case "$ADOPT_MCP_QDRANT_DATA" in                     # BL-311-MCP-DATA-SAY
-    volume)
-      adopt_note "Its data is in the Docker volume $ADOPT_MCP_QDRANT_SRC, which removing the container keeps:"
-      adopt_note "  docker rm -f qdrant &&"                                            # BL-311-MCP-DATA-VOLUME-RM
-      adopt_note "  $(_adopt_mcp_run_with "$ADOPT_MCP_QDRANT_SRC" "$ADOPT_MCP_QDRANT_IMAGE")"   # BL-311-MCP-DATA-VOLUME-RUN
-      _adopt_mcp_way_back ;;
-    bind)
-      adopt_note "Its data is in the host folder $ADOPT_MCP_QDRANT_SRC, which removing the container keeps:"
-      adopt_note "  docker rm -f qdrant &&"                                            # BL-311-MCP-DATA-BIND-RM
-      adopt_note "  $(_adopt_mcp_run_with "$ADOPT_MCP_QDRANT_SRC" "$ADOPT_MCP_QDRANT_IMAGE")"
-      _adopt_mcp_way_back ;;
-    *)
-      _adopt_mcp_no_steps ;;
-  esac
+  adopt_note "Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, it has to"
+  adopt_note "be recreated, and removing a container can delete its data."
   adopt_note "(On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment"
   adopt_note "can reach even ports published on 127.0.0.1 — moby/moby#45610.)"   # BL-311-MCP-MOBY-CAVEAT
-  adopt_note "Adoption does not do this for you."
+  adopt_note "Adoption changed nothing about this container, and prints no commands to recreate"   # BL-311-MCP-CHANGED-NOTHING
+  adopt_note "it. How to do that without losing its data:"
+  if [ -n "${ADOPT_FRAMEWORK_ROOT:-}" ]; then
+    adopt_note "\"Recreating an exposed Qdrant container\" in $ADOPT_FRAMEWORK_ROOT/docs/adoption.md."   # BL-311-MCP-POINTER
+  else
+    adopt_note "\"Recreating an exposed Qdrant container\" in the framework's docs/adoption.md."
+  fi
 }
 
 # _adopt_mcp_wait_qdrant — the database takes a moment to accept connections
@@ -561,7 +370,7 @@ adopt_mcp_resolve() {                                  # BL-311-MCP-STEP
   local st="" c7="" q="" qurl="" c7_why="" q_why="" q_db="" raw="" ans="" row="" srv="" cmd=""
   local c7_word="" q_word="" q_failed=0 fp_before="" fp_after="" c7_before="" q_before=""
   ADOPT_MCP_PLAN=()
-  ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""; ADOPT_MCP_QDRANT_DATA="unread"; ADOPT_MCP_QDRANT_SRC=""; ADOPT_MCP_QDRANT_KEY="unread"
+  ADOPT_MCP_QDRANT_BIND="none"; ADOPT_MCP_QDRANT_BIND_WHY=""; ADOPT_MCP_QDRANT_KEY="unread"
   # `SOIF_ADOPT_MCP=off` IS A TEST SEAM, like SOIF_ADOPT_QDRANT and
   # SOIF_ADOPT_GUARDRAILS_DIR. Every adoption suite written before this step
   # pipes a fixed answer sequence; on a developer machine that HAS `claude`
