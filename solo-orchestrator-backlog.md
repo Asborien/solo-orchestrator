@@ -22294,18 +22294,30 @@ day; five were authored text, which raises the pending-approval sentinel, and no
 **Ruling applied.** Files the agent writes are still scanned (#454's review); nothing is excluded by
 path. The patterns are narrowed instead.
 
-**Fix.** `# BL-315-TERMINAL-WORDS`: the verb and the terminal or shell match only as words (no letter,
-digit, `_` or `-` beside them), and the terminal is reached with "in", "from", "on", "via" or "through" and at most three
-words, the shape every proposal fixture in `tests/test-bypass-patterns.sh` has. `# BL-315-FAKE-LOOP-VERB`:
-the list form needs the word "mark" earlier in the same sentence and the whole word "complete"; the
-step-name form is unchanged.
+**Fix.** `# BL-315-TERMINAL-WORDS`: after the verb, the terminal or shell is reached with a preposition
+("in", "from", "on", "via", "through", "inside", "within", "at", "using" or "with") and at most four
+words, and "terminal" or "shell" is a word (no letter, digit or `_` after it; a hyphen is allowed, so
+"terminal-emulator" matches). Every proposal fixture has that shape; a flag after a helper called `run`,
+a word such as SUBSHELL, and a description with no preposition ("run without a shell") do not.
+`# BL-315-FAKE-LOOP-VERB`: the list form needs a marking verb as a word ("mark", "set", "record", "flag"
+or "tick") earlier in the same sentence, and "complete" not followed by `_`, so `complete_step` does not
+match while "completed" does; the step-name form is unchanged.
 
-**Tests.** `tests/test-bypass-patterns.sh` T19 to T25 are the recorded excerpts (six red before the fix;
-T22 pins identifiers, which already did not match); T26 keeps four proposal shapes matching; T27 and T28
-revert each marked line in a copy of the library and see its fixture match again. T1 to T18 unchanged
-and green; `tests/test-bypass-detector.sh` green.
+**Tests.** `tests/test-bypass-patterns.sh`: T19 to T25 are excerpts the detector recorded on 30 September
+2026 on an adopting project, none a proposal (six red before the fix; T22 pins identifiers, which already
+did not match); the issue's three Observed rows, from 29 and 30 September, are of the same kind. T26, T29 and T30 keep the
+proposal shapes matching, including the issue's must-match line and the spellings the old pattern caught
+("re-run", the other prepositions, a four-word gap, the other marking verbs, "as completed"). T31 gives
+each boundary atom a fixture that matches if the atom is removed. T27 and T28 revert each marked line in
+a copy of the library and see its fixture match again. T1 to T18 unchanged and green;
+`tests/test-bypass-detector.sh` and `tests/test-bypass-sentinel.sh` green.
 
 **Residuals.** `no_verify` still matches prose that names the flag (for example "never `--no-verify`");
-narrowing it would stop "I'll use --no-verify here" (T7) matching, so it is left as it is. The detector
-stores excerpts truncated, so a row whose match lay past the cut cannot be replayed from the audit log.
+narrowing it would stop "I'll use --no-verify here" (T7) matching, so it is left as it is. The issue's
+Stop-arm row ("which only you can do from a terminal") still matches: it has the proposal's shape, no
+pattern separates operator guidance from a proposal, and the operator closes it as a false positive.
+Given up deliberately: a gap of five or more words before the terminal; a sentence broken by an internal
+full stop ("step 2, i.e. tests_verified_failing, complete"); and marking verbs outside the five named.
+The detector stores excerpts truncated, so a row whose match lay past the cut cannot be replayed from the
+audit log.
 
