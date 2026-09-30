@@ -4380,7 +4380,16 @@ this repo's own agent-worktree flow until PR #304. 'Never a bypass' was wrong.
 **Logged:** 2026-07-24 (BL-174 WP-D adversarial verifier)
 **Category:** Upgrade-path safety / framework-repo hygiene
 **Severity:** Medium
-**Status:** Open
+**Status:** Closed — 2026-09-27, commit `bde8b9d`: the prescribed structural guard is at the top of
+`_run_idempotent_backfill` (`# BL-177-BACKFILL-GUARD` — no project root, or a root with neither
+`.claude/phase-state.json` nor `.claude/manifest.json`, writes nothing), and the project-root check now
+runs right after argument parsing (`# BL-177-HELP-FIRST`), so `--backfill-only` outside a project is
+refused before any write. The empty-root `cd` was a version split: a silent no-op in bash 3.2 (the leak
+below) and "null directory" rc 1 in bash 5 (issue #419). `tests/test-upgrade-help-and-projectless.sh`
+P1–P5. Not done: `guard_not_in_framework` on the `--backfill-only` entry — the project check now stops a
+framework checkout first, because it carries no `.claude/phase-state.json`.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 `scripts/upgrade-project.sh`'s `_run_idempotent_backfill` runs its whole body inside a subshell that opens with `( cd "$PROJECT_ROOT" …`. `find_project_root` keys on `.claude/phase-state.json`; when that marker is absent — the framework repo itself, or any non-project cwd — `PROJECT_ROOT` is the empty string and **`cd ""` is a SILENT rc-0 no-op under `set -euo pipefail` on bash 3.2** (empty operand → success, cwd unchanged), so the subshell proceeds in the INVOCATION directory rather than a project root. Nothing downstream re-checks that we are in a real project.
 
@@ -13594,7 +13603,12 @@ read stdin and does not exit before it.
 
 ## BL-242: Brownfield adoption is HALF BUILT and has never had a backlog entry — seven capabilities unbuilt, and the feature's shape is now decided (D1-D8)
 
-**Status:** Open
+**Status:** Closed — 2026-09-27: every designed work package shipped, the last of them in PRs #441–#451,
+and the Development Guardrails install (BL-296 row 33) in PR #455 (merge `f7ff2f5`); `docs/adoption.md`'s
+"What is not built yet" now lists every package as shipped. **The residuals this entry recorded are NOT
+closed with it** — they move to `## BL-310:`, which lists each one and points back to its section here.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 **Filed 2026-08-23 at Karl's direction.** The feature has been able to adopt an
 existing codebase since **PR #337 merged on 2026-08-09**; the last of the
@@ -18973,7 +18987,9 @@ one entry by a shared defect class — the precedent for this entry's shape), `#
 
 ## BL-265: `intake-wizard.sh` names a jq KEYWORD as a function parameter, so the intake appendix's Project Context table renders with zero rows on every jq since 1.5
 
-**Status:** Open — 2026-09-26 reconciliation: **the rename half landed on `main` via PR #412** (`141eef5`); `tests/test-bl265-jq-reserved-label.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — `render_intake_file || true` is unchanged at all three call sites on `main`, so jq's exit status is still not checked (the second half of `## BUG-010:` defect (3)'s prescribed fix).
+**Status:** Closed — 2026-09-27: the `render_intake_file || true` residual is closed in `eed252b` (`# BL-265-RENDER-STATUS`: every step checked, file replaced only whole, a failed final render stops the run); `tests/test-bug010-intake-silent-paths.sh` R1–R5.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the rename half landed on `main` via PR #412** (`141eef5`); `tests/test-bl265-jq-reserved-label.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — `render_intake_file || true` is unchanged at all three call sites on `main`, so jq's exit status is still not checked (the second half of `## BUG-010:` defect (3)'s prescribed fix).
 
 **Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl265` at `8f2eecb`. Not pushed, no PR.
 
@@ -19147,7 +19163,9 @@ branch, so on a branch carrying only this entry those citations would resolve to
 
 ## BL-266: typing `pause` files the UNFINISHED intake section under `completed_sections`, and `--resume` then skips it permanently — with no message either way
 
-**Status:** Open — 2026-09-26 reconciliation: **the pause fix landed on `main` via PR #412** (`41c7bc2`, then `2fa9887` dropping the resume-point block); `tests/test-bl266-paused-section-marked-complete.sh` 10 passed / 0 failed, rc 0, on `c3f3d9e`. The first residual below (the `115` arithmetic without a pause) is fixed by `## BL-281:` (`eb15bc0`, same PR). **Still open: the second residual** — `load_progress()` still subscripts `data['project_name']` etc. with no `.get` on `main` (`## BUG-010:` defect (1)).
+**Status:** Closed — 2026-09-27: its last residual, BUG-010 defect (1), is fixed in `eed252b` (`# BUG-010-LOAD-REFUSE`: `load_progress` refuses an unusable progress file by name); the `115` residual was closed by BL-281. `tests/test-bug010-intake-silent-paths.sh` L cases.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the pause fix landed on `main` via PR #412** (`41c7bc2`, then `2fa9887` dropping the resume-point block); `tests/test-bl266-paused-section-marked-complete.sh` 10 passed / 0 failed, rc 0, on `c3f3d9e`. The first residual below (the `115` arithmetic without a pause) is fixed by `## BL-281:` (`eb15bc0`, same PR). **Still open: the second residual** — `load_progress()` still subscripts `data['project_name']` etc. with no `.get` on `main` (`## BUG-010:` defect (1)).
 
 **Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl266` at `b3b781f`. Not pushed, no PR.
 
@@ -19317,7 +19335,9 @@ on a branch carrying only this entry those citations would resolve to nothing.)*
 
 ## BL-267: the wizard's own `?` help key is recorded as the answer at 81 of its prompts, because only one of the two prompt helpers handles it
 
-**Status:** Open — 2026-09-26 reconciliation: **the `prompt_input` fix landed on `main` via PR #412** (`78f20b9`, suite hardened by `ee7a9f4` and `51ee606`); `tests/test-bl267-bare-question-mark.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — on `main`, `prompt_choice` still answers `?` with "Invalid choice", and neither `prompt_choice` nor `prompt_with_suggestions` checks `read`'s exit status (the EOF hang, `## BUG-010:` defect (2)).
+**Status:** Closed — 2026-09-27: the `prompt_choice` `?` message (`# BL-267-CHOICE-HELP`) and the end-of-input loop in `prompt_choice` and `prompt_with_suggestions` (BUG-010 defect (2), `# BUG-010-EOF`) are fixed in `eed252b`; `tests/test-bug010-intake-silent-paths.sh` E1–E6.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the `prompt_input` fix landed on `main` via PR #412** (`78f20b9`, suite hardened by `ee7a9f4` and `51ee606`); `tests/test-bl267-bare-question-mark.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — on `main`, `prompt_choice` still answers `?` with "Invalid choice", and neither `prompt_choice` nor `prompt_with_suggestions` checks `read`'s exit status (the EOF hang, `## BUG-010:` defect (2)).
 
 **Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl267` at `1989933`. Not pushed, no PR.
 
@@ -22274,3 +22294,91 @@ demonstration), #419 (where the follow-up was asked for), the pending fix for #4
 `tests/test-bl233-wpb-accumulation.sh`, not yet opened).
 
 ---
+
+## BL-310: brownfield adoption's residuals, carried from `## BL-242:` when that entry closed
+
+**Status:** Open — a tracking entry. Each line below was recorded inside `## BL-242:` as found and not
+fixed; closing that entry would otherwise have dropped all of them off the what's-open list. **Verify
+each against `main` before working it** — they were recorded at different commits, and a later package
+may have closed one without saying so here.
+
+**Filed:** 2026-09-27, when BL-242 closed (all designed packages shipped, PR #455 the last).
+
+| # | Residual | Where in `## BL-242:` |
+|---|---|---|
+| 1 | `resolve-tools.sh` files a documentation URL in the `auto_install` bucket, and `init.sh` executes that bucket (the shared resolver's defect) | "BL-242 residual — `resolve-tools.sh` files a documentation URL…" |
+| 2 | the Linux gitleaks recipe adoption offers is an unpinned, unverified root install; CI pins the same artefact by version and checksum | "A SECOND RESIDUAL, FOUND AT THE SAME REVIEW…" |
+| 3 | `# BL-242-RESOLVER-NO-EXEC` tells the operator to "run adoption again", which `# BL-242-PREFLIGHT-ARM1` refuses | its own residual heading |
+| 4 | adoption follows a symlink out of the project and overwrites its target — partly guarded since (22 `-L` / `adopt_path_under_link` sites in `scripts/lib/adopt/` on 2026-09-27), but `adopt_write_file` itself is still `cat >` | "BL-242 residual — adoption follows a SYMLINK…" |
+| 5 | init parity: thirteen `init.sh` effects adoption does not perform and nothing designs (the §8.7a table) | "THE INIT-PARITY RESIDUAL" |
+| 6 | a file of the operator's where a framework *script* goes is left alone, so that script is not installed (named by the run) | `docs/adoption.md`, "What is not built yet" |
+| 7 | the `# BL-242-SECRETS-RESCAN` guard is still correct but no longer observable in the persisted artefact | "Residual carried here from WP10b/2 (PR #437)" |
+| 8 | the no-fingerprint guard refuses ALL-missing fingerprints, not SOME-missing | "Residual — the no-fingerprint guard covers ALL-missing…" |
+| 9 | WP11: the `@sh`-quoted restore line is unpinned; I20's planned-path matching is spelling-dependent | "Residuals from WP11's pre-PR review" |
+| 10 | eight suites still carry the `"test":"npm test"` fixture that hangs a shard once one commits a source file after adoption | "RESIDUAL — the other eight still carry it" |
+| 11 | the `--finish` / commit-hook review list: MANIFEST still says `replaced` after an edited hook is refused; three guard lines unkilled; root `-w` on a `chmod 444` hook; no time bound on the adoptee's test command; a red suite blocks every source commit from day one; `soif_write_precommit_hook` returns `chmod`'s status; hook order against §10 | "RESIDUALS from these reviews, recorded not fixed" |
+| 12 | the real Guardrails installer runs only where a host has the clone; the PR lane exercises it through a stub | `## BL-296:` (closed), its review-round block |
+
+Hook managers (item 11's pre-commit/lefthook line) are **not** a residual: Karl ruled 2026-09-25 that
+adoption replaces them (`## BL-242:`, "Karl's ruling on hook managers").
+
+---
+
+## BL-311: brownfield dogfood run 1 (k-pdf, 2026-09-27) — nine things a regular user should never hit
+
+**Status:** Open — Karl approved fixing every row (2026-09-28), then a FULL CLEAN RERUN. Each row closes
+by its own PR; the entry closes when the rerun passes.
+
+**What ran.** A fresh Claude Code session (Sonnet, a clean `CLAUDE_CONFIG_DIR`) played a systems
+technician with one to two years of experience — not a developer — installing Solo Orchestrator from
+the public README and adopting a private copy of k-pdf (Python/uv, 240 commits, scaffolded by an OLDER
+Solo and carrying the Guardrails 4.3.0, no `phase-state.json`). It reached the end of Stage 2 (adopted,
+commit `ec5c7b5`) with 14 findings. **Evidence** (outside the repo, untracked):
+`~/dogfood-evidence-2026-09-27/` — the findings file, the full transcript, a git bundle holding the
+adoption commit, the worktree diff, and the `.claude` tree including Scout's report.
+
+| # | What the user hit | Root cause | Fix | Run findings |
+|---|---|---|---|---|
+| 1 | After adopting, EVERY file write in the session was blocked until a Qdrant call succeeded — impossible, no Qdrant tool in the session | Adoption never checks for, or offers to set up, the Qdrant and Context7 MCP servers the session gate requires (`init.sh` provisions Qdrant); the MCP helpers read `$HOME/.claude.json` by fixed path, so adoption saw a registration the session did not have and wrote `mcp.qdrant_required`; a mid-session adoption leaves `.claude/tool-usage.json` absent until a restart | Adoption checks Docker, the Qdrant container, and the Qdrant and Context7 MCP registrations, offers to set up what is missing, honours `CLAUDE_CONFIG_DIR`, lists them in `docs/adoption.md`, and ends by telling the operator to start a new Claude Code session | 8, 12 |
+| 2 | Adoption refused: "this project already looks framework-managed" | Preflight reads any `.claude/manifest.json` as a possible earlier adoption; a Guardrails-only `.claude/` (a `frameworkVersion` manifest, no Solo keys, no `phase-state.json`) is a known, adoptable shape | Recognise it and adopt; the Guardrails stage already has its "already installed" arm | 5, 6 |
+| 3 | The agent relaying a gate's own documented escape was flagged as a bypass proposal (a pending approval, default "decline") | The bypass detector cannot tell a relayed framework escape from an invented workaround | Exempt text quoting a framework gate's own escape hint; same class as `## BL-277:` | 13 |
+| 4 | Scout reported the tests failing (exit 127) on a suite that passes 1071/0 | The test command ignores the detected package manager: bare `pytest` in a uv project | Prefix the runner (`uv run`, and the poetry/pipenv equivalents) | 4 |
+| 5 | "your ignore rules refuse 24 of the files" — the cause took reading `.gitignore` to find | The refusal is right but does not name the rule (`lib/` matching `scripts/lib/`) | Name the ignoring rule, file and line (`git check-ignore -v`), and the one-line fix | 7 |
+| 6 | Claude Code's auto mode refused the framework's first script ("Code from External"), then refused the agent's attempt to change permissions | Undocumented | An "allow the framework's scripts" step, with the settings snippet, before the first command | 1, 2 |
+| 7 | README and the adoption guide give different clone locations | Two instructions | One path, stated the same way in both | Stage 0 log |
+| 8 | Adoption set `track: full` (enterprise) for a free offline hobby app | The track defaults silently | Derive it from the answers, or ask | 9 |
+| 9 | `check-versions.sh` said Qdrant and Context7 were OK while neither was in the session | It checks installation, not registration | Check the registration the session reads | 14 |
+
+**For the Development Guardrails (CDF), not fixed here:** `enforce-superpowers` blocks source-extension
+writes outside the project (run findings 3, 10); `enforce-evaluate` blocks a read-only `&&`-chained git
+inspection as "a commit" (11); the settings carry `Write(...)` deny rules current Claude Code ignores
+beside their `Edit(...)` twins (startup warnings).
+
+**Test-design lesson, for the rerun:** a clean `CLAUDE_CONFIG_DIR` also drops the user's MCP servers,
+so Stage 0 must register them the way the CLI Setup Addendum says.
+
+## BL-312: an opt-in "TL;DR mode" for the person the agent works for — greenfield and brownfield
+
+**Status:** Open — **DECIDED 2026-09-28 (Karl).** Build after `## BL-311:`'s nine fixes and BEFORE the
+clean dogfood rerun, so the technician persona tests it.
+
+**What it is.** The reply format Karl works with, offered to every project's user as a choice, because
+it is most useful to a non-developer: every reply the agent gives ends with exactly one plain-English
+TL;DR, self-contained (restated in full every time, never "as above"), carrying eight parts —
+
+1. what happened; 2. what it means for them; 3. next steps; 4. what is waiting on them; 5. the options;
+6. pros and cons for each option; 7. a recommendation with its reasoning; 8. what happens if they do
+nothing — plus every command they must run, in a fenced block, never named in prose.
+
+**Decided shape.**
+- **Enforced, not advised:** a Stop hook checks each reply for the TL;DR and its parts and asks the agent
+  to add what is missing — instruction-only formats drift over a long session.
+- **Chosen once, changeable:** one plain question in the greenfield intake and in adoption;
+  `reconfigure-project.sh` switches it afterwards.
+- **Layered on `docs/messaging-standard.md`**, which already requires a five-part plain-English half for
+  every *summary*. TL;DR mode extends that to every reply and adds parts 3, 4 and 6 and the command rule.
+
+**Open for the design:** where the choice is recorded (a manifest or phase-state key the hook and
+`CLAUDE.md` both read); the hook's check (which parts it can verify mechanically, and how it avoids
+re-prompting forever on a reply it cannot parse); and how it coexists with the Guardrails' own Stop hooks.
+
