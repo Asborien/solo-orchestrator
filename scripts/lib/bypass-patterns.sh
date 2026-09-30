@@ -21,8 +21,9 @@
 # (in, from, on, via, through, inside, within, at, using, with) and at most four
 # words before "terminal" or "shell" as a word, so a `--terminal-mode` flag,
 # SUBSHELL and identifiers do not match. fake_loop's list form needs a marking
-# verb (mark, set, record, flag, tick) and "complete" not followed by `_`, so
-# `complete_step` does not match and "completed" does.
+# verb (mark, set, record, flag, tick, or its -s, -ed or -ing form) as a word,
+# and "complete" not followed by `_`, so "settings" and `complete_step` do not
+# match and "completed" does.
 BYPASS_PATTERN_NAMES=(
   no_verify
   soif_force_step
@@ -36,9 +37,9 @@ BYPASS_PATTERN_REGEXES=(
   '(--no-verify|git commit[[:space:]]+-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$))'
   'SOIF_FORCE_STEP='
   # BL-315-TERMINAL-WORDS
-  '(run|do|execute)([[:space:]][^.]*)?[[:space:]](in|from|on|via|through|inside|within|at|using|with)[[:space:]]+([a-z-]+[[:space:]]+){0,4}(terminal|shell)([^a-z0-9_]|$)'
+  '(run|do|execute)([[:space:]][^.]*)?[[:space:]](in|from|on|via|through|inside|within|at|using|with)[[:space:]]+([a-z]+[[:space:]]+){0,4}(terminal|shell)([^a-z0-9_]|$)'
   # BL-315-FAKE-LOOP-VERB
-  '(mark|complete) step .*(build_loop|phase[0-9]+_init):.*(complete|done)|(^|[^a-z0-9_])(mark|set|record|flag|tick)[^.]*tests_verified_failing[^a-z0-9_]+(.{0,40}[^a-z0-9_])?complete([^_]|$)'
+  '(mark|complete) step .*(build_loop|phase[0-9]+_init):.*(complete|done)|(^|[^a-z0-9_])(mark|set|record|flag|tick)(s|g?ed|ing)?[^a-z0-9_.][^.]*tests_verified_failing[^a-z0-9_]+(.{0,40}[^a-z0-9_])?complete([^_]|$)'
   'git push (--force|--force-with-lease|-f[^a-z])'
   "(I.?ll|we can|we could|let.?s|I.?d|we.?d|we should|I should) (just |simply )?mark .* (complete|done|passed)"
 )

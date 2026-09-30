@@ -22300,8 +22300,9 @@ words, and "terminal" or "shell" is a word (no letter, digit or `_` after it; a 
 "terminal-emulator" matches). Every proposal fixture has that shape; a flag after a helper called `run`,
 a word such as SUBSHELL, and a description with no preposition ("run without a shell") do not.
 `# BL-315-FAKE-LOOP-VERB`: the list form needs a marking verb as a word ("mark", "set", "record", "flag"
-or "tick") earlier in the same sentence, and "complete" not followed by `_`, so `complete_step` does not
-match while "completed" does; the step-name form is unchanged.
+or "tick", or its -s, -ed or -ing form) earlier in the same sentence, and "complete" not followed by `_`,
+so "settings" and `complete_step` do not match while "marked" and "completed" do; the step-name form is
+unchanged.
 
 **Tests.** `tests/test-bypass-patterns.sh`: T19 to T25 are excerpts the detector recorded on 30 September
 2026 on an adopting project, none a proposal (six red before the fix; T22 pins identifiers, which already
@@ -22318,6 +22319,7 @@ Stop-arm row ("which only you can do from a terminal") still matches: it has the
 pattern separates operator guidance from a proposal, and the operator closes it as a false positive.
 Given up deliberately: a gap of five or more words before the terminal; a sentence broken by an internal
 full stop ("step 2, i.e. tests_verified_failing, complete"); and marking verbs outside the five named.
-The detector stores excerpts truncated, so a row whose match lay past the cut cannot be replayed from the
+Three atoms that predate BL-315 stay unpinned: the `.{0,40}` width and the separator after the step name
+in the list form, and the `[^.]*` sentence bound (the full-stop case above). The detector stores excerpts truncated, so a row whose match lay past the cut cannot be replayed from the
 audit log.
 
