@@ -22320,8 +22320,9 @@ pattern separates operator guidance from a proposal, and the operator closes it 
 Given up deliberately: a gap of five or more words before the terminal; a sentence broken by an internal
 full stop ("step 2, i.e. tests_verified_failing, complete"); marking verbs outside the five named; and
 a hyphenated word in the gap before the terminal ("built-in", "front-end"), since gap words are letters
-only (T31 pins this). A description of the form "runs within a <noun> shell" still matches, like the
-Stop-arm row above: the preposition and noun are those of a proposal. Three atoms that predate BL-315 stay unpinned: the `.{0,40}` width and the separator after the step name
+only (T31 pins this). A description of the form "run within a <noun> shell", with "run" as its own
+word, still matches, like the Stop-arm row above: the preposition and noun are those of a proposal. A
+gap word holding a digit is not a gap word either, and no fixture pins that. Three atoms that predate BL-315 stay unpinned: the `.{0,40}` width and the separator after the step name
 in the list form, and the `[^.]*` sentence bound (the full-stop case above). The detector stores excerpts truncated, so a row whose match lay past the cut cannot be replayed from the
 audit log.
 
