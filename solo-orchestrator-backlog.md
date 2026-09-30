@@ -4380,7 +4380,16 @@ this repo's own agent-worktree flow until PR #304. 'Never a bypass' was wrong.
 **Logged:** 2026-07-24 (BL-174 WP-D adversarial verifier)
 **Category:** Upgrade-path safety / framework-repo hygiene
 **Severity:** Medium
-**Status:** Open
+**Status:** Closed — 2026-09-27, commit `bde8b9d`: the prescribed structural guard is at the top of
+`_run_idempotent_backfill` (`# BL-177-BACKFILL-GUARD` — no project root, or a root with neither
+`.claude/phase-state.json` nor `.claude/manifest.json`, writes nothing), and the project-root check now
+runs right after argument parsing (`# BL-177-HELP-FIRST`), so `--backfill-only` outside a project is
+refused before any write. The empty-root `cd` was a version split: a silent no-op in bash 3.2 (the leak
+below) and "null directory" rc 1 in bash 5 (issue #419). `tests/test-upgrade-help-and-projectless.sh`
+P1–P5. Not done: `guard_not_in_framework` on the `--backfill-only` entry — the project check now stops a
+framework checkout first, because it carries no `.claude/phase-state.json`.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 `scripts/upgrade-project.sh`'s `_run_idempotent_backfill` runs its whole body inside a subshell that opens with `( cd "$PROJECT_ROOT" …`. `find_project_root` keys on `.claude/phase-state.json`; when that marker is absent — the framework repo itself, or any non-project cwd — `PROJECT_ROOT` is the empty string and **`cd ""` is a SILENT rc-0 no-op under `set -euo pipefail` on bash 3.2** (empty operand → success, cwd unchanged), so the subshell proceeds in the INVOCATION directory rather than a project root. Nothing downstream re-checks that we are in a real project.
 
@@ -13594,7 +13603,12 @@ read stdin and does not exit before it.
 
 ## BL-242: Brownfield adoption is HALF BUILT and has never had a backlog entry — seven capabilities unbuilt, and the feature's shape is now decided (D1-D8)
 
-**Status:** Open
+**Status:** Closed — 2026-09-27: every designed work package shipped, the last of them in PRs #441–#451,
+and the Development Guardrails install (BL-296 row 33) in PR #455 (merge `f7ff2f5`); `docs/adoption.md`'s
+"What is not built yet" now lists every package as shipped. **The residuals this entry recorded are NOT
+closed with it** — they move to `## BL-310:`, which lists each one and points back to its section here.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 **Filed 2026-08-23 at Karl's direction.** The feature has been able to adopt an
 existing codebase since **PR #337 merged on 2026-08-09**; the last of the
@@ -22168,10 +22182,107 @@ demonstration), #419 (where the follow-up was asked for), the pending fix for #4
 
 ---
 
-## BL-312: concurrent writers of the tool-usage ledger share one temp name, land a 0-byte ledger, and the MCP session gate then refuses every Write and Edit
+## BL-310: brownfield adoption's residuals, carried from `## BL-242:` when that entry closed
+
+**Status:** Open — a tracking entry. Each line below was recorded inside `## BL-242:` as found and not
+fixed; closing that entry would otherwise have dropped all of them off the what's-open list. **Verify
+each against `main` before working it** — they were recorded at different commits, and a later package
+may have closed one without saying so here.
+
+**Filed:** 2026-09-27, when BL-242 closed (all designed packages shipped, PR #455 the last).
+
+| # | Residual | Where in `## BL-242:` |
+|---|---|---|
+| 1 | `resolve-tools.sh` files a documentation URL in the `auto_install` bucket, and `init.sh` executes that bucket (the shared resolver's defect) | "BL-242 residual — `resolve-tools.sh` files a documentation URL…" |
+| 2 | the Linux gitleaks recipe adoption offers is an unpinned, unverified root install; CI pins the same artefact by version and checksum | "A SECOND RESIDUAL, FOUND AT THE SAME REVIEW…" |
+| 3 | `# BL-242-RESOLVER-NO-EXEC` tells the operator to "run adoption again", which `# BL-242-PREFLIGHT-ARM1` refuses | its own residual heading |
+| 4 | adoption follows a symlink out of the project and overwrites its target — partly guarded since (22 `-L` / `adopt_path_under_link` sites in `scripts/lib/adopt/` on 2026-09-27), but `adopt_write_file` itself is still `cat >` | "BL-242 residual — adoption follows a SYMLINK…" |
+| 5 | init parity: thirteen `init.sh` effects adoption does not perform and nothing designs (the §8.7a table) | "THE INIT-PARITY RESIDUAL" |
+| 6 | a file of the operator's where a framework *script* goes is left alone, so that script is not installed (named by the run) | `docs/adoption.md`, "What is not built yet" |
+| 7 | the `# BL-242-SECRETS-RESCAN` guard is still correct but no longer observable in the persisted artefact | "Residual carried here from WP10b/2 (PR #437)" |
+| 8 | the no-fingerprint guard refuses ALL-missing fingerprints, not SOME-missing | "Residual — the no-fingerprint guard covers ALL-missing…" |
+| 9 | WP11: the `@sh`-quoted restore line is unpinned; I20's planned-path matching is spelling-dependent | "Residuals from WP11's pre-PR review" |
+| 10 | eight suites still carry the `"test":"npm test"` fixture that hangs a shard once one commits a source file after adoption | "RESIDUAL — the other eight still carry it" |
+| 11 | the `--finish` / commit-hook review list: MANIFEST still says `replaced` after an edited hook is refused; three guard lines unkilled; root `-w` on a `chmod 444` hook; no time bound on the adoptee's test command; a red suite blocks every source commit from day one; `soif_write_precommit_hook` returns `chmod`'s status; hook order against §10 | "RESIDUALS from these reviews, recorded not fixed" |
+| 12 | the real Guardrails installer runs only where a host has the clone; the PR lane exercises it through a stub | `## BL-296:` (closed), its review-round block |
+
+Hook managers (item 11's pre-commit/lefthook line) are **not** a residual: Karl ruled 2026-09-25 that
+adoption replaces them (`## BL-242:`, "Karl's ruling on hook managers").
+
+---
+
+## BL-311: brownfield dogfood run 1 (k-pdf, 2026-09-27) — nine things a regular user should never hit
+
+**Status:** Open — Karl approved fixing every row (2026-09-28), then a FULL CLEAN RERUN. Each row closes
+by its own PR; the entry closes when the rerun passes.
+
+**What ran.** A fresh Claude Code session (Sonnet, a clean `CLAUDE_CONFIG_DIR`) played a systems
+technician with one to two years of experience — not a developer — installing Solo Orchestrator from
+the public README and adopting a private copy of k-pdf (Python/uv, 240 commits, scaffolded by an OLDER
+Solo and carrying the Guardrails 4.3.0, no `phase-state.json`). It reached the end of Stage 2 (adopted,
+commit `ec5c7b5`) with 14 findings. **Evidence** (outside the repo, untracked):
+`~/dogfood-evidence-2026-09-27/` — the findings file, the full transcript, a git bundle holding the
+adoption commit, the worktree diff, and the `.claude` tree including Scout's report.
+
+| # | What the user hit | Root cause | Fix | Run findings |
+|---|---|---|---|---|
+| 1 | After adopting, EVERY file write in the session was blocked until a Qdrant call succeeded — impossible, no Qdrant tool in the session | Adoption never checks for, or offers to set up, the Qdrant and Context7 MCP servers the session gate requires (`init.sh` provisions Qdrant); the MCP helpers read `$HOME/.claude.json` by fixed path, so adoption saw a registration the session did not have and wrote `mcp.qdrant_required`; a mid-session adoption leaves `.claude/tool-usage.json` absent until a restart | Adoption checks Docker, the Qdrant container, and the Qdrant and Context7 MCP registrations, offers to set up what is missing, honours `CLAUDE_CONFIG_DIR`, lists them in `docs/adoption.md`, and ends by telling the operator to start a new Claude Code session | 8, 12 |
+| 2 | Adoption refused: "this project already looks framework-managed" | Preflight reads any `.claude/manifest.json` as a possible earlier adoption; a Guardrails-only `.claude/` (a `frameworkVersion` manifest, no Solo keys, no `phase-state.json`) is a known, adoptable shape | Recognise it and adopt; the Guardrails stage already has its "already installed" arm | 5, 6 |
+| 3 | The agent relaying a gate's own documented escape was flagged as a bypass proposal (a pending approval, default "decline") | The bypass detector cannot tell a relayed framework escape from an invented workaround | Exempt text quoting a framework gate's own escape hint; same class as `## BL-277:` | 13 |
+| 4 | Scout reported the tests failing (exit 127) on a suite that passes 1071/0 | The test command ignores the detected package manager: bare `pytest` in a uv project | Prefix the runner (`uv run`, and the poetry/pipenv equivalents) | 4 |
+| 5 | "your ignore rules refuse 24 of the files" — the cause took reading `.gitignore` to find | The refusal is right but does not name the rule (`lib/` matching `scripts/lib/`) | Name the ignoring rule, file and line (`git check-ignore -v`), and the one-line fix | 7 |
+| 6 | Claude Code's auto mode refused the framework's first script ("Code from External"), then refused the agent's attempt to change permissions | Undocumented | An "allow the framework's scripts" step, with the settings snippet, before the first command | 1, 2 |
+| 7 | README and the adoption guide give different clone locations | Two instructions | One path, stated the same way in both | Stage 0 log |
+| 8 | Adoption set `track: full` (enterprise) for a free offline hobby app | The track defaults silently | Derive it from the answers, or ask | 9 |
+| 9 | `check-versions.sh` said Qdrant and Context7 were OK while neither was in the session | It checks installation, not registration | Check the registration the session reads | 14 |
+
+**For the Development Guardrails (CDF), not fixed here:** `enforce-superpowers` blocks source-extension
+writes outside the project (run findings 3, 10); `enforce-evaluate` blocks a read-only `&&`-chained git
+inspection as "a commit" (11); the settings carry `Write(...)` deny rules current Claude Code ignores
+beside their `Edit(...)` twins (startup warnings).
+
+**Test-design lesson, for the rerun:** a clean `CLAUDE_CONFIG_DIR` also drops the user's MCP servers,
+so Stage 0 must register them the way the CLI Setup Addendum says.
+
+**Group A residuals (round 15, not fixed).** Measured by the round-15 review (real Docker 29.8.1,
+Qdrant 1.17.1); recorded, not fixed:
+- **R-BL311-10** — a container on `--network container:<id>` reads as loopback, and adoption prints
+  nothing about it. An improbable shape for a Qdrant container.
+- **R-BL311-11** — `-P` together with an explicit `127.0.0.1` binding on every exposed port is
+  reported as open. It errs on the cautious side; the defect is the wording.
+- **R-BL311-12** — Qdrant 1.17.1 enforces an EMPTY `QDRANT__SERVICE__API_KEY=` (a request with no
+  key gets 401, one with an empty `api-key` header 200), and a container with only a read-only key
+  reads as "no key". The warning points the right way; its wording is inaccurate.
+
+## BL-312: an opt-in "TL;DR mode" for the person the agent works for — greenfield and brownfield
+
+**Status:** Open — **DECIDED 2026-09-28 (Karl).** Build after `## BL-311:`'s nine fixes and BEFORE the
+clean dogfood rerun, so the technician persona tests it.
+
+**What it is.** The reply format Karl works with, offered to every project's user as a choice, because
+it is most useful to a non-developer: every reply the agent gives ends with exactly one plain-English
+TL;DR, self-contained (restated in full every time, never "as above"), carrying eight parts —
+
+1. what happened; 2. what it means for them; 3. next steps; 4. what is waiting on them; 5. the options;
+6. pros and cons for each option; 7. a recommendation with its reasoning; 8. what happens if they do
+nothing — plus every command they must run, in a fenced block, never named in prose.
+
+**Decided shape.**
+- **Enforced, not advised:** a Stop hook checks each reply for the TL;DR and its parts and asks the agent
+  to add what is missing — instruction-only formats drift over a long session.
+- **Chosen once, changeable:** one plain question in the greenfield intake and in adoption;
+  `reconfigure-project.sh` switches it afterwards.
+- **Layered on `docs/messaging-standard.md`**, which already requires a five-part plain-English half for
+  every *summary*. TL;DR mode extends that to every reply and adds parts 3, 4 and 6 and the command rule.
+
+**Open for the design:** where the choice is recorded (a manifest or phase-state key the hook and
+`CLAUDE.md` both read); the hook's check (which parts it can verify mechanically, and how it avoids
+re-prompting forever on a reply it cannot parse); and how it coexists with the Guardrails' own Stop hooks.
+
+## BL-314: concurrent writers of the tool-usage ledger share one temp name, land a 0-byte ledger, and the MCP session gate then refuses every Write and Edit
 
 **Status:** Open — reproduction and fix in the pull request that files this entry.
-`tests/test-bl312-tool-usage-concurrent.sh` and T5d in `tests/test-session-test-gate-check-merge.sh`
+`tests/test-bl314-tool-usage-concurrent.sh` and T5d in `tests/test-session-test-gate-check-merge.sh`
 pin it; the cases are named below.
 
 **Found:** 2026-09-22 in practice, where several sessions and subagents shared one checkout.
@@ -22193,26 +22304,26 @@ checks deny the next Write (C8).
 `init.sh` ships it beside them, and `scripts/verify-install.sh` checks and restores it
 (`fix_lib_copy_ledger-write`). `_lw_update` applies a jq filter to the ledger, and `_lw_put` lands
 stdin as the whole ledger. Both take a mkdir lock beside the ledger, write through a unique
-`mktemp "$TOOL_USAGE.lw.XXXXXX"` in the same directory (`# BL-312-UNIQUE-TMP`), and `mv` only a
-non-empty result into place (`# BL-312-NONEMPTY`). Each behaviour, with the case that pins it:
+`mktemp "$TOOL_USAGE.lw.XXXXXX"` in the same directory (`# BL-314-UNIQUE-TMP`), and `mv` only a
+non-empty result into place (`# BL-314-NONEMPTY`). Each behaviour, with the case that pins it:
 
 - Every call row survives a concurrent burst, `mcp_requirements` is kept and the find flags are set
   (C1). A reader polling through the burst never sees an empty or unparseable ledger (C2). No temp
   or lock is left (C4).
 - The commit counter's read and write happen under one lock hold, so no commit is lost (C3).
-- The seed is taken under the lock (`# BL-312-SEED-LOCK`), re-checked inside it and landed by `mv`,
+- The seed is taken under the lock (`# BL-314-SEED-LOCK`), re-checked inside it and landed by `mv`,
   so a burst with no ledger records every call and seeds no `mcp_requirements`, as `## BL-233:`
   requires (C5). A tracker that arrives while another is landing the seed waits for it and appends
   its own row to it (C5b).
-- A lock is stale when its mtime is more than 3 s old (`# BL-312-STALE-AGE`): SIGKILL skips every
+- A lock is stale when its mtime is more than 3 s old (`# BL-314-STALE-AGE`): SIGKILL skips every
   trap, and a live hold lasts milliseconds. It is broken at most once per acquisition
-  (`# BL-312-BREAK-STALE`), so one write past it records its call and clears it (C7). A lock still
+  (`# BL-314-BREAK-STALE`), so one write past it records its call and clears it (C7). A lock still
   stale after that break cannot be removed, and the write goes ahead unlocked; it may lose an update,
   and the unique temp keeps the ledger whole (C6, with a breakable and a stuck lock). A lock aged
   5 s is broken at once, so the budget is 3 s and not longer (C7a). The wait is bounded in the other
-  shapes too: a lock dated more than the budget ahead of the clock is stale (`# BL-312-FUTURE-STALE`,
+  shapes too: a lock dated more than the budget ahead of the clock is stale (`# BL-314-FUTURE-STALE`,
   C7f, the tracker and the gate), and a lock whose time cannot be read is given up after one budget,
-  the write then going ahead unlocked (`# BL-312-UNREADABLE`, C7u). The lock's time is read with GNU
+  the write then going ahead unlocked (`# BL-314-UNREADABLE`, C7u). The lock's time is read with GNU
   `stat -c %Y` or, failing that, BSD `stat -f %m`; the BSD branch is pinned under a stat that
   refuses `-c` (C20).
 - A busy lock is waited for and never broken: 40 and 80 concurrent events keep every call row (C9).
@@ -22224,33 +22335,33 @@ non-empty result into place (`# BL-312-NONEMPTY`). Each behaviour, with the case
   find event wait, and its row survives (C18, one arm per site).
 - POSIX `mkdir()` fails with EEXIST only when the name exists, so only EEXIST is contention. When
   `mkdir` fails and no lockdir exists, one retry separates a lock released in between from EACCES,
-  EROFS, ENOSPC or ENOTDIR, and those give the lock up at once (`# BL-312-NOT-EEXIST`); the write
+  EROFS, ENOSPC or ENOTDIR, and those give the lock up at once (`# BL-314-NOT-EEXIST`); the write
   then fails in `mktemp` and cleans up. With `.claude` at mode 0555, or a file, the gate answers and
   the tracker finishes within 3 s (C16). A loop that waited there would hold every Write and Edit
   until Claude Code's 600 s hook timeout.
-- Only EXIT is trapped (`# BL-312-TRAP`; the gate's call carries `# BL-312-GATE-TRAP`). SIGTERM at
+- Only EXIT is trapped (`# BL-314-TRAP`; the gate's call carries `# BL-314-GATE-TRAP`). SIGTERM at
   its default ends the hook with 143, bash runs the EXIT trap, the lock is released, the temp is
   removed, and nothing lands: in the tracker (C10) and in the gate (C10c).
 - SIGINT sent to the hook alone is waited out. Bash defers it until the foreground jq exits, jq never
   received it, so the hook finishes with rc 0 and the write lands whole under the lock (C10b).
 - The next locked write sweeps this lib's `tool-usage.json.lw.XXXXXX` temps that are older than the
-  budget, and spares younger ones, which may belong to a live writer (C11, `# BL-312-SWEEP-AGE`). It
+  budget, and spares younger ones, which may belong to a live writer (C11, `# BL-314-SWEEP-AGE`). It
   touches no other name: an aged `tool-usage.json.backup` and `.bak` survive (C15,
-  `# BL-312-SWEEP-GLOB`).
+  `# BL-314-SWEEP-GLOB`).
 - A jq filter that prints nothing never lands an empty ledger (C12). The tracker reseeds an existing
   0-byte or unparseable ledger as it seeds a missing one (C13); the seed carries no requirements, so
   the gate stays closed until outcomes are recorded again.
-- A failed write removes its temp (`# BL-312-FAIL-CLEAN`, C14). A failed `mv` is a failed write:
+- A failed write removes its temp (`# BL-314-FAIL-CLEAN`, C14). A failed `mv` is a failed write:
   `_lw_update` returns 1, the ledger is unchanged, and no temp is left (C19).
 - SessionStart's merge goes through `_lw_update`, and its two fresh writes through `_lw_put`
-  (`# BL-312-SESSION-PUT` on the startup one). Twelve concurrent resumes mixed with twelve find
+  (`# BL-314-SESSION-PUT` on the startup one). Twelve concurrent resumes mixed with twelve find
   events keep every call row, and twelve concurrent startups are never seen half-written (C17). The
   lib is safe under that hook's `set -e`.
-- The startup write takes the lock (`# BL-312-PUT-LOCK`). A tracker that has read a ledger carrying
+- The startup write takes the lock (`# BL-314-PUT-LOCK`). A tracker that has read a ledger carrying
   inherited successes, and still holds the lock, lands first; the startup lands last, and
   `## BL-236:`'s reset holds (C17c).
 - Without the lib, or jq, no ledger can be written, so a startup removes the existing one
-  (`# BL-312-NOLIB-RESET`, the literal path `.claude/tool-usage.json`). An inherited ledger's `true`
+  (`# BL-314-NOLIB-RESET`, the literal path `.claude/tool-usage.json`). An inherited ledger's `true`
   flags cannot reach the first Write, and the gate reports the ledger absent (T5d). This is new
   behaviour, not a restoration: before this change the startup reset ran only when jq was present,
   so without jq an inherited ledger kept its flags. Without the lib, the tracker writes nothing and
@@ -22265,19 +22376,19 @@ after proving its location: one end-of-line site of the marker, and a diff of ex
 
 | marker | mutant | killed by |
 |---|---|---|
-| `BL-312-UNIQUE-TMP` | M1, the shared `"$TOOL_USAGE.tmp"` name back | C6, stuck lock |
-| `BL-312-LOCK` | M2, the lock never taken | C1, C3 |
-| `BL-312-BREAK-STALE` | M4, a stale lock never broken | C7 |
-| `BL-312-STALE-AGE` | MR, a held lock broken whatever its age | C9 |
-| `BL-312-TRAP` | ME, the EXIT trap removed | C10 |
-| `BL-312-FAIL-CLEAN` | MF, the failure path's cleanup removed | C14 |
-| `BL-312-NONEMPTY` | MG, the non-empty check removed | C12 |
-| `BL-312-NOT-EEXIST` | MN, a non-EEXIST failure read as contention | C16 |
-| `BL-312-GATE-TRAP` | MX1, the gate's `_lw_traps` call removed | C10c |
-| `BL-312-SWEEP-GLOB` | MS, the sweep glob widened to any six characters | C15 |
-| `BL-312-SWEEP-AGE` | MX2, the sweep's age check removed | a fresh temp deleted, as C11 sees |
-| `BL-312-SESSION-PUT` | MT, the startup write back to `cat >` | C17 |
-| `BL-312-PUT-LOCK` | MX5, `_lw_put` without the lock | C17c |
+| `BL-314-UNIQUE-TMP` | M1, the shared `"$TOOL_USAGE.tmp"` name back | C6, stuck lock |
+| `BL-314-LOCK` | M2, the lock never taken | C1, C3 |
+| `BL-314-BREAK-STALE` | M4, a stale lock never broken | C7 |
+| `BL-314-STALE-AGE` | MR, a held lock broken whatever its age | C9 |
+| `BL-314-TRAP` | ME, the EXIT trap removed | C10 |
+| `BL-314-FAIL-CLEAN` | MF, the failure path's cleanup removed | C14 |
+| `BL-314-NONEMPTY` | MG, the non-empty check removed | C12 |
+| `BL-314-NOT-EEXIST` | MN, a non-EEXIST failure read as contention | C16 |
+| `BL-314-GATE-TRAP` | MX1, the gate's `_lw_traps` call removed | C10c |
+| `BL-314-SWEEP-GLOB` | MS, the sweep glob widened to any six characters | C15 |
+| `BL-314-SWEEP-AGE` | MX2, the sweep's age check removed | a fresh temp deleted, as C11 sees |
+| `BL-314-SESSION-PUT` | MT, the startup write back to `cat >` | C17 |
+| `BL-314-PUT-LOCK` | MX5, `_lw_put` without the lock | C17c |
 
 **Residuals.**
 - Two waiters that both read a stale lock's age can both break it, and the second can remove a lock a

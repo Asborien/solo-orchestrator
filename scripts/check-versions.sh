@@ -616,6 +616,13 @@ for i in $(seq 0 $((TOOL_COUNT - 1))); do
   if [ "$CHECK_RC" -ne 0 ]; then
     if [ "$CHECK_RC" -eq 2 ]; then                                              # BL-235-THIRD-STATE
       print_warn "$NAME: configured, but working could not be confirmed${CHECK_NOTE:+ — $CHECK_NOTE}"
+    elif [ "$CATEGORY" = "mcp_server" ]; then
+      # `## BL-311:` AN MCP SERVER IS NOT INSTALLED, IT IS REGISTERED — with THIS
+      # Claude Code session's configuration, which probe-tool.sh now reads where
+      # CLAUDE_CONFIG_DIR puts it. "not installed" sent the operator to look for
+      # a package; the fix is `claude mcp add`, and the row says which question
+      # it answered.
+      print_warn "$NAME: NOT registered with Claude Code${CHECK_NOTE:+ — $CHECK_NOTE}"   # BL-311-CV-NOT-REGISTERED
     else
       print_warn "$NAME: not installed${CHECK_NOTE:+ — $CHECK_NOTE}"
     fi

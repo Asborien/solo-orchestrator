@@ -441,7 +441,7 @@ check_scripts() {
     # and pre-commit-gate.sh's warning no-ops — and without this row
     # verify-install reported a healthy install with the enforcement lib gone.
     "scripts/lib/accumulation.sh"
-    # BL-312: sourced by track-tool-usage.sh and session-mcp-gate.sh. Without
+    # BL-314: sourced by track-tool-usage.sh and session-mcp-gate.sh. Without
     # it the tracker writes nothing, and the gate refuses every Write and Edit.
     "scripts/lib/ledger-write.sh"
   )
@@ -1058,14 +1058,22 @@ check_tools() {
 check_plugins_mcp() {
   print_step "Checking plugins and MCP servers..."
 
-  if ! command -v jq &>/dev/null || [ ! -f "$HOME/.claude/settings.json" ]; then
-    register_manual "Plugin/MCP check skipped" "Requires jq and ~/.claude/settings.json"
+  # `## BL-311:` THE FILES THIS SESSION READS, not fixed $HOME paths: with
+  # CLAUDE_CONFIG_DIR set, Claude Code keeps settings.json and .claude.json
+  # inside it. The Context7 row below already asked through
+  # is_context7_mcp_registered, which honours it; the Qdrant row read
+  # ~/.claude.json directly, so the two rows answered for different
+  # configurations.
+  local _vi_set=""
+  _vi_set="$(soif_claude_settings_path)"
+  if ! command -v jq &>/dev/null || [ ! -f "$_vi_set" ]; then
+    register_manual "Plugin/MCP check skipped" "Requires jq and $_vi_set"
     return
   fi
 
   # Superpowers
   local sp_installed
-  sp_installed=$(jq -r '.enabledPlugins["superpowers@claude-plugins-official"] // false' "$HOME/.claude/settings.json" 2>/dev/null || echo "false")
+  sp_installed=$(jq -r '.enabledPlugins["superpowers@claude-plugins-official"] // false' "$_vi_set" 2>/dev/null || echo "false")
   if [ "$sp_installed" = "true" ]; then
     register_pass "Superpowers plugin installed"
   else
@@ -1081,9 +1089,8 @@ check_plugins_mcp() {
     register_manual "Context7 MCP not configured" "Install Node.js first, then: claude mcp add context7 -- npx -y @upstash/context7-mcp@latest"
   fi
 
-  # Qdrant MCP — check both config locations
-  if ([ -f "$HOME/.claude/settings.json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$HOME/.claude/settings.json" >/dev/null 2>&1) || \
-     ([ -f "$HOME/.claude.json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$HOME/.claude.json" >/dev/null 2>&1); then
+  # Qdrant MCP — both config locations THIS session reads (helpers-full.sh)
+  if is_qdrant_mcp_entry_present; then   # BL-311-VERIFY-QDRANT
     register_pass "Qdrant MCP configured"
   else
     register_manual "Qdrant MCP not configured" "Requires Docker + uv. See docs/reference/cli-setup-addendum.md"

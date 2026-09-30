@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/lib/ledger-write.sh — BL-312: the one locked writer of the MCP
+# scripts/lib/ledger-write.sh — BL-314: the one locked writer of the MCP
 # tool-usage ledger. Sourced by track-tool-usage.sh (after every MCP call),
 # session-mcp-gate.sh (before every Write and Edit) and session-test-gate-check.sh
 # (at SessionStart). The caller sets TOOL_USAGE.
@@ -36,12 +36,12 @@ _lw_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null; }
 
 _lw_lock() {
   local broken=0 mt now age unread=""
-  while ! mkdir "$TOOL_USAGE.lockdir" 2>/dev/null; do   # BL-312-LOCK
+  while ! mkdir "$TOOL_USAGE.lockdir" 2>/dev/null; do   # BL-314-LOCK
     if [ ! -e "$TOOL_USAGE.lockdir" ]; then
       # Released between the two calls, or mkdir cannot create it at all
       # (EACCES, EROFS, ENOSPC, ENOTDIR). One retry tells them apart.
       mkdir "$TOOL_USAGE.lockdir" 2>/dev/null && break
-      [ -e "$TOOL_USAGE.lockdir" ] || return 1   # BL-312-NOT-EEXIST
+      [ -e "$TOOL_USAGE.lockdir" ] || return 1   # BL-314-NOT-EEXIST
     fi
     now=$(date +%s)
     mt=$(_lw_mtime "$TOOL_USAGE.lockdir") || mt=""
@@ -50,7 +50,7 @@ _lw_lock() {
         # Gone since the mkdir, or a time no stat here can read. Retry, and
         # give the lock up once it has stayed unreadable for a whole budget.
         [ -n "$unread" ] || unread=$now
-        [ $((now - unread)) -gt "$LW_BUDGET" ] && return 1   # BL-312-UNREADABLE
+        [ $((now - unread)) -gt "$LW_BUDGET" ] && return 1   # BL-314-UNREADABLE
         sleep 0.1
         continue ;;
     esac
@@ -58,10 +58,10 @@ _lw_lock() {
     age=$((now - mt))
     # A lock dated ahead of the clock (a SIGKILL-left lock, then the clock
     # stepped back) would never age; past the budget ahead, it is stale too.
-    if [ "$age" -lt "-$LW_BUDGET" ]; then age=$((LW_BUDGET + 1)); fi   # BL-312-FUTURE-STALE
-    if [ "$age" -gt "$LW_BUDGET" ]; then   # BL-312-STALE-AGE
+    if [ "$age" -lt "-$LW_BUDGET" ]; then age=$((LW_BUDGET + 1)); fi   # BL-314-FUTURE-STALE
+    if [ "$age" -gt "$LW_BUDGET" ]; then   # BL-314-STALE-AGE
       [ "$broken" = "1" ] && return 1
-      rmdir "$TOOL_USAGE.lockdir" 2>/dev/null || :   # BL-312-BREAK-STALE
+      rmdir "$TOOL_USAGE.lockdir" 2>/dev/null || :   # BL-314-BREAK-STALE
       broken=1
       continue
     fi
@@ -82,10 +82,10 @@ _lw_unlock() {
 _lw_sweep() {
   local f mt now
   now=$(date +%s)
-  for f in "$TOOL_USAGE".lw.??????; do   # BL-312-SWEEP-GLOB
+  for f in "$TOOL_USAGE".lw.??????; do   # BL-314-SWEEP-GLOB
     mt=$(_lw_mtime "$f") || continue
     case "$mt" in ''|*[!0-9]*) continue ;; esac
-    [ $((now - mt)) -gt "$LW_BUDGET" ] && rm -f "$f" || :   # BL-312-SWEEP-AGE
+    [ $((now - mt)) -gt "$LW_BUDGET" ] && rm -f "$f" || :   # BL-314-SWEEP-AGE
   done
   return 0
 }
@@ -96,14 +96,14 @@ _lw_sweep() {
 _lw_land() {
   local tmp
   _lw_sweep
-  tmp=$(mktemp "$TOOL_USAGE.lw.XXXXXX" 2>/dev/null) || tmp=""   # BL-312-UNIQUE-TMP
+  tmp=$(mktemp "$TOOL_USAGE.lw.XXXXXX" 2>/dev/null) || tmp=""   # BL-314-UNIQUE-TMP
   [ -n "$tmp" ] || return 1
   LW_TMP="$tmp"
-  if "$@" > "$tmp" 2>/dev/null && [ -s "$tmp" ] && mv "$tmp" "$TOOL_USAGE" 2>/dev/null; then   # BL-312-NONEMPTY
+  if "$@" > "$tmp" 2>/dev/null && [ -s "$tmp" ] && mv "$tmp" "$TOOL_USAGE" 2>/dev/null; then   # BL-314-NONEMPTY
     LW_TMP=""
     return 0
   fi
-  rm -f "$tmp"   # BL-312-FAIL-CLEAN
+  rm -f "$tmp"   # BL-314-FAIL-CLEAN
   LW_TMP=""
   return 1
 }
@@ -125,7 +125,7 @@ _lw_update() {
 # ledger first and lands after it.
 _lw_put() {
   local rc=0
-  _lw_lock || :   # BL-312-PUT-LOCK
+  _lw_lock || :   # BL-314-PUT-LOCK
   _lw_land cat || rc=$?
   _lw_unlock
   return "$rc"
@@ -143,5 +143,5 @@ _lw_cleanup() {
 # bash defers it until the foreground jq exits, jq never received it, so the
 # hook carries on and the write lands whole under the lock.
 _lw_traps() {
-  trap '_lw_cleanup' EXIT   # BL-312-TRAP
+  trap '_lw_cleanup' EXIT   # BL-314-TRAP
 }

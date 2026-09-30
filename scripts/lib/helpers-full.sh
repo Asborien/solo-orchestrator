@@ -68,15 +68,20 @@ finalize_log() {
 }
 
 # ── MCP Detection Helpers ────────────────────────────────────────
-# Check both ~/.claude/settings.json and ~/.claude.json for MCP server registration.
+# Check the two user config files THIS Claude Code session reads for an MCP
+# server registration: settings.json and .claude.json, both located by
+# helpers-core.sh's soif_claude_* functions, which honour CLAUDE_CONFIG_DIR
+# (`## BL-311:` — with it set, `~/.claude.json` is NOT what the session reads).
 
 is_context7_mcp_registered() {
+  local _c7_set="" _c7_json=""
   command -v jq &>/dev/null || return 1
+  _c7_set="$(soif_claude_settings_path)"; _c7_json="$(soif_claude_json_path)"
   # Direct MCP registration in either user config file
-  ([ -f "$HOME/.claude/settings.json" ] && jq -e '.mcpServers.context7 // .mcpServers["context7-mcp"] // empty' "$HOME/.claude/settings.json" >/dev/null 2>&1) || \
-  ([ -f "$HOME/.claude.json" ] && jq -e '.mcpServers.context7 // .mcpServers["context7-mcp"] // empty' "$HOME/.claude.json" >/dev/null 2>&1) || \
+  ([ -f "$_c7_set" ] && jq -e '.mcpServers.context7 // .mcpServers["context7-mcp"] // empty' "$_c7_set" >/dev/null 2>&1) || \
+  ([ -f "$_c7_json" ] && jq -e '.mcpServers.context7 // .mcpServers["context7-mcp"] // empty' "$_c7_json" >/dev/null 2>&1) || \
   # Plugin-installed Context7 (surfaces as mcp__plugin_context7_context7__*; registered under .enabledPlugins, not .mcpServers)
-  ([ -f "$HOME/.claude/settings.json" ] && jq -e '.enabledPlugins | to_entries[] | select(.key | test("^context7"; "i")) | select(.value == true)' "$HOME/.claude/settings.json" >/dev/null 2>&1)
+  ([ -f "$_c7_set" ] && jq -e '.enabledPlugins | to_entries[] | select(.key | test("^context7"; "i")) | select(.value == true)' "$_c7_set" >/dev/null 2>&1)
 }
 
 # ── Qdrant: registered is not the same question as working (BL-234) ─────────
@@ -92,9 +97,11 @@ is_context7_mcp_registered() {
 # wants it (writing a project-local collection override is correct whether or
 # not the server happens to be up).
 is_qdrant_mcp_entry_present() {
+  local _qe_set="" _qe_json=""
   command -v jq &>/dev/null || return 1
-  ([ -f "$HOME/.claude/settings.json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$HOME/.claude/settings.json" >/dev/null 2>&1) || \
-  ([ -f "$HOME/.claude.json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$HOME/.claude.json" >/dev/null 2>&1)
+  _qe_set="$(soif_claude_settings_path)"; _qe_json="$(soif_claude_json_path)"
+  ([ -f "$_qe_set" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$_qe_set" >/dev/null 2>&1) || \
+  ([ -f "$_qe_json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$_qe_json" >/dev/null 2>&1)
 }
 
 # qdrant_mcp_reg_file — the ONE config file whose qdrant entry is authoritative.
@@ -117,7 +124,7 @@ is_qdrant_mcp_entry_present() {
 qdrant_mcp_reg_file() {
   local f
   command -v jq &>/dev/null || { printf ''; return 0; }
-  for f in "$HOME/.claude.json" "$HOME/.claude/settings.json"; do
+  for f in "$(soif_claude_json_path)" "$(soif_claude_settings_path)"; do   # BL-311-QDRANT-REG-FILE
     [ -f "$f" ] || continue
     if jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$f" >/dev/null 2>&1; then
       printf '%s' "$f"; return 0
@@ -387,7 +394,13 @@ is_qdrant_container_running() {
 
 # Register Qdrant MCP with Claude Code (30s timeout).
 # Usage: register_qdrant_mcp [collection_name]
+# `## BL-311:` THE SERVER NAME COMES BEFORE `-e`. `-e, --env <env...>` is
+# variadic (`claude mcp add --help`), so a name written after the `-e` options
+# is read as one more environment value and the command exits 1 ("Invalid
+# environment variable format: qdrant") — measured on Claude Code 2.1.283
+# against a scratch CLAUDE_CONFIG_DIR, in the order this line used to have.
+# tests/test-bl311-mcp-add-order.sh pins every tracked spelling.
 register_qdrant_mcp() {
   local collection="${1:-claude-memory}"
-  run_with_timeout 30 bash -c "echo y | claude mcp add -s user -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=$collection qdrant -- uvx --python 3.13 mcp-server-qdrant >/dev/null 2>&1"
+  run_with_timeout 30 bash -c "echo y | claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=$collection -- uvx --python 3.13 mcp-server-qdrant >/dev/null 2>&1"   # BL-311-MCP-ADD-ORDER
 }

@@ -170,6 +170,13 @@
 # LANE: registered in tests/full-project-test-suite.sh AND in the tests.yml
 # `unit-shard` list. Its executed lines never name init.sh.
 set -o pipefail
+# #435 — `printf … | grep -q` under pipefail is a RACE: grep -q exits at the
+# first match, the writer can take SIGPIPE (141) before it finishes, and
+# pipefail reports the pipeline as failed although the pattern matched —
+# every time on a large output with an early match, under load on a small
+# one. `_gq` reads to EOF (no -q), so the writer always finishes; the exit
+# codes are grep's own (0 match, 1 none, 2 error).
+_gq() { grep "$@" >/dev/null; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -420,7 +427,7 @@ klass="$(active_json "$P" -r '.active_delta.class')"
 # Nothing heavier: none of the three heavy tokens anywhere on the row or in the
 # transcript, and no docs/deltas directory conjured into being.
 heavy=n
-printf '%s' "$gates" | grep -qE 'brief|build_loop' && heavy=y
+printf '%s' "$gates" | _gq -E 'brief|build_loop' && heavy=y
 had_deltas=n; [ -d "$P/docs/deltas" ] && had_deltas=y
 # Everything that existed before is byte-identical afterwards — EXCEPT BUGS.md,
 # which gains exactly one row (Karl's decision of 2026-08-09: the hotfix audit
@@ -438,7 +445,7 @@ done > "$T/recheck"
 printf '%s\n' "$before" | grep -v '^$' > "$T/before"
 moved="$(diff "$T/before" "$T/recheck" 2>/dev/null | grep '^[<>]' || true)"
 if [ -n "$moved" ]; then
-  printf '%s\n' "$moved" | grep -qv 'BUGS\.md' && undisturbed=n
+  printf '%s\n' "$moved" | _gq -v 'BUGS\.md' && undisturbed=n
 fi
 # ...and the shape of the one permitted move. The diff goes to a FILE and the
 # assertions read the file: `diff` exits 1 when the files differ, and under
@@ -471,7 +478,7 @@ open_hotfix "$REPO_ROOT/scripts" "$P" checkout
 stamp="$(active_json "$P" -r '.active_delta.audit_row_at_open')"
 done_at_open="$(active_json "$P" -c '.active_delta.gates_completed')"
 stamp_shape=n
-printf '%s' "$stamp" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' && stamp_shape=y
+printf '%s' "$stamp" | _gq -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' && stamp_shape=y
 Pf="$T/fix"; mk_proj "$Pf" 4
 delta_run "$REPO_ROOT/scripts" "$Pf" --open --describe "the CSV export crashes on unicode" --confirm >/dev/null 2>&1
 fix_stamp="$(active_json "$Pf" -r '.active_delta.audit_row_at_open // "ABSENT"')"
@@ -602,8 +609,8 @@ slot="$(active_json "$P" -r '.active_delta')"
 n_closed="$(active_json "$P" -r '.closed | length')"
 row_after="$(active_json "$P" -c '.hotfix_retros[0]')"
 still_open="$(active_json "$P" -r '.hotfix_retros[0].closed_at == null')"
-announced=n; printf '%s' "$out" | grep -qi 'write-up' && announced=y
-names_id=n; printf '%s' "$out" | grep -qF 'DELTA-001' && names_id=y
+announced=n; printf '%s' "$out" | _gq -i 'write-up' && announced=y
+names_id=n; printf '%s' "$out" | _gq -F 'DELTA-001' && names_id=y
 carried="$(active_json "$P" -r '.closed[0].audit_row_at_open != null')"
 if [ "$rc" -eq 0 ] && [ "$slot" = "null" ] && [ "$n_closed" = "1" ] \
    && [ "$still_open" = "true" ] && [ "$row_at_open" = "$row_after" ] \
@@ -628,7 +635,7 @@ hand_edit "$P" '.hotfix_retros = []'
 before="$(_md5file "$P/.claude/delta-state.json")"
 out=$(delta_run "$REPO_ROOT/scripts" "$P" --close); rc=$?
 after="$(_md5file "$P/.claude/delta-state.json")"
-names=n; printf '%s' "$out" | grep -qF 'retro_review' && names=y
+names=n; printf '%s' "$out" | _gq -F 'retro_review' && names=y
 n_closed="$(active_json "$P" -r '.closed | length')"
 if [ "$rc" -eq 7 ] && [ "$names" = y ] && [ "$before" = "$after" ] && [ "$n_closed" = "0" ]; then
   pass "S2: with the ledger row erased the close is REFUSED (rc $rc) naming retro_review, the record is byte-identical and the audit tail is still empty — the gate is bound to the obligation, and an obligation nobody is holding fails CLOSED"
@@ -648,7 +655,7 @@ before="$(_md5file "$P/.claude/delta-state.json")"
 out=$(delta_run "$REPO_ROOT/scripts" "$P" --complete-gate retro_review); rc=$?
 after="$(_md5file "$P/.claude/delta-state.json")"
 done_list="$(active_json "$P" -c '.active_delta.gates_completed')"
-points=n; printf '%s' "$out" | grep -qF -- '--retro' && points=y
+points=n; printf '%s' "$out" | _gq -F -- '--retro' && points=y
 if [ "$rc" -eq 2 ] && [ "$before" = "$after" ] && [ "$points" = y ] \
    && [ "$done_list" = '["audit_row_at_open"]' ]; then
   pass "S3: --complete-gate retro_review is refused (rc $rc) and points the operator at --retro; the record is byte-identical and gates_completed is unchanged ($done_list). The loan cannot be repaid by ticking a box"
@@ -746,7 +753,7 @@ Pa="$T/attested"; mk_proj "$Pa" 4
 ship_hotfix "$REPO_ROOT/scripts" "$Pa" checkout
 out_a=$(delta_run "$REPO_ROOT/scripts" "$Pa" --retro DELTA-001 --record docs/incidents/never-written.md); rc_a=$?
 kind_a="$(active_json "$Pa" -r '.hotfix_retros[0].record.kind')"
-says_which=n; printf '%s' "$out_a" | grep -qi 'could not find\|no file' && says_which=y
+says_which=n; printf '%s' "$out_a" | _gq -i 'could not find\|no file' && says_which=y
 if [ "$rc_f" -eq 0 ] && [ "$kind_f" = "file" ] && [ "$val_f" = "docs/incidents/2026-08-03-checkout.md" ] \
    && [ "$rc_a" -eq 0 ] && [ "$kind_a" = "attested" ] && [ "$says_which" = y ]; then
   pass "T4: a --record naming a file that EXISTS is recorded as kind '$kind_f' pointing at $val_f; a --record naming one that does not is recorded as kind '$kind_a' and the transcript SAYS no such file was found ($says_which) — the framework never files a document it did not see"
@@ -891,26 +898,26 @@ echo "=== V — --status renders open and overdue retros ==="
 T=$(mktemp -d); P="$T/proj"; mk_proj "$P" 4
 ship_hotfix "$REPO_ROOT/scripts" "$P" checkout
 out_none=$(delta_run "$REPO_ROOT/scripts" "$P" --status)
-v_none=n; printf '%s' "$out_none" | grep -qF 'DELTA-001' && v_none=y
+v_none=n; printf '%s' "$out_none" | _gq -F 'DELTA-001' && v_none=y
 age_retro "$P" DELTA-001 5
 out_over=$(delta_run "$REPO_ROOT/scripts" "$P" --status)
-v_over=n; printf '%s' "$out_over" | grep -qiE 'overdue|late' && v_over=y
+v_over=n; printf '%s' "$out_over" | _gq -iE 'overdue|late' && v_over=y
 # With a NEW delta open the retro block must still render — the ledger outlives
 # the delta, so a surface that only showed it in the idle branch would hide it
 # exactly when the operator is busy.
 delta_run "$REPO_ROOT/scripts" "$P" --open --describe "add dark mode" --confirm >/dev/null 2>&1
 out_busy=$(delta_run "$REPO_ROOT/scripts" "$P" --status)
-v_busy=n; printf '%s' "$out_busy" | grep -qF 'DELTA-001' && v_busy=y
-v_new=n;  printf '%s' "$out_busy" | grep -qF 'DELTA-002' && v_new=y
+v_busy=n; printf '%s' "$out_busy" | _gq -F 'DELTA-001' && v_busy=y
+v_new=n;  printf '%s' "$out_busy" | _gq -F 'DELTA-002' && v_new=y
 # An unreadable date is named as unreadable, not rendered as a day count.
 hand_edit "$P" '.hotfix_retros[0].due_by = "2026-13-45"'
 out_bad=$(delta_run "$REPO_ROOT/scripts" "$P" --status)
-v_bad=n; printf '%s' "$out_bad" | grep -qiE 'cannot be read|OVERDUE' && v_bad=y
+v_bad=n; printf '%s' "$out_bad" | _gq -iE 'cannot be read|OVERDUE' && v_bad=y
 # Filed: gone.
 hand_edit "$P" '.hotfix_retros[0].due_by = "2026-08-06T00:00:00Z"'
 delta_run "$REPO_ROOT/scripts" "$P" --retro DELTA-001 --record "filed" >/dev/null 2>&1
 out_filed=$(delta_run "$REPO_ROOT/scripts" "$P" --status)
-v_filed=n; printf '%s' "$out_filed" | grep -qF 'DELTA-001' && v_filed=y
+v_filed=n; printf '%s' "$out_filed" | _gq -F 'DELTA-001' && v_filed=y
 if [ "$v_none" = y ] && [ "$v_over" = y ] && [ "$v_busy" = y ] && [ "$v_new" = y ] \
    && [ "$v_bad" = y ] && [ "$v_filed" = n ]; then
   pass "V1: --status names the outstanding write-up with nothing else open ($v_none), calls it overdue once it is ($v_over), still shows it while a DIFFERENT delta is open ($v_busy alongside $v_new), names an unreadable due date rather than rendering it as a day count ($v_bad) — and once filed it appears nowhere ($v_filed)"
@@ -1125,7 +1132,7 @@ mut_policy="$(jq -r '.classes.hotfix.retro_due_days' "$Pm/.claude/delta-policy.j
 # THE SILENCE IS MEASURED, NOT ASSERTED. The narrative's whole point is that the
 # operator gets no signal, so the mutant's own transcript is searched for one.
 mut_silent=y
-printf '%s' "$mut_out" | grep -qiE 'not a whole number|standard 3|could not|warn' && mut_silent=n
+printf '%s' "$mut_out" | _gq -iE 'not a whole number|standard 3|could not|warn' && mut_silent=n
 if [ "$sites" = "1" ] && [ "$changed" = y ] && [ "$nlines" -eq 2 ] \
    && [ "$pri_days" = "9" ] && [ "$mut_days" = "3" ] && [ "$mut_policy" = "9" ] \
    && [ "$mut_silent" = y ]; then
@@ -1395,15 +1402,15 @@ rm -rf "$T"
 T=$(mktemp -d); P="$T/proj"; mk_proj "$P" 4
 ship_hotfix "$REPO_ROOT/scripts" "$P" checkout
 out_ok=$(delta_run "$REPO_ROOT/scripts" "$P" --status)
-shows=n; printf '%s' "$out_ok" | grep -qF 'DELTA-001' && shows=y
+shows=n; printf '%s' "$out_ok" | _gq -F 'DELTA-001' && shows=y
 printf '{"schemaVersion": 1, "hotfix_' > "$P/.claude/delta-state.json"
 out_bad=$(delta_run "$REPO_ROOT/scripts" "$P" --status)
-warns=n; printf '%s' "$out_bad" | grep -qi 'cannot be read' && warns=y
+warns=n; printf '%s' "$out_bad" | _gq -i 'cannot be read' && warns=y
 # THE LIE-DETECTOR IS THE PRODUCT'S OWN ALL-CLEAR SENTENCE, VERBATIM, and it is
 # spelled that precisely on purpose: a looser pattern ("nothing.*outstanding")
 # matched the fail-closed WARNING itself, so the first cut of this row failed
 # because the repair announced itself in words the detector read as the defect.
-lies=n;  printf '%s' "$out_bad" | grep -qi 'releases are clear' && lies=y
+lies=n;  printf '%s' "$out_bad" | _gq -i 'releases are clear' && lies=y
 if [ "$shows" = y ] && [ "$warns" = y ] && [ "$lies" = n ]; then
   pass "F3: --status names the outstanding write-up on a healthy record ($shows) and, on a record it cannot parse, says so and refuses to imply anything (warned=$warns, claimed-clear=$lies) — the operator-facing half of the same fail-closed repair"
 else
@@ -1435,11 +1442,11 @@ out_retro=$(delta_run "$REPO_ROOT/scripts" "$P" --retro DELTA-001 --record "x");
 d1_ok=y; d1_detail=""
 for pair in "close:$out_close" "gate:$out_gate" "retro:$out_retro"; do
   nm="${pair%%:*}"; body="${pair#*:}"
-  says=n; printf '%s' "$body" | grep -qF 'git checkout -- .claude/delta-state.json' && says=y
+  says=n; printf '%s' "$body" | _gq -F 'git checkout -- .claude/delta-state.json' && says=y
   d1_detail="$d1_detail [$nm restore=$says]"
   [ "$says" = y ] || d1_ok=n
 done
-circle=n; printf '%s' "$out_gate" | grep -qF -- '--retro' && circle=y
+circle=n; printf '%s' "$out_gate" | _gq -F -- '--retro' && circle=y
 if [ "$rc_close" -eq 7 ] && [ "$rc_gate" -eq 2 ] && [ "$rc_retro" -eq 11 ] \
    && [ "$d1_ok" = y ] && [ "$circle" = n ]; then
   pass "D1: with the row lost, all three refusals (close rc $rc_close, --complete-gate rc $rc_gate, --retro rc $rc_retro) name the ONE thing that actually works —$d1_detail — and --complete-gate no longer points at --retro, which would refuse (circle=$circle). The dead end has an exit named"
@@ -1458,8 +1465,8 @@ delta_run "$REPO_ROOT/scripts" "$P" --open --describe "the CSV export crashes on
 klass="$(active_json "$P" -r '.active_delta.class')"
 complete_gates "$REPO_ROOT/scripts" "$P"
 out=$(delta_run "$REPO_ROOT/scripts" "$P" --close); rc=$?
-names_policy=n; printf '%s' "$out" | grep -qF 'delta-policy.json' && names_policy=y
-names_class=n;  printf '%s' "$out" | grep -qF "classes.fix.gates" && names_class=y
+names_policy=n; printf '%s' "$out" | _gq -F 'delta-policy.json' && names_policy=y
+names_class=n;  printf '%s' "$out" | _gq -F "classes.fix.gates" && names_class=y
 n_closed="$(active_json "$P" -r '.closed | length')"
 if [ "$rc" -eq 7 ] && [ "$klass" = "fix" ] && [ "$names_policy" = y ] && [ "$names_class" = y ] \
    && [ "$n_closed" = "0" ]; then

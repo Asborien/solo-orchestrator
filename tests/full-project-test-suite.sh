@@ -924,11 +924,19 @@ run_child_suite "tests/test-brownfield-wp9c-session-layer.sh" \
 run_child_suite "tests/test-bl296-adopt-guardrails.sh" \
   "BL-296 row 33: the Development Guardrails on the adoption path" \
   "BL-296 adoption-Guardrails tests FAILED (run tests/test-bl296-adopt-guardrails.sh for details)"
-# BL-312: concurrent tracker invocations shared one temp name and landed a
+# BL-311 fixes 1 and 9: adoption offers the Qdrant and Context7 MCP servers the
+# session is checked for; every MCP reader honours CLAUDE_CONFIG_DIR.
+run_child_suite "tests/test-bl311-adopt-mcp.sh" \
+  "BL-311: the MCP servers on the adoption path, and CLAUDE_CONFIG_DIR" \
+  "BL-311 adoption-MCP tests FAILED (run tests/test-bl311-adopt-mcp.sh for details)"
+run_child_suite "tests/test-bl311-mcp-add-order.sh" \
+  "BL-311: every tracked claude mcp add puts the server name before -e" \
+  "BL-311 mcp-add order tests FAILED (run tests/test-bl311-mcp-add-order.sh for details)"
+# BL-314: concurrent tracker invocations shared one temp name and landed a
 # 0-byte ledger, which the MCP session gate then refused on every Write.
-run_child_suite "tests/test-bl312-tool-usage-concurrent.sh" \
-  "BL-312: concurrent writers never truncate the tool-usage ledger or lose a call row" \
-  "BL-312 concurrent ledger tests FAILED (run tests/test-bl312-tool-usage-concurrent.sh for details)"
+run_child_suite "tests/test-bl314-tool-usage-concurrent.sh" \
+  "BL-314: concurrent writers never truncate the tool-usage ledger or lose a call row" \
+  "BL-314 concurrent ledger tests FAILED (run tests/test-bl314-tool-usage-concurrent.sh for details)"
 # BL-284: two verify-install.sh auto-fixers that could never run — has_context()
 # was unsatisfiable on an adopted project, and fix_superpowers ran a CLI verb
 # that does not exist.
@@ -966,6 +974,9 @@ run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
 run_child_suite "tests/test-bl281-resume-after-115.sh" \
   "BL-281: --resume after a clean Section 11.5 must run Sections 12 and 13" \
   "BL-281 resume-after-115 tests FAILED (run tests/test-bl281-resume-after-115.sh for details)"
+run_child_suite "tests/test-upgrade-help-and-projectless.sh" \
+  "#419/#426/BL-177: upgrade-project.sh --help wins over every mode and a projectless run writes nothing" \
+  "upgrade help/projectless tests FAILED (run tests/test-upgrade-help-and-projectless.sh for details)"
 run_child_suite "tests/test-bug010-intake-silent-paths.sh" \
   "BUG-010: the intake wizard refuses an unreadable progress file, stops at end of input, and never completes over a failed render" \
   "BUG-010 intake silent-path tests FAILED (run tests/test-bug010-intake-silent-paths.sh for details)"
@@ -1965,7 +1976,7 @@ run_child_suite "tests/test-validate-counter-sanitizer.sh" \
 run_child_suite "tests/test-record-claude-commit.sh" "tests/test-record-claude-commit.sh (9/9)"
 run_child_suite "tests/test-unrecord-feature.sh" "tests/test-unrecord-feature.sh (7/7)"
 run_child_suite "tests/test-session-test-gate-check-merge.sh" \
-  "tests/test-session-test-gate-check-merge.sh (12/12)"
+  "tests/test-session-test-gate-check-merge.sh (18/18)"
 
 # ----------------------------------------------------------------
 # Process-checklist / pending-approval / poc-modes (BL-035 C)

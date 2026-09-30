@@ -178,7 +178,7 @@ jobs:
       # PR author sees one failure and cannot tell what else is broken.
       fail-fast: false
       matrix:
-        shard: [lint-sweep, lint-scan, sast, slow-misc, adopt, commit-hooks, rest]
+        shard: [lint-sweep, lint-scan, sast, slow-misc, adopt, commit-hooks, mcp, rest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (v7.0.1)
@@ -292,6 +292,19 @@ jobs:
           sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
+      - name: Install zsh (BL-311 paste-into-zsh cases)
+        # The ubuntu runner image ships no zsh, so without this step the BL-311
+        # suite's S22p/S22q/S22m paste the printed Qdrant steps into bash only
+        # and SKIP the zsh half — the half that matters on macOS, whose default
+        # zsh (INTERACTIVE_COMMENTS off) runs a `#` line as a command and so
+        # ENDS an `&&` chain wherever a note sits between two links, letting
+        # the rest run after a refused mkdir. The suite's shell-free shape
+        # check still holds without zsh; this is what lets the real
+        # `zsh -f -i` paste run here too. Installed in every shard, like
+        # semgrep, so the pin map stays free to move; a failed install fails
+        # the shard loudly rather than quietly dropping back to bash only.
+        run: sudo apt-get -o Acquire::Retries=3 update && sudo apt-get -o Acquire::Retries=3 install -y zsh
+
       - name: Run fast unit tests — shard ${{ matrix.shard }}
         env:
           SHARD: ${{ matrix.shard }}
@@ -318,7 +331,7 @@ jobs:
           # it. Delete a name here and its `pin_*` array is ORPHANED — it
           # no longer enters `pinned`, so those paths fall back into `rest`
           # and STILL RUN. Fail-safe, not silently dropped.
-          shard_names="lint-sweep lint-scan sast slow-misc adopt commit-hooks rest"
+          shard_names="lint-sweep lint-scan sast slow-misc adopt commit-hooks mcp rest"
 
           roster="|"
           shard_arms=0
@@ -575,6 +588,7 @@ jobs:
             tests/test-bl263-bl264-uat-template-dom.sh
             tests/test-bl284-verify-install-context.sh
             tests/test-bl281-resume-after-115.sh
+            tests/test-upgrade-help-and-projectless.sh
             tests/test-bug010-intake-silent-paths.sh
             tests/test-bl286-integration-branch.sh
             tests/test-bl209-hooksdir-resolution.sh
@@ -602,7 +616,9 @@ jobs:
             tests/test-brownfield-wp12c-production-exemption.sh
             tests/test-brownfield-wp9c-session-layer.sh
             tests/test-bl296-adopt-guardrails.sh
-            tests/test-bl312-tool-usage-concurrent.sh
+            tests/test-bl311-adopt-mcp.sh
+            tests/test-bl311-mcp-add-order.sh
+            tests/test-bl314-tool-usage-concurrent.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────
@@ -1001,6 +1017,17 @@ jobs:
             tests/test-brownfield-wp7f-provenance.sh   # new — one real adoption, then the checker and the finisher
             tests/test-brownfield-wp7e-ci-carveout.sh  # new — real adoptions, CI files read and one written
           )
+          # ── `mcp` — the BL-311 group A suite, alone (2026-09-30). It runs
+          # ~540s locally (128 assertions, 71 of them mutation proofs over the
+          # adoption MCP step and the written Qdrant procedure). Landing
+          # unpinned it took `rest` to 764s and the cap cancelled the leg with
+          # nothing failed (PR #477, run 36720512756); every other leg ran
+          # 400–648s of 720s on that run, so no re-pin could absorb it. Per the
+          # doctrine above the timeout-minutes line, that is a new leg, not a
+          # raised cap.
+          pin_mcp=(
+            tests/test-bl311-adopt-mcp.sh              # ~540s local; `rest` without it was ~513s on PR #477
+          )
 
           # The ONLY thing that maps a roster name to a pin array. Both the
           # pinned-set build and the dispatch go through this function, so
@@ -1016,6 +1043,7 @@ jobs:
               slow-misc)  printf '%s\n' "${pin_slow_misc[@]}" ;;
               adopt)      printf '%s\n' "${pin_adopt[@]}" ;;
               commit-hooks) printf '%s\n' "${pin_commit_hooks[@]}" ;;
+              mcp)        printf '%s\n' "${pin_mcp[@]}" ;;
               rest)       : ;;
               *) echo "shard roster: '$1' is in the roster but has no arm in pins_for" >&2
                  return 1 ;;

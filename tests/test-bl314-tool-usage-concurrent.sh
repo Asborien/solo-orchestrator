@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# tests/test-bl312-tool-usage-concurrent.sh
+# tests/test-bl314-tool-usage-concurrent.sh
 #
-# BL-312 — concurrent writers of .claude/tool-usage.json. Every write in
+# BL-314 — concurrent writers of .claude/tool-usage.json. Every write in
 # scripts/track-tool-usage.sh went `jq … > "$TOOL_USAGE.tmp" && mv`, one temp
 # NAME shared by every hook invocation. Two invocations at once (two sessions,
 # or subagents, on one project) truncate each other's half-written temp and the
@@ -85,11 +85,11 @@
 #   (C19); MV01, MV02 verify-install's row and fixer (C21); MGI each ignore
 #   file without its temp line (C22). A mutant with no marker is anchored on
 #   its own find text, which must occur on exactly one line.
-# Not a mutant here: skipping the seed lock (# BL-312-SEED-LOCK) survived six
+# Not a mutant here: skipping the seed lock (# BL-314-SEED-LOCK) survived six
 # C5 rounds. Every process in a burst passes the seed check before any of them
 # appends, so a second seed cannot land over a first writer's row without
 # pausing one process mid-seed. The lock stays because it closes that window
-# by construction; the survivor is recorded on `## BL-312:`.
+# by construction; the survivor is recorded on `## BL-314:`.
 #
 # The script under test runs as "$BASH" (the runner's interpreter), never by
 # its shebang, so a 3.2 run is a 3.2 run.
@@ -131,7 +131,7 @@ if [ ! -f "$TRACKER" ] || ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "BL-312: concurrent writers of the tool-usage ledger (interpreter: $BASH, $BASH_VERSION)"
+echo "BL-314: concurrent writers of the tool-usage ledger (interpreter: $BASH, $BASH_VERSION)"
 
 N=12
 ROUNDS=3
@@ -149,7 +149,7 @@ _seed() {
   mkdir -p "$1/.claude"
   cat > "$1/.claude/tool-usage.json" << 'EOF'
 {
-  "session_id": "bl312",
+  "session_id": "bl314",
   "calls": [],
   "commits_since_last_context7": 0,
   "qdrant_find_called": false,
@@ -205,7 +205,7 @@ _seed_satisfied() {
   mkdir -p "$1/.claude"
   cat > "$1/.claude/tool-usage.json" << 'EOF'
 {
-  "session_id": "bl312",
+  "session_id": "bl314",
   "calls": [],
   "commits_since_last_context7": 0,
   "qdrant_find_succeeded": true,
@@ -1088,9 +1088,9 @@ _mk_mutant() {
 
 # M1: the shared temp name back. Only unlocked writes can collide on it, so
 # only C6's stuck arm, where every writer goes ahead unlocked, sees it.
-if _mk_mutant "M1" lib/ledger-write.sh "# BL-312-UNIQUE-TMP" \
-     'tmp=$(mktemp "$TOOL_USAGE.lw.XXXXXX" 2>/dev/null) || tmp=""   # BL-312-UNIQUE-TMP' \
-     'tmp="$TOOL_USAGE.tmp"   # BL-312-UNIQUE-TMP'; then
+if _mk_mutant "M1" lib/ledger-write.sh "# BL-314-UNIQUE-TMP" \
+     'tmp=$(mktemp "$TOOL_USAGE.lw.XXXXXX" 2>/dev/null) || tmp=""   # BL-314-UNIQUE-TMP' \
+     'tmp="$TOOL_USAGE.tmp"   # BL-314-UNIQUE-TMP'; then
   m1_killed=""
   r=1
   while [ "$r" -le 6 ] && [ -z "$m1_killed" ]; do
@@ -1106,9 +1106,9 @@ if _mk_mutant "M1" lib/ledger-write.sh "# BL-312-UNIQUE-TMP" \
 fi
 
 # M2: the lock is never taken.
-if _mk_mutant "M2" lib/ledger-write.sh "# BL-312-LOCK" \
-     'while ! mkdir "$TOOL_USAGE.lockdir" 2>/dev/null; do   # BL-312-LOCK' \
-     'while false; do   # BL-312-LOCK'; then
+if _mk_mutant "M2" lib/ledger-write.sh "# BL-314-LOCK" \
+     'while ! mkdir "$TOOL_USAGE.lockdir" 2>/dev/null; do   # BL-314-LOCK' \
+     'while false; do   # BL-314-LOCK'; then
   m2_killed=""
   r=1
   while [ "$r" -le 6 ] && [ -z "$m2_killed" ]; do
@@ -1128,9 +1128,9 @@ if _mk_mutant "M2" lib/ledger-write.sh "# BL-312-LOCK" \
 fi
 
 # M4: a stale lock is never broken.
-if _mk_mutant "M4" lib/ledger-write.sh "# BL-312-BREAK-STALE" \
-     'rmdir "$TOOL_USAGE.lockdir" 2>/dev/null || :   # BL-312-BREAK-STALE' \
-     ':   # BL-312-BREAK-STALE'; then
+if _mk_mutant "M4" lib/ledger-write.sh "# BL-314-BREAK-STALE" \
+     'rmdir "$TOOL_USAGE.lockdir" 2>/dev/null || :   # BL-314-BREAK-STALE' \
+     ':   # BL-314-BREAK-STALE'; then
   _single_stale "$MUT_DIR/track-tool-usage.sh"
   if [ "$R_LOCK" = "held" ]; then
     pass "M4: without the breaker a stale lock outlives the write (calls=$R_CALLS, lock=$R_LOCK), so every later write waits out the budget"
@@ -1141,9 +1141,9 @@ fi
 
 # MR: a held lock is broken whatever its age — the attempt-count breaker's
 # failure, taken to its limit.
-if _mk_mutant "MR" lib/ledger-write.sh "# BL-312-STALE-AGE" \
-     'if [ "$age" -gt "$LW_BUDGET" ]; then   # BL-312-STALE-AGE' \
-     'if true; then   # BL-312-STALE-AGE'; then
+if _mk_mutant "MR" lib/ledger-write.sh "# BL-314-STALE-AGE" \
+     'if [ "$age" -gt "$LW_BUDGET" ]; then   # BL-314-STALE-AGE' \
+     'if true; then   # BL-314-STALE-AGE'; then
   _wide_round "$MUT_DIR/track-tool-usage.sh" 40
   if [ "$R_CALLS" != "40" ]; then
     pass "MR: breaking a live lock loses call rows (C9 calls=$R_CALLS/40)"
@@ -1153,9 +1153,9 @@ if _mk_mutant "MR" lib/ledger-write.sh "# BL-312-STALE-AGE" \
 fi
 
 # ME: the trap removed.
-if _mk_mutant "ME" lib/ledger-write.sh "# BL-312-TRAP" \
-     "trap '_lw_cleanup' EXIT   # BL-312-TRAP" \
-     ':   # BL-312-TRAP'; then
+if _mk_mutant "ME" lib/ledger-write.sh "# BL-314-TRAP" \
+     "trap '_lw_cleanup' EXIT   # BL-314-TRAP" \
+     ':   # BL-314-TRAP'; then
   _signal_round "$MUT_DIR/track-tool-usage.sh" TERM '.calls +='
   if [ "$R_LOCK" = "held" ] || [ -n "$R_DEBRIS" ] || [ "$R_RC" != "143" ]; then
     pass "ME: without the trap a signalled write leaves debris (rc=$R_RC lock=$R_LOCK debris=[$R_DEBRIS])"
@@ -1165,9 +1165,9 @@ if _mk_mutant "ME" lib/ledger-write.sh "# BL-312-TRAP" \
 fi
 
 # MF: the failure path's temp cleanup removed.
-if _mk_mutant "MF" lib/ledger-write.sh "# BL-312-FAIL-CLEAN" \
-     'rm -f "$tmp"   # BL-312-FAIL-CLEAN' \
-     ':   # BL-312-FAIL-CLEAN'; then
+if _mk_mutant "MF" lib/ledger-write.sh "# BL-314-FAIL-CLEAN" \
+     'rm -f "$tmp"   # BL-314-FAIL-CLEAN' \
+     ':   # BL-314-FAIL-CLEAN'; then
   _failed_write "$MUT_DIR/session-mcp-gate.sh"
   if [ -n "$R_DEBRIS" ]; then
     pass "MF: without the cleanup a failed write leaves its temp (debris=[$R_DEBRIS])"
@@ -1177,9 +1177,9 @@ if _mk_mutant "MF" lib/ledger-write.sh "# BL-312-FAIL-CLEAN" \
 fi
 
 # MG: the non-empty check removed.
-if _mk_mutant "MG" lib/ledger-write.sh "# BL-312-NONEMPTY" \
-     '[ -s "$tmp" ] && mv "$tmp" "$TOOL_USAGE" 2>/dev/null; then   # BL-312-NONEMPTY' \
-     'mv "$tmp" "$TOOL_USAGE" 2>/dev/null; then   # BL-312-NONEMPTY'; then
+if _mk_mutant "MG" lib/ledger-write.sh "# BL-314-NONEMPTY" \
+     '[ -s "$tmp" ] && mv "$tmp" "$TOOL_USAGE" 2>/dev/null; then   # BL-314-NONEMPTY' \
+     'mv "$tmp" "$TOOL_USAGE" 2>/dev/null; then   # BL-314-NONEMPTY'; then
   _empty_filter "$MUT_DIR/lib/ledger-write.sh"
   if [ "$R_SAME" = "0" ]; then
     pass "MG: without the non-empty check a filter with no output empties the ledger"
@@ -1189,9 +1189,9 @@ if _mk_mutant "MG" lib/ledger-write.sh "# BL-312-NONEMPTY" \
 fi
 
 # MN: every mkdir failure read as contention again.
-if _mk_mutant "MN" lib/ledger-write.sh "# BL-312-NOT-EEXIST" \
-     '[ -e "$TOOL_USAGE.lockdir" ] || return 1   # BL-312-NOT-EEXIST' \
-     ':   # BL-312-NOT-EEXIST'; then
+if _mk_mutant "MN" lib/ledger-write.sh "# BL-314-NOT-EEXIST" \
+     '[ -e "$TOOL_USAGE.lockdir" ] || return 1   # BL-314-NOT-EEXIST' \
+     ':   # BL-314-NOT-EEXIST'; then
   c16_fail=""; c16_skip=""
   c16_shape "gate/EACCES/unsatisfied" deny "$MUT_DIR/session-mcp-gate.sh" unsatisfied
   if [ -n "$c16_skip" ]; then
@@ -1204,9 +1204,9 @@ if _mk_mutant "MN" lib/ledger-write.sh "# BL-312-NOT-EEXIST" \
 fi
 
 # MX1: the gate installs no trap.
-if _mk_mutant "MX1" session-mcp-gate.sh "# BL-312-GATE-TRAP" \
-     '&& _lw_traps   # BL-312-GATE-TRAP' \
-     '&& :   # BL-312-GATE-TRAP'; then
+if _mk_mutant "MX1" session-mcp-gate.sh "# BL-314-GATE-TRAP" \
+     '&& _lw_traps   # BL-314-GATE-TRAP' \
+     '&& :   # BL-314-GATE-TRAP'; then
   _signal_round "$MUT_DIR/session-mcp-gate.sh" TERM '.mcp_gate_satisfied = true' satisfied
   if [ "$R_LOCK" = "held" ] || [ -n "$R_DEBRIS" ]; then
     pass "MX1: without its trap a signalled gate leaves debris (rc=$R_RC lock=$R_LOCK debris=[$R_DEBRIS])"
@@ -1216,7 +1216,7 @@ if _mk_mutant "MX1" session-mcp-gate.sh "# BL-312-GATE-TRAP" \
 fi
 
 # MS: the sweep takes any six-character suffix again.
-if _mk_mutant "MS" lib/ledger-write.sh "# BL-312-SWEEP-GLOB" \
+if _mk_mutant "MS" lib/ledger-write.sh "# BL-314-SWEEP-GLOB" \
      '"$TOOL_USAGE".lw.??????; do' \
      '"$TOOL_USAGE".??????; do'; then
   _sweep_neighbours "$MUT_DIR/track-tool-usage.sh"
@@ -1228,7 +1228,7 @@ if _mk_mutant "MS" lib/ledger-write.sh "# BL-312-SWEEP-GLOB" \
 fi
 
 # MX2: the sweep ignores age.
-if _mk_mutant "MX2" lib/ledger-write.sh "# BL-312-SWEEP-AGE" \
+if _mk_mutant "MX2" lib/ledger-write.sh "# BL-314-SWEEP-AGE" \
      '[ $((now - mt)) -gt "$LW_BUDGET" ] && rm -f "$f" || :' \
      'rm -f "$f" || :'; then
   d=$(newtmp); _seed "$d"; : > "$d/.claude/tool-usage.json.lw.LIVE01"
@@ -1241,9 +1241,9 @@ if _mk_mutant "MX2" lib/ledger-write.sh "# BL-312-SWEEP-AGE" \
 fi
 
 # MT: SessionStart's startup write back to an unlocked truncating redirect.
-if _mk_mutant "MT" session-test-gate-check.sh "# BL-312-SESSION-PUT" \
-     '_lw_put << TUEOF   # BL-312-SESSION-PUT' \
-     'cat > "$TOOL_USAGE" << TUEOF   # BL-312-SESSION-PUT'; then
+if _mk_mutant "MT" session-test-gate-check.sh "# BL-314-SESSION-PUT" \
+     '_lw_put << TUEOF   # BL-314-SESSION-PUT' \
+     'cat > "$TOOL_USAGE" << TUEOF   # BL-314-SESSION-PUT'; then
   mt_killed=""
   r=1
   while [ "$r" -le 6 ] && [ -z "$mt_killed" ]; do
@@ -1259,9 +1259,9 @@ if _mk_mutant "MT" session-test-gate-check.sh "# BL-312-SESSION-PUT" \
 fi
 
 # MX5: SessionStart's whole-ledger write takes no lock.
-if _mk_mutant "MX5" lib/ledger-write.sh "# BL-312-PUT-LOCK" \
-     '_lw_lock || :   # BL-312-PUT-LOCK' \
-     ':   # BL-312-PUT-LOCK'; then
+if _mk_mutant "MX5" lib/ledger-write.sh "# BL-314-PUT-LOCK" \
+     '_lw_lock || :   # BL-314-PUT-LOCK' \
+     ':   # BL-314-PUT-LOCK'; then
   _startup_race "$MUT_DIR/session-test-gate-check.sh" "$MUT_DIR/track-tool-usage.sh"
   if [ "$R_Q" = "true" ] || [ "$R_C" = "true" ]; then
     pass "MX5: an unlocked startup write is overwritten by the stalled tracker, and the inherited successes return (qdrant=$R_Q context7=$R_C)"
@@ -1306,9 +1306,9 @@ _mk_mutant_line() {
 }
 
 # MSL: the seed written without the lock.
-if _mk_mutant "MSL" track-tool-usage.sh "# BL-312-SEED-LOCK" \
-     '_lw_lock   # BL-312-SEED-LOCK' \
-     ':   # BL-312-SEED-LOCK'; then
+if _mk_mutant "MSL" track-tool-usage.sh "# BL-314-SEED-LOCK" \
+     '_lw_lock   # BL-314-SEED-LOCK' \
+     ':   # BL-314-SEED-LOCK'; then
   msl_killed=""
   r=1
   while [ "$r" -le 3 ] && [ -z "$msl_killed" ]; do
@@ -1334,7 +1334,7 @@ if _mk_mutant_line "MBUD" lib/ledger-write.sh 'LW_BUDGET=3' 'LW_BUDGET=60'; then
 fi
 
 # MFUT: a lock dated ahead never counts as stale.
-if _mk_mutant "MFUT" lib/ledger-write.sh "# BL-312-FUTURE-STALE" \
+if _mk_mutant "MFUT" lib/ledger-write.sh "# BL-314-FUTURE-STALE" \
      'age=$((LW_BUDGET + 1))' ':'; then
   _future_round "$MUT_DIR/track-tool-usage.sh" "$MUT_DIR/session-mcp-gate.sh"
   if [ "$R_T_HUNG" = "1" ] || [ "$R_G_HUNG" = "1" ]; then
@@ -1345,7 +1345,7 @@ if _mk_mutant "MFUT" lib/ledger-write.sh "# BL-312-FUTURE-STALE" \
 fi
 
 # MUNR: an unreadable lock time waited on for ever.
-if _mk_mutant "MUNR" lib/ledger-write.sh "# BL-312-UNREADABLE" \
+if _mk_mutant "MUNR" lib/ledger-write.sh "# BL-314-UNREADABLE" \
      '[ $((now - unread)) -gt "$LW_BUDGET" ] && return 1' ':'; then
   _unreadable_round "$MUT_DIR/track-tool-usage.sh"
   if [ "$R_HUNG" = "1" ]; then

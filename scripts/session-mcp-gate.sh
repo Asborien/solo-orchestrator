@@ -67,7 +67,7 @@ TOOL_USAGE=".claude/tool-usage.json"
 PROCESS_STATE=".claude/process-state.json"
 ATTEST_JSONL=".claude/mcp-attestations.jsonl"
 
-# BL-312: the two mcp_gate_satisfied writes below run on every Write and Edit,
+# BL-314: the two mcp_gate_satisfied writes below run on every Write and Edit,
 # so they share track-tool-usage.sh's locked, unique-temp writer. Through a
 # shared "$TOOL_USAGE.tmp" with no lock, twelve concurrent checks landed a
 # 0-byte ledger and the next Write was denied. The writes are a record only,
@@ -78,7 +78,7 @@ ATTEST_JSONL=".claude/mcp-attestations.jsonl"
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 if [ -f "$SCRIPT_DIR/lib/ledger-write.sh" ]; then
   # shellcheck source=scripts/lib/ledger-write.sh
-  . "$SCRIPT_DIR/lib/ledger-write.sh" && _lw_traps   # BL-312-GATE-TRAP
+  . "$SCRIPT_DIR/lib/ledger-write.sh" && _lw_traps   # BL-314-GATE-TRAP
 fi
 
 # THE ESCAPE IS LAUNCH-TIME, and the hint must say so rather than implying a

@@ -57,7 +57,7 @@ set +e
 
 TOOL_USAGE=".claude/tool-usage.json"
 
-# BL-312: every ledger write goes through the locked, unique-temp writer that
+# BL-314: every ledger write goes through the locked, unique-temp writer that
 # session-mcp-gate.sh shares. Without it this hook cannot write the ledger at
 # all, and verify-install reports the lib missing.
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
@@ -153,7 +153,7 @@ esac
 # session-mcp-gate.sh fail CLOSED (its default is `true`, not `false`), which is
 # the correct reading of "this file cannot tell me".
 #
-# BL-312: seeded under the lock, re-checked inside it, and landed by mv, so two
+# BL-314: seeded under the lock, re-checked inside it, and landed by mv, so two
 # first writers cannot both seed and a reader never sees a half-written seed.
 # A ledger that exists but is EMPTY or UNPARSEABLE is reseeded the same way:
 # every write on it would otherwise fail, and the gate would refuse every
@@ -168,7 +168,7 @@ _ledger_unusable() {
 CREATED_LEDGER=0
 if _ledger_unusable; then
   mkdir -p .claude
-  _lw_lock   # BL-312-SEED-LOCK
+  _lw_lock   # BL-314-SEED-LOCK
   if _ledger_unusable; then
     _lw_land cat << 'EOF' && CREATED_LEDGER=1
 {
