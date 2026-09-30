@@ -22318,8 +22318,10 @@ narrowing it would stop "I'll use --no-verify here" (T7) matching, so it is left
 Stop-arm row ("which only you can do from a terminal") still matches: it has the proposal's shape, no
 pattern separates operator guidance from a proposal, and the operator closes it as a false positive.
 Given up deliberately: a gap of five or more words before the terminal; a sentence broken by an internal
-full stop ("step 2, i.e. tests_verified_failing, complete"); and marking verbs outside the five named.
-Three atoms that predate BL-315 stay unpinned: the `.{0,40}` width and the separator after the step name
+full stop ("step 2, i.e. tests_verified_failing, complete"); marking verbs outside the five named; and
+a hyphenated word in the gap before the terminal ("built-in", "front-end"), since gap words are letters
+only (T31 pins this). A description of the form "runs within a <noun> shell" still matches, like the
+Stop-arm row above: the preposition and noun are those of a proposal. Three atoms that predate BL-315 stay unpinned: the `.{0,40}` width and the separator after the step name
 in the list form, and the `[^.]*` sentence bound (the full-stop case above). The detector stores excerpts truncated, so a row whose match lay past the cut cannot be replayed from the
 audit log.
 

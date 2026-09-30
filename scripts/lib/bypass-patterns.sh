@@ -39,7 +39,7 @@ BYPASS_PATTERN_REGEXES=(
   # BL-315-TERMINAL-WORDS
   '(run|do|execute)([[:space:]][^.]*)?[[:space:]](in|from|on|via|through|inside|within|at|using|with)[[:space:]]+([a-z]+[[:space:]]+){0,4}(terminal|shell)([^a-z0-9_]|$)'
   # BL-315-FAKE-LOOP-VERB
-  '(mark|complete) step .*(build_loop|phase[0-9]+_init):.*(complete|done)|(^|[^a-z0-9_])(mark|set|record|flag|tick)(s|g?ed|ing)?[^a-z0-9_.][^.]*tests_verified_failing[^a-z0-9_]+(.{0,40}[^a-z0-9_])?complete([^_]|$)'
+  '(mark|complete) step .*(build_loop|phase[0-9]+_init):.*(complete|done)|(^|[^a-z0-9_])(mark|set|record|flag|tick)(s|g?ed|[gt]?ing)?[^a-z0-9_.][^.]*tests_verified_failing[^a-z0-9_]+(.{0,40}[^a-z0-9_])?complete([^_]|$)'
   'git push (--force|--force-with-lease|-f[^a-z])'
   "(I.?ll|we can|we could|let.?s|I.?d|we.?d|we should|I should) (just |simply )?mark .* (complete|done|passed)"
 )
