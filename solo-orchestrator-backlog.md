@@ -22279,3 +22279,31 @@ nothing — plus every command they must run, in a fenced block, never named in 
 `CLAUDE.md` both read); the hook's check (which parts it can verify mechanically, and how it avoids
 re-prompting forever on a reply it cannot parse); and how it coexists with the Guardrails' own Stop hooks.
 
+
+## BL-316: `record-claude-commit.sh` never records a commit, because Claude Code's Bash `tool_response` has no `exit_code`
+
+**Status:** Open — reproduction and fix in the pull request that files this entry (issue #483).
+
+**What happened.** The BL-030 recorder decided success with `.tool_response.exit_code // 1`. Claude
+Code's PostToolUse `tool_response` for Bash carries `stdout`, `stderr`, `interrupted`, `isImage` and
+`noOutputExpected`, and no `exit_code`, so the default made every commit look failed and the hook
+exited before writing. `.claude/claude-commits.jsonl` was never created, and the out-of-band detector
+classified every agent commit as `out_of_band_commit`, `user_terminal_inferred`. The suite fed a
+synthetic `{"exit_code":0}` envelope, so it passed against a shape the host never sends.
+
+**Ruling.** Success is the event. A failed call fires PostToolUseFailure, never PostToolUse (the
+measurement of 2026-08-13 in `session-mcp-gate.sh`'s BL-233 header, rule 1, "SATISFACTION IS AN OUTCOME"). The hook
+records when the event is PostToolUse, the call was not interrupted, and no explicit non-zero
+`exit_code` is present, kept for a host that sends one.
+
+**Mechanism.** `# BL-316-EVENT` skips any event other than PostToolUse; `# BL-316-INTERRUPTED` skips an
+interrupted call; the `exit_code` default is now 0 and is read only when `tool_response` is an object.
+`tests/test-record-claude-commit.sh` gains T10 (the real envelope records; red before the fix), T11
+(PostToolUseFailure does not record), T12 (an interrupted call does not record), and mutation proofs
+M1 to M3, one per marked line.
+
+**Residuals.**
+- A command that exits 0 without creating a commit (a dry run, or a commit chained with an operator
+  that swallows its failure) records the existing HEAD. The ledger then names an earlier commit as
+  agent-issued. Reading HEAD before and after the call would close it; not done here.
+- Out-of-band rows written before this fix stay as they are; nothing re-classifies them.

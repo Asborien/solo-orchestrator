@@ -7,12 +7,20 @@
 # Claude-issued commits from user-terminal commits.
 #
 # Stdin: JSON envelope from Claude Code's PostToolUse hook contract:
-#   { "tool_input": {"command": "..."}, "tool_response": {"exit_code": N} }
+#   { "hook_event_name": "PostToolUse", "tool_input": {"command": "..."},
+#     "tool_response": {"stdout": "...", "stderr": "...", "interrupted": false, ...} }
+#
+# BL-316: the Bash tool_response carries no exit_code. Success is the event:
+# a failed call fires PostToolUseFailure, never PostToolUse (the measurement
+# in session-mcp-gate.sh's BL-233 header). Reading `exit_code // 1` made every
+# commit look failed, so the ledger stayed empty.
 #
 # No-op conditions:
 #   - .claude/ doesn't exist (project not initialized)
 #   - tool_input.command isn't a `git commit` invocation
-#   - tool_response.exit_code != 0
+#   - the event is not PostToolUse (e.g. PostToolUseFailure)
+#   - tool_response.interrupted is true
+#   - tool_response.exit_code is present and non-zero (a host that sends one)
 #   - jq isn't installed (silent — never block Claude on missing infrastructure)
 #   - HEAD ref isn't readable (e.g., empty repo before first commit)
 
@@ -29,7 +37,9 @@ INPUT=$(cat)
 [ -z "$INPUT" ] && exit 0
 
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)
-EXIT=$(echo "$INPUT" | jq -r '.tool_response.exit_code // 1' 2>/dev/null)
+EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // "PostToolUse"' 2>/dev/null)
+INTERRUPTED=$(echo "$INPUT" | jq -r 'if (.tool_response | type) == "object" then (.tool_response.interrupted // false) else false end' 2>/dev/null)
+EXIT=$(echo "$INPUT" | jq -r 'if (.tool_response | type) == "object" then (.tool_response.exit_code // 0) else 0 end' 2>/dev/null)
 
 # Filter: must be a `git commit` (not `git commit-tree`, etc.) and must have succeeded.
 #
@@ -58,6 +68,8 @@ _is_git_commit() {
 }
 _is_git_commit "$CMD" || exit 0
 echo "$CMD" | grep -qE '(^|[^"'\''])git[[:space:]]+commit-tree\b' && exit 0
+[ "$EVENT" != "PostToolUse" ] && exit 0  # BL-316-EVENT
+[ "$INTERRUPTED" = "true" ] && exit 0      # BL-316-INTERRUPTED
 [ "$EXIT" != "0" ] && exit 0
 
 # Capture HEAD SHA. If unreadable, no-op silently.
