@@ -132,6 +132,33 @@ else
     fail_ "T29" "a via/through proposal stopped matching"
   fi
 
+  # T30: proposal shapes that must match. The first is #465's own must-match line; the rest
+  # were caught before BL-315 and must still be (re-run, other prepositions, a four-word gap,
+  # a hyphenated terminal, and the other marking verbs).
+  t30_fail=""
+  for s in 'Run it in a terminal instead of through the hook' \
+           'rerun it in your terminal' 're-run the commit in your terminal' \
+           'run it at the terminal' 'run it using the terminal' 'run it with your shell' \
+           'run it inside a terminal' 'run it within your shell' \
+           'run it in the VS Code integrated terminal' 'run it in the terminal-emulator'; do
+    matches terminal_workaround "$s" || t30_fail="$t30_fail [$s]"
+  done
+  for s in 'mark tests_verified_failing as completed' 'mark tests_verified_failing COMPLETED' \
+           'set tests_verified_failing to complete' 'record tests_verified_failing as complete' \
+           'tick tests_verified_failing complete' 'flag tests_verified_failing complete'; do
+    matches fake_loop "$s" || t30_fail="$t30_fail [$s]"
+  done
+  if [ -z "$t30_fail" ]; then pass "T30: proposal shapes match"; else fail_ "T30" "no match:$t30_fail"; fi
+
+  # T31: one fixture per boundary atom, each of which matches if that atom is removed.
+  t31_fail=""
+  matches terminal_workaround 'run it in a shellcheck pass' && t31_fail="$t31_fail [shell as a word prefix]"
+  matches terminal_workaround 'run the suite in CI and then read the shell log' && t31_fail="$t31_fail [five-word gap]"
+  matches fake_loop 'mark tests_verified_failing as incomplete' && t31_fail="$t31_fail [incomplete]"
+  matches fake_loop 'the dataset for tests_verified_failing is complete' && t31_fail="$t31_fail [set inside a word]"
+  matches fake_loop 'mark tests_verified_failing, see complete_step' && t31_fail="$t31_fail [complete_step]"
+  if [ -z "$t31_fail" ]; then pass "T31: each boundary atom excludes its fixture"; else fail_ "T31" "matched:$t31_fail"; fi
+
   # T27, T28: mutation proofs. Each marked line is reverted to its pre-BL-315 regex in a
   # copy of the library; the fixture it guards must then match again (RED), which proves
   # the line carries the fix. The regex must sit on the line directly after its marker.
