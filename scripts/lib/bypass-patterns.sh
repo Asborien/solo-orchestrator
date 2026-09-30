@@ -18,7 +18,7 @@
 #   - no_verify: catches the canonical short flag `git commit -n` / `-nm`.
 #
 # Precision, BL-315 / #465 (2026-09-30): run/do/execute and terminal/shell match only
-# as words, with the terminal reached "in/from/on" it, so `--terminal-mode`,
+# as words, with the terminal reached in, from, on, via or through it, so `--terminal-mode`,
 # SUBSHELL and identifiers do not match; fake_loop's list form needs a marking
 # verb and the word `complete`, so `complete_step` and "completed" do not.
 BYPASS_PATTERN_NAMES=(
@@ -34,7 +34,7 @@ BYPASS_PATTERN_REGEXES=(
   '(--no-verify|git commit[[:space:]]+-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|$))'
   'SOIF_FORCE_STEP='
   # BL-315-TERMINAL-WORDS
-  '(^|[^a-z0-9_-])(run|do|execute)([[:space:]][^.]*)?[[:space:]](in|from|on)[[:space:]]+([a-z]+[[:space:]]+){0,3}(terminal|shell)([^a-z0-9_-]|$)'
+  '(^|[^a-z0-9_-])(run|do|execute)([[:space:]][^.]*)?[[:space:]](in|from|on|via|through)[[:space:]]+([a-z]+[[:space:]]+){0,3}(terminal|shell)([^a-z0-9_-]|$)'
   # BL-315-FAKE-LOOP-VERB
   '(mark|complete) step .*(build_loop|phase[0-9]+_init):.*(complete|done)|(^|[^a-z0-9_])mark[^.]*tests_verified_failing[^a-z0-9_]+(.{0,40}[^a-z0-9_])?complete([^a-z0-9_]|$)'
   'git push (--force|--force-with-lease|-f[^a-z])'

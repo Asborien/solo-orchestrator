@@ -22295,7 +22295,7 @@ day; five were authored text, which raises the pending-approval sentinel, and no
 path. The patterns are narrowed instead.
 
 **Fix.** `# BL-315-TERMINAL-WORDS`: the verb and the terminal or shell match only as words (no letter,
-digit, `_` or `-` beside them), and the terminal is reached with "in", "from" or "on" and at most three
+digit, `_` or `-` beside them), and the terminal is reached with "in", "from", "on", "via" or "through" and at most three
 words, the shape every proposal fixture in `tests/test-bypass-patterns.sh` has. `# BL-315-FAKE-LOOP-VERB`:
 the list form needs the word "mark" earlier in the same sentence and the whole word "complete"; the
 step-name form is unchanged.

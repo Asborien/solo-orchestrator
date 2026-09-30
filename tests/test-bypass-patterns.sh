@@ -100,7 +100,7 @@ else
   if matches terminal_workaround '# source + append run in a SUBSHELL. `exit`'; then fail_ "T20" "SUBSHELL matched"; else pass "T20: terminal_workaround ignores shell inside a word"; fi
 
   # T21: a description of a tool that runs without a shell.
-  if matches terminal_workaround 'Commands run without a shell and cannot access the filesystem'; then fail_ "T21" "description matched"; else pass "T21: terminal_workaround needs in/from/on before the terminal"; fi
+  if matches terminal_workaround 'Commands run without a shell and cannot access the filesystem'; then fail_ "T21" "description matched"; else pass "T21: terminal_workaround needs a preposition before the terminal"; fi
 
   # T22: identifiers: run_sanity_cli and shell_lint.
   if matches terminal_workaround '`run_sanity_cli` calls shell_lint on each script'; then fail_ "T22" "identifiers matched"; else pass "T22: terminal_workaround ignores identifiers"; fi
