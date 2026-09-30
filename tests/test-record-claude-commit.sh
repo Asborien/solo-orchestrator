@@ -207,6 +207,100 @@ else
 fi
 teardown
 
+# T10-T12: BL-316. Claude Code's Bash tool_response carries stdout, stderr,
+# interrupted, isImage and noOutputExpected, and no exit_code. Success is the
+# event itself: a failed call fires PostToolUseFailure, never PostToolUse
+# (the measurement recorded in session-mcp-gate.sh's BL-233 header). T1 to T9
+# feed a synthetic exit_code envelope the host never sends, which is how a
+# recorder that never recorded passed.
+
+# T10: the real PostToolUse envelope, with no exit_code, records the commit.
+echo "T10: PostToolUse hook records a commit from the real Claude Code envelope (no exit_code)"
+setup
+cd "$TMP"
+cat <<'EOF' | bash "$HOOK" >/dev/null 2>&1
+{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m 'feat: x'"},"tool_response":{"stdout":"[main abc1234] feat: x","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}
+EOF
+if [ -f "$TMP/.claude/claude-commits.jsonl" ] && \
+   jq -e --arg sha "$SHA" '.sha == $sha' < "$TMP/.claude/claude-commits.jsonl" >/dev/null 2>&1; then
+  pass "T10"
+else
+  fail_ "T10" "the host's real envelope carries no exit_code; the commit was not recorded"
+fi
+teardown
+
+# T11: a PostToolUseFailure envelope never records.
+echo "T11: hook ignores a git commit reported through PostToolUseFailure"
+setup
+cd "$TMP"
+cat <<'EOF' | bash "$HOOK" >/dev/null 2>&1
+{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"git commit -m 'feat: x'"},"tool_response":"Exit code 1\nnothing to commit"}
+EOF
+if [ ! -f "$TMP/.claude/claude-commits.jsonl" ]; then
+  pass "T11"
+else
+  fail_ "T11" "a failed commit (PostToolUseFailure) was recorded"
+fi
+teardown
+
+# T12: an interrupted call never records, even on PostToolUse.
+echo "T12: hook ignores an interrupted git commit"
+setup
+cd "$TMP"
+cat <<'EOF' | bash "$HOOK" >/dev/null 2>&1
+{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m 'feat: x'"},"tool_response":{"stdout":"","stderr":"","interrupted":true,"isImage":false,"noOutputExpected":false}}
+EOF
+if [ ! -f "$TMP/.claude/claude-commits.jsonl" ]; then
+  pass "T12"
+else
+  fail_ "T12" "an interrupted commit was recorded"
+fi
+teardown
+
+# M1-M3: mutation proofs for BL-316's marked lines. Each mutant is one line
+# changed in a copy of the hook, must still parse, and must flip exactly the
+# case that line exists for, in a fresh fixture. A guard whose removal no case
+# notices is not tested.
+_bl316_mutant() {  # $1 label, $2 perl program, $3 envelope, $4 expect: record|none
+  local label="$1" prog="$2" envelope="$3" expect="$4" mdir mhook changed got
+  mdir=$(mktemp -d)
+  mhook="$mdir/record-claude-commit.sh"
+  cp "$HOOK" "$mhook"
+  perl -i -e "$prog" "$mhook"
+  changed=$(diff "$HOOK" "$mhook" | grep -c '^[<>]' || true)
+  if [ "$changed" -lt 1 ] || [ "$changed" -gt 2 ]; then
+    fail_ "$label" "mutant changed $changed diff lines; expected one line removed or replaced"
+    rm -rf "$mdir"; return
+  fi
+  if ! bash -n "$mhook" 2>/dev/null; then
+    fail_ "$label" "mutant does not parse"
+    rm -rf "$mdir"; return
+  fi
+  setup
+  cd "$TMP"
+  printf '%s\n' "$envelope" | bash "$mhook" >/dev/null 2>&1
+  if [ -f "$TMP/.claude/claude-commits.jsonl" ]; then got=record; else got=none; fi
+  if [ "$got" = "$expect" ]; then
+    pass "$label"
+  else
+    fail_ "$label" "mutant gave '$got', expected '$expect': the case does not see this line"
+  fi
+  teardown
+  rm -rf "$mdir"
+}
+
+echo "M1: removing # BL-316-EVENT lets a PostToolUseFailure commit record"
+_bl316_mutant "M1" 'while (<>) { print unless /# BL-316-EVENT$/ }' \
+  '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"git commit -m '"'"'x'"'"'"},"tool_response":"Exit code 1"}' record
+
+echo "M2: removing # BL-316-INTERRUPTED lets an interrupted commit record"
+_bl316_mutant "M2" 'while (<>) { print unless /# BL-316-INTERRUPTED$/ }' \
+  '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m '"'"'x'"'"'"},"tool_response":{"stdout":"","stderr":"","interrupted":true}}' record
+
+echo "M3: restoring the pre-BL-316 exit_code default of 1 drops the real envelope"
+_bl316_mutant "M3" 'while (<>) { s/\(\.tool_response\.exit_code \/\/ 0\)/(.tool_response.exit_code \/\/ 1)/; print }' \
+  '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m '"'"'x'"'"'"},"tool_response":{"stdout":"ok","stderr":"","interrupted":false}}' none
+
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
