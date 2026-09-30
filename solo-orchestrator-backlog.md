@@ -22305,5 +22305,7 @@ M1 to M3, one per marked line.
 **Residuals.**
 - A command that exits 0 without creating a commit (a dry run, or a commit chained with an operator
   that swallows its failure) records the existing HEAD. The ledger then names an earlier commit as
-  agent-issued. Reading HEAD before and after the call would close it; not done here.
+  agent-issued. Claude Code's PostToolUse envelope for a commit carries
+  `tool_response.gitOperation.commit.{sha,kind,branch}` (measured on 2.1.286), so recording that
+  SHA rather than HEAD would close it; not done here.
 - Out-of-band rows written before this fix stay as they are; nothing re-classifies them.
