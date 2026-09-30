@@ -486,10 +486,11 @@ snapshot documentation (<https://qdrant.tech/documentation/snapshots/>:
 `GET /collections/{name}/snapshots/{snapshot}` to download it;
 `POST /collections/{name}/snapshots/upload?priority=snapshot` to restore it,
 which creates the collection) and its alias API (`GET /aliases`;
-`POST /collections/aliases` with `create_alias` actions). It needs `curl` and
-`jq` — steps 1 and 2 stop and say so when `jq` is missing — and the old
-container **running** — start it if it is stopped, unless it
-was started with `--rm` and is already gone.
+`POST /collections/aliases` with `create_alias` actions). It needs `curl`,
+`jq`, and `sha256sum` or `shasum` (Linux has `sha256sum`, macOS `shasum`) —
+steps 1 and 2 stop and say so when `jq` is missing, and step 2 when neither
+checksum tool is there — and the old container **running** — start it if it is
+stopped, unless it was started with `--rm` and is already gone.
 
 **Before you start, list the settings it was created with — the new container
 must be created with the SAME ones.** That is its environment — an API key,
@@ -524,42 +525,76 @@ the old one refused. And:
   not on a volume or a host folder — are copied out in step 3, before the old
   container is stopped.
 
+**Two addresses: `O` for the old container, `Q` for the new one.** Step 1 talks
+to the OLD container at `O`; steps 5 and 6 talk to the NEW one at `Q`, which is
+`http://127.0.0.1:6333` because step 4 publishes it there. Step 1's second line
+reads `O` from `docker port qdrant 6333/tcp`, so a container created with `-P`
+(a random port) or published on a LAN address is found where it is; `0.0.0.0`
+and `[::]` are read as `127.0.0.1` and `[::1]`. **If it prints nothing** — a
+container on the host's network (`--network host`) publishes no port, and a
+stopped one has none — step 1 stops and says so; start the container if it is
+stopped, and otherwise replace step 1's second line with `O=http://` followed
+by the address and port where the old container answers. On Linux, a container
+on the host's network answers at `http://127.0.0.1:6333`. On Docker Desktop it
+answers on this machine only if Docker Desktop's host networking is turned on;
+if nothing answers, this procedure cannot read it from here — stop, nothing has
+changed. **If `docker port` prints an address this machine does not reach,**
+step 1 says the old container did not answer at it: set `O` by hand the same
+way. Never point `Q` at the old container: step 5 waits for the new one at
+`Q`, and would wait forever.
+
 **1. Snapshot and download every collection, and save the aliases,** into a
 new folder in your home directory (never the project). Paste the numbered
-blocks into the SAME shell — they share `$Q`, `$S`, `$B` and `$H` — and each
-block whole. This one stops at the first failure and says so: `STEP 1 FAILED`
-when `jq` is missing or the old container did not answer, `SNAPSHOT FAILED`
-with the collection it stopped at:
+blocks into the SAME shell — they share `$O`, `$Q`, `$S`, `$B` and `$H` — and
+each block whole. This one stops at the first failure and says so: `STEP 1
+FAILED` when `jq` is missing, `docker port` printed no address, or the old
+container did not answer; `SNAPSHOT FAILED` with the collection it stopped at.
+For each snapshot it keeps what Qdrant answered when it made it — the size and
+the SHA-256 checksum of the file — for step 2 to check the download against:
 
 ```sh
 Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"; H=()
+O="$(docker port qdrant 6333/tcp 2>/dev/null | head -1 | sed -e 's/^0\.0\.0\.0:/127.0.0.1:/' -e 's/^\[::\]:/[::1]:/' -e 's#^#http://#')"
 if ! command -v jq >/dev/null 2>&1; then echo "STEP 1 FAILED: jq is not installed — install it, then paste this block again"
+elif [ -z "$O" ]; then echo "STEP 1 FAILED: docker port printed no address for the old container — start it if it is stopped; if it runs, replace this block's second line with O=http://<address>:<port> where it answers"
 elif mkdir "$B" &&
-  curl -s -o /dev/null -w '%{http_code}' "$Q/collections" > "$B/nokey-status.txt" &&
-  curl -sf "${H[@]}" "$Q/aliases" > "$B/aliases.json" &&
-  curl -sf "${H[@]}" "$Q/collections" > "$B/collections.json" &&
+  curl -s -o /dev/null -w '%{http_code}' "$O/collections" > "$B/nokey-status.txt" &&
+  curl -sf "${H[@]}" "$O/aliases" > "$B/aliases.json" &&
+  curl -sf "${H[@]}" "$O/collections" > "$B/collections.json" &&
   jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt"; then
   while IFS= read -r c; do
-    n="$(curl -sf "${H[@]}" -X POST "$Q/collections/$c/snapshots" | jq -r '.result.name // empty')" &&
+    curl -sf "${H[@]}" -X POST "$O/collections/$c/snapshots" > "$B/$c.created.json" &&
+    n="$(jq -r '.result.name // empty' "$B/$c.created.json")" &&
     [ -n "$n" ] &&
-    curl -sf "${H[@]}" "$Q/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
+    curl -sf "${H[@]}" "$O/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
     [ -s "$B/$c.snapshot" ] || { echo "SNAPSHOT FAILED: $c"; break; }
   done < "$B/collections.txt"
-else echo "STEP 1 FAILED: the old container did not answer, or it needs its API key (set H in the first line)"
+else echo "STEP 1 FAILED: the old container did not answer at $O, or it needs its API key (set H in the first line)"
 fi
 ```
 
-**2. Check that step 1 finished:** `jq` is installed, the number of collections
-the server listed matches the number of names step 1 saved — and is not 0 —
-and every one of them has a non-empty snapshot. Go on only if this prints
-`ALL SNAPSHOTS PRESENT`:
+**2. Check that step 1 finished:** `jq` is installed, and `sha256sum` or
+`shasum`; the number of collections the server listed matches the number of
+names step 1 saved — and is not 0 — and every snapshot file has exactly the
+size and the SHA-256 checksum Qdrant reported when it made it. A file being
+there proves nothing: a download cut short — a full disk, a dropped
+connection, or Ctrl-C, which prints nothing at all — leaves a partial file
+that is not empty. Go on only if this prints `ALL SNAPSHOTS PRESENT`;
+`MISSING OR INCOMPLETE` names a collection whose snapshot is not all there, or
+whose record from step 1 is missing — fix the cause (disk space, above all)
+and paste step 1 again, which starts a new folder:
 
 ```sh
 m=0; command -v jq >/dev/null 2>&1 || { echo "STEP 2 FAILED: jq is not installed"; m=1; }
+if command -v sha256sum >/dev/null 2>&1; then K=(sha256sum); elif command -v shasum >/dev/null 2>&1; then K=(shasum -a 256); else K=(); echo "STEP 2 FAILED: neither sha256sum nor shasum is installed, so the snapshots cannot be checked"; m=1; fi
 [ -s "$B/nokey-status.txt" ] && [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] && [ -f "$B/collections.txt" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
 e="$(jq '.result.collections | length' "$B/collections.json" 2>/dev/null)"; g="$(grep -c '' "$B/collections.txt" 2>/dev/null)"
 [ "$e" -gt 0 ] 2>/dev/null && [ "$e" = "$g" ] || { echo "COUNT MISMATCH: the server listed ${e:-?} collections, collections.txt has ${g:-?} (they must match, and not be 0)"; m=1; }
-while IFS= read -r c; do [ -s "$B/$c.snapshot" ] || { echo "MISSING: $c"; m=1; }; done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
+while IFS= read -r c; do
+  z="$(jq -r '.result.size // empty' "$B/$c.created.json" 2>/dev/null)"; w="$(jq -r '.result.checksum // empty' "$B/$c.created.json" 2>/dev/null)"
+  [ -n "$z" ] && [ -n "$w" ] && [ -f "$B/$c.snapshot" ] && [ "$(wc -c < "$B/$c.snapshot" | tr -d '[:space:]')" = "$z" ] &&
+    [ "${#K[@]}" -gt 0 ] && [ "$("${K[@]}" < "$B/$c.snapshot" | cut -d' ' -f1)" = "$w" ] || { echo "MISSING OR INCOMPLETE: $c"; m=1; }
+done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
 ```
 
 **3. Copy out the snapshot files you keep inside the container** — skip this

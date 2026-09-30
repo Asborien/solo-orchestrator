@@ -59,11 +59,15 @@
 #       `docker `, `&&` or `$(`; with no API key it is one text, whatever the
 #       storage; S30/S31 MIXED bindings (one port open, one on loopback) are
 #       open; S32 an EMPTY API key is not a key; S33 bindings that do not
-#       parse are "could not be read", never loopback; S34 -P, S35 --network
+#       parse are "could not be read", never loopback — and so are a
+#       PublishAllPorts that is not a boolean (S33b) and a NetworkMode that is
+#       not a string or carries two values (S33c); S34 -P, S35 --network
 #       host and S36 a LAN address are exposed, each in its own words (and S20
 #       holds ::1 as loopback); S37 a lowercase key is a key; S38 the written
 #       procedure RUN against a stand-in Qdrant — jq missing, the empty list
-#       that lost data in round 14, a lost API key, a failed upload
+#       that lost data in round 14, a lost API key, a failed upload, and
+#       (round 15) a download cut short, no sha256 tool, and the old container
+#       at the address `docker port` gives while the new one is on 6333
 #   E*  WHOLE ADOPTIONS: E1 both present — no question, the Record row, and
 #       the restart sentence BEFORE "NEXT"; E2 set it up now — no command read
 #       the operator's answers, and the project collection is declared; E3
@@ -127,6 +131,10 @@ case "${1:-}" in
   #                      an answer that does not parse; overrides qdrant-open
   #   qdrant-publish-all created with -P (.HostConfig.PublishAllPorts true)
   #   qdrant-network     .HostConfig.NetworkMode (e.g. host); default bridge
+  #   qdrant-publish-all-raw / qdrant-network-raw  the WHOLE PublishAllPorts /
+  #                      NetworkMode line, verbatim — for an answer of the wrong
+  #                      type or with two values on it (S33b, S33c); overrides
+  #                      the two knobs above
   #   qdrant-mount       one `type|source|destination` per line (an empty file =
   #                      nothing mounted); default this host's real shape, the
   #                      qdrant_storage volume at /qdrant/storage
@@ -147,8 +155,10 @@ case "${1:-}" in
                  hip='127.0.0.1'; [ -f "$st/qdrant-open" ] && hip="$(cat "$st/qdrant-open")"
                  jq -cn --arg h "$hip" '{"6333/tcp":[{"HostIp":$h,"HostPort":"6333"}],"6334/tcp":[{"HostIp":$h,"HostPort":"6334"}]}' ;;
                .HostConfig.PublishAllPorts)
+                 if [ -f "$st/qdrant-publish-all-raw" ]; then printf '%s\n' "$(cat "$st/qdrant-publish-all-raw")"; continue; fi
                  if [ -f "$st/qdrant-publish-all" ]; then echo true; else echo false; fi ;;
                .HostConfig.NetworkMode)
+                 if [ -f "$st/qdrant-network-raw" ]; then printf '%s\n' "$(cat "$st/qdrant-network-raw")"; continue; fi
                  if [ -f "$st/qdrant-network" ]; then jq -cn --arg n "$(cat "$st/qdrant-network")" '$n'; else echo '"bridge"'; fi ;;
                .Mounts)
                  mf="$st/qdrant-mount"; [ -f "$mf" ] || { mf="$st/.default-mount"; printf 'volume|qdrant_storage|/qdrant/storage\n' > "$mf"; }
@@ -254,19 +264,21 @@ STUB
 }
 STUBS="$WORK/stubs"; _mkstubs "$STUBS" yes
 
-# _mirror_without DIR NAME — every executable on PATH, symlinked, EXCEPT NAME:
-# "this machine has no `claude`" without losing the rest of PATH. (Appending
-# /usr/bin:/bin as a safety net would defeat it for a tool that lives there;
-# asserted with `command -v` before it is trusted.)
+# _mirror_without DIR NAME... — every executable on PATH, symlinked, EXCEPT each
+# NAME: "this machine has no `claude`" without losing the rest of PATH.
+# (Appending /usr/bin:/bin as a safety net would defeat it for a tool that lives
+# there; asserted with `command -v` before it is trusted.)
 _mirror_without() {
-  local dir="$1" skipname="$2" d="" f="" n="" rest="$PATH:"
+  local dir="$1" d="" f="" n="" s="" hit="" rest="$PATH:"
+  shift
   mkdir -p "$dir" || return 1
   while [ -n "$rest" ]; do
     d="${rest%%:*}"; rest="${rest#*:}"
     [ -n "$d" ] && [ -d "$d" ] || continue
     for f in "$d"/*; do
       n="${f##*/}"
-      [ "$n" = "$skipname" ] && continue
+      hit=0; for s in "$@"; do [ "$n" = "$s" ] && hit=1; done
+      [ "$hit" = 1 ] && continue
       [ -x "$f" ] && [ ! -e "$dir/$n" ] && ln -s "$f" "$dir/$n" 2>/dev/null
     done
   done
@@ -939,6 +951,36 @@ s33() {   # bindings that do not parse: said to be unreadable, NEVER loopback
   grep -q 'Your existing qdrant container' "$C/out" && bad="$bad [a binding was claimed from an answer that did not parse]"
   [ -z "$bad" ] && pass "S33 bindings that do not parse: 'could not be read' beside docker start — never read as loopback" || fail_ "S33" "$bad"
 }
+# S33b / S33c (round 15, R-BL311-8): `# BL-311-MCP-BIND-PARSE` checks all THREE
+# lines it reads, but S33 garbles only the bindings — so dropping the
+# PublishAllPorts type check (K5), the NetworkMode type check (K6) or the count
+# (`length == 3` → `length >= 1`, K15) survived the whole suite. Every shape
+# here has loopback bindings, so the parse check is the ONLY thing between it
+# and "loopback". A value of the wrong TYPE is valid JSON and slips past a
+# parse that only asks for JSON; TWO values on one line slip past a count.
+_unread_said() {   # LABEL — on $C/out: the could-not-be-read outcome, and no note
+  grep -qxF "     $QSTART" "$C/out" || printf ' [%s: no docker start hint to check]' "$1"
+  grep -q "how an existing qdrant container is published could not be read — docker inspect's answer about its ports could not be parsed" "$C/out" || printf ' [%s: not said to be unreadable]' "$1"
+  grep -q 'Your existing qdrant container' "$C/out" && printf ' [%s: a binding was claimed from an answer that did not parse]' "$1"
+  return 0
+}
+S33_LOOPBACK='{"6333/tcp":[{"HostIp":"127.0.0.1","HostPort":"6333"}],"6334/tcp":[{"HostIp":"127.0.0.1","HostPort":"6334"}]}'
+s33b() {   # a PublishAllPorts that is not a boolean
+  local bad=""
+  _bind_case s33b-null "$S33_LOOPBACK"; printf 'null' > "$ST/qdrant-publish-all-raw"; _step "skip it\n"
+  bad="$bad$(_unread_said '(null) a PublishAllPorts of null')"
+  _bind_case s33b-str "$S33_LOOPBACK"; printf '"true"' > "$ST/qdrant-publish-all-raw"; _step "skip it\n"
+  bad="$bad$(_unread_said '(string) a PublishAllPorts of "true"')"
+  [ -z "$bad" ] && pass "S33b a PublishAllPorts that is not a boolean (null, the string \"true\"), bindings on loopback: 'could not be read' beside docker start — never read as loopback" || fail_ "S33b" "$bad"
+}
+s33c() {   # a NetworkMode that is not a string, or two values on its line
+  local bad=""
+  _bind_case s33c-null "$S33_LOOPBACK"; printf 'null' > "$ST/qdrant-network-raw"; _step "skip it\n"
+  bad="$bad$(_unread_said '(null) a NetworkMode of null')"
+  _bind_case s33c-two "$S33_LOOPBACK"; printf '"bridge" "host"' > "$ST/qdrant-network-raw"; _step "skip it\n"
+  bad="$bad$(_unread_said '(two values) a NetworkMode line with two values')"
+  [ -z "$bad" ] && pass "S33c a NetworkMode that is not a string (null), or a line with two values on it, bindings on loopback: 'could not be read' beside docker start — never read as loopback or as the host network" || fail_ "S33c" "$bad"
+}
 s34() {   # -P: PublishAllPorts, nothing in PortBindings
   local bad=""
   _bind_case s34 '{}'; : > "$ST/qdrant-publish-all"
@@ -1125,26 +1167,34 @@ s28() {
 docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}} {{json .Mounts}}' qdrant
 --- block
 Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"; H=()
+O="$(docker port qdrant 6333/tcp 2>/dev/null | head -1 | sed -e 's/^0\.0\.0\.0:/127.0.0.1:/' -e 's/^\[::\]:/[::1]:/' -e 's#^#http://#')"
 if ! command -v jq >/dev/null 2>&1; then echo "STEP 1 FAILED: jq is not installed — install it, then paste this block again"
+elif [ -z "$O" ]; then echo "STEP 1 FAILED: docker port printed no address for the old container — start it if it is stopped; if it runs, replace this block's second line with O=http://<address>:<port> where it answers"
 elif mkdir "$B" &&
-  curl -s -o /dev/null -w '%{http_code}' "$Q/collections" > "$B/nokey-status.txt" &&
-  curl -sf "${H[@]}" "$Q/aliases" > "$B/aliases.json" &&
-  curl -sf "${H[@]}" "$Q/collections" > "$B/collections.json" &&
+  curl -s -o /dev/null -w '%{http_code}' "$O/collections" > "$B/nokey-status.txt" &&
+  curl -sf "${H[@]}" "$O/aliases" > "$B/aliases.json" &&
+  curl -sf "${H[@]}" "$O/collections" > "$B/collections.json" &&
   jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt"; then
   while IFS= read -r c; do
-    n="$(curl -sf "${H[@]}" -X POST "$Q/collections/$c/snapshots" | jq -r '.result.name // empty')" &&
+    curl -sf "${H[@]}" -X POST "$O/collections/$c/snapshots" > "$B/$c.created.json" &&
+    n="$(jq -r '.result.name // empty' "$B/$c.created.json")" &&
     [ -n "$n" ] &&
-    curl -sf "${H[@]}" "$Q/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
+    curl -sf "${H[@]}" "$O/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
     [ -s "$B/$c.snapshot" ] || { echo "SNAPSHOT FAILED: $c"; break; }
   done < "$B/collections.txt"
-else echo "STEP 1 FAILED: the old container did not answer, or it needs its API key (set H in the first line)"
+else echo "STEP 1 FAILED: the old container did not answer at $O, or it needs its API key (set H in the first line)"
 fi
 --- block
 m=0; command -v jq >/dev/null 2>&1 || { echo "STEP 2 FAILED: jq is not installed"; m=1; }
+if command -v sha256sum >/dev/null 2>&1; then K=(sha256sum); elif command -v shasum >/dev/null 2>&1; then K=(shasum -a 256); else K=(); echo "STEP 2 FAILED: neither sha256sum nor shasum is installed, so the snapshots cannot be checked"; m=1; fi
 [ -s "$B/nokey-status.txt" ] && [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] && [ -f "$B/collections.txt" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
 e="$(jq '.result.collections | length' "$B/collections.json" 2>/dev/null)"; g="$(grep -c '' "$B/collections.txt" 2>/dev/null)"
 [ "$e" -gt 0 ] 2>/dev/null && [ "$e" = "$g" ] || { echo "COUNT MISMATCH: the server listed ${e:-?} collections, collections.txt has ${g:-?} (they must match, and not be 0)"; m=1; }
-while IFS= read -r c; do [ -s "$B/$c.snapshot" ] || { echo "MISSING: $c"; m=1; }; done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
+while IFS= read -r c; do
+  z="$(jq -r '.result.size // empty' "$B/$c.created.json" 2>/dev/null)"; w="$(jq -r '.result.checksum // empty' "$B/$c.created.json" 2>/dev/null)"
+  [ -n "$z" ] && [ -n "$w" ] && [ -f "$B/$c.snapshot" ] && [ "$(wc -c < "$B/$c.snapshot" | tr -d '[:space:]')" = "$z" ] &&
+    [ "${#K[@]}" -gt 0 ] && [ "$("${K[@]}" < "$B/$c.snapshot" | cut -d' ' -f1)" = "$w" ] || { echo "MISSING OR INCOMPLETE: $c"; m=1; }
+done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
 --- block
 docker cp qdrant:/qdrant/snapshots "$B/old-snapshots" && echo "SNAPSHOT FILES COPIED"
 --- block
@@ -1179,7 +1229,7 @@ DOCEOF
   printf '%s\n' "$sec" | grep -qF 'snapshots/upload?priority=snapshot' || bad="$bad [the snapshot restore is not the route]"
   printf '%s\n' "$sec" | grep -qF '.Config.Image' && bad="$bad [(a) the recreate names the tag (.Config.Image), not the image the container runs]"
   grep -qxF "I=\"\$(docker inspect -f '{{.Image}}' qdrant)\" &&" "$WORK/s28.got" || bad="$bad [(a) the recreate does not reuse the running image ID]"
-  grep -qF 'curl -sf "${H[@]}" "$Q/aliases" > "$B/aliases.json" &&' "$WORK/s28.got" || bad="$bad [(b) the aliases are not saved]"
+  grep -qF 'curl -sf "${H[@]}" "$O/aliases" > "$B/aliases.json" &&' "$WORK/s28.got" || bad="$bad [(b) the aliases are not saved]"
   grep -qF '"$Q/collections/aliases"' "$WORK/s28.got" || bad="$bad [(b) the aliases are not restored]"
   grep -qF 'echo "ALL ALIASES RESTORED"' "$WORK/s28.got" || bad="$bad [(b) the restored aliases are not checked]"
   grep -qxF "docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}} {{json .Mounts}}' qdrant" "$WORK/s28.got" || bad="$bad [(c) the settings, mounts included, are not listed before the recreate]"
@@ -1202,7 +1252,25 @@ DOCEOF
   grep -qF '[ "$k" = 0 ] && [ -f "$B/collections.txt" ]' "$WORK/s28.got" || bad="$bad [(h) step 6's success lines do not wait on the key check]"
   printf '%s\n' "$sec" | grep -qF 'were NOT tried, and no alias was restored' || bad="$bad [(i) step 5 does not say the collections after a failed upload were not tried]"
   printf '%s\n' "$sec" | grep -qF 'paste this block' || bad="$bad [(i) step 5 does not say to paste it again for the rest]"
-  [ -z "$bad" ] && pass "S28 the written procedure's seven command blocks match exactly — list the settings and mounts, snapshot every collection and save the aliases (saying so when jq is missing), check the counts match, copy out kept snapshot files, recreate from the running image ID with rename before stop, restore collections and aliases (saying what was not tried), check both and that the API key survived — and no file copy of the storage is in it" || fail_ "S28" "$bad"
+  # ROUND 15. R-BL311-7: step 1 keeps what Qdrant answered when it made each
+  # snapshot, and step 2 checks every file's size and sha256 against it — a
+  # download cut short leaves a file that is NOT empty, so `[ -s ]` passed it
+  # (S38 (f) runs that). R-BL311-9: the old container is read at O, from
+  # `docker port`, and the new one at Q — step 5 waiting on the old address
+  # would never end (S38 (h) runs that).
+  grep -qF 'curl -sf "${H[@]}" -X POST "$O/collections/$c/snapshots" > "$B/$c.created.json" &&' "$WORK/s28.got" || bad="$bad [(j) step 1 does not keep what Qdrant answered when it made each snapshot]"
+  grep -qF 'wc -c < "$B/$c.snapshot"' "$WORK/s28.got" && grep -qF '= "$z" ]' "$WORK/s28.got" || bad="$bad [(j) step 2 does not check each file's size against the one Qdrant reported]"
+  grep -qF '"${K[@]}" < "$B/$c.snapshot"' "$WORK/s28.got" && grep -qF '= "$w" ]' "$WORK/s28.got" || bad="$bad [(j) step 2 does not check each file's sha256 against the one Qdrant reported]"
+  grep -qF 'echo "MISSING OR INCOMPLETE: $c"' "$WORK/s28.got" || bad="$bad [(j) step 2 does not name a collection whose snapshot is not all there]"
+  grep -qF 'else K=(); echo "STEP 2 FAILED: neither sha256sum nor shasum is installed' "$WORK/s28.got" || bad="$bad [(j) step 2 does not fail when there is no sha256 tool]"
+  grep -qF '[ -s "$B/$c.snapshot" ] || { echo "MISSING' "$WORK/s28.got" && bad="$bad [(j) step 2 is back to a non-empty test, which passes a partial download]"
+  grep -qF 'O="$(docker port qdrant 6333/tcp 2>/dev/null | head -1 |' "$WORK/s28.got" || bad="$bad [(k) step 1 does not read the old container's address from docker port]"
+  grep -qF 'elif [ -z "$O" ]; then echo "STEP 1 FAILED: docker port printed no address' "$WORK/s28.got" || bad="$bad [(k) step 1 does not stop when docker port prints nothing]"
+  _doc_block 2 "$d" | grep -qF '"$Q/' && bad="$bad [(k) step 1 sends a request to Q, the NEW container's address]"
+  _doc_block 6 "$d" | grep -qF '$O' && bad="$bad [(k) step 5 sends a request to O, the OLD container's address]"
+  _doc_block 7 "$d" | grep -qF '$O' && bad="$bad [(k) step 6 sends a request to O, the OLD container's address]"
+  printf '%s\n' "$sec" | grep -qF 'Never point `Q` at the old container' || bad="$bad [(k) the doc does not say never to point Q at the old container]"
+  [ -z "$bad" ] && pass "S28 the written procedure's seven command blocks match exactly — list the settings and mounts, snapshot every collection from the old container's docker port address and save the aliases (saying so when jq is missing or no address is printed), check the counts match and every file's size and sha256 against what Qdrant reported, copy out kept snapshot files, recreate from the running image ID with rename before stop, restore collections and aliases (saying what was not tried), check both and that the API key survived — and no file copy of the storage is in it" || fail_ "S28" "$bad"
 }
 
 # s38 — THE WRITTEN PROCEDURE, RUN (round 14). S28 pins the text; this runs
@@ -1222,27 +1290,56 @@ DOCEOF
 #       prints API KEY LOST and neither success line; kept, both print;
 #   (e) step 5 with its first upload failing — says the rest were not tried,
 #       and uploads nothing after it and restores no alias.
-_mk_qapi() {   # DIR — the stand-in Qdrant curl
+# Round 15 measured data loss again (R-BL311-7): a download cut short — disk
+# full, a dropped connection, Ctrl-C — leaves a PARTIAL file that is not
+# empty, and step 1 stops there, so it is the LAST collection tried; step 2's
+# `[ -s ]` passed it. And (R-BL311-9) step 1 read the old container at
+# 127.0.0.1:6333, which is not where a -P or LAN-address container is. So:
+#   (f) the last download, then the ONLY one, cut short — step 2 names it
+#       MISSING OR INCOMPLETE and prints no success line, and a complete file
+#       beside it passes (its size and sha256 as the stand-in reported them);
+#   (g) no sha256 tool — step 2 says so and prints no success line;
+#   (h) -P (docker port 0.0.0.0:32768 and [::]:32768), then a LAN address —
+#       step 1 reaches the old container there; after "step 4" only the new
+#       one answers, on 127.0.0.1:6333, and steps 5-6 restore it there;
+#   (i) docker port prints nothing — step 1 says so and asks no address at
+#       all; with its second line set by hand, as the doc says, it completes.
+_mk_qapi() {   # DIR — the stand-in Qdrant: its curl, and a docker that answers `docker port`
   mkdir -p "$1" || return 1
   cat > "$1/curl" <<'QAPI'
 #!/bin/bash
-# a stand-in Qdrant HTTP API, as curl sees it, for running the written procedure
+# a stand-in Qdrant HTTP API, as curl sees it, for running the written procedure.
+# It answers at ONE host:port — $QSTUB/serving, default 127.0.0.1:6333 — and
+# refuses a connection anywhere else (exit 7, and `000` for -w), as curl does.
+# A fifth refused connection in one run is a loop that would never end (step
+# 5's `until` against an address nothing answers at): it is recorded in
+# hung.log and the run is ended, so a case cannot hang the suite.
 d="${QSTUB:?}"
-method=GET out="" url="" key="" fmt="" failflag=0
+method=GET out="" url="" key="" fmt="" failflag=0 partial=0 form=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -X) method="$2"; shift 2 ;;
     -H) case "$2" in api-key:*) key="${2#api-key:}"; key="${key# }" ;; esac; shift 2 ;;
     -o|--output) out="$2"; shift 2 ;;
     -w) fmt="$2"; shift 2 ;;
-    -F|--data-binary) shift 2 ;;
+    -F) form="$2"; shift 2 ;;
+    --data-binary) shift 2 ;;
     -sf|-fs|-f) failflag=1; shift ;;
     http://*) url="$1"; shift ;;
     *) shift ;;
   esac
 done
 echo "$method $url key=${key:-none}" >> "$d/requests.log"
-p="${url#http://127.0.0.1:6333}"; p="${p%%\?*}"
+# curl reads a -F file before it connects: a missing one is exit 26
+case "$form" in *=@*) [ -f "${form#*=@}" ] || { echo "curl: (26) Failed to open/read local data from file/application" >&2; exit 26; } ;; esac
+rest="${url#http://}"; hp="${rest%%/*}"; p="/${rest#*/}"; p="${p%%\?*}"
+served="127.0.0.1:6333"; [ -f "$d/serving" ] && served="$(cat "$d/serving")"
+if [ "$hp" != "$served" ]; then
+  echo "$url" >> "$d/refused.log"
+  if [ "$(grep -c '' "$d/refused.log")" -ge 5 ]; then echo "HUNG: $url" >> "$d/hung.log"; kill -TERM "$PPID" 2>/dev/null; fi
+  [ -n "$fmt" ] && printf '000'
+  exit 7
+fi
 need=""; [ -f "$d/key" ] && [ ! -f "$d/key-lost" ] && need="$(cat "$d/key")"
 if [ -n "$need" ] && [ "$key" != "$need" ]; then
   code=401; body='{"status":{"error":"Must provide an API key or an Authorization bearer token"}}'
@@ -1252,14 +1349,24 @@ else
     "GET /aliases")                   body="$(cat "$d/aliases.json")" ;;
     "GET /collections")               body="$(cat "$d/collections.json")" ;;
     "POST /collections/aliases")      body='{"result":true,"status":"ok"}' ;;
-    "POST /collections/"*/snapshots)  c="${p#/collections/}"; c="${c%/snapshots}"; body="{\"result\":{\"name\":\"$c-1.snapshot\"},\"status\":\"ok\"}" ;;
-    "GET /collections/"*/snapshots/*) body="snapshot bytes of ${p#/collections/}" ;;
+    # what Qdrant answers when it makes a snapshot (measured on 1.17.1 by the
+    # round-15 review): its name, and the size and sha256 checksum of the file
+    # the download then gives — here, the exact bytes the download arm prints
+    "POST /collections/"*/snapshots)
+      c="${p#/collections/}"; c="${c%/snapshots}"; n="$c-1.snapshot"; sb="snapshot bytes of $c/snapshots/$n"
+      body="{\"result\":{\"name\":\"$n\",\"creation_time\":\"2026-09-29T00:00:00\",\"size\":${#sb},\"checksum\":\"$(printf '%s' "$sb" | "${QSUM:?}" | cut -d' ' -f1)\"},\"status\":\"ok\"}" ;;
+    "GET /collections/"*/snapshots/*)
+      body="snapshot bytes of ${p#/collections/}"; c="${p#/collections/}"; c="${c%%/*}"
+      [ -f "$d/download-partial" ] && [ "$(cat "$d/download-partial")" = "$c" ] && partial=1 ;;
     "POST /collections/"*/snapshots/upload)
       c="${p#/collections/}"; c="${c%/snapshots/upload}"; body='{"result":true,"status":"ok"}'
       [ -f "$d/upload-fails" ] && [ "$(cat "$d/upload-fails")" = "$c" ] && { code=500; body='{"status":{"error":"stub upload failure"}}'; } ;;
     *) code=404; body='{"status":{"error":"Not found"}}' ;;
   esac
 fi
+# A DOWNLOAD CUT SHORT (a full disk, a dropped connection, Ctrl-C): curl leaves
+# what it got — a file that is NOT empty — and exits non-zero (18, partial file).
+if [ "$partial" = 1 ] && [ -n "$out" ]; then printf '%s' "${body:0:$(( ${#body} / 2 ))}" > "$out"; exit 18; fi
 case "$code" in 2*) ok=1 ;; *) ok=0 ;; esac
 if [ "$ok" = 1 ] || [ "$failflag" = 0 ]; then
   if [ -n "$out" ]; then printf '%s' "$body" > "$out"; elif [ -z "$fmt" ]; then printf '%s' "$body"; fi
@@ -1268,28 +1375,60 @@ fi
 [ "$ok" = 0 ] && [ "$failflag" = 1 ] && exit 22
 exit 0
 QAPI
-  chmod +x "$1/curl"
+  cat > "$1/docker" <<'QDOCK'
+#!/bin/bash
+# the stand-in's docker answers `docker port qdrant 6333/tcp` from $QSTUB/port —
+# 127.0.0.1:6333 when there is none; an EMPTY one is a container that publishes
+# nothing (the host network), which real docker answers on stderr, exit 1.
+# Anything else is not modelled, and says so.
+d="${QSTUB:?}"
+echo "docker $*" >> "$d/docker.log"
+if [ "$*" = "port qdrant 6333/tcp" ]; then
+  if [ ! -f "$d/port" ]; then echo "127.0.0.1:6333"
+  elif [ -s "$d/port" ]; then cat "$d/port"
+  else echo "Error: No public port '6333/tcp' published for qdrant" >&2; exit 1; fi
+  exit 0
+fi
+echo "stand-in docker: not modelled: $*" >&2; exit 1
+QDOCK
+  chmod +x "$1/curl" "$1/docker"
 }
 _doc_block() { _doc_blocks "$2" | awk -v n="$1" '/^--- block$/ { k++; next } k == n'; }   # N FILE
 _qrun() {   # SCRIPT PATH — run SCRIPT in bash with that PATH, a fresh HOME, this case's stand-in state
   local h=""
   h="$(mktemp -d "$C/home.XXXXXX")" || return 1
-  env PATH="$2" HOME="$h" QSTUB="$C/qs" bash "$1" </dev/null 2>&1
+  : > "$C/qs/refused.log"   # the stand-in's hang guard counts per run
+  env PATH="$2" HOME="$h" QSTUB="$C/qs" QSUM="$WORK/qsum" bash "$1" </dev/null 2>&1
 }
 s38() {
-  local bad="" d="$FW/docs/adoption.md" b1="" b2="" b5="" b6="" b1k="" o="" pj="" pn=""
+  local bad="" d="$FW/docs/adoption.md" b1="" b2="" b5="" b6="" b1k="" b1o="" o="" pj="" pn="" ps="" two=""
   _case s38 >/dev/null
   b1="$(_doc_block 2 "$d")"; b2="$(_doc_block 3 "$d")"; b5="$(_doc_block 6 "$d")"; b6="$(_doc_block 7 "$d")"
   if [ -z "$b1" ] || [ -z "$b2" ] || [ -z "$b5" ] || [ -z "$b6" ]; then fail_ "S38" "[the procedure's blocks could not be read from $d]"; return; fi
-  [ -x "$WORK/qapi/curl" ] || _mk_qapi "$WORK/qapi" || { fail_ "S38" "[the stand-in Qdrant could not be made]"; return; }
+  { [ -x "$WORK/qapi/curl" ] && [ -x "$WORK/qapi/docker" ]; } || _mk_qapi "$WORK/qapi" || { fail_ "S38" "[the stand-in Qdrant could not be made]"; return; }
+  # the stand-in's own sha256, by absolute path, so it still answers on a PATH
+  # that has neither tool (g)
+  if [ ! -x "$WORK/qsum" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then printf '#!/bin/bash\nexec "%s"\n' "$(command -v sha256sum)" > "$WORK/qsum"
+    elif command -v shasum >/dev/null 2>&1; then printf '#!/bin/bash\nexec "%s" -a 256\n' "$(command -v shasum)" > "$WORK/qsum"
+    else fail_ "S38" "[neither sha256sum nor shasum is on this machine, so the stand-in cannot give a checksum]"; return; fi
+    chmod +x "$WORK/qsum"
+  fi
+  # A KNOWN ANSWER, so the stand-in's checksum is SHA-256 and not merely the
+  # same tool agreeing with itself: step 2 may pick that same tool, and a
+  # format both misread would then match. sha256("abc"), FIPS 180-2.
+  [ "$(printf 'abc' | "$WORK/qsum" | cut -d' ' -f1)" = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad ] || { fail_ "S38" "[the stand-in's sha256 is not SHA-256: $(printf 'abc' | "$WORK/qsum" | head -1)]"; return; }
   [ -d "$WORK/nojq" ] || _mirror_without "$WORK/nojq" jq
-  pj="$WORK/qapi:$PATH"; pn="$WORK/qapi:$WORK/nojq"
+  [ -d "$WORK/nosum" ] || _mirror_without "$WORK/nosum" sha256sum shasum
+  pj="$WORK/qapi:$PATH"; pn="$WORK/qapi:$WORK/nojq"; ps="$WORK/qapi:$WORK/nosum"
   # Asked of a FRESH shell on that PATH: this one has jq in its command hash,
   # and `PATH=… command -v jq` answers from the hash (measured: /usr/bin/jq).
   if env PATH="$pn" bash -c 'command -v jq' </dev/null >/dev/null 2>&1; then fail_ "S38" "[jq is still on the no-jq PATH: $(env PATH="$pn" bash -c 'command -v jq' </dev/null)]"; return; fi
+  if env PATH="$ps" bash -c 'command -v sha256sum || command -v shasum' </dev/null >/dev/null 2>&1; then fail_ "S38" "[a sha256 tool is still on the no-sha256 PATH: $(env PATH="$ps" bash -c 'command -v sha256sum || command -v shasum' </dev/null)]"; return; fi
   mkdir -p "$C/qs"
+  two='{"result":{"collections":[{"name":"claude-memory"},{"name":"acme"}]},"status":"ok"}'
   printf '%s' '{"result":{"aliases":[{"alias_name":"mem","collection_name":"claude-memory"}]},"status":"ok"}' > "$C/qs/aliases.json"
-  printf '%s' '{"result":{"collections":[{"name":"claude-memory"},{"name":"acme"}]},"status":"ok"}' > "$C/qs/collections.json"
+  printf '%s' "$two" > "$C/qs/collections.json"
   # (a)
   printf '%s\n%s\n%s\n' "$b1" "$b2" "$b6" > "$C/a.sh"; o="$(_qrun "$C/a.sh" "$pj")"
   printf '%s\n' "$o" | grep -qx 'ALL SNAPSHOTS PRESENT' || bad="$bad [(a) with jq and no key, step 2 did not print ALL SNAPSHOTS PRESENT: $(printf '%s' "$o" | head -3 | tr '\n' '|' | cut -c1-160)]"
@@ -1323,7 +1462,59 @@ s38() {
   printf '%s\n' "$o" | grep -q '^RESTORE FAILED: claude-memory — the collections after it were NOT tried' || bad="$bad [(e) a failed upload does not say the collections after it were not tried]"
   grep -q 'acme/snapshots/upload' "$C/qs/requests.log" && bad="$bad [(e) a collection after the failed upload was uploaded]"
   grep -q 'POST .*/collections/aliases' "$C/qs/requests.log" && bad="$bad [(e) the aliases were restored after a failed upload]"
-  [ -z "$bad" ] && pass "S38 the written procedure run against a stand-in Qdrant: jq missing is said by steps 1 and 2 with no success line, step 1's empty list no longer passes step 2, a lost API key fails step 6, a failed upload stops step 5 and says the rest were not tried — and with jq and the key kept, every success line prints" || fail_ "S38" "$bad"
+  mv "$C/qs/upload-fails" "$C/qs/upload-fails.off"
+  # (f) R-BL311-7 — the download of the LAST collection step 1 tries is cut
+  # short, leaving a partial file that is NOT empty; step 1 says SNAPSHOT FAILED
+  # and stops, and step 2 must not pass it. Then the ONLY collection (the
+  # mcp-server-qdrant default: one), where round 15 lost the data.
+  printf 'acme' > "$C/qs/download-partial"
+  printf '%s\n%s\n' "$b1" "$b2" > "$C/f.sh"; o="$(_qrun "$C/f.sh" "$pj")"
+  printf '%s\n' "$o" | grep -qx 'SNAPSHOT FAILED: acme' || bad="$bad [(f) the stand-in did not cut acme's download short: $(printf '%s' "$o" | head -3 | tr '\n' '|' | cut -c1-160)]"
+  printf '%s\n' "$o" | grep -q 'ALL SNAPSHOTS PRESENT' && bad="$bad [(f) a partial snapshot of the LAST collection: step 2 still printed ALL SNAPSHOTS PRESENT]"
+  printf '%s\n' "$o" | grep -qx 'MISSING OR INCOMPLETE: acme' || bad="$bad [(f) a partial snapshot of the LAST collection is not named MISSING OR INCOMPLETE]"
+  printf '%s\n' "$o" | grep -q 'MISSING OR INCOMPLETE: claude-memory' && bad="$bad [(f) a complete snapshot, its size and checksum as reported, was called incomplete]"
+  printf '%s' '{"result":{"collections":[{"name":"claude-memory"}]},"status":"ok"}' > "$C/qs/collections.json"
+  printf 'claude-memory' > "$C/qs/download-partial"
+  o="$(_qrun "$C/f.sh" "$pj")"
+  printf '%s\n' "$o" | grep -qx 'SNAPSHOT FAILED: claude-memory' || bad="$bad [(f) the stand-in did not cut the only download short]"
+  printf '%s\n' "$o" | grep -q 'ALL SNAPSHOTS PRESENT' && bad="$bad [(f) a partial snapshot of the ONLY collection: step 2 still printed ALL SNAPSHOTS PRESENT]"
+  printf '%s\n' "$o" | grep -qx 'MISSING OR INCOMPLETE: claude-memory' || bad="$bad [(f) a partial snapshot of the ONLY collection is not named MISSING OR INCOMPLETE]"
+  printf '%s' "$two" > "$C/qs/collections.json"; mv "$C/qs/download-partial" "$C/qs/download-partial.off"
+  # (g) no sha256 tool: step 2 cannot check the files, so it says so and passes nothing
+  printf '%s\n%s\n' "$b1" "$b2" > "$C/g.sh"; o="$(_qrun "$C/g.sh" "$ps")"
+  printf '%s\n' "$o" | grep -q '^STEP 2 FAILED: neither sha256sum nor shasum is installed' || bad="$bad [(g) with no sha256 tool, step 2 did not say so: $(printf '%s' "$o" | head -3 | tr '\n' '|' | cut -c1-160)]"
+  printf '%s\n' "$o" | grep -q 'ALL SNAPSHOTS PRESENT' && bad="$bad [(g) with no sha256 tool, step 2 printed ALL SNAPSHOTS PRESENT]"
+  # (h) R-BL311-9 — the old container is where `docker port` says, not on
+  # 6333: created with -P (0.0.0.0 and [::] on a random port), then on a LAN
+  # address. Steps 1-2 must reach it there; after step 4 only the NEW container
+  # answers, on 127.0.0.1:6333, and steps 5-6 must go there — waiting on the old
+  # address would never end (the stand-in records that as hung.log).
+  printf '0.0.0.0:32768\n[::]:32768\n' > "$C/qs/port"; printf '127.0.0.1:32768' > "$C/qs/serving"; : > "$C/qs/requests.log"
+  printf '%s\n%s\n%s\n%s\n%s\n' "$b1" "$b2" 'printf 127.0.0.1:6333 > "$QSTUB/serving"' "$b5" "$b6" > "$C/h.sh"; o="$(_qrun "$C/h.sh" "$pj")"
+  printf '%s\n' "$o" | grep -qx 'ALL SNAPSHOTS PRESENT' || bad="$bad [(h) -P (docker port 0.0.0.0:32768): step 1 did not reach the old container where docker port said: $(printf '%s' "$o" | head -3 | tr '\n' '|' | cut -c1-160)]"
+  grep -q '^POST http://127\.0\.0\.1:32768/collections/acme/snapshots ' "$C/qs/requests.log" || bad="$bad [(h) -P: the snapshot was not made at 127.0.0.1:32768]"
+  [ -s "$C/qs/hung.log" ] && bad="$bad [(h) step 5 waited on the OLD address, where nothing answers after step 4: $(head -1 "$C/qs/hung.log")]"
+  grep -q '^POST http://127\.0\.0\.1:6333/collections/acme/snapshots/upload?priority=snapshot ' "$C/qs/requests.log" || bad="$bad [(h) -P: the restore did not go to the new container on 127.0.0.1:6333]"
+  printf '%s\n' "$o" | grep -qx 'ALL COLLECTIONS RESTORED' && printf '%s\n' "$o" | grep -qx 'ALL ALIASES RESTORED' || bad="$bad [(h) -P: step 6 did not print both success lines]"
+  printf '192.168.1.10:6333\n' > "$C/qs/port"; printf '192.168.1.10:6333' > "$C/qs/serving"
+  printf '%s\n%s\n' "$b1" "$b2" > "$C/h2.sh"; o="$(_qrun "$C/h2.sh" "$pj")"
+  printf '%s\n' "$o" | grep -qx 'ALL SNAPSHOTS PRESENT' || bad="$bad [(h) a LAN address (docker port 192.168.1.10:6333): step 1 did not reach the old container there]"
+  # (i) `docker port` prints nothing (the host network): step 1 says so and asks
+  # NOTHING of any address — no guess; then the doc's remedy, its second line
+  # replaced by O=<where it answers>, completes.
+  : > "$C/qs/port"; printf '127.0.0.1:6333' > "$C/qs/serving"; : > "$C/qs/requests.log"
+  printf '%s\n%s\n' "$b1" "$b2" > "$C/i.sh"; o="$(_qrun "$C/i.sh" "$pj")"
+  printf '%s\n' "$o" | grep -q '^STEP 1 FAILED: docker port printed no address for the old container' || bad="$bad [(i) docker port printed nothing and step 1 did not say so: $(printf '%s' "$o" | head -2 | tr '\n' '|' | cut -c1-160)]"
+  printf '%s\n' "$o" | grep -q 'ALL SNAPSHOTS PRESENT' && bad="$bad [(i) docker port printed nothing and step 2 printed ALL SNAPSHOTS PRESENT]"
+  [ -s "$C/qs/requests.log" ] && bad="$bad [(i) docker port printed nothing and step 1 still asked an address it guessed: $(head -1 "$C/qs/requests.log")]"
+  if ! printf '%s\n' "$b1" | sed -n 2p | grep -q '^O='; then bad="$bad [(i) step 1's second line does not set O, so the doc's remedy cannot be followed]"
+  else
+    b1o="$(printf '%s\n' "$b1" | awk 'NR == 2 { print "O=http://127.0.0.1:6333"; next } { print }')"
+    printf '%s\n%s\n' "$b1o" "$b2" > "$C/i2.sh"; o="$(_qrun "$C/i2.sh" "$pj")"
+    printf '%s\n' "$o" | grep -qx 'ALL SNAPSHOTS PRESENT' || bad="$bad [(i) with the second line set by hand, as the doc says, step 1 still did not complete]"
+  fi
+  mv "$C/qs/port" "$C/qs/port.off"; mv "$C/qs/serving" "$C/qs/serving.off"
+  [ -z "$bad" ] && pass "S38 the written procedure run against a stand-in Qdrant: jq missing is said by steps 1 and 2 with no success line, step 1's empty list no longer passes step 2, a lost API key fails step 6, a failed upload stops step 5 and says the rest were not tried, a download cut short on the last or only collection fails step 2's size and checksum check, no sha256 tool fails step 2, the old container is read where docker port says (-P, a LAN address) and the new one restored on 127.0.0.1:6333, docker port printing nothing stops step 1 with no guess — and with jq and the key kept, every success line prints" || fail_ "S38" "$bad"
 }
 
 if [ -n "${BL311_ONLY:-}" ]; then
@@ -1333,7 +1524,7 @@ fi
 a1; a4; a5; a6; a7; a8
 s1; s2; s3; s4; s5; s6; s7; s8; s9; s10; s11; s12; s13; s14; s15; s16; s17; s18
 s19; s19b; s19c; s19d; s19e; s19f; s19g; s20; s25; s27; s28; s29
-s30; s31; s32; s33; s34; s35; s36; s37; s38
+s30; s31; s32; s33; s33b; s33c; s34; s35; s36; s37; s38
 e_cases
 
 # ── M — mutation proofs ─────────────────────────────────────────────────────
@@ -1427,7 +1618,7 @@ mut_doc() {
   _mut_judge "$label" "$m" "$4" "$5"
 }
 
-if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M147" "BL311_SKIP_MUTANTS=1"; _done; fi
+if [ "${BL311_SKIP_MUTANTS:-0}" = "1" ]; then skip "M1-M153" "BL311_SKIP_MUTANTS=1"; _done; fi
 echo "== M — mutation proofs =="
 mut "M1 helpers-core ignores CLAUDE_CONFIG_DIR for settings.json — killed by A4" \
   scripts/lib/helpers-core.sh '# BL-311-CONFIG-DIR' \
@@ -1689,6 +1880,17 @@ mut_sub "M144 (R-BL311-5) the key's name matched in upper case only — killed b
 mut_sub "M147 (R-BL311-4) ::1 read as an address other than loopback — killed by S20" \
   '# BL-311-MCP-OPEN-DETECT-ADDR' 'any(. != "127.0.0.1" and . != "::1")' 'any(. != "127.0.0.1")' \
   s20 'a ::1 binding was reported as open'
+# M148-M150 (round 15, R-BL311-8): the reviewer's K5, K6 and K15 — each part of
+# `# BL-311-MCP-BIND-PARSE` that S33 alone left unpinned.
+mut_sub "M148 (R-BL311-8, K5) the PublishAllPorts type check dropped — killed by S33b" \
+  '# BL-311-MCP-BIND-PARSE' ' and (.[1] | type == "boolean")' '' \
+  s33b '(null) a PublishAllPorts of null: not said to be unreadable'
+mut_sub "M149 (R-BL311-8, K6) the NetworkMode type check dropped — killed by S33c" \
+  '# BL-311-MCP-BIND-PARSE' ' and (.[2] | type == "string")' '' \
+  s33c '(null) a NetworkMode of null: not said to be unreadable'
+mut_sub "M150 (R-BL311-8, K15) the count loosened (length == 3 → length >= 1) — killed by S33c" \
+  '# BL-311-MCP-BIND-PARSE' 'length == 3' 'length >= 1' \
+  s33c '(two values) a NetworkMode line with two values: not said to be unreadable'
 # M145: step 2 as it was before round 14 — no jq check, no count — the block
 # that printed ALL SNAPSHOTS PRESENT over an empty list and lost the data.
 cat > "$WORK/m145.block" <<'M145'
@@ -1704,5 +1906,28 @@ _doc_block 7 "$REPO_ROOT/docs/adoption.md" | sed -n '2,$p' | awk '{ p = "[ \"$k\
 mut_doc "M146 (R-BL311-3) step 6 without the request made without the key — killed by S38 (d)" \
   7 "$WORK/m146.block" \
   s38 '(d) the key was lost and step 6 still printed a success line'
+# M151-M153 (round 15). M151: step 2's per-collection check back to the
+# non-empty test (R-BL311-7) — every other line as the doc prints it, so the
+# jq and checksum-tool checks stay and ONLY the size/sha256 comparison goes;
+# S38 (f) must kill it, not only S28's text pin. M152: step 1 reads the old
+# container at Q again instead of docker port's address (R-BL311-9). M153: step
+# 5 waits on the OLD address, which never answers after step 4 (R-BL311-9) —
+# the stand-in ends that run after five refused connections.
+_doc_block 3 "$REPO_ROOT/docs/adoption.md" | awk '
+  /^while IFS= read -r c; do$/ { print "while IFS= read -r c; do [ -s \"$B/$c.snapshot\" ] || { echo \"MISSING: $c\"; m=1; }; done < \"$B/collections.txt\"; [ \"$m\" = 0 ] && echo \"ALL SNAPSHOTS PRESENT\""; skip = 1; next }
+  skip && /^done < / { skip = 0; next }
+  skip { next }
+  { print }' > "$WORK/m151.block"
+mut_doc "M151 (R-BL311-7) step 2 checks only that each snapshot is not empty — killed by S38 (f)" \
+  3 "$WORK/m151.block" \
+  s38 '(f) a partial snapshot of the LAST collection: step 2 still printed ALL SNAPSHOTS PRESENT'
+_doc_block 2 "$REPO_ROOT/docs/adoption.md" | awk 'NR == 2 { print "O=\"$Q\""; next } { print }' > "$WORK/m152.block"
+mut_doc "M152 (R-BL311-9) step 1 reads the old container at Q, not where docker port says — killed by S38 (h)" \
+  2 "$WORK/m152.block" \
+  s38 '(h) -P (docker port 0.0.0.0:32768): step 1 did not reach the old container where docker port said'
+_doc_block 6 "$REPO_ROOT/docs/adoption.md" | awk 'NR == 1 { f = "\"$Q/collections\""; i = index($0, f); if (i) $0 = substr($0, 1, i - 1) "\"$O/collections\"" substr($0, i + length(f)) } { print }' > "$WORK/m153.block"
+mut_doc "M153 (R-BL311-9) step 5 waits for the new container at the OLD address — killed by S38 (h)" \
+  6 "$WORK/m153.block" \
+  s38 '(h) step 5 waited on the OLD address'
 
 _done
