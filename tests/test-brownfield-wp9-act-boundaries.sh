@@ -34,6 +34,12 @@
 # `# BL-181-UNIT-LANE-PREDICATE` reads — but this suite only READS that file,
 # never runs it, so it belongs in the fast unit lane and is registered there.
 set -o pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

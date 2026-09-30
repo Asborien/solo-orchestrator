@@ -2154,6 +2154,18 @@ adopt_main() {
   report="$ADOPT_WORK/secrets-report.json"
   adopt_secrets_decide "$report" || return 1   # BL-242-SECRETS-DECIDE-CALL
 
+  # `## BL-311:` THE TWO MCP SERVERS A SESSION HERE IS CHECKED FOR. In the
+  # pre-write sequence with tool resolution, and for its reasons: before any
+  # writer, so a run abandoned here changed the repository not at all and the
+  # operator's Claude Code configuration only if they said yes. AFTER the
+  # secrets stop rather than straight after tool resolution, on purpose: an
+  # adoption that stop is going to refuse must not first have registered
+  # servers in the operator's configuration or started a container — and the
+  # stop's own verdict line stays under the tools section that produced it.
+  # Its question is NOT mandatory, so an answer sequence that does not expect
+  # it still completes.
+  adopt_mcp_resolve "$root" || return 1   # BL-311-MCP-CALL
+
   # THE CI AUDIT AND ITS QUESTIONS, BEFORE THE INTAKE. Read-only; its answers
   # are held for the record. Here rather than after the intake so its questions
   # sit at a FIXED position in the run: the intake's count depends on what the
@@ -2222,6 +2234,7 @@ adopt_main() {
   adopt_note "starts: phase 0. Nothing has been marked as already done, and nothing was"
   adopt_note "guessed about how far along you are — you will be asked about that instead."
   adopt_blank
+  adopt_mcp_restart_note   # BL-311-ACT2-RESTART-CALL
   adopt_note "NEXT: run this, and paste what it prints into Claude Code."
   adopt_note "  bash scripts/resume.sh"
   adopt_blank
@@ -2349,6 +2362,7 @@ adopt_finish_main() {                                  # BL-242-FINISH
     adopt_note "From your next commit onward the framework's two message gates are live in"
     adopt_note "this project: test-before-code ordering, and the Build-Loop commit check."
     adopt_blank
+    adopt_mcp_restart_note   # BL-311-FINISH-RESTART-CALL
     adopt_note "NEXT: run this, and paste what it prints into Claude Code."
     adopt_note "  bash scripts/resume.sh"
     # `--finish` IS THE PATH THE CHANGED-HOOK GUARD EXISTS FOR, so it carries

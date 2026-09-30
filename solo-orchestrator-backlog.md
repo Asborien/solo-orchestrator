@@ -22244,6 +22244,16 @@ beside their `Edit(...)` twins (startup warnings).
 **Test-design lesson, for the rerun:** a clean `CLAUDE_CONFIG_DIR` also drops the user's MCP servers,
 so Stage 0 must register them the way the CLI Setup Addendum says.
 
+**Group A residuals (round 15, not fixed).** Measured by the round-15 review (real Docker 29.8.1,
+Qdrant 1.17.1); recorded, not fixed:
+- **R-BL311-10** — a container on `--network container:<id>` reads as loopback, and adoption prints
+  nothing about it. An improbable shape for a Qdrant container.
+- **R-BL311-11** — `-P` together with an explicit `127.0.0.1` binding on every exposed port is
+  reported as open. It errs on the cautious side; the defect is the wording.
+- **R-BL311-12** — Qdrant 1.17.1 enforces an EMPTY `QDRANT__SERVICE__API_KEY=` (a request with no
+  key gets 401, one with an empty `api-key` header 200), and a container with only a read-only key
+  reads as "no key". The warning points the right way; its wording is inaccurate.
+
 ## BL-312: an opt-in "TL;DR mode" for the person the agent works for — greenfield and brownfield
 
 **Status:** Open — **DECIDED 2026-09-28 (Karl).** Build after `## BL-311:`'s nine fixes and BEFORE the

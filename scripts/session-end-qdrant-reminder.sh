@@ -7,9 +7,15 @@ set -euo pipefail
 # Check if Qdrant MCP is configured
 QDRANT_CONFIGURED=false
 if command -v jq &>/dev/null; then
-  if [ -f "$HOME/.claude/settings.json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+  # `## BL-311:` the two user files THIS session reads — inside CLAUDE_CONFIG_DIR
+  # when it is set, never ~/.claude.json then. This hook sources nothing, so the
+  # rule is inline: helpers-core.sh's soif_claude_config_dir /
+  # soif_claude_json_path own it, and `# BL-311-GATE-CONFIG` in
+  # session-test-gate-check.sh is the other sync sibling.
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then _cc_set="$CLAUDE_CONFIG_DIR/settings.json"; _cc_json="$CLAUDE_CONFIG_DIR/.claude.json"; else _cc_set="$HOME/.claude/settings.json"; _cc_json="$HOME/.claude.json"; fi   # BL-311-REMINDER-CONFIG
+  if [ -f "$_cc_set" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$_cc_set" >/dev/null 2>&1; then
     QDRANT_CONFIGURED=true
-  elif [ -f "$HOME/.claude.json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$HOME/.claude.json" >/dev/null 2>&1; then
+  elif [ -f "$_cc_json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$_cc_json" >/dev/null 2>&1; then
     QDRANT_CONFIGURED=true
   fi
 fi

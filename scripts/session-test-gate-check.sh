@@ -43,9 +43,18 @@ CONTEXT7_CONFIGURED=false
 UNKNOWN_SERVERS=""
 
 if command -v jq &>/dev/null; then
+  # `## BL-311:` THE USER FILES ARE THE ONES THIS SESSION READS. With
+  # CLAUDE_CONFIG_DIR set, Claude Code keeps `.claude.json` and `settings.json`
+  # inside that directory and does NOT read `~/.claude.json` — so a server
+  # registered only there is not in the session, and treating it as configured
+  # made it REQUIRED: every Write/Edit blocked on a tool that could not be
+  # called. This hook sources nothing by design, so the rule is inline; its one
+  # owner is helpers-core.sh's soif_claude_config_dir / soif_claude_json_path,
+  # and this line is their sync sibling.
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then _cc_set="$CLAUDE_CONFIG_DIR/settings.json"; _cc_json="$CLAUDE_CONFIG_DIR/.claude.json"; else _cc_set="$HOME/.claude/settings.json"; _cc_json="$HOME/.claude.json"; fi   # BL-311-GATE-CONFIG
   # Collect all configured MCP server names from all settings scopes
   ALL_MCP_SERVERS=""
-  for settings_file in "$HOME/.claude/settings.json" "$HOME/.claude.json" ".claude/settings.json" ".claude/settings.local.json"; do
+  for settings_file in "$_cc_set" "$_cc_json" ".claude/settings.json" ".claude/settings.local.json"; do
     if [ -f "$settings_file" ]; then
       SERVERS=$(jq -r '.mcpServers // {} | keys[]' "$settings_file" 2>/dev/null || true)
       if [ -n "$SERVERS" ]; then

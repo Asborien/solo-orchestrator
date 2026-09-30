@@ -24,15 +24,27 @@ _adopt_session_language() {
   adopt_report_read "$1" '.stack.languages[0].name // ""' | tr '[:upper:]' '[:lower:]'
 }
 
-# _adopt_session_qdrant — init.sh's predicate: an MCP entry already registered,
-# or a Qdrant container running with uvx to launch the server. Read in a
-# SUBSHELL so helpers-full.sh's definitions never leak into the driver.
-# `SOIF_ADOPT_QDRANT=yes|no` is a TEST SEAM: no suite may start a container.
+# _adopt_session_qdrant — is Qdrant REGISTERED for this Claude Code session?
+# Read in a SUBSHELL so helpers-full.sh's definitions never leak into the
+# driver. `SOIF_ADOPT_QDRANT=yes|no` is a TEST SEAM: no suite may start a
+# container.
+#
+# `## BL-311:` THIS USED TO BE init.sh's PREDICATE, AND HALF OF IT WAS WRONG
+# HERE. init.sh's second arm — a Qdrant container running and uvx present —
+# REGISTERS the server before it writes the project's declaration. Adoption's
+# copy took the arm and skipped the registering, so it declared a server no
+# session had: .claude/settings.local.json is not among the MCP locations
+# Claude Code documents (~/.claude.json and .mcp.json —
+# code.claude.com/docs/en/mcp), but the SessionStart hook reads it, marks
+# Qdrant REQUIRED, and every file edit is then blocked on a tool the session
+# does not have. The MCP step (adopt-mcp.sh) now offers the registration
+# itself, so the only honest question left here is whether the session has
+# one — asked of the files the session reads (CLAUDE_CONFIG_DIR,
+# helpers-core.sh).
 _adopt_session_qdrant() {
   case "${SOIF_ADOPT_QDRANT:-}" in yes) return 0 ;; no) return 1 ;; esac
   ( . "$ADOPT_CORE_LIB_DIR/helpers-full.sh" >/dev/null 2>&1 || exit 1
-    is_qdrant_mcp_entry_present && exit 0
-    is_qdrant_container_running && command -v uvx >/dev/null 2>&1 ) >/dev/null 2>&1
+    is_qdrant_mcp_entry_present ) >/dev/null 2>&1   # BL-311-SESSION-QDRANT-PREDICATE
 }
 
 adopt_write_session_layer() {                          # BL-242-SESSION-STAGE
@@ -119,7 +131,7 @@ adopt_write_session_layer() {                          # BL-242-SESSION-STAGE
       adopt_note "alone, so no project collection was declared."
     fi
   else
-    adopt_note "No Qdrant server was found, so no MCP declaration was written — as init.sh does."
+    adopt_note "Qdrant is not registered for Claude Code, so no project collection was declared."
   fi
   return 0
 }
