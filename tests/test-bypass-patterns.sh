@@ -124,6 +124,14 @@ else
     fail_ "T26" "a proposal shape stopped matching"
   fi
 
+  # T29: the terminal reached "via" or "through" is still a proposal.
+  if matches terminal_workaround 'you can run it via the shell' \
+    && matches terminal_workaround 'execute it through the terminal instead'; then
+    pass "T29: via and through still match"
+  else
+    fail_ "T29" "a via/through proposal stopped matching"
+  fi
+
   # T27, T28: mutation proofs. Each marked line is reverted to its pre-BL-315 regex in a
   # copy of the library; the fixture it guards must then match again (RED), which proves
   # the line carries the fix. The regex must sit on the line directly after its marker.
