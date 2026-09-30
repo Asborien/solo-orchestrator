@@ -27,7 +27,7 @@
 #
 # CASES — all on the real tree, `test` job only (the `sast` job scans the
 # tree and needs no manifest):
-#   T0  the template list is derived (find), meets a floor of 9, and every
+#   T0  the template list is derived (find), meets a floor of 10 (9 language templates plus other.yml), and every
 #       template has a census row — a new language cannot slip in unguarded
 #   T1  exactly one notice step per template, guarded `== ''` on the census
 #       manifest, and its body carries a `::notice::` annotation
@@ -46,7 +46,7 @@
 #       rendered YAML plus this evaluation of its conditions.
 #   T5  past Phase 1 a missing manifest FAILS, it does not skip green: the
 #       notice step's `run:` script is extracted and EXECUTED under
-#       `"$BASH" -e -o pipefail` (the runner's fail-fast options, under the
+#       `"$BASH" -e -o pipefail` (stricter than the runner's default `bash -e {0}`, under the
 #       interpreter this suite itself runs under) against four
 #       fixtures — `.claude/phase-state.json` at current_phase 3 and 2
 #       (rc 1, `::error::`), at current_phase 1 (rc 0, `::notice::`), and
