@@ -22279,3 +22279,33 @@ nothing — plus every command they must run, in a fenced block, never named in 
 `CLAUDE.md` both read); the hook's check (which parts it can verify mechanically, and how it avoids
 re-prompting forever on a reply it cannot parse); and how it coexists with the Guardrails' own Stop hooks.
 
+## BL-315: two bypass patterns match text that names a flag, an identifier or a step (#465)
+
+**Status:** Open — reproduction and fix in the pull request that files this entry.
+
+**What happens.** `terminal_workaround` was `(run|do|execute) [^.]*(terminal|shell)`: any sentence with
+the word "run" and, later, the letters "terminal" or "shell" matched, including a test helper called
+`run` followed by a `--terminal-mode` flag, "SUBSHELL", and a description of a tool that runs without a
+shell. `fake_loop`'s list form was `tests_verified_failing[^a-z0-9_]+.{0,40}complete`, which the step
+name `complete_step`, the gate's own refusal ("not yet completed") and prose explaining the pattern all
+satisfy. On an adopting project on 30 September 2026 these two patterns produced 29 detector rows in one
+day; five were authored text, which raises the pending-approval sentinel, and none was a proposal.
+
+**Ruling applied.** Files the agent writes are still scanned (#454's review); nothing is excluded by
+path. The patterns are narrowed instead.
+
+**Fix.** `# BL-315-TERMINAL-WORDS`: the verb and the terminal or shell match only as words (no letter,
+digit, `_` or `-` beside them), and the terminal is reached with "in", "from" or "on" and at most three
+words, the shape every proposal fixture in `tests/test-bypass-patterns.sh` has. `# BL-315-FAKE-LOOP-VERB`:
+the list form needs the word "mark" earlier in the same sentence and the whole word "complete"; the
+step-name form is unchanged.
+
+**Tests.** `tests/test-bypass-patterns.sh` T19 to T25 are the recorded excerpts (six red before the fix;
+T22 pins identifiers, which already did not match); T26 keeps four proposal shapes matching; T27 and T28
+revert each marked line in a copy of the library and see its fixture match again. T1 to T18 unchanged
+and green; `tests/test-bypass-detector.sh` green.
+
+**Residuals.** `no_verify` still matches prose that names the flag (for example "never `--no-verify`");
+narrowing it would stop "I'll use --no-verify here" (T7) matching, so it is left as it is. The detector
+stores excerpts truncated, so a row whose match lay past the cut cannot be replayed from the audit log.
+
