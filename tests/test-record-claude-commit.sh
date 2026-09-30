@@ -234,7 +234,7 @@ echo "T11: hook ignores a git commit reported through PostToolUseFailure"
 setup
 cd "$TMP"
 cat <<'EOF' | bash "$HOOK" >/dev/null 2>&1
-{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"git commit -m 'feat: x'"},"tool_response":"Exit code 1\nnothing to commit"}
+{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"git commit -m nothing"},"error":"Exit code 1\nOn branch main\nnothing to commit, working tree clean","is_interrupt":false,"duration_ms":22}
 EOF
 if [ ! -f "$TMP/.claude/claude-commits.jsonl" ]; then
   pass "T11"
@@ -257,6 +257,36 @@ else
 fi
 teardown
 
+# T13: the vendor's documented PostToolUse example carries tool_response as a
+# plain string; a successful commit in that shape still records.
+echo "T13: hook records a commit whose tool_response is a plain string"
+setup
+cd "$TMP"
+cat <<'EOF' | bash "$HOOK" >/dev/null 2>&1
+{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m 'feat: x'"},"tool_response":"[main abc1234] feat: x"}
+EOF
+if [ -f "$TMP/.claude/claude-commits.jsonl" ]; then
+  pass "T13"
+else
+  fail_ "T13" "a string tool_response on PostToolUse was not recorded"
+fi
+teardown
+
+# T14: any event other than PostToolUse is skipped, not only
+# PostToolUseFailure. A guard narrowed to the failure event would record this.
+echo "T14: hook ignores a git commit reported under any other event"
+setup
+cd "$TMP"
+cat <<'EOF' | bash "$HOOK" >/dev/null 2>&1
+{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m 'feat: x'"}}
+EOF
+if [ ! -f "$TMP/.claude/claude-commits.jsonl" ]; then
+  pass "T14"
+else
+  fail_ "T14" "a commit reported under PreToolUse was recorded"
+fi
+teardown
+
 # M1-M3: mutation proofs for BL-316's marked lines. Each mutant is one line
 # changed in a copy of the hook, must still parse, and must flip exactly the
 # case that line exists for, in a fresh fixture. A guard whose removal no case
@@ -268,6 +298,7 @@ _bl316_mutant() {  # $1 label, $2 perl program, $3 envelope, $4 expect: record|n
   cp "$HOOK" "$mhook"
   perl -i -e "$prog" "$mhook"
   changed=$(diff "$HOOK" "$mhook" | grep -c '^[<>]' || true)
+  case "$changed" in ''|*[!0-9]*) changed=0 ;; esac
   if [ "$changed" -lt 1 ] || [ "$changed" -gt 2 ]; then
     fail_ "$label" "mutant changed $changed diff lines; expected one line removed or replaced"
     rm -rf "$mdir"; return
@@ -291,7 +322,7 @@ _bl316_mutant() {  # $1 label, $2 perl program, $3 envelope, $4 expect: record|n
 
 echo "M1: removing # BL-316-EVENT lets a PostToolUseFailure commit record"
 _bl316_mutant "M1" 'while (<>) { print unless /# BL-316-EVENT$/ }' \
-  '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"git commit -m '"'"'x'"'"'"},"tool_response":"Exit code 1"}' record
+  '{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"git commit -m nothing"},"error":"Exit code 1\nnothing to commit, working tree clean","is_interrupt":false,"duration_ms":22}' record
 
 echo "M2: removing # BL-316-INTERRUPTED lets an interrupted commit record"
 _bl316_mutant "M2" 'while (<>) { print unless /# BL-316-INTERRUPTED$/ }' \
