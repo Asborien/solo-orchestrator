@@ -82,6 +82,85 @@ else
   out=$(scan_bypass_patterns "use --no-verify and SOIF_FORCE_STEP=foo")
   count=$(echo "$out" | grep -c .)
   if [ "$count" = "1" ]; then pass "T18: scan single still single-match"; else fail_ "T18" "expected 1, got $count"; fi
+
+  # ---- #465 precision: text that names a flag, an identifier or a step is not a proposal ----
+  # Fixtures T19 to T26 are excerpts the detector recorded on 30 Sep 2026 as bypass
+  # proposals, none of them one. matches <name> <text> is true when scan_all names it.
+  matches() {
+    local found
+    found=$(scan_bypass_patterns_all "$2" || true)
+    case $'\n'"$found"$'\n' in *$'\n'"$1"$'\n'*) return 0 ;; esac
+    return 1
+  }
+
+  # T19: a `--terminal-mode` flag after a helper called `run`.
+  if matches terminal_workaround '  run "$K1" "$BASH" "$PCG" --terminal-mode --tdd-only --emit-blocked-gate'; then fail_ "T19" "flag --terminal-mode matched"; else pass "T19: terminal_workaround ignores a --terminal-mode flag"; fi
+
+  # T20: "shell" inside a longer word.
+  if matches terminal_workaround '# source + append run in a SUBSHELL. `exit`'; then fail_ "T20" "SUBSHELL matched"; else pass "T20: terminal_workaround ignores shell inside a word"; fi
+
+  # T21: a description of a tool that runs without a shell.
+  if matches terminal_workaround 'Commands run without a shell and cannot access the filesystem'; then fail_ "T21" "description matched"; else pass "T21: terminal_workaround needs in/from/on before the terminal"; fi
+
+  # T22: identifiers: run_sanity_cli and shell_lint.
+  if matches terminal_workaround '`run_sanity_cli` calls shell_lint on each script'; then fail_ "T22" "identifiers matched"; else pass "T22: terminal_workaround ignores identifiers"; fi
+
+  # T23: the step name complete_step after tests_verified_failing.
+  if matches fake_loop '| N2 | Build Loop `tests_verified_failing` (order only) | also pins the shared `complete_step` order predicate |'; then fail_ "T23" "complete_step matched"; else pass "T23: fake_loop ignores complete_step"; fi
+
+  # T24: the gate's own refusal message ("completed").
+  if matches fake_loop "Cannot complete 'tests_verified_failing' — 'tests_written' not yet completed."; then fail_ "T24" "completed matched"; else pass "T24: fake_loop ignores completed"; fi
+
+  # T25: prose explaining the pattern, with no marking verb.
+  if matches fake_loop '`fake_loop`'"'"'s second alternative is `tests_verified_failing[^a-z0-9_]+.{0,40}complete`, which `complete_step` satisfies.'; then fail_ "T25" "explanation matched"; else pass "T25: fake_loop's list form needs a marking verb"; fi
+
+  # T26: the proposal shapes still match after the tightening.
+  if matches terminal_workaround 'you could execute it from the terminal yourself' \
+    && matches terminal_workaround 'do this in a shell instead' \
+    && matches fake_loop 'mark tests_written, tests_verified_failing, etc. as complete via process-checklist.sh --complete-step' \
+    && matches fake_loop "I'll mark step build_loop:tests_verified_failing complete and move on"; then
+    pass "T26: proposal shapes still match"
+  else
+    fail_ "T26" "a proposal shape stopped matching"
+  fi
+
+  # T27, T28: mutation proofs. Each marked line is reverted to its pre-BL-315 regex in a
+  # copy of the library; the fixture it guards must then match again (RED), which proves
+  # the line carries the fix. The regex must sit on the line directly after its marker.
+  MUT_DIR=$(mktemp -d)
+  trap 'rm -rf "$MUT_DIR"' EXIT
+  # mutate <marker> <old-regex> <out>: replace the line after <marker>; exit 3 if mis-targeted.
+  mutate() {
+    SOIF_MUT_MARK="$1" SOIF_MUT_OLD="$2" awk '
+      hit == 1 { print "  \047" ENVIRON["SOIF_MUT_OLD"] "\047"; hit = 2; done++; next }
+      { print }
+      index($0, "# " ENVIRON["SOIF_MUT_MARK"]) > 0 && $0 ~ /^[[:space:]]*#/ { marks++; hit = 1 }
+      END { if (marks != 1 || done != 1) exit 3 }
+    ' "$LIB" > "$3"
+  }
+  # mutant_matches <mutant-lib> <name> <text>
+  mutant_matches() {
+    local found
+    found=$( ( . "$1"; scan_bypass_patterns_all "$3" ) || true)
+    case $'\n'"$found"$'\n' in *$'\n'"$2"$'\n'*) return 0 ;; esac
+    return 1
+  }
+
+  if ! mutate BL-315-TERMINAL-WORDS '(run|do|execute) [^.]*(terminal|shell)' "$MUT_DIR/t.sh"; then
+    fail_ "T27" "MIS-TARGETED: BL-315-TERMINAL-WORDS is not present exactly once above its regex"
+  elif mutant_matches "$MUT_DIR/t.sh" terminal_workaround '  run "$K1" "$BASH" "$PCG" --terminal-mode --tdd-only'; then
+    pass "T27: reverting BL-315-TERMINAL-WORDS makes the --terminal-mode flag match again (RED)"
+  else
+    fail_ "T27" "the reverted terminal regex still ignores the flag; the case does not measure the marked line"
+  fi
+
+  if ! mutate BL-315-FAKE-LOOP-VERB '(mark|complete) step .*(build_loop|phase[0-9]+_init):.*(complete|done)|tests_verified_failing[^a-z0-9_]+.{0,40}complete' "$MUT_DIR/f.sh"; then
+    fail_ "T28" "MIS-TARGETED: BL-315-FAKE-LOOP-VERB is not present exactly once above its regex"
+  elif mutant_matches "$MUT_DIR/f.sh" fake_loop '| N2 | Build Loop `tests_verified_failing` (order only) | also pins the shared `complete_step` order predicate |'; then
+    pass "T28: reverting BL-315-FAKE-LOOP-VERB makes complete_step match again (RED)"
+  else
+    fail_ "T28" "the reverted fake_loop regex still ignores complete_step; the case does not measure the marked line"
+  fi
 fi
 
 echo ""
