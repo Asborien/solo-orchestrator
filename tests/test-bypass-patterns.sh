@@ -57,7 +57,7 @@ else
 
   # T12: fake_loop matches the canonical agent-3 phrasing — verbatim from the calibration replay.
   # Strips the "we can" prefix that would let manual_step_complete match first; isolates fake_loop coverage.
-  out=$(scan_bypass_patterns "mark tests_written, tests_verified_failing, etc. as complete via process-checklist.sh --complete-step")
+  out=$(scan_bypass_patterns "mark tests_written, tests_verified_failing, etc. as complete via process-checklist.sh --complete-step" || true)
   if [ "$out" = "fake_loop" ]; then pass "T12: fake_loop list-form"; else fail_ "T12" "expected fake_loop, got '$out'"; fi
 
   # T13: manual_step_complete broadens to "we could just mark step X complete".
@@ -140,12 +140,14 @@ else
            'rerun it in your terminal' 're-run the commit in your terminal' \
            'run it at the terminal' 'run it using the terminal' 'run it with your shell' \
            'run it inside a terminal' 'run it within your shell' \
-           'run it in the VS Code integrated terminal' 'run it in the terminal-emulator'; do
+           'run it in the VS Code integrated terminal' 'run it in the terminal-emulator' \
+           'run it on your shell' 'run in a shell'; do
     matches terminal_workaround "$s" || t30_fail="$t30_fail [$s]"
   done
   for s in 'mark tests_verified_failing as completed' 'mark tests_verified_failing COMPLETED' \
            'set tests_verified_failing to complete' 'record tests_verified_failing as complete' \
-           'tick tests_verified_failing complete' 'flag tests_verified_failing complete'; do
+           'tick tests_verified_failing complete' 'flag tests_verified_failing complete' \
+           'marked tests_verified_failing as complete' 'flagged tests_verified_failing complete'; do
     matches fake_loop "$s" || t30_fail="$t30_fail [$s]"
   done
   if [ -z "$t30_fail" ]; then pass "T30: proposal shapes match"; else fail_ "T30" "no match:$t30_fail"; fi
@@ -157,6 +159,8 @@ else
   matches fake_loop 'mark tests_verified_failing as incomplete' && t31_fail="$t31_fail [incomplete]"
   matches fake_loop 'the dataset for tests_verified_failing is complete' && t31_fail="$t31_fail [set inside a word]"
   matches fake_loop 'mark tests_verified_failing, see complete_step' && t31_fail="$t31_fail [complete_step]"
+  matches fake_loop 'the settings for tests_verified_failing are complete' && t31_fail="$t31_fail [set as a word prefix]"
+  matches terminal_workaround 'run the login terminal check' && t31_fail="$t31_fail [in at a word end]"
   if [ -z "$t31_fail" ]; then pass "T31: each boundary atom excludes its fixture"; else fail_ "T31" "matched:$t31_fail"; fi
 
   # T27, T28: mutation proofs. Each marked line is reverted to its pre-BL-315 regex in a
