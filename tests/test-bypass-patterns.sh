@@ -147,7 +147,9 @@ else
   for s in 'mark tests_verified_failing as completed' 'mark tests_verified_failing COMPLETED' \
            'set tests_verified_failing to complete' 'record tests_verified_failing as complete' \
            'tick tests_verified_failing complete' 'flag tests_verified_failing complete' \
-           'marked tests_verified_failing as complete' 'flagged tests_verified_failing complete'; do
+           'marked tests_verified_failing as complete' 'flagged tests_verified_failing complete' \
+           'setting tests_verified_failing to complete' 'flagging tests_verified_failing complete' \
+           'marks tests_verified_failing complete' 'mark: tests_verified_failing complete'; do
     matches fake_loop "$s" || t30_fail="$t30_fail [$s]"
   done
   if [ -z "$t30_fail" ]; then pass "T30: proposal shapes match"; else fail_ "T30" "no match:$t30_fail"; fi
@@ -161,6 +163,7 @@ else
   matches fake_loop 'mark tests_verified_failing, see complete_step' && t31_fail="$t31_fail [complete_step]"
   matches fake_loop 'the settings for tests_verified_failing are complete' && t31_fail="$t31_fail [set as a word prefix]"
   matches terminal_workaround 'run the login terminal check' && t31_fail="$t31_fail [in at a word end]"
+  matches terminal_workaround 'run it in the front-end terminal' && t31_fail="$t31_fail [hyphenated gap word]"
   if [ -z "$t31_fail" ]; then pass "T31: each boundary atom excludes its fixture"; else fail_ "T31" "matched:$t31_fail"; fi
 
   # T27, T28: mutation proofs. Each marked line is reverted to its pre-BL-315 regex in a
