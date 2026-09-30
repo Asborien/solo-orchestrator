@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # BL-311-MANIFEST-GUARD: a Phase 0/1 project has no Python manifest yet,
+      # BL-313-MANIFEST-GUARD: a Phase 0/1 project has no Python manifest yet,
       # and `pip install -r requirements.txt` fails without one. Every step that
       # needs the manifest is guarded on the manifests the framework recognises
       # (requirements.txt, pyproject.toml for Poetry, Pipfile for Pipenv); this

@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # BL-311-MANIFEST-GUARD: a Phase 0/1 project has no go.mod yet, and
+      # BL-313-MANIFEST-GUARD: a Phase 0/1 project has no go.mod yet, and
       # `go build ./...` fails without one. Every step that needs the manifest
       # is guarded on it; this notice says what was skipped. Once go.mod exists
       # every guard is true and nothing is weakened. Past Phase 1 a missing

@@ -240,7 +240,12 @@ _writers() {
       # declaration — a variable name, not a command.
       grep -rnE -- "(^|[^A-Za-z0-9_])$_v" "$REPO_ROOT"/scripts/lib/adopt/*.sh
     done
-    for _v in '> "$' '>> "$'; do
+    # `rm -rf "$root` / `rmdir "$root` — a deletion in the adoptee is a write.
+    # Added for `## BL-296:`'s guardrails stage, whose main write is an
+    # external installer run in a subshell (`( cd "$root" && bash … init.sh )`):
+    # no verb here can see a write a SUBPROCESS makes, so T10 sees that file
+    # through its backup cleanup instead. Recorded on `## BL-296:`.
+    for _v in '> "$' '>> "$' 'rm -rf "$root' 'rmdir "$root'; do
       grep -rnF -- "$_v" "$REPO_ROOT"/scripts/lib/adopt/*.sh
     done; } \
     | grep -vE ':[0-9]+: *#' \
@@ -381,6 +386,16 @@ echo "== T10 — a whole-FILE collapse cannot pass silently (two derived sets) =
 # `## BL-225:` rather than answered with a third guard.
 t10_bad=0
 for _mf in $(_marker_files); do
+  # ONE NAMED EXEMPTION, AND ITS REASON. `adopt-mcp.sh` (`## BL-311:`) writes
+  # nothing into the adoptee: its only writers are `claude mcp add` and
+  # `docker`, run from $ADOPT_WORK against the operator's Claude Code config.
+  # It raises the markers only when a fingerprint of the tree taken across
+  # those commands differs (`# BL-311-MCP-TOUCHED-ON-CHANGE`), so it has no
+  # write SHAPE for this recipe to find by construction — the same "a
+  # subprocess's write is invisible to a verb grep" gap this file already
+  # records for the Guardrails stage. T9 still scans the file; only this
+  # file-level cross-check skips it.
+  case "$_mf" in adopt-mcp.sh) continue ;; esac
   _writer_files | grep -qx "$_mf" || { t10_bad=$((t10_bad + 1)); echo "         (T10) $_mf calls the marker but the recipe finds no writer in it"; }
 done
 chk "T10: every file that raises the marker also yields a writer" "$t10_bad" "0"

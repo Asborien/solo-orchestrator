@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# tests/test-bl311-ci-before-manifest.sh
+# tests/test-bl313-ci-before-manifest.sh
 #
-# `## BL-311:` — A GENERATED GITHUB CI WORKFLOW MUST BE GREEN BEFORE THE
+# `## BL-313:` — A GENERATED GITHUB CI WORKFLOW MUST BE GREEN BEFORE THE
 # LANGUAGE MANIFEST EXISTS, AND MUST NOT BE WEAKENED ONCE IT DOES.
 #
 # Every ci/github/<lang>.yml opens its `test` job with a toolchain that

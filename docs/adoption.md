@@ -37,6 +37,9 @@ Everything on this page is output that was observed, pasted as it printed.
 | `shasum` or `sha256sum` | The adoption stamp hashes the survey it was made from | Refused during the pre-write rehearsal, before anything is written |
 | `gitleaks` | The credential scan of your history | **Organizational**: the adoption stops, with no override. **Personal**: it can continue if you accept that on the record |
 | `semgrep` | The commit-time static-analysis pass | Every commit prints `semgrep not found — pre-commit SAST skipped.`; nothing blocks |
+| A clone of the Development Guardrails at `~/.claude-dev-framework` | The Claude Code rules and hooks a new project gets | Adoption completes without them and prints the two commands that install them later. Adoption never fetches the clone itself. Get it with `git clone https://github.com/kraulerson/claude-dev-framework.git ~/.claude-dev-framework` |
+| Docker running the Qdrant database, and the Qdrant MCP server registered with Claude Code (`uvx` launches it) | Memory across Claude Code sessions. Once it is registered, every session in the project must reach it (a successful `qdrant-find`) before it can change a file | Adoption checks it and, when this machine can (the `claude` command, Docker running, `uvx`), offers to set it up — showing the exact commands first. Skipped or impossible, adoption completes and prints the commands for later. See [The memory and documentation servers](#the-memory-and-documentation-servers) |
+| The Context7 MCP server registered with Claude Code (`npx` launches it) | Current library documentation for the agent. Once it is registered, every session must read documentation through it before it changes a file | Checked and offered the same way (needs the `claude` command and `npx`); otherwise its one command is printed |
 
 Your project must be a normal git repository with at least one commit. A linked
 worktree, a submodule, or a repository with `core.hooksPath` configured is
@@ -82,6 +85,9 @@ Who is this project for?
    2) A company, a client, or people who are paying for it
 ```
 
+If the Qdrant or Context7 server is missing and this machine can set it up, it
+also offers to — an **optional** question; no answer means skip it
+([The memory and documentation servers](#the-memory-and-documentation-servers)).
 Then it confirms what the survey found, writes the project's state at phase 0,
 and commits. **Your uncommitted work is never staged**; the commit contains only
 files adoption wrote. Exit codes: `0` adopted; `1` did not complete (a refusal,
@@ -116,6 +122,13 @@ a stop, or a halt); `2` bad usage.
 
 ### 5. Afterwards
 
+**First, if a Claude Code session is open in this project, close it and start a
+new one.** The checks, and the memory and documentation servers, that adoption
+set up only take effect in a session started after adoption: a session that was
+already open has no record of its own start, and the framework's MCP check
+blocks every file edit in it (measured in the 2026-09-27 dogfood run). The run's
+closing block says so too. Then:
+
 ```bash
 bash scripts/resume.sh
 ```
@@ -145,6 +158,7 @@ bash ~/solo-orchestrator/scripts/adopt-project.sh --re-add .git/hooks/pre-commit
 - [Quick start: install and use](#quick-start-install-and-use)
 - [Before you adopt: run Scout](#before-you-adopt-run-scout)
 - [The one question](#the-one-question)
+- [The memory and documentation servers](#the-memory-and-documentation-servers)
 - [Where it lands: phase 0, always](#where-it-lands-phase-0-always)
 - [The reverse intake](#the-reverse-intake)
 - [What gets written, and in what order](#what-gets-written-and-in-what-order)
@@ -266,6 +280,414 @@ something. It is the one thing adoption asks because it is the one thing no
 amount of reading your code can determine.
 
 ---
+
+## The memory and documentation servers
+
+A Claude Code session in an adopted project is checked for two MCP servers:
+**Qdrant** (memory across sessions) and **Context7** (current library
+documentation). The check (`scripts/session-mcp-gate.sh`) blocks every file edit
+until each server that is **registered** has answered a call that session — and
+does not require one that is registered nowhere. So what matters is which of
+three states each server is in, and adoption tells you:
+
+| State | What a Claude Code session in this project does |
+|---|---|
+| Registered, and answering | Works. Each session calls it before its first file edit |
+| Registered, but nothing answers | **Blocks every file edit** until it answers |
+| Not registered | Works without it — no memory of earlier sessions, or no library documentation. Its check switches on in the first session after you register it |
+
+Adoption reads the registrations from the files a Claude Code session started
+from the same shell reads: `~/.claude.json` and `~/.claude/settings.json`, or —
+when `CLAUDE_CONFIG_DIR` is set — `.claude.json` and `settings.json` inside that
+directory, **and nothing under your home directory**. That is Claude Code's own
+rule, and before this step adoption did not follow it: it read `~/.claude.json`
+for a session that did not, saw a Qdrant server that session did not have, and
+declared it for the project.
+
+After the credential scan, when something is missing and this machine can act,
+it shows the exact commands and asks. This was recorded with stand-in `claude`
+and `docker` commands, so nothing was registered on the machine that produced
+it; the two paths are shortened (that run's `CLAUDE_CONFIG_DIR` was a scratch
+directory):
+
+```text
+══ The memory and documentation servers Claude Code uses here
+   Read from the two files a Claude Code session started from here reads:
+     …/cfg/.claude.json
+     …/cfg/settings.json
+   Context7 (current library documentation): NOT registered for Claude Code.
+   Qdrant (memory across sessions): NOT registered for Claude Code.
+
+   This would run, exactly as written:
+     claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
+     docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+     claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
+   The claude commands change your Claude Code configuration for every project,
+   not only this one. Nothing is written into this project.
+Set them up now? (No answer means skip it.)
+   1) skip it
+   2) set it up now
+   Answer with the number or the words:
+```
+
+**`skip it` is listed first on purpose**: an answer of `1` meant for another
+question — a script that answers `1` to everything — skips, rather than
+registering servers for every project on the machine.
+
+`set it up now` (or `2`) runs them, from the run's own scratch directory, then
+reads the registrations back and asks Claude Code itself whether it can start
+each server (`claude mcp get`, the same check `claude mcp list` runs) — it
+claims only what those show:
+
+```text
+   Running: claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
+   Running: docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+   Running: claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
+
+   Afterwards:
+   Context7 (current library documentation): registered for Claude Code.
+   Qdrant (memory across sessions): registered, and answering at http://localhost:6333.
+
+   Context7: Claude Code's own check (claude mcp get) says it starts.
+   Qdrant: Claude Code's own check (claude mcp get) says it starts.
+```
+
+If Claude Code cannot start a server it now has registered — `uvx` cannot fetch
+its Python, say — that is the worst state, because registered means required,
+and the run says so as a block, with Claude Code's own command to undo it
+(recorded with a stand-in that refuses to start Qdrant):
+
+```text
+   Qdrant: Claude Code's own check says it could NOT start it — stub: qdrant cannot be started.
+
+   BLOCKED UNTIL FIXED: Qdrant IS registered, but Claude Code could NOT start it (stub: qdrant cannot be started).
+     Every file edit in this project is blocked until it can. To back the registration out:
+       claude mcp remove qdrant -s user
+```
+
+Qdrant is registered only once its database answers, and not at all if its
+container fails to start: a registered server with nothing behind it would
+block every file edit. If a container named `qdrant` already exists, the plan
+says `docker start qdrant` instead of `docker run`; if a database already
+answers on port 6333, only the registration is offered. **A new container's
+ports are published on `127.0.0.1` only** — without an address, `-p` publishes
+on every network interface unless your Docker daemon sets a default bind
+address, and this database has no API key. (Docker's own documentation adds
+that on Docker Engine older than 28.0.0 on Linux, hosts on the same network
+segment can reach even ports published on `127.0.0.1` — moby/moby#45610.)
+
+A container that already exists keeps whatever binding it was created with, so
+whenever adoption finds one it reads it (`docker inspect`: the port bindings,
+whether it was created with `-P` (`--publish-all`) or on the host's network,
+and whether `QDRANT__SERVICE__API_KEY` — in any letter case, as Qdrant reads
+it — is set in its environment, never its value), on every path — even when
+nothing is missing. It says so before the question, and every later
+`docker start` hint points back at it, when the container runs on the host's
+network (every interface of this machine), when a binding names `0.0.0.0`
+(every interface), `::` (every IPv6 address), no host address, or any address
+other than `127.0.0.1` and `::1`, and when it was created with `-P`, which
+publishes on random ports of every interface. Loopback is only what is left
+when none of those holds. When Docker is not running, the inspect fails or its
+answer cannot be parsed, every `docker start` hint says the bindings could not
+be read and how to check them. Recorded with a stand-in
+`docker` shaped like a real container on the `qdrant_storage` volume with no
+API key in its environment; `/path/to/solo-orchestrator` stands for the
+framework checkout:
+
+```text
+   Your existing qdrant container's ports name no host address, which Docker
+   publishes on every network interface unless your Docker daemon sets a default
+   bind address: while it runs, other machines on your network may be able to reach
+   it — and no API key is set in its environment (a key in a Qdrant config file would not show here).
+   Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, it has to
+   be recreated, and removing a container can delete its data.
+   (On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment
+   can reach even ports published on 127.0.0.1 — moby/moby#45610.)
+   Adoption changed nothing about this container, and prints no commands to recreate
+   it. How to do that without losing its data:
+   "Recreating an exposed Qdrant container" in /path/to/solo-orchestrator/docs/adoption.md.
+```
+
+**It prints no command to recreate the container — for any container.**
+Recreating it on loopback means removing it, and whether the data survives that
+depends on how the container was made. Earlier versions of this step printed a
+recreate, first for every shape and then only for the shapes an allow-list
+confirmed; each round of review on real Docker found another setting the printed
+commands lost or broke — where the data lives (nothing mounted, `--rm`, a tmpfs
+in any spelling, a tmpfs-backed volume, storage split across mounts, a volume
+subpath), an API key or another setting, lowercase setting names, `RUN_MODE`,
+command-line flags, a tag that had moved since the container was made, snapshot
+files kept inside the container. So the note says what it found, that adoption
+changed nothing, and where the written procedure is:
+[Recreating an exposed Qdrant container](#recreating-an-exposed-qdrant-container),
+which goes through Qdrant's own snapshot API and so does not depend on how the
+storage is mounted. The note is the same whatever the storage, and carries no
+line to paste. `docker start qdrant` stays the offered action.
+
+`skip it`, a blank line, or the end of your input all mean skip — this question
+never stops an adoption:
+
+```text
+   Skipped. Nothing was run.
+
+   NOT SET UP — what that means for Claude Code in this project:
+     Qdrant is not registered: sessions here have no memory of earlier sessions. The
+     framework's check for it is off while it is not registered, and ON from the first
+     session after you register it — so have the database running when you do.
+     Context7 is not registered: sessions here cannot read current library documentation.
+     Its check is off until you register it, and ON from the next session after that.
+   To set them up later, run these, then start a new Claude Code session:
+     docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+       (or, if a container named qdrant already exists: docker start qdrant)
+     claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
+     claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
+```
+
+A server that is registered but silent gets the stronger sentence instead —
+`EVERY file edit is BLOCKED until qdrant-find succeeds` — because that is what
+the check then does. When the machine cannot act (no `claude` command, which is
+every CI runner; Docker not running; no `uvx` or `npx`), there is no question:
+the run names what is missing and what to install (Node.js for `npx`, uv for
+`uvx`), and prints the same commands for later. Either way
+the [Adoption Record](#the-adoption-record) carries one row for it:
+
+```text
+    | MCP servers (Qdrant, Context7) | Qdrant: NOT registered (skipped); Context7: NOT registered (skipped) |
+```
+
+**The Qdrant command puts the server name before the `-e` options.** Measured on
+Claude Code 2.1.283: `-e` takes every value after it, so the spelling with
+`qdrant` after `-e COLLECTION_NAME=claude-memory` exits 1 with `Invalid
+environment variable format: qdrant`. Earlier copies of the framework — `init.sh`,
+the phase checks, the tool matrix and the [CLI Setup Addendum](cli-setup-addendum.md)
+— printed and ran that failing order; all of them now use this one.
+
+---
+
+## Recreating an exposed Qdrant container
+
+Adoption points here whenever it finds an existing `qdrant` container whose
+ports are published beyond loopback — a binding on `0.0.0.0`, `::`, no host
+address or any address other than `127.0.0.1` and `::1`, a container created
+with `-P`, or one on the host's network (`--network host`). It says what it
+read and changes nothing, and it prints no commands to recreate the container:
+a recreate printed without knowing everything the container was created with
+can lose its data or drop a setting it relies on (see
+[The memory and documentation servers](#the-memory-and-documentation-servers)
+for the list review found). Recreating the container on loopback is still the
+fix; this is how to do it without losing the data. Adoption does none of it for
+you.
+
+**The route does not depend on how the storage is mounted.** It uses Qdrant's
+own snapshot API: each collection is snapshotted and downloaded through the
+running server, and uploaded into the new container. It follows Qdrant's
+snapshot documentation (<https://qdrant.tech/documentation/snapshots/>:
+`POST /collections/{name}/snapshots`, whose response carries `result.name`;
+`GET /collections/{name}/snapshots/{snapshot}` to download it;
+`POST /collections/{name}/snapshots/upload?priority=snapshot` to restore it,
+which creates the collection) and its alias API (`GET /aliases`;
+`POST /collections/aliases` with `create_alias` actions). It needs `curl`,
+`jq`, and `sha256sum` or `shasum` (Linux has `sha256sum`, macOS `shasum`) —
+steps 1 and 2 stop and say so when `jq` is missing, and step 2 when neither
+checksum tool is there — and the old container **running** — start it if it is
+stopped, unless it was started with `--rm` and is already gone.
+
+**Before you start, list the settings it was created with — the new container
+must be created with the SAME ones.** That is its environment — an API key,
+every `QDRANT__` variable whatever its case, `RUN_MODE` — any command or
+entrypoint flags, and its mounts: **a config file mounted into it** (such as
+`/qdrant/config/production.yaml`) can hold an API key or any other setting, and
+none of that shows in its environment. A recreate that drops one does not
+behave like the old container: a dropped API key leaves the new one open, and a
+dropped setting can move where it stores its data. This lists them and changes
+nothing — **but it prints their values, an API key included**, so run it where
+no one can read your screen, and do not paste its output anywhere:
+
+```sh
+docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}} {{json .Mounts}}' qdrant
+```
+
+Step 4 says where each one goes; what the image sets itself, such as `PATH`, comes
+back with the same image. **If it has an API key** — in its environment or in a
+mounted config file — change `H=()` at the end of step 1's first line to
+`H=(-H 'api-key: <the key>')`. Every `curl` below passes `"${H[@]}"`, except the
+two that check what a request made WITHOUT the key gets: step 1 records whether
+the old container answers one, and step 6 fails if the new one answers where
+the old one refused. And:
+
+- **Keep the same image.** Step 4 reuses the image the container RUNS (its
+  image ID, `{{.Image}}`), not the tag it was created from: a tag may have
+  moved since (a later pull), and recreating from it would run a different
+  Qdrant version. A version change is a separate upgrade, not part of this.
+- **Aliases are not in a collection snapshot.** Step 1 saves them to
+  `$B/aliases.json`, step 5 re-creates them and step 6 checks them.
+- **Snapshot files you keep inside the container** — at `/qdrant/snapshots`,
+  not on a volume or a host folder — are copied out in step 3, before the old
+  container is stopped.
+
+**Two addresses: `O` for the old container, `Q` for the new one.** Step 1 talks
+to the OLD container at `O`; steps 5 and 6 talk to the NEW one at `Q`, which is
+`http://127.0.0.1:6333` because step 4 publishes it there. Step 1's second line
+reads `O` from `docker port qdrant 6333/tcp`, so a container created with `-P`
+(a random port) or published on a LAN address is found where it is; `0.0.0.0`
+and `[::]` are read as `127.0.0.1` and `[::1]`. **If it prints nothing** — a
+container on the host's network (`--network host`) publishes no port, and a
+stopped one has none — step 1 stops and says so; start the container if it is
+stopped, and otherwise replace step 1's second line with `O=http://` followed
+by the address and port where the old container answers. On Linux, a container
+on the host's network answers at `http://127.0.0.1:6333`. On Docker Desktop it
+answers on this machine only if Docker Desktop's host networking is turned on;
+if nothing answers, this procedure cannot read it from here — stop, nothing has
+changed. **If `docker port` prints an address this machine does not reach,**
+step 1 says the old container did not answer at it: set `O` by hand the same
+way. Never point `Q` at the old container: step 5 waits for the new one at
+`Q`, and would wait forever.
+
+**1. Snapshot and download every collection, and save the aliases,** into a
+new folder in your home directory (never the project). Paste the numbered
+blocks into the SAME shell — they share `$O`, `$Q`, `$S`, `$B` and `$H` — and
+each block whole. This one stops at the first failure and says so: `STEP 1
+FAILED` when `jq` is missing, `docker port` printed no address, or the old
+container did not answer; `SNAPSHOT FAILED` with the collection it stopped at.
+For each snapshot it keeps what Qdrant answered when it made it — the size and
+the SHA-256 checksum of the file — for step 2 to check the download against:
+
+```sh
+Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"; H=()
+O="$(docker port qdrant 6333/tcp 2>/dev/null | head -1 | sed -e 's/^0\.0\.0\.0:/127.0.0.1:/' -e 's/^\[::\]:/[::1]:/' -e 's#^#http://#')"
+if ! command -v jq >/dev/null 2>&1; then echo "STEP 1 FAILED: jq is not installed — install it, then paste this block again"
+elif [ -z "$O" ]; then echo "STEP 1 FAILED: docker port printed no address for the old container — start it if it is stopped; if it runs, replace this block's second line with O=http://<address>:<port> where it answers"
+elif mkdir "$B" &&
+  curl -s -o /dev/null -w '%{http_code}' "$O/collections" > "$B/nokey-status.txt" &&
+  curl -sf "${H[@]}" "$O/aliases" > "$B/aliases.json" &&
+  curl -sf "${H[@]}" "$O/collections" > "$B/collections.json" &&
+  jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt"; then
+  while IFS= read -r c; do
+    curl -sf "${H[@]}" -X POST "$O/collections/$c/snapshots" > "$B/$c.created.json" &&
+    n="$(jq -r '.result.name // empty' "$B/$c.created.json")" &&
+    [ -n "$n" ] &&
+    curl -sf "${H[@]}" "$O/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
+    [ -s "$B/$c.snapshot" ] || { echo "SNAPSHOT FAILED: $c"; break; }
+  done < "$B/collections.txt"
+else echo "STEP 1 FAILED: the old container did not answer at $O, or it needs its API key (set H in the first line)"
+fi
+```
+
+**2. Check that step 1 finished:** `jq` is installed, and `sha256sum` or
+`shasum`; the number of collections the server listed matches the number of
+names step 1 saved — and is not 0 — and every snapshot file has exactly the
+size and the SHA-256 checksum Qdrant reported when it made it. A file being
+there proves nothing: a download cut short — a full disk, a dropped
+connection, or Ctrl-C, which prints nothing at all — leaves a partial file
+that is not empty. Go on only if this prints `ALL SNAPSHOTS PRESENT`;
+`MISSING OR INCOMPLETE` names a collection whose snapshot is not all there, or
+whose record from step 1 is missing — fix the cause (disk space, above all)
+and paste step 1 again, which starts a new folder:
+
+```sh
+m=0; command -v jq >/dev/null 2>&1 || { echo "STEP 2 FAILED: jq is not installed"; m=1; }
+if command -v sha256sum >/dev/null 2>&1; then K=(sha256sum); elif command -v shasum >/dev/null 2>&1; then K=(shasum -a 256); else K=(); echo "STEP 2 FAILED: neither sha256sum nor shasum is installed, so the snapshots cannot be checked"; m=1; fi
+[ -s "$B/nokey-status.txt" ] && [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] && [ -f "$B/collections.txt" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
+e="$(jq '.result.collections | length' "$B/collections.json" 2>/dev/null)"; g="$(grep -c '' "$B/collections.txt" 2>/dev/null)"
+[ "$e" -gt 0 ] 2>/dev/null && [ "$e" = "$g" ] || { echo "COUNT MISMATCH: the server listed ${e:-?} collections, collections.txt has ${g:-?} (they must match, and not be 0)"; m=1; }
+while IFS= read -r c; do
+  z="$(jq -r '.result.size // empty' "$B/$c.created.json" 2>/dev/null)"; w="$(jq -r '.result.checksum // empty' "$B/$c.created.json" 2>/dev/null)"
+  [ -n "$z" ] && [ -n "$w" ] && [ -f "$B/$c.snapshot" ] && [ "$(wc -c < "$B/$c.snapshot" | tr -d '[:space:]')" = "$z" ] &&
+    [ "${#K[@]}" -gt 0 ] && [ "$("${K[@]}" < "$B/$c.snapshot" | cut -d' ' -f1)" = "$w" ] || { echo "MISSING OR INCOMPLETE: $c"; m=1; }
+done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
+```
+
+**3. Copy out the snapshot files you keep inside the container** — skip this
+if you keep none there, or keep them on a volume or a host folder. The old
+container is stopped in step 4, and one started with `--rm` is deleted when it
+stops. The copy also holds the snapshots step 1 just made. Go on only if this
+prints `SNAPSHOT FILES COPIED`:
+
+```sh
+docker cp qdrant:/qdrant/snapshots "$B/old-snapshots" && echo "SNAPSHOT FILES COPIED"
+```
+
+**4. Recreate it on loopback** with the same image and the same settings. The
+old container is renamed while it still runs, so a name clash stops this before
+anything is stopped. Before you paste it, add the settings you listed before
+you started: each environment variable as `-e NAME=value` before `"$I"`; each
+mount that is not the storage — **a config file above all** — as
+`-v <source>:<destination>` before `"$I"`, at the same destination (a key or
+setting kept in a config file is lost without it); and the command after `"$I"`
+(and `--entrypoint`, before `"$I"`) if you started it with one. Do not mount the
+old storage again: the new container gets a fresh volume, which step 5 fills.
+If a setting moves the storage path away from `/qdrant/storage`, mount the
+volume at that path instead:
+
+```sh
+I="$(docker inspect -f '{{.Image}}' qdrant)" &&
+docker rename qdrant qdrant-old &&
+docker stop qdrant-old &&
+docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v "qdrant_storage_$S:/qdrant/storage" --restart unless-stopped "$I"
+```
+
+**5. Restore every collection, then the aliases,** once the new container
+answers. **It stops at the first upload that fails** and prints
+`RESTORE FAILED` with that collection: the collections after it in the list
+were NOT tried, and no alias was restored. Fix the cause and paste this block
+again for the rest — it uploads every collection again, which replaces the ones
+already restored with the same snapshot; step 6 shows what is still missing:
+
+```sh
+until curl -sf "${H[@]}" "$Q/collections" >/dev/null; do sleep 1; done &&
+f=0 &&
+while IFS= read -r c; do
+  curl -sf "${H[@]}" -X POST "$Q/collections/$c/snapshots/upload?priority=snapshot" -F "snapshot=@$B/$c.snapshot" >/dev/null ||
+    { echo "RESTORE FAILED: $c — the collections after it were NOT tried; fix the cause and paste this block again"; f=1; break; }
+done < "$B/collections.txt" &&
+[ "$f" = 0 ] &&
+jq -c '{actions: [.result.aliases[] | {create_alias: {collection_name, alias_name}}]}' "$B/aliases.json" > "$B/alias-actions.json" &&
+{ [ "$(jq '.actions | length' "$B/alias-actions.json")" = 0 ] ||
+  curl -sf "${H[@]}" -X POST "$Q/collections/aliases" -H 'Content-Type: application/json' --data-binary "@$B/alias-actions.json" >/dev/null ||
+  echo "ALIAS RESTORE FAILED"; }
+```
+
+**6. Check.** Go on only if this prints BOTH `ALL COLLECTIONS RESTORED` and
+`ALL ALIASES RESTORED`, and compare the `points_count` of each collection
+(`curl -s "${H[@]}" "$Q/collections/<name>"`) with the old one's if you noted
+them. If the old container refused a request made without its API key, this
+first makes one such request to the new one; if that is answered it prints
+`API KEY LOST` and neither success line — the key, from its environment or a
+mounted config file, did not reach the new container:
+
+```sh
+k=0; [ "$(cat "$B/nokey-status.txt" 2>/dev/null)" = 200 ] || [ "$(curl -s -o /dev/null -w '%{http_code}' "$Q/collections")" != 200 ] || { echo "API KEY LOST: the new container answers without the API key the old one required"; k=1; }
+[ "$k" = 0 ] && [ -f "$B/collections.txt" ] && curl -sf "${H[@]}" "$Q/collections" | jq -r '.result.collections[].name' | sort > "$B/restored.txt" &&
+sort "$B/collections.txt" | diff - "$B/restored.txt" && echo "ALL COLLECTIONS RESTORED"
+[ "$k" = 0 ] && curl -sf "${H[@]}" "$Q/aliases" | jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' > "$B/aliases-restored.json" &&
+jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' "$B/aliases.json" | diff - "$B/aliases-restored.json" && echo "ALL ALIASES RESTORED"
+```
+
+Only then remove the old container (`docker rm qdrant-old`, if it is still
+there) — until step 6 passes it is your way back — and keep `$B` until you are
+sure. Run the adoption's `claude mcp add` line for Qdrant, if it was skipped.
+
+**If a step fails.** Nothing is lost before step 4: the old container still
+runs with its data. In step 4, if `docker run` fails, the snapshots in `$B`
+are intact: fix what it reports and run that line again, or bring the old one
+back with `docker rename qdrant-old qdrant` and `docker start qdrant` — which
+restores the data only if it lived on a volume or in the container itself, not
+if it was in memory or the container was started with `--rm`. In step 5, a
+failed upload stops the loop: the uploads before it stay in place, the
+collections after it were not tried — fix the cause and paste step 5 again for
+the rest, and step 6 shows what is still missing. In step 6, `API KEY LOST`
+means the new container was created without the key: remove the NEW one
+(`docker rm -f qdrant` — the old one is still `qdrant-old`), paste step 4's
+last line again with the key's `-e` setting or its config file's `-v` added,
+then steps 5 and 6. A collection name with characters that are not safe in a URL needs
+percent-encoding in these URLs.
+
+There is deliberately **no file-copy route for the data**: copying
+`/qdrant/storage` by hand misses whatever is mounted under it (a tmpfs at
+`/qdrant/storage/collections` comes back empty), and `docker cp` reads nothing
+from a tmpfs. The snapshot goes through the server, which sees all of it.
+Step 3's `docker cp` copies only snapshot files you keep yourself, never the
+storage.
 
 ## Where it lands: phase 0, always
 
@@ -961,15 +1383,50 @@ the ledger are real; the *automatic* part is not.
 This section started as the list of what was designed and not built; all of
 it now ships, and each subsection says so in its heading.
 
-Two gaps have no owning package yet:
+One gap has no owning package: **a file of yours sitting where a framework
+*script* goes is left alone**, so the framework's version of that script is not
+installed; the run names it.
 
-- **The Development Guardrails for Claude Code are not installed.** `init.sh`
-  clones and runs that companion framework (`~/.claude-dev-framework`) for a new
-  project, which is where its Claude Code rules and hooks come from; adoption
-  never runs it. Ruled in on 2026-09-18 (`## BL-296:`, row 33) and not yet
-  designed.
-- **A file of yours sitting where a framework *script* goes is left alone**, so
-  the framework's version of that script is not installed; the run names it.
+### The Development Guardrails for Claude Code — SHIP (`## BL-296:`)
+
+When `~/.claude-dev-framework` holds a clone, adoption runs **the same
+installer a new project runs**. It writes the rules and hooks into
+`.claude/framework/`, merges its hooks into `.claude/settings.json`, and records
+its version in `.claude/manifest.json`. All of it is part of the adoption commit.
+Adoption runs it without a terminal, so it never asks a question. The profile
+comes from the installer's own detection over your project's files; when it
+recognises nothing (a plain Python, Go, Rust or shell project), adoption uses
+`web-api`, the fallback a new project gets, says so, and prints the command
+that changes it. The platform itself is decided in the assessment. It runs before the adoption stamp is written, because the installer
+replaces `.claude/manifest.json`, and the stamp is then merged into its file.
+Measured:
+
+```text
+══ The Development Guardrails for Claude Code
+   Installed the Guardrails (version 4.3.1, profile web-api) —
+   the same installer a new project runs. Its rules and hooks are in .claude/framework/.
+```
+
+Three differences from a new project, on purpose:
+
+- **No clone.** Adoption never fetches the Guardrails over the network. Without a
+  clone it says **NOT INSTALLED** and prints the two commands that install them
+  afterwards, and the Adoption Record says so.
+- **No update.** It installs the version on disk, and the Record names it.
+- **An existing install is left alone.** A project that already has
+  `.claude/framework/` keeps its own.
+- **Your `settings.json` keeps its hooks.** The installer replaces the `hooks`
+  in `.claude/settings.json` with its own. Adoption puts yours back, ahead of
+  the installer's, and stops if it cannot. If the file is not plain JSON, or is
+  a symlink, it is restored exactly as it was, and the run and the Adoption
+  Record say the Guardrails' hooks are **not registered**.
+- **A symlinked `.claude` is not installed into**, because the installer would
+  write through the link to wherever it points. The run says NOT INSTALLED.
+
+The installer's own backup directory (`.claude-backup/<timestamp>/`) is
+removed, as `init.sh` removes it: the adoption archive already holds every
+original. A `.claude-backup` of yours is not touched. If the installer fails,
+the adoption stops in the pre-write rehearsal, before anything is written.
 
 ### The assessment — Act 3 and Act 4 — SHIPS (WP12a)
 
@@ -1373,11 +1830,15 @@ adopted one now gets the same one, from the same code
 - **The four vendored skills** — `session-handoff`, `sweep-triage`, `zoom-out`,
   `grill-with-docs` — in `.claude/skills/`. A copy of yours at one of those
   names is archived and replaced; any other skill of yours is untouched.
-- **The Qdrant MCP declaration**, only where `init.sh` would write one (a
-  registered Qdrant server, or a running container with `uvx`):
+- **The Qdrant MCP declaration**, only when Qdrant is registered for the
+  Claude Code session (read where `CLAUDE_CONFIG_DIR` puts it —
+  [The memory and documentation servers](#the-memory-and-documentation-servers)):
   `.claude/settings.local.json` with this project's collection — machine-local
   and not committed, as in a new project — and the requirement recorded in
-  `.claude/manifest.json`, which is.
+  `.claude/manifest.json`, which is. `init.sh` also writes it for a running
+  container with `uvx`, because it registers the server first; adoption offers
+  that registration in its own step, so a running container alone no longer
+  declares a server the session does not have (`## BL-311:`).
 
 ### The CI carve-out — SHIPS (WP7)
 

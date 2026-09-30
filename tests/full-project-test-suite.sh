@@ -921,6 +921,17 @@ run_child_suite "tests/test-brownfield-wp12c-production-exemption.sh" \
 run_child_suite "tests/test-brownfield-wp9c-session-layer.sh" \
   "WP9c: the Claude Code session layer an adopted project receives" \
   "WP9c session-layer tests FAILED (run tests/test-brownfield-wp9c-session-layer.sh for details)"
+run_child_suite "tests/test-bl296-adopt-guardrails.sh" \
+  "BL-296 row 33: the Development Guardrails on the adoption path" \
+  "BL-296 adoption-Guardrails tests FAILED (run tests/test-bl296-adopt-guardrails.sh for details)"
+# BL-311 fixes 1 and 9: adoption offers the Qdrant and Context7 MCP servers the
+# session is checked for; every MCP reader honours CLAUDE_CONFIG_DIR.
+run_child_suite "tests/test-bl311-adopt-mcp.sh" \
+  "BL-311: the MCP servers on the adoption path, and CLAUDE_CONFIG_DIR" \
+  "BL-311 adoption-MCP tests FAILED (run tests/test-bl311-adopt-mcp.sh for details)"
+run_child_suite "tests/test-bl311-mcp-add-order.sh" \
+  "BL-311: every tracked claude mcp add puts the server name before -e" \
+  "BL-311 mcp-add order tests FAILED (run tests/test-bl311-mcp-add-order.sh for details)"
 # BL-284: two verify-install.sh auto-fixers that could never run — has_context()
 # was unsatisfiable on an adopted project, and fix_superpowers ran a CLI verb
 # that does not exist.
@@ -958,6 +969,12 @@ run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
 run_child_suite "tests/test-bl281-resume-after-115.sh" \
   "BL-281: --resume after a clean Section 11.5 must run Sections 12 and 13" \
   "BL-281 resume-after-115 tests FAILED (run tests/test-bl281-resume-after-115.sh for details)"
+run_child_suite "tests/test-upgrade-help-and-projectless.sh" \
+  "#419/#426/BL-177: upgrade-project.sh --help wins over every mode and a projectless run writes nothing" \
+  "upgrade help/projectless tests FAILED (run tests/test-upgrade-help-and-projectless.sh for details)"
+run_child_suite "tests/test-bug010-intake-silent-paths.sh" \
+  "BUG-010: the intake wizard refuses an unreadable progress file, stops at end of input, and never completes over a failed render" \
+  "BUG-010 intake silent-path tests FAILED (run tests/test-bug010-intake-silent-paths.sh for details)"
 # BL-286: the TDD gate's branch axis resolves its base from the project's
 # recorded integration branch, so it stops exempting every commit on a
 # non-`main` trunk — and an absent key still behaves byte-identically.
@@ -985,12 +1002,12 @@ run_child_suite "tests/test-bl287-reconfigure-ci-host.sh" \
 run_child_suite "tests/test-bl288-scout-shallow-history-claim.sh" \
   "BL-288: a shallow clone must not be reported as a full-history secrets scan" \
   "BL-288 shallow-history-claim tests FAILED (run tests/test-bl288-scout-shallow-history-claim.sh for details)"
-# BL-311: every GitHub CI template guards its toolchain on the language
+# BL-313: every GitHub CI template guards its toolchain on the language
 # manifest, so a Phase 0/1 project's first pull request is green; the secret
 # scan and governance steps stay unconditional.
-run_child_suite "tests/test-bl311-ci-before-manifest.sh" \
-  "BL-311: generated GitHub CI is green before the manifest exists and unweakened after" \
-  "BL-311 ci-before-manifest tests FAILED (run tests/test-bl311-ci-before-manifest.sh for details)"
+run_child_suite "tests/test-bl313-ci-before-manifest.sh" \
+  "BL-313: generated GitHub CI is green before the manifest exists and unweakened after" \
+  "BL-313 ci-before-manifest tests FAILED (run tests/test-bl313-ci-before-manifest.sh for details)"
 # BL-278: the pending-approval sentinel is read from the repo the commit
 # targets, not only from the session's project directory.
 run_child_suite "tests/test-bl278-sentinel-root.sh" \

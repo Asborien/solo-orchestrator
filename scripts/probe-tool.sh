@@ -98,15 +98,29 @@ _probe_http() {
   _probe_bounded "$PROBE_TIMEOUT" curl -sS -o /dev/null --max-time "$PROBE_TIMEOUT" "$url" >/dev/null 2>&1
 }
 
+# _probe_cfg_files — the two user config files THIS Claude Code session reads,
+# one per line, settings.json first. `## BL-311:` — they move with
+# CLAUDE_CONFIG_DIR, and reading `~/.claude.json` regardless is how this probe
+# reported `[OK]` for two servers a clean-config session did not have. The
+# location rule has one owner, helpers-core.sh; without it this cannot know
+# where to look, which is "cannot confirm", never "not configured".
+_probe_cfg_files() {
+  command -v soif_claude_json_path >/dev/null 2>&1 || return 2
+  printf '%s\n%s\n' "$(soif_claude_settings_path)" "$(soif_claude_json_path)"   # BL-311-PROBE-CONFIG
+}
+
 # _mcp_entry <jq-filter> — the first match across the two config files Claude
 # uses. Presence only; this decides CONFIGURED, never WORKING.
 _mcp_entry() {
-  local filter="$1" f
+  local filter="$1" f files=""
   command -v jq >/dev/null 2>&1 || return 1
-  for f in "$HOME/.claude/settings.json" "$HOME/.claude.json"; do
+  files="$(_probe_cfg_files)" || return 2
+  while IFS= read -r f; do
     [ -f "$f" ] || continue
     jq -e "$filter" "$f" >/dev/null 2>&1 && { jq -r "$filter" "$f" 2>/dev/null; return 0; }
-  done
+  done <<EOF
+$files
+EOF
   return 1
 }
 
@@ -152,7 +166,7 @@ _uv_cached_version() {
 _plugin_entry() {
   local id="$1" reg rows path ver
   command -v jq >/dev/null 2>&1 || return 1
-  reg="$HOME/.claude/plugins/installed_plugins.json"                 # BL-235-PROBE-PLUGIN-REGISTRY
+  reg="$(soif_claude_config_dir)/plugins/installed_plugins.json"      # BL-235-PROBE-PLUGIN-REGISTRY
   [ -f "$reg" ] || return 1
   # Both registry shapes: entries under `.plugins[<id>]`, and older files that
   # carry the id at the top level.
@@ -182,7 +196,7 @@ probe_qdrant() {
     return 2
   fi
   is_qdrant_mcp_entry_present || {
-    _probe_note "qdrant: no mcpServers entry in ~/.claude/settings.json or ~/.claude.json"
+    _probe_note "qdrant: not registered for this Claude Code — no mcpServers entry in $(soif_claude_json_path) or $(soif_claude_settings_path)"
     return 1
   }
   body="$(mktemp)" || { _probe_note "qdrant: no writable temp directory — cannot confirm"; return 2; }
@@ -224,7 +238,11 @@ probe_qdrant() {
 }
 
 probe_context7() {
-  local want_version="$1" entry url cmd pver rc=0
+  local want_version="$1" entry="" url cmd pver rc=0
+  if ! _probe_cfg_files >/dev/null; then
+    _probe_note "context7: scripts/lib/helpers-core.sh is unavailable, so this session's Claude Code config files cannot be located — cannot confirm"
+    return 2
+  fi
   entry="$(_mcp_entry '.mcpServers.context7 // .mcpServers["context7-mcp"] // empty')" || entry=""
   if [ -n "$entry" ]; then
     # THE TRANSPORT THE ENTRY DECLARES, NOT THE ONE THIS PROBE ASSUMED.
@@ -259,7 +277,7 @@ probe_context7() {
   local pid
   pid="$(_mcp_entry '.enabledPlugins | to_entries[] | select(.key | test("^context7"; "i")) | select(.value == true) | .key')" || pid=""
   if [ -z "$pid" ]; then
-    _probe_note "context7: no mcpServers entry and no enabled plugin"
+    _probe_note "context7: not registered for this Claude Code — no mcpServers entry and no enabled plugin in $(soif_claude_json_path) or $(soif_claude_settings_path)"
     return 1
   fi
   local row
@@ -272,10 +290,12 @@ probe_context7() {
 }
 
 probe_superpowers() {
-  local want_version="$1" id="superpowers@claude-plugins-official" enabled row rc=0
+  local want_version="$1" id="superpowers@claude-plugins-official" enabled row rc=0 sfile=""
   command -v jq >/dev/null 2>&1 || { _probe_note "superpowers: jq unavailable"; return 2; }
-  [ -f "$HOME/.claude/settings.json" ] || { _probe_note "superpowers: no ~/.claude/settings.json"; return 1; }
-  enabled="$(jq -r --arg id "$id" '.enabledPlugins[$id] // false' "$HOME/.claude/settings.json" 2>/dev/null)"
+  _probe_cfg_files >/dev/null || { _probe_note "superpowers: scripts/lib/helpers-core.sh is unavailable, so this session's Claude Code settings cannot be located — cannot confirm"; return 2; }
+  sfile="$(soif_claude_settings_path)"
+  [ -f "$sfile" ] || { _probe_note "superpowers: no $sfile"; return 1; }
+  enabled="$(jq -r --arg id "$id" '.enabledPlugins[$id] // false' "$sfile" 2>/dev/null)"
   [ "$enabled" = "true" ] || { _probe_note "superpowers: not enabled in settings.json"; return 1; }
 
   # ENABLED IS A DECLARATION; THE INSTALLED FILES ARE THE CAPABILITY. Derive the

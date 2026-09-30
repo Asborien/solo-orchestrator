@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # BL-311-MANIFEST-GUARD: a Phase 0/1 project has no solution or project
+      # BL-313-MANIFEST-GUARD: a Phase 0/1 project has no solution or project
       # file yet, and `dotnet restore` fails without one (MSB1003). Every step
       # that needs the manifest is guarded on it; this notice says what was
       # skipped. Once a .sln or .csproj exists every guard is true and nothing is

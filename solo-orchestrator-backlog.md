@@ -4380,7 +4380,16 @@ this repo's own agent-worktree flow until PR #304. 'Never a bypass' was wrong.
 **Logged:** 2026-07-24 (BL-174 WP-D adversarial verifier)
 **Category:** Upgrade-path safety / framework-repo hygiene
 **Severity:** Medium
-**Status:** Open
+**Status:** Closed — 2026-09-27, commit `bde8b9d`: the prescribed structural guard is at the top of
+`_run_idempotent_backfill` (`# BL-177-BACKFILL-GUARD` — no project root, or a root with neither
+`.claude/phase-state.json` nor `.claude/manifest.json`, writes nothing), and the project-root check now
+runs right after argument parsing (`# BL-177-HELP-FIRST`), so `--backfill-only` outside a project is
+refused before any write. The empty-root `cd` was a version split: a silent no-op in bash 3.2 (the leak
+below) and "null directory" rc 1 in bash 5 (issue #419). `tests/test-upgrade-help-and-projectless.sh`
+P1–P5. Not done: `guard_not_in_framework` on the `--backfill-only` entry — the project check now stops a
+framework checkout first, because it carries no `.claude/phase-state.json`.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 `scripts/upgrade-project.sh`'s `_run_idempotent_backfill` runs its whole body inside a subshell that opens with `( cd "$PROJECT_ROOT" …`. `find_project_root` keys on `.claude/phase-state.json`; when that marker is absent — the framework repo itself, or any non-project cwd — `PROJECT_ROOT` is the empty string and **`cd ""` is a SILENT rc-0 no-op under `set -euo pipefail` on bash 3.2** (empty operand → success, cwd unchanged), so the subshell proceeds in the INVOCATION directory rather than a project root. Nothing downstream re-checks that we are in a real project.
 
@@ -13594,7 +13603,12 @@ read stdin and does not exit before it.
 
 ## BL-242: Brownfield adoption is HALF BUILT and has never had a backlog entry — seven capabilities unbuilt, and the feature's shape is now decided (D1-D8)
 
-**Status:** Open
+**Status:** Closed — 2026-09-27: every designed work package shipped, the last of them in PRs #441–#451,
+and the Development Guardrails install (BL-296 row 33) in PR #455 (merge `f7ff2f5`); `docs/adoption.md`'s
+"What is not built yet" now lists every package as shipped. **The residuals this entry recorded are NOT
+closed with it** — they move to `## BL-310:`, which lists each one and points back to its section here.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 **Filed 2026-08-23 at Karl's direction.** The feature has been able to adopt an
 existing codebase since **PR #337 merged on 2026-08-09**; the last of the
@@ -15393,6 +15407,13 @@ literals in wp4/wp7/wp12b.
 **Residuals:** the `docs/reference/*` list is still spelled in adopt-docs.sh rather than derived from
 init.sh's `cp` lines (§10-WP9c(1)'s shared parser); the four skill paths are spelled again in the
 archive's disposition arm; BL-296 row 33 (the Development Guardrails install) remains unowned.
+
+### Karl's ruling on hook managers (2026-09-25) — adoption REPLACES them, it does not chain them
+
+Asked repeatedly since WP7/3 (§7.1): an adoptee's Python `pre-commit` or lefthook is archived and
+REPLACED by the framework's fallback hook, not chained to run beside it. The recommendation was to
+chain. **Karl chose to keep replacing ("Go with B").** The archive keeps the original with a restore
+line and `--re-add` puts it back; nothing further is owed. Do not re-raise it as an open question.
 
 ## BL-248: `adopt_evidence_deploy_lane` reads rung 4's evidence without consulting `.satisfied`, so a project with NO deploy lane is told "Points to: built out"
 
@@ -18011,7 +18032,16 @@ a hoist is not taken).
 
 **Status:** Open — **DECIDED 2026-09-17 (Karl): option 3 below, the entry's own recommendation.** The
 contributor who filed this (also issue #385, which proposed scanning `tool_input`) is invited to build it;
-adversarial review before merge, as every PR. Not built yet. *(Before 2026-09-17: ENTRY-ONLY BY DECISION
+adversarial review before merge, as every PR. Not built yet; the build is PR #454, changes requested.
+**RULED 2026-09-27 (Karl), on PR #454's review: files the agent WRITES must still be scanned.** The PR's
+Bash-only PostToolUse matcher was justified as removing the Read half, but Read output was never
+scanned (Read's text sits at `toolUseResult.file.content`); a top-level `content` is a Write, both
+`type: create` and `type: update` (measured over local transcripts 2026-09-27: Read `text` 35 rows,
+keys `file` only; Write `create` 47, `update` 5, each with `content`), so Bash-only dropped model-authored files. The matcher must be `Bash|Write`, with
+Write rows recorded as authored (`actor: "claude"`, sentinel raised). Requested alongside it: the
+false-positive close becomes operator-only, and its pointer comes out of the deny text relayed to the
+model — after option 3 every sentinel comes from model-authored text, so a model-run false-positive
+close could only relabel a real proposal. *(Before 2026-09-17: ENTRY-ONLY BY DECISION
 (2026-09-13); three options set out below with a recommendation, none built.)* Consequence for adoption:
 ADOPT-002-ARCH v2.2 makes shipping `.claude/settings.json` to adoptees depend on this landing, so no
 adoptee imports the day-one sentinel. Choosing among them is a judgement about this
@@ -18957,7 +18987,11 @@ one entry by a shared defect class — the precedent for this entry's shape), `#
 
 ## BL-265: `intake-wizard.sh` names a jq KEYWORD as a function parameter, so the intake appendix's Project Context table renders with zero rows on every jq since 1.5
 
-**Status:** Open — fix + suite committed on branch `fix/bl265` at `8f2eecb`. Not pushed, no PR.
+**Status:** Closed — 2026-09-27: the `render_intake_file || true` residual is closed in `eed252b` (`# BL-265-RENDER-STATUS`: every step checked, file replaced only whole, a failed final render stops the run); `tests/test-bug010-intake-silent-paths.sh` R1–R5.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the rename half landed on `main` via PR #412** (`141eef5`); `tests/test-bl265-jq-reserved-label.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — `render_intake_file || true` is unchanged at all three call sites on `main`, so jq's exit status is still not checked (the second half of `## BUG-010:` defect (3)'s prescribed fix).
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl265` at `8f2eecb`. Not pushed, no PR.
 
 **THIS IS THE FIX FOR `## BUG-010:` DEFECT (3), WHICH THE MAINTAINER FILED ON 2026-09-01.** He
 diagnosed it, named `label` as the reserved keyword, and prescribed the same one-word rename — down to
@@ -19129,7 +19163,11 @@ branch, so on a branch carrying only this entry those citations would resolve to
 
 ## BL-266: typing `pause` files the UNFINISHED intake section under `completed_sections`, and `--resume` then skips it permanently — with no message either way
 
-**Status:** Open — fix + suite committed on branch `fix/bl266` at `b3b781f`. Not pushed, no PR.
+**Status:** Closed — 2026-09-27: its last residual, BUG-010 defect (1), is fixed in `eed252b` (`# BUG-010-LOAD-REFUSE`: `load_progress` refuses an unusable progress file by name); the `115` residual was closed by BL-281. `tests/test-bug010-intake-silent-paths.sh` L cases.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the pause fix landed on `main` via PR #412** (`41c7bc2`, then `2fa9887` dropping the resume-point block); `tests/test-bl266-paused-section-marked-complete.sh` 10 passed / 0 failed, rc 0, on `c3f3d9e`. The first residual below (the `115` arithmetic without a pause) is fixed by `## BL-281:` (`eb15bc0`, same PR). **Still open: the second residual** — `load_progress()` still subscripts `data['project_name']` etc. with no `.get` on `main` (`## BUG-010:` defect (1)).
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl266` at `b3b781f`. Not pushed, no PR.
 
 **Logged:** 2026-09-12, reproduced live while filling in a downstream adoption's intake.
 
@@ -19297,7 +19335,11 @@ on a branch carrying only this entry those citations would resolve to nothing.)*
 
 ## BL-267: the wizard's own `?` help key is recorded as the answer at 81 of its prompts, because only one of the two prompt helpers handles it
 
-**Status:** Open — fix + suite committed on branch `fix/bl267` at `1989933`. Not pushed, no PR.
+**Status:** Closed — 2026-09-27: the `prompt_choice` `?` message (`# BL-267-CHOICE-HELP`) and the end-of-input loop in `prompt_choice` and `prompt_with_suggestions` (BUG-010 defect (2), `# BUG-010-EOF`) are fixed in `eed252b`; `tests/test-bug010-intake-silent-paths.sh` E1–E6.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the `prompt_input` fix landed on `main` via PR #412** (`78f20b9`, suite hardened by `ee7a9f4` and `51ee606`); `tests/test-bl267-bare-question-mark.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — on `main`, `prompt_choice` still answers `?` with "Invalid choice", and neither `prompt_choice` nor `prompt_with_suggestions` checks `read`'s exit status (the EOF hang, `## BUG-010:` defect (2)).
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl267` at `1989933`. Not pushed, no PR.
 
 **Logged:** 2026-09-12, observed on `one_time_budget` and `users_12mo` in a downstream adoption's
 `.claude/intake-progress.json`, both stored as the literal string `?`.
@@ -19841,7 +19883,9 @@ that makes a verification result load-bearing).
 
 ## BL-281: `intake-wizard.sh --resume` after a CLEAN finish of Section 11.5 runs nothing, prints "Intake Complete!", and never runs Sections 12 and 13 — the resume point is `115 + 1`
 
-**Status:** Open — fix + suite built on branch `fix/bl281`, not yet checked in, not pushed, no PR. The
+**Status:** Closed — 2026-09-26 reconciliation: fixed on main via PR #412 (`eb15bc0`, suite `6b15a92`); `tests/test-bl281-resume-after-115.sh` 19 passed / 0 failed, rc 0, on `c3f3d9e`. The items under "Left to the maintainer" are unchanged: the interactive resume path is not driven end to end, an unknown `last_section` restarts from the top rather than refusing, and `## BUG-010:` defect (1) is still open there.
+
+**Original status (pre-close, kept for audit trail):** Open — fix + suite built on branch `fix/bl281`, not yet checked in, not pushed, no PR. The
 operator verifies and submits.
 
 **Logged:** 2026-09-14, from a downstream adoption's intake: the operator finished Section 11.5 cleanly,
@@ -19975,7 +20019,9 @@ each lands on its own branch.
 **Renumbered BL-261 → BL-286 on merge (2026-09-15):** BL-261 was taken on `main` before this landed;
 the marker, the test file and both registrations were renamed to match.
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/bl286`, NOT yet submitted.
+**Status:** Open — 2026-09-26 reconciliation: **the reader half landed on `main` via PR #412** (`e6be06e`, suite `f6c240d`, review hardening `f6ebc86`); `tests/test-bl286-integration-branch.sh` 17 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the keyless case** ("What this does NOT fix" below) — on `main` nothing writes `integration_branch` (`scripts/pre-commit-gate.sh` is the only file under `init.sh`, `scripts/` and `templates/` that names it), so a wrong-trunk project with no key is still exempted.
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — reproduction + fix BUILT on branch `fix/bl286`, NOT yet submitted.
 `# BL-286-INTEGRATION-BRANCH`: `_tdd_triggers` reads the project's own integration branch from
 `integration_branch` in the project manifest and resolves the branch axis against that, falling back to
 today's literal `main` when the key is absent. Suite `tests/test-bl286-integration-branch.sh` **15 / 0**
@@ -20275,7 +20321,9 @@ script's documented CLI surface and its implemented CLI surface disagreed).
 **Renumbered BL-262 → BL-287 on merge (2026-09-15):** BL-262 was taken on `main` before this landed;
 the markers, the test file and both registrations were renamed to match.
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/reconfigure-ci-host`, NOT yet submitted.
+**Status:** Open — 2026-09-26 reconciliation: **the CI half landed on `main` via PR #412** (`37fa9e7`, renumbered by `15caa8a`); `tests/test-bl287-reconfigure-ci-host.sh` 14 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the release-arm residual below** — both `release_src` sites in `scripts/reconfigure-project.sh` on `main` still build `templates/pipelines/release/<platform>.yml` with no host segment; and the refuse-vs-infer question for an absent host is still undecided.
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — reproduction + fix BUILT on branch `fix/reconfigure-ci-host`, NOT yet submitted.
 `# BL-287-RECONFIG-CI-HOST`: the `language` arm resolves the recorded host from the project manifest,
 reads the template from `templates/pipelines/ci/<host>/<lang>.yml`, and takes the destination from the
 shared resolver (`# BL-229-HOST-PIPELINE-PATHS`) rather than minting a fourth copy of the mapping. An
@@ -21005,7 +21053,9 @@ same file).
 
 ## BL-280: the Phase 2→3 bug gate treats an unmeasured GitHub as zero bugs — an absent SEV label, and a repo `gh` cannot even resolve, both read as "no bugs" and clear the gate
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/bl280`, NOT yet submitted.
+**Status:** Open — 2026-09-26 reconciliation: **both unmeasured-source arms landed on `main` via PR #412** (`b4c20a5`, suite `7dd6657`, review hardening `f6ebc86`); `tests/test-bl280-bug-gate-unmeasured-source.sh` 21 passed / 0 failed, rc 0, on `c3f3d9e`. **Stays Open for what is not filed anywhere else:** the `--limit 1000` cap still understates a larger open-issue count, and the two maintainer judgements under "What this entry does NOT decide" — block vs warn on an unmeasured source, and plumbing `bug_tracker` (written by init.sh and the wizard, read by nothing) — are undecided.
+
+**Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — reproduction + fix BUILT on branch `fix/bl280`, NOT yet submitted.
 `# BL-280-SEV-LABEL-PROBE` distinguishes "this label does not exist" from "zero open issues"
 with one bounded `gh api repos/{owner}/{repo}/labels/<name>` per label; `# BL-280-NO-SEV-VOCAB`
 stops `gh auth status` alone from establishing a bug-tracking SOURCE; `# BL-280-PARTIAL-VOCAB`
@@ -21636,9 +21686,16 @@ pessimistic "had already ATTEMPTED writes" sentence over a provably clean tree (
 
 ## BL-296: the Development Guardrails (CDF) install is an `init.sh` effect adoption never performs — and greenfield registers the Solo hook roster only inside the CDF-success branch
 
-**Status:** Open — **DECIDED 2026-09-18 (Karl): YES, an adoptee receives the Development Guardrails
-install, on the same terms a scaffolded project does.** The question this entry was filed to ask is
-answered; the DESIGN is not written and the code is not built, so the entry stays Open for both.
+**Status:** Closed — 2026-09-26, PR #455 (merge `f7ff2f5`). Both halves shipped: the roster half
+(PR #441, merge `f790e09`) and the adoption install, row 33 (PR #455, built on Karl's 2026-09-25 "Option A";
+blocks below). Upstream companion: kraulerson/claude-dev-framework#8 (`init.sh --help` no longer
+installs), open for Karl. Residual carried: the PR lane has no CDF clone, so the real installer is
+exercised only where a host has one (G6).
+
+**Original status (pre-close, kept for audit trail):** Open — **DECIDED 2026-09-18 (Karl): YES, an
+adoptee receives the Development Guardrails install, on the same terms a scaffolded project does.**
+The question this entry was filed to ask is answered; the DESIGN is not written and the code is not
+built, so the entry stays Open for both.
 
 **What the ruling settles, and what it leaves to the design.** Settled: an adopted project is not a
 second class of project — it gets what `init.sh` gives a scaffolded one. Left open, and WP9c's to
@@ -21668,13 +21725,59 @@ hook, and the condition under which the Solo roster (`track-tool-usage.sh`, `byp
 `session-*-check.sh`, …) is registered at all come from `~/.claude-dev-framework/scripts/init.sh`,
 which adoption never runs. Rows 18–21 of the design's install-parity table (`docs/reference/*`,
 `.claude/settings.json`, `.claude/settings.local.json`, vendored skills) were UNOWNED at `579b0b0`
-and are WP9c's since v2.2; row 33 (this) stays UNOWNED.
+and are WP9c's since v2.2; row 33 (this) stayed UNOWNED until 2026-09-25 (superseded: closed 2026-09-26, PR #455).
 
 **Related:** `## BL-242:` (§8.7a), `## BL-284:` (`verify-install.sh`'s CDF-adjacent fixers),
 `## BL-277:` (the roster's PostToolUse arm — WP9c ships it only after that entry closes).
 
+**ADOPTION HALF BUILT 2026-09-25 (Karl's go-ahead, "Option A"): the Guardrails are installed on the
+adoption path.** `scripts/lib/adopt/adopt-guardrails.sh` — `adopt_guardrails_resolve`
+(`# BL-296-ADOPT-RESOLVE`, before any write) and the `guardrails` write stage (`# BL-296-ADOPT-STAGE`,
+ordered by `# BL-296-ADOPT-ORDER` BEFORE `manifest`, because the installer writes
+`.claude/manifest.json` with `>` and would otherwise erase the adoption stamp). It runs the same
+`~/.claude-dev-framework/scripts/init.sh` init.sh runs, with `--prepopulate` and
+`--skip-plugin-check`, stdin from /dev/null (every installer prompt is `[ -t 0 ]`-guarded) and no
+`--profile` (the installer detects one; the platform is the assessment's). A failure blocks in the
+rehearsal (`# BL-296-ADOPT-RECEIPT`); the installer's own `.claude-backup/<ts>` is removed, an
+operator's is not; every file it writes is recorded for the adoption commit; the Adoption Record
+names the outcome (`# BL-296-ADOPT-RECORD`). **Three deliberate differences from init.sh:** no
+network clone (the PR lane has none, and adoption does not reach the network unasked — without a
+clone it prints the two commands and records "not installed"); no `git pull`; an existing
+`.claude/framework/` is left alone. Measured on a real adoption with the real clone: version 4.3.1,
+profile web-api, 36 files committed, manifest carrying both the installer's keys and the stamp.
+Pinned by `tests/test-bl296-adopt-guardrails.sh` (G1–G6, a stub installer so the lane is hermetic;
+G6 runs the real one where present), seven mutants killed.
+**Found while researching:** the Guardrails' `scripts/init.sh` has NO `--help` — any invocation
+installs into the current directory (it ran inside this repo on 2026-09-25; nothing tracked changed,
+three untracked directories were deleted). The upstream fix belongs in kraulerson/claude-dev-framework.
+**Found by the full adoption sweep with the real clone installed (61/63 before these fixes):**
+(1) the `manifest` stage's merge arm never wrote `remote_url`, and once the installer runs a manifest
+always exists, so every real adoption took that arm and lost init.sh's key (`test-bl253` P1e) — now
+kept or seeded `""` (`# BL-296-ADOPT-REMOTE-URL`); (2) `test-bl225-staging-preflight.sh` T10 found
+no writer in `adopt-guardrails.sh`. **Residual, recorded not fixed:** the stage's main write is a
+SUBPROCESS (the installer), which no line-level recipe can see; T10 now sees the file through its
+`rm -rf "$root` / `rmdir "$root` backup cleanup, and T9's per-function marker check covers those
+lines. The installer's own writes are pinned behaviourally instead (G1–G4, and the recorded-files
+mutant). The PR lane has no clone, so there both suites take the `absent` arm and were never red.
+**Review round (2026-09-26, one adversarial pass, verdict block — all reachable findings fixed):**
+R-296-1, the installer's `detect-profile.sh` exits 1 without a TTY on a project it cannot classify,
+so every Python/Go/Rust/shell adoption was refused on a host with the clone — adoption now always
+passes `--profile` (detected, else init.sh's `web-api` fallback, said; `# BL-296-ADOPT-PROFILE`).
+R-296-2, the installer's `. + {hooks: $h}` REPLACED the operator's settings.json hooks and overwrote a
+non-JSON file, after which the session layer printed "nothing of yours was removed" — adoption now
+snapshots the file, composes the operator's hooks back ahead of the installer's with a receipt, or
+restores a non-composable/symlinked file byte for byte and says the hooks are not registered
+(`# BL-296-ADOPT-SETTINGS`, `# BL-296-ADOPT-SETTINGS-RECEIPT`). R-296-3, the stub appended where the
+real installer replaces, which hid R-2 — the stub now copies the real merge and profile detection,
+and G7–G10 pin the four cases (all four RED before the fix; the receipt kills a compose-identity
+mutant). R-296-4, pre-existing operator files under `.claude/project` were claimed as installer
+writes and tripped I20 — only files the installer created or changed are recorded. Found while
+fixing: a symlinked `.claude` would take the installer's writes outside the project — not installed,
+said (`# BL-296-ADOPT-LINKED`). **Residual:** the PR lane has no clone, so the real installer runs
+only on a host that has one (G6); the stub is the lane's model of it and must track upstream.
+
 **HALF LANDED 2026-09-22 (WP9c/1) — the ROSTER half only. The entry stays Open for the CDF
-install, which is row 33 and is still UNOWNED.** `init.sh`'s `fi` closing `if [ "$framework_valid" =
+install, which is row 33 and was then still UNOWNED (superseded: closed 2026-09-26, PR #455).** `init.sh`'s `fi` closing `if [ "$framework_valid" =
 true ]` moved UP, above the hooks-merge block, which now carries
 `# BL-296-ROSTER-UNCONDITIONAL`. Every hook in that block runs a script from the project's own
 `scripts/`; none of them belongs to the Development Guardrails, and
@@ -21973,9 +22076,212 @@ for the 4.0 trap: **assign at the declaration**, applied to code you are already
 
 ---
 
-## BL-311: the generated GitHub CI is red on every pull request before Phase 2 — `actions/setup-node` with `cache: 'npm'` fails "Dependencies lock file is not found" on a tree that has no `package.json` yet, and every language template has the same shape
+## BL-309: twenty-four absence assertions in eight suites grep for `integer expression`, which bash 5.3 reworded, so where the script under test runs under 5.3 they cannot fail
 
-**Status:** Open — reproduction + fix BUILT on branch `fix/bl307-ci-before-lockfile`, NOT yet submitted.
+**Status:** Open — entry only, the sweep asked for on #419 ("the 'assertion that cannot fail'
+shape is worth the wider sweep you suggested; file it as a follow-up entry rather than folding it
+in"). No fix is on this branch. A pending fix for #420 covering the three sites in
+`tests/test-bl233-wpb-accumulation.sh` touches no other site.
+
+**The three counts, at `19d27e3`:** 27 assertion sites in 9 files in total; 24 absence sites in
+8 suites cannot fail today where the script under test runs under 5.3 (the title's figure);
+22 in 7 suites will still be unable to fail once the pending three-site fix for #420 lands.
+
+**Found:** 2026-09-17 in #420, in one suite. Swept 2026-09-22 over `tests/` at `d95520f`; the
+same sweep on 2026-09-23 at `32832a3` and on 2026-09-26 at `19d27e3` returns identical results.
+
+**The shape.** A test captures the output of the script under test and asserts that a shell
+diagnostic is ABSENT by grepping for one wording of it. `[: X: integer expression expected` is
+the wording of bash 3.2 through 5.2; bash 5.3 prints `[: X: integer expected`. Wherever the bash
+that runs the script under test is 5.3, the diagnostic the script emits never matches the string
+the test looks for, and the absence assertion passes whether or not the leak happened. Most suites
+run their script under whatever `bash` is first on `PATH` (`#!/usr/bin/env bash`, or a bare `bash`
+invocation). One does not: `tests/test-test-gate-counter-sanitizer.sh` runs its subject as
+`PATH="/usr/bin:/bin" bash "$SCRIPT"` in `run_gate()`, so its three sites follow the system bash, which
+on macOS is `/bin/bash` 3.2.57 even when the caller's `PATH` bash is Homebrew 5.3.
+#420 demonstrated it on one site: with the sanitiser removed from `scripts/validate.sh`,
+`tests/test-validate-counter-sanitizer.sh` T2 reported "stderr clean" over a stderr that read
+`[: 0: integer expected`. Measured on 2026-09-22, `[ "$a" -le 20260922 ]` with `a=ZZZZZZZZZZ`:
+
+| bash | wording |
+|---|---|
+| 3.2.57, macOS `/bin/bash` | `integer expression expected` |
+| 5.2.21, `ubuntu:24.04` (the bash of `ubuntu-latest`, currently 24.04) | `integer expression expected` |
+| 5.3.15, Homebrew | `integer expected` |
+
+**Method.** Two scans, each line read at its site. First, the derived command from #420,
+`grep -rn "integer expression expected" tests/ | grep -E 'grep|if \['`: 41 lines in 8 files.
+Each line was sorted into an assertion site (a grep whose result decides pass or fail) or a
+`fail_` message that merely repeats the string (15 lines, not sites). The plain grep finds one
+more file, `tests/test-brownfield-wp2-scout-sections.sh`, whose hit is the comment on `_num()`. The derived
+command keys on the full phrase, so it misses a grep for part of it. Second, the broader scan,
+`grep -rn -i integer tests/` filtered to lines holding `grep`, `[[`, `case` or `=~`: one further
+assertion site, `tests/test-intake-wizard-fixes.sh` (T-bl203-session-check-null-safe), whose
+conjunct `! printf '%s' "$OUT" | grep -q 'integer expression'` targets the same diagnostic from a
+script run under bare `bash`. The other lines it returns are `fail_` and `pass` messages, an
+`echo` and a comment. Both scans give the same lines at `d95520f`, `32832a3` and `19d27e3`. Sites were then split by
+direction, absence (the test wants the diagnostic gone) or presence (the test wants a mutant to
+leak it), and checked for a wording-independent arm in their alternation. Whether any site already
+matches both wordings: `grep -rF 'integer( expression)? expected' tests/` and a search for the
+bare `integer expected` return nothing. With the pending fix for #420 merged onto `19d27e3`
+(a `git merge-tree` of the two, which merges cleanly and changes only
+`tests/test-bl233-wpb-accumulation.sh` under `tests/`), the derived command returns 39 lines: the
+fix moves that suite's three sites to a pattern matching both wordings, and adds one line,
+`_sid_old`, a self-check of its own pattern against the old wording, which is not an assertion
+site. After the three-site fix, that leaves 24 sites in 8 files, 22 of which cannot fail where the
+script under test runs under 5.3 (19 on a Mac whose `PATH` bash is 5.3).
+
+**Count: 27 assertion sites in 9 files.**
+
+| Suite | Sites | Direction | Where the script under test runs under bash 5.3 |
+|---|---|---|---|
+| `tests/test-init-schema-phase-gate.sh` | 8 (T1, T2, T3a to T3e, T4) | absence | cannot fail |
+| `tests/test-validate-counter-sanitizer.sh` | 4 (T2 to T5) | absence | cannot fail (T2 is the #420 demonstration) |
+| `tests/test-test-gate-null-handling.sh` | 4 (T1 to T4) | absence; T1 and T4 also match `unbound variable` | the integer arm cannot fail |
+| `tests/test-test-gate-counter-sanitizer.sh` | 3 (T1, T4, T5) | absence | cannot fail; the suite pins `PATH="/usr/bin:/bin"`, so only where the system bash is 5.3 |
+| `tests/test-check-phase-gate-counter-sanitizer.sh` | 1 (T7) | absence | cannot fail |
+| `tests/test-bl281-resume-after-115.sh` | 1 (C3 control, one conjunct of the pass condition) | absence | that conjunct cannot fail |
+| `tests/test-intake-wizard-fixes.sh` | 1 (T-bl203-session-check-null-safe, one conjunct; greps `integer expression`) | absence | that conjunct cannot fail |
+| `tests/test-bl233-wpb-accumulation.sh` | 3 (N6 and the M23 control arm; the M23 mutant arm) | 2 absence, 1 presence | the two absence arms cannot fail; the presence arm is the red in #420 |
+| `tests/known-bugs-test-suite.sh` | 2 (bug7, bug7b) | absence | immune: the alternation's `line [0-9]+: \[: ` arm matches both wordings |
+
+So 26 absence sites, of which 2 are immune and 24, in 8 suites, cannot fail where the script
+under test runs under 5.3, plus 1 presence site that goes red there. On a Mac whose `PATH` bash is
+5.3, that is 21 sites in 7 suites, because the three in `tests/test-test-gate-counter-sanitizer.sh`
+still run under `/bin/bash` 3.2.57. Zero sites match the 5.3 wording. Once the pending
+three-site fix for #420 lands, 22 vacuous sites in 7 files remain (19 on such a Mac). Not measured here: a per-site kill on a 5.3
+host beyond the one #420 ran; the count is by reading, the wording table is by execution.
+
+**Why CI does not see it.** The unit lane runs on `ubuntu-latest`, currently 24.04, whose bash is
+5.2.21. 16 of the 24 sites run in that PR-blocking lane and still discriminate there. The other 8
+are in `tests/test-init-schema-phase-gate.sh`, which has no unit-lane row and runs only in the
+full lane (manual `workflow_dispatch`), so they run on no pull request, on any bash. A Mac with
+Homebrew bash 5.3 first on `PATH` sees M23 red and 21 sites in 7 suites green regardless of what
+the scripts print; the three in `tests/test-test-gate-counter-sanitizer.sh` still go red on a leak.
+The day `ubuntu-latest` is repointed at an image that ships 5.3, the 16 stop discriminating on CI
+too, silently; only M23 will announce it.
+
+**Proposed follow-up (not built; the shape is yours to decide).** One change over the eight
+suites (seven once the pending fix for #420 lands): match both wordings with `integer( expression)? expected`
+(under `grep -E`), a superset of the current pattern, so every absence assertion strengthens and
+the M23 presence arm goes green on 5.3. A `grep -q` site in BRE needs `-E`, and where its
+alternation is written `\|` (null-handling T1 and T4, `expected\|unbound variable`) adding `-E`
+means rewriting `\|` as `|`, or the `unbound variable` arm silently stops matching; staying in
+BRE, the pattern is `integer\( expression\)\{0,1\} expected`. The proof per site is #420's: with the
+script under test running under 5.3, remove the sanitiser the site guards and see the site go RED, with the same run on
+3.2.57 as the control. A lint refusing the bare wording under `tests/` would keep the shape from
+returning, if you want one; until then the broader scan above is the check, since the derived
+command misses partial-phrase greps. A wider class is not covered by this sweep: any other
+absence assertion that quotes a shell diagnostic verbatim (`unbound variable`, `cd: null
+directory` from #419's table, `command not found`) has the same exposure to a rewording, and a
+second pass over quoted `line [0-9]+:` diagnostics would find them.
+
+**Related:** `## BL-233:` (owner of N6 and M23), #420 (the one-suite instance and the
+demonstration), #419 (where the follow-up was asked for), the pending fix for #420 (the three sites in
+`tests/test-bl233-wpb-accumulation.sh`, not yet opened).
+
+---
+
+## BL-310: brownfield adoption's residuals, carried from `## BL-242:` when that entry closed
+
+**Status:** Open — a tracking entry. Each line below was recorded inside `## BL-242:` as found and not
+fixed; closing that entry would otherwise have dropped all of them off the what's-open list. **Verify
+each against `main` before working it** — they were recorded at different commits, and a later package
+may have closed one without saying so here.
+
+**Filed:** 2026-09-27, when BL-242 closed (all designed packages shipped, PR #455 the last).
+
+| # | Residual | Where in `## BL-242:` |
+|---|---|---|
+| 1 | `resolve-tools.sh` files a documentation URL in the `auto_install` bucket, and `init.sh` executes that bucket (the shared resolver's defect) | "BL-242 residual — `resolve-tools.sh` files a documentation URL…" |
+| 2 | the Linux gitleaks recipe adoption offers is an unpinned, unverified root install; CI pins the same artefact by version and checksum | "A SECOND RESIDUAL, FOUND AT THE SAME REVIEW…" |
+| 3 | `# BL-242-RESOLVER-NO-EXEC` tells the operator to "run adoption again", which `# BL-242-PREFLIGHT-ARM1` refuses | its own residual heading |
+| 4 | adoption follows a symlink out of the project and overwrites its target — partly guarded since (22 `-L` / `adopt_path_under_link` sites in `scripts/lib/adopt/` on 2026-09-27), but `adopt_write_file` itself is still `cat >` | "BL-242 residual — adoption follows a SYMLINK…" |
+| 5 | init parity: thirteen `init.sh` effects adoption does not perform and nothing designs (the §8.7a table) | "THE INIT-PARITY RESIDUAL" |
+| 6 | a file of the operator's where a framework *script* goes is left alone, so that script is not installed (named by the run) | `docs/adoption.md`, "What is not built yet" |
+| 7 | the `# BL-242-SECRETS-RESCAN` guard is still correct but no longer observable in the persisted artefact | "Residual carried here from WP10b/2 (PR #437)" |
+| 8 | the no-fingerprint guard refuses ALL-missing fingerprints, not SOME-missing | "Residual — the no-fingerprint guard covers ALL-missing…" |
+| 9 | WP11: the `@sh`-quoted restore line is unpinned; I20's planned-path matching is spelling-dependent | "Residuals from WP11's pre-PR review" |
+| 10 | eight suites still carry the `"test":"npm test"` fixture that hangs a shard once one commits a source file after adoption | "RESIDUAL — the other eight still carry it" |
+| 11 | the `--finish` / commit-hook review list: MANIFEST still says `replaced` after an edited hook is refused; three guard lines unkilled; root `-w` on a `chmod 444` hook; no time bound on the adoptee's test command; a red suite blocks every source commit from day one; `soif_write_precommit_hook` returns `chmod`'s status; hook order against §10 | "RESIDUALS from these reviews, recorded not fixed" |
+| 12 | the real Guardrails installer runs only where a host has the clone; the PR lane exercises it through a stub | `## BL-296:` (closed), its review-round block |
+
+Hook managers (item 11's pre-commit/lefthook line) are **not** a residual: Karl ruled 2026-09-25 that
+adoption replaces them (`## BL-242:`, "Karl's ruling on hook managers").
+
+---
+
+## BL-311: brownfield dogfood run 1 (k-pdf, 2026-09-27) — nine things a regular user should never hit
+
+**Status:** Open — Karl approved fixing every row (2026-09-28), then a FULL CLEAN RERUN. Each row closes
+by its own PR; the entry closes when the rerun passes.
+
+**What ran.** A fresh Claude Code session (Sonnet, a clean `CLAUDE_CONFIG_DIR`) played a systems
+technician with one to two years of experience — not a developer — installing Solo Orchestrator from
+the public README and adopting a private copy of k-pdf (Python/uv, 240 commits, scaffolded by an OLDER
+Solo and carrying the Guardrails 4.3.0, no `phase-state.json`). It reached the end of Stage 2 (adopted,
+commit `ec5c7b5`) with 14 findings. **Evidence** (outside the repo, untracked):
+`~/dogfood-evidence-2026-09-27/` — the findings file, the full transcript, a git bundle holding the
+adoption commit, the worktree diff, and the `.claude` tree including Scout's report.
+
+| # | What the user hit | Root cause | Fix | Run findings |
+|---|---|---|---|---|
+| 1 | After adopting, EVERY file write in the session was blocked until a Qdrant call succeeded — impossible, no Qdrant tool in the session | Adoption never checks for, or offers to set up, the Qdrant and Context7 MCP servers the session gate requires (`init.sh` provisions Qdrant); the MCP helpers read `$HOME/.claude.json` by fixed path, so adoption saw a registration the session did not have and wrote `mcp.qdrant_required`; a mid-session adoption leaves `.claude/tool-usage.json` absent until a restart | Adoption checks Docker, the Qdrant container, and the Qdrant and Context7 MCP registrations, offers to set up what is missing, honours `CLAUDE_CONFIG_DIR`, lists them in `docs/adoption.md`, and ends by telling the operator to start a new Claude Code session | 8, 12 |
+| 2 | Adoption refused: "this project already looks framework-managed" | Preflight reads any `.claude/manifest.json` as a possible earlier adoption; a Guardrails-only `.claude/` (a `frameworkVersion` manifest, no Solo keys, no `phase-state.json`) is a known, adoptable shape | Recognise it and adopt; the Guardrails stage already has its "already installed" arm | 5, 6 |
+| 3 | The agent relaying a gate's own documented escape was flagged as a bypass proposal (a pending approval, default "decline") | The bypass detector cannot tell a relayed framework escape from an invented workaround | Exempt text quoting a framework gate's own escape hint; same class as `## BL-277:` | 13 |
+| 4 | Scout reported the tests failing (exit 127) on a suite that passes 1071/0 | The test command ignores the detected package manager: bare `pytest` in a uv project | Prefix the runner (`uv run`, and the poetry/pipenv equivalents) | 4 |
+| 5 | "your ignore rules refuse 24 of the files" — the cause took reading `.gitignore` to find | The refusal is right but does not name the rule (`lib/` matching `scripts/lib/`) | Name the ignoring rule, file and line (`git check-ignore -v`), and the one-line fix | 7 |
+| 6 | Claude Code's auto mode refused the framework's first script ("Code from External"), then refused the agent's attempt to change permissions | Undocumented | An "allow the framework's scripts" step, with the settings snippet, before the first command | 1, 2 |
+| 7 | README and the adoption guide give different clone locations | Two instructions | One path, stated the same way in both | Stage 0 log |
+| 8 | Adoption set `track: full` (enterprise) for a free offline hobby app | The track defaults silently | Derive it from the answers, or ask | 9 |
+| 9 | `check-versions.sh` said Qdrant and Context7 were OK while neither was in the session | It checks installation, not registration | Check the registration the session reads | 14 |
+
+**For the Development Guardrails (CDF), not fixed here:** `enforce-superpowers` blocks source-extension
+writes outside the project (run findings 3, 10); `enforce-evaluate` blocks a read-only `&&`-chained git
+inspection as "a commit" (11); the settings carry `Write(...)` deny rules current Claude Code ignores
+beside their `Edit(...)` twins (startup warnings).
+
+**Test-design lesson, for the rerun:** a clean `CLAUDE_CONFIG_DIR` also drops the user's MCP servers,
+so Stage 0 must register them the way the CLI Setup Addendum says.
+
+**Group A residuals (round 15, not fixed).** Measured by the round-15 review (real Docker 29.8.1,
+Qdrant 1.17.1); recorded, not fixed:
+- **R-BL311-10** — a container on `--network container:<id>` reads as loopback, and adoption prints
+  nothing about it. An improbable shape for a Qdrant container.
+- **R-BL311-11** — `-P` together with an explicit `127.0.0.1` binding on every exposed port is
+  reported as open. It errs on the cautious side; the defect is the wording.
+- **R-BL311-12** — Qdrant 1.17.1 enforces an EMPTY `QDRANT__SERVICE__API_KEY=` (a request with no
+  key gets 401, one with an empty `api-key` header 200), and a container with only a read-only key
+  reads as "no key". The warning points the right way; its wording is inaccurate.
+
+## BL-312: an opt-in "TL;DR mode" for the person the agent works for — greenfield and brownfield
+
+**Status:** Open — **DECIDED 2026-09-28 (Karl).** Build after `## BL-311:`'s nine fixes and BEFORE the
+clean dogfood rerun, so the technician persona tests it.
+
+**What it is.** The reply format Karl works with, offered to every project's user as a choice, because
+it is most useful to a non-developer: every reply the agent gives ends with exactly one plain-English
+TL;DR, self-contained (restated in full every time, never "as above"), carrying eight parts —
+
+1. what happened; 2. what it means for them; 3. next steps; 4. what is waiting on them; 5. the options;
+6. pros and cons for each option; 7. a recommendation with its reasoning; 8. what happens if they do
+nothing — plus every command they must run, in a fenced block, never named in prose.
+
+**Decided shape.**
+- **Enforced, not advised:** a Stop hook checks each reply for the TL;DR and its parts and asks the agent
+  to add what is missing — instruction-only formats drift over a long session.
+- **Chosen once, changeable:** one plain question in the greenfield intake and in adoption;
+  `reconfigure-project.sh` switches it afterwards.
+- **Layered on `docs/messaging-standard.md`**, which already requires a five-part plain-English half for
+  every *summary*. TL;DR mode extends that to every reply and adds parts 3, 4 and 6 and the command rule.
+
+**Open for the design:** where the choice is recorded (a manifest or phase-state key the hook and
+`CLAUDE.md` both read); the hook's check (which parts it can verify mechanically, and how it avoids
+re-prompting forever on a reply it cannot parse); and how it coexists with the Guardrails' own Stop hooks.
+
+## BL-313: the generated GitHub CI is red on every pull request before Phase 2 — `actions/setup-node` with `cache: 'npm'` fails "Dependencies lock file is not found" on a tree that has no `package.json` yet, and every language template has the same shape
+
+**Status:** Open — reproduction and fix in the pull request that files this entry.
 
 **Found:** 2026-09-22, on the first pull requests of an organisational project born from `init.sh` at
 `f8841de` — the intake, the manifesto, the pre-Phase-0 precondition rows. Every one carried a red
@@ -22021,7 +22327,7 @@ behind `setup-java` `cache: 'gradle'` (which hashes `**/*.gradle*` for its key),
   `**/gradle-wrapper.properties`, `buildSrc/**/Versions.kt`, `buildSrc/**/Dependencies.kt`,
   `gradle/*.versions.toml`, `**/versions.properties`.
 
-**Fix (`# BL-311-MANIFEST-GUARD`, one per template).** The template's own idiom, already on its
+**Fix (`# BL-313-MANIFEST-GUARD`, one per template).** The template's own idiom, already on its
 three governance steps since `## BL-147:`: every step that needs the manifest carries
 `if: hashFiles('<manifests>') != ''`, and one new step immediately after checkout, guarded `== ''`,
 reads `current_phase` from `.claude/phase-state.json` and then either FAILS (`::error::`, exit 1)
@@ -22055,7 +22361,7 @@ it is a step-context function and a job-level `if:` cannot see the tree. Why gua
 rather than drop `cache:`: the `package-manager-cache` default above, and no toolchain is worth
 installing on a tree with nothing to build.
 
-**Suite:** `tests/test-bl311-ci-before-manifest.sh`. T0 — the template list is derived once
+**Suite:** `tests/test-bl313-ci-before-manifest.sh`. T0 — the template list is derived once
 (`template_list`) and must be in bijection with a nine-row census, so a new language template
 without a census row fails and nothing can be added unguarded. T1 — exactly one `::notice::` skip
 step per template. T2 — every toolchain step guarded on the census manifest (62). T3 — checkout,

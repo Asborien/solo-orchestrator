@@ -22,6 +22,12 @@
 #   L8  a settings.json the framework cannot compose into (not JSON; a string
 #       `permissions`; an array `hooks`) is left alone and said — never forced
 set -uo pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSED=0; FAILED=0; SKIPPED=0
@@ -47,7 +53,9 @@ _base() {   # _base DIR — a small TypeScript project with its own history
 _commit() { ( cd "$1" && git add -- "${@:2}" && git commit -q --no-verify -m "chore: their history" ) >/dev/null 2>&1; }
 _adopt() {  # _adopt DIR TAG [ENV=VAL]
   local p="$1" tag="$2"; shift 2
-  ( cd "$p" && printf '1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n' | env "$@" bash "$REPO_ROOT/scripts/adopt-project.sh" ) > "$WORK/$tag.out" 2>&1
+  # No Guardrails clone: this suite is about the session layer alone, and a
+  # host that has one would otherwise add its hooks to the roster L2 compares.
+  ( cd "$p" && printf '1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n' | env SOIF_ADOPT_GUARDRAILS_DIR="$WORK/no-guardrails" "$@" bash "$REPO_ROOT/scripts/adopt-project.sh" ) > "$WORK/$tag.out" 2>&1
   RUN_RC=$?
 }
 _pairs() {  # _pairs FILE — (event, script) pairs, sorted

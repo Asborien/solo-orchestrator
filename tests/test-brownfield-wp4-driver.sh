@@ -52,6 +52,12 @@
 # executes outside the fixture is scripts/scout.sh, which is read-only by
 # construction (its own suite hashes a whole tree before and after).
 set -o pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -380,11 +386,11 @@ s1_first_sites=$(_sites "$L_STATE" 'BL-242-APPROVAL-LOG-FIRST')
 # updated rather than loosened — a prefix match would stop discriminating the
 # next time a stage is added in the middle, which is the one place it would
 # matter.
-if [ "$s1_order" = "approval_log phase_state intake dispositions manifest framework_docs ci session_layer assessment_prompt adoption_record write_set " ] \
+if [ "$s1_order" = "approval_log phase_state intake dispositions guardrails manifest framework_docs ci session_layer assessment_prompt adoption_record write_set " ] \
    && [ "$s1_sites" -eq 1 ] && [ "$s1_first_sites" -eq 1 ]; then
-  pass "S1: the order is A4's log first, then §8.4's, then WP12b's framework_docs, WP7/1's adoption_record and WP9d's write_set last — approval_log, phase_state, intake, dispositions, manifest, framework_docs, ci, session_layer, assessment_prompt, adoption_record, write_set"
+  pass "S1: the order is A4's log first, then §8.4's, then WP12b's framework_docs, WP7/1's adoption_record and WP9d's write_set last — approval_log, phase_state, intake, dispositions, guardrails, manifest, framework_docs, ci, session_layer, assessment_prompt, adoption_record, write_set"
 else
-  fail_ "S1" "order=[$s1_order] (want 'approval_log phase_state intake dispositions manifest framework_docs ci session_layer assessment_prompt adoption_record write_set ') order-sites=$s1_sites (want 1) first-sites=$s1_first_sites (want 1)"
+  fail_ "S1" "order=[$s1_order] (want 'approval_log phase_state intake dispositions guardrails manifest framework_docs ci session_layer assessment_prompt adoption_record write_set ') order-sites=$s1_sites (want 1) first-sites=$s1_first_sites (want 1)"
 fi
 
 # _assert_safe_row LABEL DIR — §8.4's TOP row: phase-state present, manifest
