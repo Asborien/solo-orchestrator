@@ -21,8 +21,16 @@
 # config is shipped, C4 and C5 that the scanner is live over the shipped docs
 # and over the installer, templates/ and the evaluation prompts, and R1
 # that the registration lint keeps this suite in the PR-blocking unit lane.
-# A1/A2 pin the gitleaks-absent posture by re-running this file without it.
+# A1/A2 pin the gitleaks-absent posture by re-running this file without it,
+# and E1 that a gitleaks config exported by the caller cannot replace the
+# default rules.
 set -euo pipefail
+# gitleaks reads a config from the environment before falling back to its
+# default rules (`gitleaks --help`: --config, then GITLEAKS_CONFIG, then
+# GITLEAKS_CONFIG_TOML, then <target>/.gitleaks.toml). CI sets neither, so a
+# developer's own config would grade this suite on rules no generated project
+# runs. E1 pins this line.
+unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -259,6 +267,25 @@ if [ -z "${BL308_POSTURE_CHILD:-}" ]; then
     pass "R1: with its tests.yml row removed, lint-tests-registered.sh fails naming this suite (rc 1, not-in-unit-lane)"
   else
     fail_ "R1" "rc=$rc; this suite's row: $(grep 'test-bl308-gitleaks-vendored-clean' "$R/list.txt" | tr '\n' ';') — the lint does not protect the unit-lane row"
+  fi
+fi
+
+# ── E1: a gitleaks config exported by the caller cannot change the rules ──
+# Re-runs the scans as a child with BOTH variables set to a config that turns
+# off the two rules the controls plant for. Only the unset at the top keeps
+# C1, C2, C4 and C5 finding their plants. Both are set because GITLEAKS_CONFIG
+# outranks GITLEAKS_CONFIG_TOML: unsetting either alone leaves the other in
+# force. The child takes the posture child's guard, so it does not recurse.
+if [ "$HAVE_GITLEAKS" -eq 1 ] && [ -z "${BL308_POSTURE_CHILD:-}" ]; then
+  E="$(newtmp)"
+  printf '[extend]\nuseDefault = true\ndisabledRules = ["aws-access-token", "generic-api-key"]\n' > "$E/off.toml"
+  rc=0
+  env GITLEAKS_CONFIG="$E/off.toml" GITLEAKS_CONFIG_TOML="$(cat "$E/off.toml")" BL308_POSTURE_CHILD=1 \
+    "$BASH" "$SCRIPT_DIR/${0##*/}" > "$E/e1.txt" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ] && grep -q '^  \[PASS\] C1:' "$E/e1.txt" && ! grep -q '^  \[FAIL\]' "$E/e1.txt"; then
+    pass "E1: with GITLEAKS_CONFIG and GITLEAKS_CONFIG_TOML exported to turn the planted rules off, every scan still runs the default rules (rc 0)"
+  else
+    fail_ "E1" "rc=$rc (want 0, C1 passing, no [FAIL]) — an exported gitleaks config replaced the default rules: $(grep '^  \[FAIL\]' "$E/e1.txt" | cut -c1-160 | tr '\n' ';')"
   fi
 fi
 

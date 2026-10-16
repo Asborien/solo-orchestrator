@@ -11,6 +11,13 @@
 # full lane only. P1/P2 pin the scan; A1/A2 pin the gitleaks-absent posture
 # by re-running this file without gitleaks, which exits before init.sh runs.
 set -euo pipefail
+# gitleaks reads a config from the environment before falling back to its
+# default rules (`gitleaks --help`: --config, then GITLEAKS_CONFIG, then
+# GITLEAKS_CONFIG_TOML, then <target>/.gitleaks.toml). CI sets neither, so a
+# developer's own config would grade P2 on rules the generated ci.yml does
+# not run. The unit sibling's E1 pins the same line there; nothing pins it
+# here, because a child re-run would run the installer a second time.
+unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
