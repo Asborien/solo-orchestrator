@@ -48,8 +48,8 @@ carrying these eight parts in order:
 Every command they must run goes in a fenced code block opened with ``` (not ~~~), never named
 only in prose. Never write "terminal" or "shell", or any word that contains either (PowerShell,
 shellcheck, nutshell), anywhere in the TL;DR outside those blocks; say "the command line" instead.
-The bypass detector reads either word after "run", "do" or "execute" on one line as a proposed
-workaround, inside other words too, and it skips only ``` blocks. The TL;DR is additive:
+The bypass detector reads either word after "run", "do" or "execute" and a word such as "in" or
+"from" on one line as a proposed workaround, and it skips only ``` blocks. The TL;DR is additive:
 the technical account above it stays in full, and `docs/reference/messaging-standard.md` still
 governs its words. A Stop hook (`scripts/hooks/tldr-check.sh`) sends a reply back, once a turn, when
 it has no TL;DR outside a code block. To turn it off: `bash scripts/reconfigure-project.sh --tldr-mode off`.
