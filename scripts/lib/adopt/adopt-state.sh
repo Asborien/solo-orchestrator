@@ -60,7 +60,7 @@ _adopt_state_order() {
   # installer REPLACES .claude/manifest.json; the stamp stage then merges into it.
   printf '%s\n' phase_state intake dispositions guardrails manifest   # BL-242-DISPOSITIONS-ORDER # BL-296-ADOPT-ORDER # BF-ADOPT-STATE-ORDER
   # AFTER `manifest` AND NOT BEFORE IT. The Adoption Record names the commit
-  # this project was adopted at, and it takes that value from the stamp rather
+  # adoption started from, and it takes that value from the stamp rather
   # than from a second `git rev-parse HEAD` — one fact, one source. The stamp
   # is written by the `manifest` stage, so the record cannot precede it.
   # AFTER `manifest` so the documents are written under a stamped adoption, and
@@ -122,8 +122,9 @@ _adopt_halt_requested() {
 # overwrite. §1.2's measured problem with init.sh is unguarded overwrites, and
 # a driver that reproduced them would have earned nothing by being separate.
 #
-# The collision LIST is kept in memory and PRINTED by the stub, not staged into
-# the run's temp directory. An earlier cut wrote it to a file under $ADOPT_WORK,
+# The collision LIST is kept in memory and printed by adopt_install_framework
+# (each path it replaced, under "Installing the framework's own scripts"), not
+# staged into the run's temp directory. An earlier cut wrote it to a file under $ADOPT_WORK,
 # which the EXIT trap deletes — so the list evaporated unread and only the count
 # was ever used (R-WP4-4). A seam that disappears before anything can consume it
 # is not a seam; WP6 owns the durable archive and its MANIFEST, and until then
@@ -306,7 +307,10 @@ INSTALL_SET
     return 1
   fi
   adopt_write_orchestrator_source "$root" || return 1   # BL-242-ORCH-SOURCE
-  adopt_stub_framework_script_collisions "$n_collided" "$ADOPT_COLLISION_LIST"
+  # The NOT DONE notice that followed here (`adopt_stub_framework_script_collisions`)
+  # said every colliding script was "LEFT ALONE … yours, kept" — true before
+  # WP11's framework-wins, false since, and printed right under the lines above
+  # that name each one as replaced (`## BL-322:` S4, review R-S2-6).
   return 0
 }
 
@@ -793,6 +797,44 @@ _adopt_preflight_prior_archive() {
 # stays green. (A draft credited PM1b, which drops arm 3 to prove arm 1 stands
 # ALONE — a different property, and the mis-citation this file's own rule about
 # citing by marker exists to prevent.)
+#
+# ── `## BL-311:` row 2 — THE GUARDRAILS' OWN `.claude/` IS NOT EVIDENCE ─────
+# The Development Guardrails installer writes `.claude/manifest.json` too, so a
+# project that carries the Guardrails and was never under this framework was
+# refused here as "already framework-managed" (brownfield dogfood run 1, k-pdf,
+# Guardrails 4.3.0). That shape is known and adoptable: its manifest carries the
+# Guardrails' keys (`frameworkVersion`, `profile`, `activeRules`, `activeHooks`,
+# `projectConfig`, `discovery`, …) and none of this framework's, and
+# `.claude/framework/` beside it. Adoption keeps every one of those settings —
+# the `guardrails` stage takes its already-installed arm, the `manifest` stage
+# MERGES this framework's keys in (`adopt_jq_edit`), and the archive keeps the
+# file as it was (`# BL-311-MANIFEST-ARCHIVE`).
+#
+# A LIST OF OUR KEYS, NOT OF THEIRS. The Guardrails add top-level keys between
+# releases (`frameworkCommit`, `files`), so an allowlist of theirs would refuse
+# the next release; the keys this framework writes are ours to enumerate.
+# SYNC: every top-level key init.sh or adoption writes into the manifest must
+# be on it. tests/test-bl311-b-adopt-guardrails-track.sh derives both halves
+# (K1 from a real adoption, K2 from init.sh's writers) and drives every entry
+# through this preflight (R1). `tldr_mode` (`## BL-312:`) is written by both
+# init.sh's seed and `adopt_write_manifest`; tests/test-bl312-tldr-mode.sh G1/G2
+# pin that a Guardrails manifest carrying it is not Guardrails-only.
+ADOPT_SOLO_MANIFEST_KEYS='["host","mode","remote_url","deployment","poc_mode","enforcement_level","soloFrameworkCommit","currency","adoption","mcp","tldr_mode"]'   # BL-311-SOLO-KEYS
+
+# _adopt_guardrails_only ROOT — 0 iff `.claude/manifest.json` is the
+# Guardrails' own and nothing of this framework's. `.claude/phase-state.json` is
+# not tested here: the arm that calls this is reached only without one.
+_adopt_guardrails_only() {
+  local root="$1"
+  # The `guardrails` stage's own already-installed test (`# BL-296-ADOPT-RESOLVE`).
+  # Without it that stage would run the installer, which REPLACES this manifest
+  # with `>` — every setting of theirs gone from the live file.
+  [ -d "$root/.claude/framework/hooks" ] || return 1   # BL-311-GUARDRAILS-ONLY-FRAMEWORK
+  jq -e --argjson solo "$ADOPT_SOLO_MANIFEST_KEYS" \
+    '(.frameworkVersion | type == "string" and length > 0) and ((keys - $solo) == keys)' \
+    "$root/.claude/manifest.json" >/dev/null 2>&1   # BL-311-GUARDRAILS-ONLY
+}
+
 _adopt_preflight_managed() {
   local root="$1" found=""
   ( cd "$root" && soif_adoption_adopted ".claude/manifest.json" ) && return 0
@@ -801,10 +843,15 @@ _adopt_preflight_managed() {
   if [ -f "$root/.claude/phase-state.json" ]; then
     # DECISIVE. `init.sh` and this driver are its only writers, so its presence
     # on an unadopted tree means the project was scaffolded.
+    # `## BL-311:` row 2 — AND IT IS NOW THE ONLY ARM that refuses a
+    # Guardrails-only manifest sitting beside a phase-state: the arm below
+    # admits that manifest, so this one being first is what refuses the pair.
     found=".claude/phase-state.json is present"
-  elif [ -f "$root/.claude/manifest.json" ]; then
+  elif [ -f "$root/.claude/manifest.json" ] && ! _adopt_guardrails_only "$root"; then   # BL-311-GUARDRAILS-ONLY-ARM
     # STRONG EVIDENCE, NOT PROOF — so the message says what was found and names
-    # both explanations rather than asserting one.
+    # both explanations rather than asserting one. The one manifest that is
+    # NOT evidence is the Development Guardrails' own (`_adopt_guardrails_only`):
+    # it falls through to the third signal below like a tree with no manifest.
     found=".claude/manifest.json is present"
   else
     # ── THE THIRD SIGNAL, AND IT IS A MAJORITY, NOT A SINGLE FILE ──────────
@@ -1080,6 +1127,129 @@ adopt_ask_audience() {
   return 0
 }
 
+# ── `## BL-311:` row 8 — THE TRACK IS ASKED, NEVER DEFAULTED ────────────────
+# It was the constant "full" in both state files, so a free offline hobby app
+# was adopted onto the enterprise track (pen testing, legal review) without
+# being asked. It is asked now, straight after the tier question it depends on,
+# the way init.sh's `collect_project_info` asks it: the same three descriptions
+# and the same two rules. SYNC SIBLING of that prompt —
+# tests/test-bl311-b-adopt-guardrails-track.sh T2 reads the descriptions out of
+# init.sh and requires them here verbatim.
+#   Rule 1 — Full on a personal project is warned about and re-confirmed;
+#            declining asks the track again.
+#   Rule 2 — Light needs a Private POC. Adoption asks no POC question and lands
+#            every project as a production build (`# BL-253-POC-MODE`), so a
+#            Light answer is ALWAYS re-asked here, between Standard and Full.
+# Unlike init.sh's `[y/N]`, nothing here has a default: an empty answer or end
+# of input REFUSES, as every adoption question does (`adopt_ask_choice`).
+# FOUR READS, each refusing on its own (tests/test-bl311-b-adopt-guardrails-track.sh
+# T6 ends the input at every one): the track (`# BL-311-TRACK-ASK`), the Full
+# re-confirmation (`# BL-311-TRACK-CONFIRM-FULL`), the track again after
+# declining Full (`# BL-311-TRACK-ASK-AFTER-FULL`) and the Light re-ask
+# (`# BL-311-TRACK-ASK-LIGHT`). And both writers refuse a track that is not
+# exactly one of the three (`adopt_track_known`).
+# ONE VARIABLE, READ BY BOTH WRITERS — `adopt_write_phase_state` and
+# `adopt_render_intake_progress` — so the two files cannot disagree.
+ADOPT_TRACK=""   # BL-311-TRACK
+ADOPT_TRACK_LABEL="the project track"
+ADOPT_TRACK_CONFIRM_LABEL="whether to keep the Full track"
+
+adopt_ask_track() {
+  adopt_blank
+  adopt_say "Project tracks:"
+  adopt_note "Light    — Internal tools, prototypes, POCs. <10 users. Minimal governance."
+  adopt_note "Standard — External users, moderate complexity. Market audit, user testing."
+  adopt_note "Full     — Enterprise buyers, sensitive data. Pen testing, legal review mandatory."
+  adopt_ask_choice "$ADOPT_TRACK_LABEL" "Project track:" light standard full || return 1   # BL-311-TRACK-ASK
+  ADOPT_TRACK="$ADOPT_ANSWER"
+  if [ "$ADOPT_TRACK" = "full" ] && [ "$ADOPT_DEPLOYMENT" = "personal" ]; then   # BL-311-TRACK-RULE-FULL
+    adopt_note "Full track is designed for organizational projects with enterprise compliance."
+    adopt_note "For personal projects, Standard track provides external-user readiness without"
+    adopt_note "enterprise overhead (pen testing, legal review). You can upgrade later."
+    adopt_ask_choice "$ADOPT_TRACK_CONFIRM_LABEL" "Continue with Full track?" \
+      "choose a different track" "continue with Full track" || return 1   # BL-311-TRACK-CONFIRM-FULL
+    if [ "$ADOPT_ANSWER" = "choose a different track" ]; then
+      adopt_ask_choice "$ADOPT_TRACK_LABEL" "Project track:" light standard full || return 1   # BL-311-TRACK-ASK-AFTER-FULL
+      ADOPT_TRACK="$ADOPT_ANSWER"
+    fi
+  fi
+  if [ "$ADOPT_TRACK" = "light" ] && [ "$ADOPT_POC_MODE" != "private_poc" ]; then   # BL-311-TRACK-RULE-LIGHT
+    adopt_note "Production builds require Standard or Full track."
+    adopt_note "Light track skips market validation, user testing, and security hardening."
+    adopt_ask_choice "$ADOPT_TRACK_LABEL" "Select a track:" standard full || return 1   # BL-311-TRACK-ASK-LIGHT
+    ADOPT_TRACK="$ADOPT_ANSWER"
+  fi
+  adopt_note "Track: $ADOPT_TRACK"
+  return 0
+}
+
+# adopt_track_known FILE — 0 iff ADOPT_TRACK is exactly light, standard or
+# full; otherwise REFUSE, naming FILE as not written. Both writers of the track
+# call it first (`# BL-311-TRACK-GUARD-PS`, `# BL-311-TRACK-GUARD-IP`), so a
+# track the question did not settle is never recorded. Review round 1
+# (R-BL311B-3): `adopt_ask_track` reads FOUR times — the track, the Full
+# re-confirmation, the track again after declining Full, the Light re-ask — and
+# a read that fell through (`|| true` on the third) wrote `track: ""` with
+# every check green. This refuses any answer that is not one of the three,
+# which a read that falls through carries (empty, or the unoffered text); it
+# cannot see a read that falls through and leaves an earlier valid track in
+# place — T6's one case per read is what pins that.
+adopt_track_known() {
+  case "$ADOPT_TRACK" in light|standard|full) return 0 ;; esac   # BL-311-TRACK-KNOWN
+  adopt_refuse "the project track is '$ADOPT_TRACK', which is not light, standard or full — $1 was not written"
+  return 1
+}
+
+# ── `## BL-312:` TL;DR MODE — OPTIONAL, AND NO ANSWER MEANS NO ──────────────
+# Whether every reply the agent gives ends with one plain-English TL;DR (the
+# eight parts tldr-mode.sh's CLAUDE.md section lists). Opt-in by Karl's ruling:
+# end of input, or an empty answer, is NO — as the MCP step's skip is, and
+# unlike the tier and the track, which refuse. An answer that is not offered
+# still refuses, as everywhere.
+#
+# IT IS ASKED LAST — after the intake's confirmations, before the pre-write
+# preflight and every writer — AND THAT POSITION IS WHAT MAKES THE DEFAULT SAFE.
+# The adoption suites pipe fixed answer sequences, written before this question
+# existed. Most are exactly as long as the questions; some are padded with `1`s,
+# because the intake's confirmation count depends on what the environment has
+# installed (the CI audit moved ahead of the intake for that reason). Put any
+# earlier, this question would read an answer meant for a later one and shift
+# the rest. Last, an exact sequence reaches it at end of input (no), and a
+# padding `1` is the number offered for "no" — the safe answer is listed FIRST,
+# as the MCP step's skip is (`# BL-311-MCP-OFFER-ORDER`). So a stray answer can
+# never turn it on: tests/test-bl312-tldr-mode.sh A1 pins the `1`, AE the end
+# of input, AR the refusal.
+ADOPT_TLDR_MODE=false
+ADOPT_TLDR_NO="no"
+ADOPT_TLDR_YES="yes"
+
+adopt_ask_tldr_mode() {
+  local raw="" ans=""
+  ADOPT_TLDR_MODE=false
+  adopt_head "How the agent replies to you"
+  adopt_note "TL;DR mode ends every reply with one plain-English summary: what happened, what it"
+  adopt_note "means for you, next steps, what is waiting on you, your options with their pros and"
+  adopt_note "cons, a recommendation with its reasoning, and what happens if you do nothing."
+  adopt_note "You can switch it later: bash scripts/reconfigure-project.sh --tldr-mode on (or off)."
+  adopt_blank
+  adopt_offer_choice "$SOIF_TLDR_QUESTION (No answer means no.)" "$ADOPT_TLDR_NO" "$ADOPT_TLDR_YES"   # BL-312-ADOPT-TLDR-OFFER-ORDER
+  adopt_read_optional
+  raw="$ADOPT_ANSWER"
+  printf '\n'
+  if [ -z "$raw" ]; then   # BL-312-ADOPT-TLDR-EOF
+    adopt_note "No answer — TL;DR mode is off."
+  else
+    ans="$(adopt_resolve_choice "$raw" "$ADOPT_TLDR_NO" "$ADOPT_TLDR_YES")"   # BL-312-ADOPT-TLDR-RESOLVE-ORDER
+    if [ -z "$ans" ]; then
+      adopt_refuse "'$raw' is not one of the answers offered for: TL;DR mode"
+      return 1
+    fi
+    if [ "$ans" = "$ADOPT_TLDR_YES" ]; then ADOPT_TLDR_MODE=true; fi   # BL-312-ADOPT-TLDR-YES
+  fi
+  if [ "$ADOPT_TLDR_MODE" = true ]; then adopt_note "TL;DR mode: on"; else adopt_note "TL;DR mode: off"; fi
+  return 0
+}
+
 # THE LANDING IS A CONSTANT, AND IT IS SPELLED AS ONE (D10). Every adopted
 # project lands at phase 0 and stays there until the ordinary gates move it:
 # no scenario, no scanned rung, no floor, no arithmetic anywhere in any act.
@@ -1087,6 +1257,7 @@ adopt_ask_audience() {
 # exactly one thing to move and phase-state is the witness that it moved.
 adopt_write_phase_state() {
   local root="$1"
+  adopt_track_known ".claude/phase-state.json" || return 1   # BL-311-TRACK-GUARD-PS
   local adopt_landing=0   # BL-242-PHASE0-LANDING
   # NULL, NOT "" — init.sh's own idiom (`poc_json="null"` in create_project).
   # The readers forgive an empty string; the parity oracle in the BL-253 suite
@@ -1094,8 +1265,8 @@ adopt_write_phase_state() {
   local poc_json='null'   # BL-253-POC-NULL
   [ -n "$ADOPT_POC_MODE" ] && poc_json="\"$ADOPT_POC_MODE\""
   jq -n --arg p "$ADOPT_PROJECT_NAME" --arg d "$ADOPT_DEPLOYMENT" --argjson m "$poc_json" \
-        --argjson phase "$adopt_landing" \
-    '{project: $p, framework_version: "1.0", current_phase: $phase, track: "full",
+        --argjson phase "$adopt_landing" --arg t "$ADOPT_TRACK" \
+    '{project: $p, framework_version: "1.0", current_phase: $phase, track: $t,
       deployment: $d, poc_mode: $m, compliance_ready: false, review_gate_enforced: true,
       gates: {phase_0_to_1: null, phase_1_to_2: null, phase_2_to_3: null, phase_3_to_4: null}}' \
     | adopt_write_file "$root" ".claude/phase-state.json"
@@ -1106,6 +1277,10 @@ adopt_write_intake() {
   local root="$1" report="$2"
   adopt_render_intake_doc "$root" || return 1
   adopt_render_intake_progress "$root" || return 1
+  # `## BL-318:` G1 — the scan's test command, when the operator kept it, for
+  # the commit-time check. REPORT is the one the interview offered from. Here,
+  # inside the write phase, so the rehearsal plans it and I20 sees it.
+  adopt_write_test_command "$root" "$report" || return 1   # BL-318-TESTCMD-CALL
   # A7: the FILE, not the phase-1 merge. `init.sh` guarantees every scaffolded
   # project a process-state and an adoptee must have one too; the
   # classification that used to ride in with it is Act 4's now (§8.7a row 5).
@@ -1184,6 +1359,15 @@ adopt_write_manifest() {
       '{host: $h, mode: $m, remote_url: "", deployment: $d, poc_mode: $p, enforcement_level: "strict"}' \
       | adopt_write_file "$root" ".claude/manifest.json" || return 1
   fi
+  # `## BL-312:` `tldr_mode`, true or false, whichever arm ran above — as
+  # init.sh's seed writes it: the question's answer, or false at end of input.
+  # A SEPARATE edit, and before the stamp: the two arms above are pinned
+  # byte for byte by tests/test-bl221-tier-fail-closed.sh (W2 executes the
+  # merge filter) and tests/test-bl268-mode-vocabulary.sh (MP2/MP3 mutate their
+  # argument lines).
+  local tl="false"
+  [ "$ADOPT_TLDR_MODE" = true ] && tl="true"
+  adopt_jq_edit "$root" ".claude/manifest.json" '.tldr_mode = $tl' --argjson tl "$tl" || return 1   # BL-312-ADOPT-TLDR-MANIFEST
 
   sha="$(adopt_sha256 "$root/.claude/adoption/scout-report.json")"
   # REFUSE ON AN EMPTY HASH (R-WP4-3), and refuse HERE rather than hoping the
@@ -1803,6 +1987,16 @@ STATE_ORDER
   return 0
 }
 
+# THE IGNORE TEST IS SCOUT'S, AND THIS DRIVER ASKS IT (`## BL-322:` S3). The
+# decision and the naming of each rule (`## BL-311:` row 5) moved to
+# scripts/lib/scout/scout-ignore.sh, so Scout can report the block adoption
+# would meet before anyone answers a question, from the same code. Found beside
+# this file, so a mirror of scripts/lib (the suites' mutation proofs) sources
+# its own copy. A missing file refuses at the check (`# BL-322-S3-SHARED-LOADED`).
+_ADOPT_STATE_SCOUT_IGNORE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../scout" 2>/dev/null && pwd)/scout-ignore.sh"
+# shellcheck disable=SC1090
+[ -f "$_ADOPT_STATE_SCOUT_IGNORE" ] && . "$_ADOPT_STATE_SCOUT_IGNORE"   # BL-322-S3-SHARED
+
 # adopt_prewrite_preflight ROOT REPORT — refuse BEFORE the first write if any
 # path the adoption is about to write is refused by the adoptee's ignore rules.
 #
@@ -1821,8 +2015,9 @@ STATE_ORDER
 #
 # THE ORACLE IS NOT THE STAGING HALF'S. That half asks `git add --dry-run`,
 # which needs the files to EXIST; here they do not yet. What replaces it is TWO
-# questions, not one — see the block at the loop below, which carries the
-# measurement. An earlier version of this header claimed a single
+# questions, not one — see `scout_ignore_refused` in
+# scripts/lib/scout/scout-ignore.sh, which carries the measurement and which
+# Scout asks too (`## BL-322:` S3). An earlier version of this header claimed a single
 # `check-ignore --no-index` agreed with `git add` "in all eight" shapes; it does
 # not, and asking it alone over-refused working projects. The header is kept
 # short deliberately: one description of this oracle, in one place.
@@ -1964,43 +2159,29 @@ adopt_prewrite_preflight() {
     return 1
   fi
 
-  # THE ORACLE, AND WHY IT IS TWO QUESTIONS AND NOT ONE. `git add` refuses an
-  # ignored path — but for a path already TRACKED it refuses only when an
-  # ANCESTOR DIRECTORY is ignored, not when a file or glob rule covers it.
-  # Measured across four rule shapes on a tracked path (`git add` rc):
-  #     .claude/   -> 1     .claude/*  -> 0     *.json -> 0     exact path -> 0
-  # A first cut asked `check-ignore --no-index` for every path, which says
-  # IGNORED in all four and so REFUSED THREE PROJECTS THAT WORK TODAY — any
-  # adoptee that tracks a file the adoption rewrites and has a non-directory
-  # rule covering it. Two measurements of the same thing had been generalised
-  # from one rule shape each, in opposite directions; twelve shapes settled it.
-  # `--no-index` stays for the untracked half: without it git reports nothing
-  # for a tracked path, the index-aware false-clean that defeated the first fix
-  # of `# BL-225-STAGE-PREFLIGHT`.
+  # THE ORACLE is `scout_ignore_refused` (scripts/lib/scout/scout-ignore.sh,
+  # where its measurement now lives): two questions, not one — a TRACKED path is
+  # refused only when a folder above it is ignored — failing closed when git
+  # cannot answer. Scout asks the same function over the files it predicts, so
+  # the two cannot disagree about a rule (`## BL-322:` S3).
   #
-  # FAIL CLOSED. `check-ignore` exits 128 on a pathspec beyond a symbolic link,
-  # and treating that as "not ignored" would be a fail-OPEN guard — the shape
-  # this entry exists to remove. Anything but 0 or 1 refuses.
-  while IFS= read -r rel; do
-    [ -n "$rel" ] || continue
-    local _ci=0 _dir
-    if ( cd "$root" && git ls-files --error-unmatch -- "$rel" ) >/dev/null 2>&1; then
-      _dir="${rel%/*}"
-      [ "$_dir" = "$rel" ] && continue        # top-level tracked file: git add accepts it
-      ( cd "$root" && git check-ignore --no-index -q -- "$_dir" ) 2>/dev/null || _ci=$?
-    else
-      ( cd "$root" && git check-ignore --no-index -q -- "$rel" ) 2>/dev/null || _ci=$?
-    fi
-    case "$_ci" in
-      0) ignored="$ignored
-$rel" ;;
-      1) : ;;                                  # not ignored
-      *) adopt_refuse "cannot tell whether '$rel' is covered by your ignore rules (git check-ignore exited $_ci) — refusing rather than guessing"   # BL-225-ORACLE-FAIL-CLOSED
-         return 1 ;;
-    esac
-  done <<PLANNED
-$planned
-PLANNED
+  # ONE PATH FEEDS BOTH QUESTIONS (`## BL-311:` row 5): each refused row carries
+  # the path the decision asked about, and the block names the rule for that.
+  local _tab="" _nl="" _bl311_rows="" _why="" _rows="" _st=0 _frel="" _frc=""
+  _tab="$(printf '\t')"; _nl="$(printf '\n_')"; _nl="${_nl%_}"
+  if ! command -v scout_ignore_refused >/dev/null 2>&1; then   # BL-322-S3-SHARED-LOADED
+    adopt_refuse "the ignore check (scripts/lib/scout/scout-ignore.sh) is not in this framework checkout — refusing rather than guessing"
+    return 1
+  fi
+  _rows="$(printf '%s\n' "$planned" | scout_ignore_refused "$root")" || _st=$?
+  if [ "$_st" -ne 0 ]; then   # BL-322-S3-DECIDE-FAILCLOSED
+    _frel="$(printf '%s\n' "$_rows" | awk -F '\t' '$1 == "F" { print $2; exit }')"
+    _frc="$(printf '%s\n' "$_rows" | awk -F '\t' '$1 == "F" { print $3; exit }')"
+    adopt_refuse "cannot tell whether '${_frel:-a planned path}' is covered by your ignore rules (git check-ignore exited ${_frc:-$_st}) — refusing rather than guessing"
+    return 1
+  fi
+  ignored="$(printf '%s\n' "$_rows" | awk -F '\t' '$1 == "R" { printf "\n%s", $2 }')"
+  _bl311_rows="$(printf '%s\n' "$_rows" | awk -F '\t' '$1 == "R" { print $2 "\t" $3 }')"
 
   if [ -n "$ignored" ]; then
     # DERIVE THE BLAST RADIUS FROM THE TREE, NOT FROM THE MARKER — BUT ONLY
@@ -2058,7 +2239,20 @@ LANDED
     # STDOUT and refusals on STDERR, so a reader piping stderr to a log would
     # get "some of your files are refused" with no list of which.
     # ROWS, not words: `wc -w` counted "my file.txt" as two refused files.
-    adopt_block "your ignore rules refuse $(printf '%s' "$ignored" | grep -c .) of the files this adoption must write, so it would leave the project half-installed. NOTHING WAS WRITTEN. The refused path(s):$ignored"   # BL-225-PREWRITE-REFUSE
+    #
+    # NAME THE RULE (`## BL-311:` row 5). "your ignore rules refuse 24 of the
+    # files" was right, and the dogfood operator still had to read .gitignore to
+    # learn it was `lib/` matching `scripts/lib/`. git knows which rule fired;
+    # the block now says so, grouped by rule. When git cannot say, the block is
+    # the one it always was plus how to ask git directly — the refusal itself
+    # was decided above and never depends on this.
+    _why="$(scout_ignore_rules_explain "$root" "$_bl311_rows")" || _why=""   # BL-311-IGNORE-RULE-EXPLAIN
+    if [ -n "$_why" ]; then
+      _why="$_nl${_nl}The rule(s) that refuse them, as \`git check-ignore -v\` names each:$_nl$_why"
+    else
+      _why="$_nl${_nl}git could not name the rule that refuses them (\`git check-ignore -v\` did not answer). Ask it about each path above:$_nl  git check-ignore -v --no-index -- <path>"   # BL-311-IGNORE-RULE-FALLBACK
+    fi
+    adopt_block "your ignore rules refuse $(printf '%s' "$ignored" | grep -c .) of the files this adoption must write, so it would leave the project half-installed. NOTHING WAS WRITTEN. The refused path(s):$ignored$_why"   # BL-225-PREWRITE-REFUSE
     adopt_note "These are the files the adoption IS — skipping one produces a broken install,"
     adopt_note "not a disclosed omission. Un-ignore them (or narrow the rule) and run this again."
     adopt_note "Note that git cannot re-include a file under an ignored DIRECTORY, so a"
@@ -2110,8 +2304,7 @@ adopt_main() {
   # their own project, and §4.3 keeps it as pre-fill for the Phase 0 intake.
   adopt_present_evidence "$root" "$report"   # BL-242-EVIDENCE-CALL
 
-  # §8.2 STEP 1 — THE TIER QUESTION, AND IT IS THE ONLY QUESTION ADOPTION ASKS
-  # THAT IS NOT A CONFIRMATION. D9 keeps it: D4's reasoning is about
+  # §8.2 STEP 1 — THE TIER QUESTION. D9 keeps it: D4's reasoning is about
   # self-reported PROCESS MATURITY, which an operator using this framework
   # cannot be expected to know, and "is this for a company or for me" is a fact
   # they know for certain and no evidence can determine. It is the sole
@@ -2122,6 +2315,11 @@ adopt_main() {
   # installed, so a run abandoned at it has changed neither the repository nor
   # the host.
   adopt_ask_audience || return 1   # BL-242-TIER-QUESTION
+  # `## BL-311:` row 8 — the track, in the same step and for the same reasons:
+  # a fact about the project's future the operator knows and no scan can
+  # determine, asked before any writer. After the tier, because its first rule
+  # reads the tier.
+  adopt_ask_track || return 1   # BL-311-TRACK-QUESTION
 
   # §8.2 STEP 2 — TOOL RESOLUTION, AND ITS POSITION IS THE CONSTRAINT.
   # BEFORE the secrets check that reads its result (§6.2) and BEFORE any
@@ -2154,16 +2352,12 @@ adopt_main() {
   report="$ADOPT_WORK/secrets-report.json"
   adopt_secrets_decide "$report" || return 1   # BL-242-SECRETS-DECIDE-CALL
 
-  # `## BL-311:` THE TWO MCP SERVERS A SESSION HERE IS CHECKED FOR. In the
-  # pre-write sequence with tool resolution, and for its reasons: before any
-  # writer, so a run abandoned here changed the repository not at all and the
-  # operator's Claude Code configuration only if they said yes. AFTER the
-  # secrets stop rather than straight after tool resolution, on purpose: an
-  # adoption that stop is going to refuse must not first have registered
-  # servers in the operator's configuration or started a container — and the
-  # stop's own verdict line stays under the tools section that produced it.
-  # Its question is NOT mandatory, so an answer sequence that does not expect
-  # it still completes.
+  # `## BL-311:` THE TWO MCP SERVERS A SESSION HERE IS CHECKED FOR. Asked in
+  # the pre-write sequence with tool resolution: after the secrets stop, so its
+  # verdict line stays under the tools section that produced it. Its question is
+  # NOT mandatory, so an answer sequence that does not expect it still completes.
+  # WHAT IT RUNS WAITS (`## BL-322:` S3): `adopt_mcp_apply`, after every check
+  # that can stop the adoption (`# BL-322-S3-MCP-APPLY-CALL`).
   adopt_mcp_resolve "$root" || return 1   # BL-311-MCP-CALL
 
   # THE CI AUDIT AND ITS QUESTIONS, BEFORE THE INTAKE. Read-only; its answers
@@ -2174,6 +2368,10 @@ adopt_main() {
   adopt_guardrails_resolve "$root" || return 1   # BL-296-ADOPT-RESOLVE-CALL
 
   adopt_run_reverse_intake "$report" || return 1
+
+  # `## BL-312:` TL;DR mode — the LAST question, before any writer; its comment
+  # says why last is the only safe place for a question whose default is no.
+  adopt_ask_tldr_mode || return 1   # BL-312-ADOPT-TLDR-CALL
 
   # WP5b. Was adopt_stub_test_debt_ledger; it is a real measurement now.
   # BEFORE adopt_install_framework, and that ordering is stated rather than
@@ -2209,6 +2407,19 @@ adopt_main() {
   # next writer added without a row is caught by its author rather than by a
   # reviewer a month later.
   _adopt_overwrite_inventory_check "$root" || return 1   # BL-242-OVERWRITE-INVENTORY
+
+  # `## BL-322:` S3 — THE MCP COMMANDS RUN HERE, NOT WHERE THEY ARE ASKED FOR.
+  # They change the operator's Claude Code configuration (and may start a
+  # container), outside this project, so they wait until every check that can
+  # stop the adoption without writing has passed: the pre-write check above,
+  # I20, and every question. Dogfood run 3, finding 5: they ran at the question,
+  # and a run the ignore check then stopped had already registered two servers.
+  # The question stays where it is (`# BL-311-MCP-CALL`): the answer sequences
+  # the adoption suites pipe are written against its position. Directly before
+  # the first write. A stop after it — a file adoption cannot write, the staging
+  # check, the project's own commit hook — leaves what it registered, and
+  # `# BL-318-G6-OUTSIDE` names it.
+  adopt_mcp_apply "$root" || return 1   # BL-322-S3-MCP-APPLY-CALL
 
   _adopt_write_phase "$root" "$ADOPT_WORK" "$report" || return 1   # BL-225-WRITE-PHASE-REAL
 

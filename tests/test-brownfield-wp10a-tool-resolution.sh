@@ -207,10 +207,11 @@ _mk_resolver() {
   return 0
 }
 
-# Five answers: the tier question plus this report's four scan-derived
-# confirmations. A case that adds the install question passes six.
-_ans() { local tier="${1:-1}"; printf '%s\n1\n1\n1\n1\n' "$tier"; }
-_ans_install() { local tier="${1:-1}" install="${2:-2}"; printf '%s\n%s\n1\n1\n1\n1\n' "$tier" "$install"; }
+# Six answers: the tier question, the track (`## BL-311:` row 8, answered
+# `standard`) and this report's four scan-derived confirmations. A case that
+# adds the install question passes seven.
+_ans() { local tier="${1:-1}"; printf '%s\nstandard\n1\n1\n1\n1\n' "$tier"; }
+_ans_install() { local tier="${1:-1}" install="${2:-2}"; printf '%s\nstandard\n%s\n1\n1\n1\n1\n' "$tier" "$install"; }
 
 RUN_RC=0; RUN_OUT=""; RUN_ERR=""
 run_adopt() {   # run_adopt <dir> <answers> <report> [fw] [extra env assignments...]
@@ -349,11 +350,12 @@ fi
 # The only "runnable" fixture above is `touch <path>`, a shape no matrix entry
 # has. These two are the SHIPPED strings, measured from the real resolver:
 # darwin+brew yields `brew install gitleaks`; linux+apt/dnf/pacman yields the
-# array joined with ` && `, whose first token is `GITLEAKS_VERSION=$(curl`.
-# A first cut resolved that first token as a command and therefore REFUSED the
-# only Linux install path the matrix has — telling the operator "this host has
-# no package manager recipe for it" while printing that recipe.
-X5_LINUX='GITLEAKS_VERSION=$(curl -sSf https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r .tag_name) && curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/x.tar.gz" | sudo tar -xz -C /usr/local/bin gitleaks'
+# framework's installer (`## BL-316:`; it was a `GITLEAKS_VERSION=$(curl …)`
+# pipeline until then). A first cut resolved that pipeline's first token as a
+# command and therefore REFUSED the only Linux install path the matrix had —
+# telling the operator "this host has no package manager recipe for it" while
+# printing that recipe.
+X5_LINUX='bash "${SOLO_SCRIPTS_DIR:-scripts}/install-gitleaks.sh"'
 X5_BREW='brew install gitleaks'
 X5_URL='https://github.com/gitleaks/gitleaks/releases'
 
@@ -486,8 +488,8 @@ if ! mk_adoptee "$X9/p"; then
 elif ! _mk_resolver "$X9/resolver" auto "true" "gitleaks-wp10a-absent"; then
   fail_ "X9 setup" "the resolver stub did not build"
 else
-  # tier, accept the install, then an answer that is not on offer
-  printf '1\n1\nNOT-AN-OPTION\n' > "$X9/answers"
+  # tier, track, accept the install, then an answer that is not on offer
+  printf '1\nstandard\n1\nNOT-AN-OPTION\n' > "$X9/answers"
   run_adopt "$X9/p" "$X9/answers" "$REPORT" "$REPO_ROOT" "SOIF_ADOPT_RESOLVER=$X9/resolver"
   X9_ALL="$(cat "$RUN_ERR" "$RUN_OUT" 2>/dev/null)"
   case "$X9_ALL" in
@@ -523,9 +525,9 @@ if ! mk_adoptee "$X10/p"; then
 elif ! _mk_resolver "$X10/resolver" auto "read _a; read _b; true" "gitleaks-wp10a-absent"; then
   fail_ "X10 setup" "the resolver stub did not build"
 else
-  # tier + accept the install + the four scan-derived confirmations. If the
-  # installer eats any of them the run cannot complete.
-  printf '1\n1\n1\n1\n1\n1\n' > "$X10/answers"
+  # tier + track + accept the install + the four scan-derived confirmations. If
+  # the installer eats any of them the run cannot complete.
+  printf '1\nstandard\n1\n1\n1\n1\n1\n' > "$X10/answers"
   run_adopt "$X10/p" "$X10/answers" "$REPORT" "$REPO_ROOT" "SOIF_ADOPT_RESOLVER=$X10/resolver"
   X10_RC="$RUN_RC"
   [ "$X10_RC" -eq 0 ] \

@@ -465,8 +465,13 @@ _adopt_rec_render() {
     printf '%s\n' "    |---|---|"
     _adopt_rec_row "Archive" "$archive"
     printf '\n'
-    printf '%s\n' "Nothing of yours was deleted. Every archived file carries a restore line in that"
-    printf '%s\n' "directory's MANIFEST.md, and any one of them can be put back with:"
+    # NOT EVERY FILE GOES BACK (`## BL-311:`). The archived copy of a
+    # Guardrails-only project's `.claude/manifest.json` predates the adoption
+    # stamp, and `--re-add` refuses it (`# BL-311-MANIFEST-READD-REFUSE`), so the
+    # sentence is the disclosure's own formula rather than a promise for all.
+    printf '%s\n' "Nothing of yours was deleted. That directory's MANIFEST.md gives, for each"
+    printf '%s\n' "archived file, how to put it back or why not to. One that can go back comes"
+    printf '%s\n' "back with:"
     printf '\n'
     printf '%s\n' '    bash /path/to/solo-orchestrator/scripts/adopt-project.sh --re-add <your path>'
     printf '\n'
@@ -788,8 +793,8 @@ adopt_write_adoption_record() {                       # BL-242-RECORD-WRITE
   adopt_note "what was archived, and what this build does not yet know."
   # ── THE `adoption` EVENT (§8.9) ───────────────────────────────────────────
   # One `adoption_event` row with `details.event: "adoption"`, the first of the
-  # five events and the one that names the act itself: the tier, the commit it
-  # was adopted at (from the stamp, the record's own source), where the
+  # five events and the one that names the act itself: the tier, the commit
+  # adoption started from (from the stamp, the record's own source), where the
   # archive is, and what the scan said. It DEGRADES LOUDLY rather than
   # refusing, for the collision row's reason: the Adoption Record just above it
   # and the stamp are the primary records, so a lost row thins the trail
