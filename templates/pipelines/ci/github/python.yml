@@ -31,15 +31,21 @@ jobs:
       # it. This notice says what was skipped. Once one exists every guard is
       # true and the job is exactly what BL-318 G3 built. Past Phase 1 a missing
       # manifest FAILS this step: a check that cannot run must not pass.
+      # An ADOPTED project (.claude/manifest.json records adoption) fails it at
+      # any phase: adoption lands at phase 0, and its code is already here.
       - name: Toolchain skipped - no Python manifest yet (Phase 0/1)
         if: hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile', 'uv.lock') == ''
         run: |
-          phase=$(grep -o '"current_phase"[[:space:]]*:[[:space:]]*[0-9]*' .claude/phase-state.json 2>/dev/null | grep -o '[0-9]*$' || true)
+          phase=$(grep -o '"current_phase"[[:space:]]*:[[:space:]]*"*[0-9][0-9]*"*' .claude/phase-state.json 2>/dev/null | grep -o '[0-9][0-9]*' | head -1 || true)
           if [ "${phase:-0}" -ge 2 ]; then
             echo "::error::current_phase is ${phase} and there is no requirements.txt, pyproject.toml, Pipfile or uv.lock in this tree - the toolchain steps cannot run, and a check that cannot run must not pass. Commit the manifest this workflow expects, or change its guards to the manifest this project uses."
             exit 1
           fi
-          echo "::notice::No requirements.txt, pyproject.toml, Pipfile or uv.lock in this tree - install, lint, test and dependency-audit steps are skipped until Phase 2 scaffolding commits one. Secret detection and governance checks still run."
+          if grep -q '"adopted"[[:space:]]*:[[:space:]]*true' .claude/manifest.json 2>/dev/null; then
+            echo "::error::This project was adopted (.claude/manifest.json records it) and there is no requirements.txt, pyproject.toml, Pipfile or uv.lock in this tree - an adopted project already has its code, so the toolchain steps must run, and a check that cannot run must not pass. Commit the manifest this workflow expects, or change its guards to the manifest this project uses."
+            exit 1
+          fi
+          echo "::notice::No requirements.txt, pyproject.toml, Pipfile or uv.lock in this tree - install, lint, test and dependency-audit steps are skipped until one is committed (in a new project, Phase 2 scaffolding commits it). Secret detection and governance checks still run."
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7 (v7.0.0)
         if: hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile', 'uv.lock') != ''
