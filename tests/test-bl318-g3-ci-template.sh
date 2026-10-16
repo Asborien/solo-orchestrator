@@ -28,11 +28,16 @@
 #   T  the written workflow: triggers, name, the setup-uv pin, the steps each
 #      installer runs, that no project tool runs ungated, and that nothing can
 #      skip the decision step or let its failure through (review round 1, R-1)
+#      except the one guard `## BL-313:` adds (Karl, 2026-10-16): with none of
+#      requirements.txt, pyproject.toml, Pipfile or uv.lock the decision and
+#      fail-closed steps do not run, and BL-313's notice step decides
 #   B  the shipped shell, executed as Actions runs a `shell: bash` step (bash
 #      --noprofile --norc -eo pipefail; each executed step must declare
 #      `shell: bash`, R-4): the installer decision over six fixture trees, the
 #      fail-closed step (R-1), the lockfile check, and the uv license check
-#      leaving the project's own package out (R-2)
+#      leaving the project's own package out (R-2). B4b runs BL-313's notice
+#      step, which declares no `shell:`, under both `bash -e` (what Actions
+#      uses then) and -eo pipefail, and requires the same answer
 #   D  the guides' sentences about when the framework's CI runs
 #   M  mutants. Template and doc mutants edit a copy and re-run the named case
 #      on it (adoption copies the template verbatim, which A1/A2 prove and MA1
@@ -80,7 +85,13 @@ check() {
 TPL_REL="templates/pipelines/ci/github/python.yml"
 GATE_UV="steps.deps.outputs.installer == 'uv'"
 GATE_PIP="steps.deps.outputs.installer == 'pip'"
-GATE_NONE="steps.deps.outputs.installer != 'uv' && steps.deps.outputs.installer != 'pip'"
+# `## BL-313:` (Karl, 2026-10-16): a tree with none of the four files the
+# python template recognises skips the decision step and the fail-closed step,
+# and BL-313's notice step decides instead (it passes before Phase 2 and fails
+# from Phase 2). Both steps carry exactly this guard; nothing looser.
+GATE_MANIFEST="hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile', 'uv.lock') != ''"
+GATE_NO_MANIFEST="hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile', 'uv.lock') == ''"
+GATE_NONE="$GATE_MANIFEST && steps.deps.outputs.installer != 'uv' && steps.deps.outputs.installer != 'pip'"
 WF_NAME="Solo Orchestrator checks"
 
 # steps_tsv FILE — one line per step of the `test` job:
@@ -308,13 +319,32 @@ case_T6() {   # both license steps carry the deny list the template had before G
   [ "$uv" = "$want" ] && [ "$pip" = "$want" ]
 }
 
-case_T7() {   # review round 1, R-1: nothing can skip the decision or let its failure through
-  local f="$1" rows="" dif="" coes=""
+# _deps_if_count FILE — how many `if:` keys the step with `id: deps` carries.
+# steps_tsv keeps the last `if:` of a step, so a second one added in front of
+# the guard would read as the guard; this counts them.
+_deps_if_count() {
+  LC_ALL=C awk '
+    function done_() { if (isdeps) print nif; isdeps = 0; nif = 0 }
+    /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { done_(); injob = ($0 ~ /^  test:/); next }
+    !injob { next }
+    /^      - / { done_(); s = substr($0, 9); if (s ~ /^if:/) nif++; if (s ~ /^id: deps[[:space:]]*$/) isdeps = 1; next }
+    /^        if:/ { nif++ }
+    /^        id: deps[[:space:]]*$/ { isdeps = 1 }
+    END { done_() }' "$1"
+}
+# review round 1, R-1, as amended by `## BL-313:` (Karl, 2026-10-16): the
+# decision step's ONE `if:` is exactly the manifest guard, so it is skipped only
+# on a tree with none of the four files (where BL-313's notice step decides);
+# any other `if:`, a guard missing one of the files, or a continue-on-error
+# anywhere in the job lets the decision be bypassed on a tree that has one.
+case_T7() {
+  local f="$1" rows="" dif="" nif="" coes=""
   rows="$(steps_tsv "$f")"
   dif="$(printf '%s\n' "$rows" | awk -F'\t' '$3 == "deps" { print "[" $4 "]"; exit }')"
+  nif="$(_deps_if_count "$f" | tr '\n' ' ')"
   coes="$(printf '%s\n' "$rows" | awk -F'\t' '$8 != "" { print ($2 != "" ? $2 : $5) ": " $8 }')"
-  CASE_DETAIL="deps if=$dif continue-on-error on: [$(printf '%s' "$coes" | tr '\n' '|')]"
-  [ "$dif" = "[]" ] && [ -z "$coes" ]
+  CASE_DETAIL="deps if=$dif (if: keys on the step: [$nif]) continue-on-error on: [$(printf '%s' "$coes" | tr '\n' '|')]"
+  [ "$dif" = "[$GATE_MANIFEST]" ] && [ "$nif" = "1 " ] && [ -z "$coes" ]
 }
 
 echo
@@ -327,7 +357,7 @@ check "T4 the uv path runs uv sync --frozen, then every tool through uv run --fr
 check "T5 the requirements.txt path is kept" case_T5 "$SG"
 check "T5b no step outside the two gates runs an installer or a project tool" case_T5b "$SG"
 check "T6 both license steps carry the deny list the template had before G3" case_T6 "$SG"
-check "T7 the decision step has no if:, and no step in the job carries continue-on-error" case_T7 "$SG"
+check "T7 the decision step's one if: is exactly the four-file manifest guard (BL-313), and no step in the job carries continue-on-error" case_T7 "$SG"
 
 # ════════════════════════════════════════════════════════════════════════════
 # B — the shipped shell, executed
@@ -366,10 +396,59 @@ _decide() {
 case_B1() { _decide "$1" uv.lock pyproject.toml; [ "$D_RC" -eq 0 ] && [ "$D_GH" = "installer=uv" ]; }
 case_B2() { _decide "$1" requirements.txt; [ "$D_RC" -eq 0 ] && [ "$D_GH" = "installer=pip" ]; }
 case_B3() { _decide "$1" uv.lock pyproject.toml requirements.txt; [ "$D_RC" -eq 0 ] && [ "$D_GH" = "installer=uv" ]; }
-case_B4() {   # neither: a failed step and an ::error:: that names all three files
-  _decide "$1"
+# case_B4 — a dependency file the step cannot install from. Since `## BL-313:`
+# (Karl, 2026-10-16) a tree with NO dependency file never reaches this step
+# (B4b); a Pipfile-only tree does, because Pipfile is one of the four files in
+# the guard T7 pins, and it has none of uv.lock, pyproject.toml or
+# requirements.txt: a failed step and an ::error:: that names all three.
+case_B4() {
+  _decide "$1" Pipfile
   [ "$D_RC" -ne 0 ] && [ -z "$D_GH" ] \
     && printf '%s\n' "$D_OUT" | _has '^::error::.*Missing: requirements.txt, uv.lock, pyproject.toml\.$'
+}
+# _notice FILE PHASE — run BL-313's notice step (the step whose `if:` is
+# GATE_NO_MANIFEST) in a tree with no dependency file and
+# .claude/phase-state.json at current_phase PHASE (`none`: no phase-state).
+# The step declares no `shell:`, so Actions runs it with `bash -e`; it is run
+# that way and as a `shell: bash` step (-eo pipefail), and the two must agree.
+# Prints "<rc> <error|notice|none>", "no-step", or "split: ...".
+_notice() {
+  local f="$1" ph="$2" d="" o1="" o2="" r1=0 r2=0 k1="none" k2="none"
+  d="$(newtmp)"
+  step_field "$f" 4 "$GATE_NO_MANIFEST" 7 | tr '\037' '\n' > "$d/.step.sh"
+  [ -s "$d/.step.sh" ] || { echo "no-step"; return 0; }
+  mkdir -p "$d/.claude" || { echo "fixture"; return 0; }
+  [ "$ph" = none ] || printf '{\n  "current_phase": %s,\n  "phase_gates": {}\n}\n' "$ph" > "$d/.claude/phase-state.json"
+  o1="$( cd "$d" && bash --noprofile --norc -e .step.sh 2>&1 )"; r1=$?
+  o2="$( cd "$d" && bash --noprofile --norc -eo pipefail .step.sh 2>&1 )"; r2=$?
+  case "$o1" in *"::error::"*) k1=error ;; *"::notice::"*) k1=notice ;; esac
+  case "$o2" in *"::error::"*) k2=error ;; *"::notice::"*) k2=notice ;; esac
+  if [ "$r1 $k1" = "$r2 $k2" ]; then echo "$r1 $k1"; else echo "split: -e gave $r1 $k1, -eo pipefail gave $r2 $k2"; fi
+}
+# case_B4b — `## BL-313:` (Karl, 2026-10-16): NO dependency file. The decision
+# step and the fail-closed step are both behind GATE_MANIFEST (T7 and B8 pin
+# the exact text), so on such a tree neither runs, and every installer-gated
+# step skips with them. BL-313's notice step decides, executed here: from
+# current_phase 2 it fails the job with an ::error:: (a check that cannot run
+# must not pass), and before Phase 2, or with no phase-state, it passes with a
+# ::notice::.
+case_B4b() {
+  local f="$1" rows="" dif="" fcs="" v="" got="" bad="" ph=""
+  rows="$(steps_tsv "$f")"
+  dif="$(printf '%s\n' "$rows" | awk -F'\t' '$3 == "deps" { print $4; exit }')"
+  fcs="$(printf '%s\n' "$rows" | GN="$GATE_NONE" awk -F'\t' '$4 == ENVIRON["GN"] { print $2 }')"
+  [ "$dif" = "$GATE_MANIFEST" ] || bad="$bad [the decision step is not behind the manifest guard: if=[$dif]]"
+  [ -n "$fcs" ] || bad="$bad [no fail-closed step behind the manifest guard]"
+  for ph in 2 3 1 0 none; do
+    v="$(_notice "$f" "$ph")"
+    got="$got phase-$ph=[$v]"
+    case "$ph" in
+      2|3) [ "$v" = "1 error" ]  || bad="$bad [current_phase $ph: expected 1 error, got $v]" ;;
+      *)   [ "$v" = "0 notice" ] || bad="$bad [current_phase $ph: expected 0 notice, got $v]" ;;
+    esac
+  done
+  CASE_DETAIL="$got$bad"
+  [ -z "$bad" ]
 }
 case_B5() {   # uv.lock without pyproject.toml is not a uv project, and the error names what is missing
   _decide "$1" uv.lock
@@ -415,6 +494,9 @@ case_B7() {   # the lockfile check reads the decision, checks uv.lock with --che
 # the decision is one of three exact forms, so the steps each answer runs can be
 # read off them: with no answer ('') only the fail-closed step runs, and its
 # script fails the job with an ::error::; with uv or pip it does not run.
+# Since `## BL-313:` (Karl, 2026-10-16) the fail-closed form is GATE_NONE with
+# GATE_MANIFEST in front, exactly: the bare form, or a guard missing one of the
+# four files, is an unknown gate here, so nothing looser passes.
 case_B8() {
   local f="$1" rows="" odd="" fc="" i_deps="" i_fc="" none_runs="" uv_hit="" out="" rc=0 d=""
   rows="$(steps_tsv "$f")"
@@ -476,7 +558,8 @@ echo "=== B — the shipped shell, executed as Actions runs it ==="
 check "B1 uv.lock with pyproject.toml: installer=uv" case_B1 "$SG"
 check "B2 requirements.txt: installer=pip" case_B2 "$SG"
 check "B3 all three files: uv wins" case_B3 "$SG"
-check "B4 none of them: the step fails with an ::error:: naming requirements.txt, uv.lock and pyproject.toml" case_B4 "$SG"
+check "B4 Pipfile alone (inside the manifest guard, none of the three): the step fails with an ::error:: naming requirements.txt, uv.lock and pyproject.toml" case_B4 "$SG"
+check "B4b no dependency file (BL-313): the decision and fail-closed steps are not reached; the notice step fails at current_phase 2 and 3 and passes at 0, 1 or with no phase-state" case_B4b "$SG"
 check "B5 uv.lock alone: not a uv project; the ::error:: names requirements.txt and pyproject.toml" case_B5 "$SG"
 check "B6 pyproject.toml alone: the ::error:: names requirements.txt and uv.lock" case_B6 "$SG"
 check "B7 the lockfile check: uv lock --check for a uv project, a warning when it fails, the old arms for the rest" case_B7 "$SG"
@@ -655,8 +738,8 @@ tmutant MT6  "$T" '- name: Security - License check (uv)' 'GNU Affero General Pu
 tmutant MT6b "$T" '- name: Security - License check (pip)' 'Server Side Public License (SSPL);' '' case_T6 "SSPL drops off the pip path's license deny list"
 tmutant MB1  "$T" 'if [ -f uv.lock ] && [ -f pyproject.toml ]; then' 'if [ -f uv.lock ] && [ -f pyproject.toml ]; then' 'if [ -f uv.lock ]; then' case_B5 "uv.lock alone counts as a uv project"
 tmutant MB2  "$T" 'if [ -f uv.lock ] && [ -f pyproject.toml ]; then' '[ -f pyproject.toml ]; then' '[ -f pyproject.toml ] && [ ! -f requirements.txt ]; then' case_B3 "requirements.txt wins over uv.lock"
-tmutant MB3  "$T" 'missing="requirements.txt"' 'exit 1' 'exit 0' case_B4 "neither file: the step passes and the job installs nothing"
-tmutant MB4  "$T" 'missing="requirements.txt"' 'echo "::error::' 'echo "::warning::' case_B4 "neither file: a warning, not an error"
+tmutant MB3  "$T" 'missing="requirements.txt"' 'exit 1' 'exit 0' case_B4 "a Pipfile-only tree: the step passes and the job installs nothing"
+tmutant MB4  "$T" 'missing="requirements.txt"' 'echo "::error::' 'echo "::warning::' case_B4 "a Pipfile-only tree: a warning, not an error"
 tmutant MB5  "$T" 'missing="requirements.txt"' '[ -f uv.lock ] || missing="$missing, uv.lock"' ':' case_B6 "the error does not name a missing uv.lock"
 tmutant MB6  "$T" 'id: deps' 'echo "installer=uv"' 'echo "installer=pip"' case_B1 "a uv project is sent down the pip path"
 tmutant MB7  "$T" 'id: deps' 'elif [ -f requirements.txt ]; then' 'elif [ -f requirements.in ]; then' case_B2 "a requirements.txt project is not recognised"
@@ -664,7 +747,15 @@ tmutant MB8  "$T" 'if [ "$INSTALLER" = "uv" ]; then' 'uv lock --check ||' 'uv lo
 tmutant MB9  "$T" '- name: Security - Lockfile integrity' 'INSTALLER: ${{ steps.deps.outputs.installer }}' 'INSTALLER: uv' case_B7 "the lockfile check does not read the decision"
 # Review round 1.
 tins    MR1a "$T" '        id: deps' '        continue-on-error: true' case_T7 "R-1 mutA: the decision step can fail and be let through, so every gated step skips on a green job"
-tins    MR1b "$T" '        id: deps' "        if: github.event_name == 'push'" case_T7 "R-1 mutB: the decision step is skipped on pull requests, so every gated step skips"
+tins    MR1b "$T" '        id: deps' "        if: github.event_name == 'push'" case_T7 "R-1 mutB: a second if: in front of the guard skips the decision step on pull requests, so every gated step skips"
+# `## BL-313:` (Karl, 2026-10-16): the guard T7 pins, attacked.
+tmutant MR1f "$T" 'id: deps' "$GATE_MANIFEST" "github.event_name == 'push'" case_T7 "BL-313: the manifest guard is replaced by another if:, which skips the decision on pull requests"
+tmutant MR1g "$T" 'id: deps' "if: $GATE_MANIFEST" '' case_T7 "BL-313: the manifest guard is deleted, so a tree with no dependency file fails at the decision before Phase 2"
+tmutant MR1h "$T" 'id: deps' ", 'uv.lock')" ')' case_T7 "BL-313: uv.lock drops out of the decision's guard, so a uv.lock-only tree skips the decision"
+tmutant MR1i "$T" '- name: Stop if no installer was chosen' "$GATE_MANIFEST && " '' case_B8 "BL-313: the fail-closed condition loses its manifest guard, so a Phase 0 tree with no dependency file is red"
+tmutant MR1j "$T" '- name: Stop if no installer was chosen' ", 'uv.lock')" ')' case_B8 "BL-313: uv.lock drops out of the fail-closed condition's guard"
+tmutant MB10 "$T" '- name: Toolchain skipped - no Python manifest yet (Phase 0/1)' 'exit 1' 'exit 0' case_B4b "BL-313: from Phase 2 a tree with no dependency file passes"
+tmutant MB11 "$T" '- name: Toolchain skipped - no Python manifest yet (Phase 0/1)' '-ge 2' '-ge 3' case_B4b "BL-313: a Phase 2 tree with no dependency file passes"
 tdel    MR1c "$T" '- name: Stop if no installer was chosen' case_B8 "R-1: the fail-closed step is removed"
 tmutant MR1d "$T" '- name: Stop if no installer was chosen' 'exit 1' 'exit 0' case_B8 "R-1: the fail-closed step no longer fails"
 tins    MR1e "$T" '- name: Stop if no installer was chosen' '        continue-on-error: true' case_T7 "R-1: the fail-closed step's failure is let through"
