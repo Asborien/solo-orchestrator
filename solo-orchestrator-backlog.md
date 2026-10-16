@@ -22169,7 +22169,13 @@ locally and fail when `CI` is set, the `## BL-288:` posture, and each pins it on
 A2 re-run the suite with gitleaks shadowed off PATH by the PATH mirror of
 `tests/test-bl112-commit-enforcement.sh`, written inline, A1 with `CI` unset asserting rc 0 and
 `[SKIP] the whole suite`, A2 with `CI=1` asserting rc 1 and `[FAIL] setup`; a PATH that still
-finds gitleaks fails both at setup.
+finds gitleaks fails both at setup. Both suites unset `GITLEAKS_CONFIG` and `GITLEAKS_CONFIG_TOML`
+first: gitleaks reads either before its default rules and CI sets neither, so a config exported
+by the developer running the suite would grade it on other rules. Measured on the unfixed tree
+with a config that only allowlists `^wf_`: without the unset the unit suite as first submitted
+gave `9 passed, 0 failed`; with it, `[FAIL] G1 … scripts/check-gate.sh:1280`. The unit suite's E1 pins the line: it
+re-runs the scans as a child with both variables exported at a config that disables the two
+planted rules, and every control must still find its plant.
 
 **Migration for projects generated before this fix.** The working tree is cleared by the next
 framework sync (`scripts/upgrade-project.sh --sync-framework`, or applying the rename directly), but
@@ -22194,6 +22200,9 @@ in a saved report and is the wider net, so the fingerprint is preferred.)
   `~/.claude-dev-framework` is outside it, and only P2 (full lane) scans it.
 - A1 and A2 make the unit suite take several seconds where it took under one: building the PATH
   mirror costs one `ln` per entry of each PATH directory that holds gitleaks.
+- The generated-project suite's `unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML` has no case of its
+  own, because a child re-run would run the installer a second time. E1 pins the same line in the
+  unit suite only.
 - P2 is the only check of a real generated project and its history, and it runs in the full lane
   only; the unit lane covers the shipped surface through G1's copies.
 - This repository's own history still reports the declaration at the commit that introduced it
