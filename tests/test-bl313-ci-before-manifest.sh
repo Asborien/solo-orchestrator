@@ -33,7 +33,12 @@
 #       manifest, and its body carries a `::notice::` annotation
 #   T2  every toolchain step — everything that is not checkout, not the
 #       notice, not the secret scan and not `Governance -` — is guarded
-#       `!= ''` on the same manifest; floor of 3 such steps per template
+#       `!= ''` on the same manifest; floor of 3 such steps per template.
+#       python.yml's install, tool and security steps are gated on its
+#       decision step (`## BL-318:` G3) instead; they count as guarded only
+#       when that `deps` step carries exactly the census guard, and the
+#       fail-closed step's condition must be that guard `&&` #499's (Karl,
+#       2026-10-16)
 #   T3  checkout and the gitleaks secret scan are NOT guarded, and no
 #       governance step's own guard names the manifest (the fix must not
 #       turn a Phase-0 tree into an unscanned one)
@@ -41,9 +46,14 @@
 #       toolchain step skips and the notice runs; with the first census
 #       sample file present every toolchain step runs and the notice skips.
 #       This evaluates the `hashFiles(<patterns>) != ''` / `== ''` forms the
-#       templates carry, and nothing else — `act` is not available here, so
-#       the workflow itself is not executed; the assertion is on the
-#       rendered YAML plus this evaluation of its conditions.
+#       templates carry, python's installer gates, and nothing else — `act`
+#       is not available here, so the workflow itself is not executed; the
+#       assertion is on the rendered YAML plus this evaluation of its
+#       conditions. For python the decision step's own script IS executed
+#       over the fixture, so the installer it would choose is measured, not
+#       re-implemented: over an empty tree it is never reached; with
+#       requirements.txt it chooses pip, and the uv-path steps and the fail-closed
+#       step are `alt`.
 #   T5  past Phase 1 a missing manifest FAILS, it does not skip green: the
 #       notice step's `run:` script is extracted and EXECUTED under
 #       `"$BASH" -e -o pipefail` (stricter than the runner's default `bash -e {0}`, under the
@@ -59,13 +69,19 @@
 #       ALONE in a fixture, enables every toolchain step and skips the
 #       notice. The census carries the manifests the harness itself
 #       recognises (process-checklist.sh's lockfile list and the platform
-#       modules' lockfile notes), so a compliant project is never
-#       "manifest absent".
+#       modules' lockfile notes, plus uv.lock for python), so a compliant
+#       project is never "manifest absent". For python a manifest the
+#       decision step cannot install from (pyproject.toml, Pipfile or
+#       uv.lock alone) stops the job there — the step exits non-zero (a loud
+#       red, never a skip; #499's suite pins its ::error:: text) — and the
+#       samples must reach both the pip path
+#       (requirements.txt) and the uv path (pyproject.toml+uv.lock).
 # MUTANTS (on a mirror of templates/, never the real tree): remove one
 # guard, invert one guard, guard the secret scan, delete the notice step,
 # delete the phase check's `exit 1`, drop one manifest name from every
-# guard of one template. Each proves it landed (changed-line count) and
-# names the case that fails.
+# guard of one template, drop the manifest guard from python's fail-closed
+# condition, delete python's decision-step guard. Each proves it landed
+# (changed-line count) and names the case that fails.
 #
 # WHY `other.yml` IS OUT: its toolchain steps are TODO comments and its
 # dependency-audit step exits 1 by design until the operator configures a
@@ -74,8 +90,9 @@
 # The census below is the SPEC, in bl254's documented-census idiom — it is
 # not derived from the templates, because a manifest read off the file it
 # is meant to check would agree with itself. Row format:
-#   <lang>|<hashFiles argument list, verbatim>|<sample files, one per pattern, space-separated>
-# The first sample is what T4 uses; T6 uses each in turn.
+#   <lang>|<hashFiles argument list, verbatim>|<samples, space-separated>
+# A sample is one file name, or several joined by `+` placed together. The
+# first sample is what T4 uses; T6 uses each in turn.
 #
 # REGISTRATION: content-pin only — no init.sh on any executed line, not an
 # aggregator -> BOTH tests/full-project-test-suite.sh and the tests.yml
@@ -108,7 +125,7 @@ count_in() { local n=""; n=$(grep -cF -- "$2" "$1" 2>/dev/null); _num "$n"; }
 CENSUS_FILE="$TOPTMP/census.txt"
 cat > "$CENSUS_FILE" <<'EOF'
 typescript|'package.json'|package.json
-python|'requirements.txt', 'pyproject.toml', 'Pipfile'|requirements.txt pyproject.toml Pipfile
+python|'requirements.txt', 'pyproject.toml', 'Pipfile', 'uv.lock'|requirements.txt pyproject.toml Pipfile uv.lock pyproject.toml+uv.lock
 java|'**/*.gradle*', '**/pom.xml'|build.gradle.kts pom.xml
 kotlin|'**/*.gradle*', '**/pom.xml'|build.gradle.kts pom.xml
 go|'go.mod'|go.mod
@@ -131,26 +148,68 @@ template_list() {
 }
 
 # steps_of <template> — one line per step of the `test` job:
-#   <name-or-uses>\t<if-expression or ->\t<1 if the body carries ::notice::>
+#   <name-or-uses>\t<if-expression or ->\t<1 if the body carries ::notice::>\t<id or ->
 # Scoped to the `test` job (indent-2 key) so the `sast` job's steps never
-# enter the census; a step opens at indent-6 `- `, its `if:` sits at indent 8.
+# enter the census; a step opens at indent-6 `- `, its `if:` and `id:` sit at
+# indent 8.
 steps_of() {
   awk '
-    function flush() { if (name != "") print name "\t" cond "\t" note; name = "" }
-    BEGIN { injob = 0; name = ""; cond = "-"; note = 0 }
+    function flush() { if (name != "") print name "\t" cond "\t" note "\t" id; name = "" }
+    BEGIN { injob = 0; name = ""; cond = "-"; note = 0; id = "-" }
     /^  test:[[:space:]]*$/ { injob = 1; next }
     injob && /^  [A-Za-z_][A-Za-z0-9_-]*:/ { flush(); injob = 0 }
     injob && /^      - / {
       flush()
       name = $0
       sub(/^      - (name|uses):[[:space:]]*/, "", name)
-      cond = "-"; note = 0
+      cond = "-"; note = 0; id = "-"
       next
     }
     injob && /^        if:[[:space:]]/ { cond = $0; sub(/^        if:[[:space:]]*/, "", cond) }
+    injob && /^        id:[[:space:]]/ { id = $0; sub(/^        id:[[:space:]]*/, "", id) }
     injob && /::notice::/ { note = 1 }
     END { flush() }
   ' "$1"
+}
+
+# THE PYTHON DECISION STEP (`## BL-318:` G3, PR #499). python.yml installs
+# through one step, `id: deps` ("Find the dependency file"), and gates every
+# install, tool and security step on its answer instead of on the manifest:
+# `steps.deps.outputs.installer == 'uv'` or `== 'pip'`, plus a fail-closed step
+# for no answer. Per Karl's 2026-10-16 decision the decision step carries the
+# census guard itself, and the fail-closed condition carries it in front, so a
+# tree with no manifest skips the decision and every step gated on it. Those
+# gates count as guarded only when the template's `deps` step carries exactly
+# the census guard (manifest_gaps), and simulate EXECUTES the template's own
+# decision script over the fixture to learn which installer it would choose.
+GATE_INST_UV="steps.deps.outputs.installer == 'uv'"
+GATE_INST_PIP="steps.deps.outputs.installer == 'pip'"
+INST_NONE_TAIL=" && steps.deps.outputs.installer != 'uv' && steps.deps.outputs.installer != 'pip'"
+
+# deps_script <template> — the `run: |` block of the step whose `id:` is
+# `deps`, de-indented. Empty if the template has none.
+deps_script() {
+  awk '
+    /^      - / { instep = 0; inrun = 0 }
+    /^        id:[[:space:]]*deps[[:space:]]*$/ { instep = 1 }
+    instep && /^        run:[[:space:]]*\|[[:space:]]*$/ { inrun = 1; next }
+    instep && inrun && /^          / { line = $0; sub(/^          /, "", line); print line; next }
+    instep && inrun && /^[[:space:]]*$/ { next }
+    instep && inrun { inrun = 0 }
+  ' "$1"
+}
+
+# run_deps <script-file> <fixture-root> — executes the decision script as a
+# `shell: bash` step runs (it declares one): prints uv or pip (its
+# GITHUB_OUTPUT answer), fail (non-zero: the job stops there, loudly), or
+# empty (it exited 0 and answered nothing).
+run_deps() {
+  local rc=0 out="" gh=""
+  gh="$(mktemp "$TOPTMP/ghout.XXXXXX")"
+  ( cd "$2" && GITHUB_OUTPUT="$gh" "$BASH" --noprofile --norc -eo pipefail "$1" ) >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then printf 'fail\n'; return 0; fi
+  out="$(awk '/^installer=/ { sub(/^installer=/, ""); print; exit }' "$gh")"
+  printf '%s\n' "${out:-empty}"
 }
 
 # notice_script <template> <want-skip-cond> — the `run: |` block of the step
@@ -187,10 +246,10 @@ run_notice() {
 #   <file>: <class>: <detail>
 # classes: census-missing notice-count notice-manifest notice-text
 #          guard-missing guard-wrong toolchain-floor checkout-guarded
-#          gitleaks-guarded governance-manifest
+#          gitleaks-guarded governance-manifest gate-unanchored
 manifest_gaps() {
-  local d="$1" f="" lang="" args="" want_run="" want_skip="" steps="" name="" cond="" note=""
-  local n_notice=0 n_tool=0 short="" list=""
+  local d="$1" f="" lang="" args="" want_run="" want_skip="" steps="" name="" cond="" note="" sid=""
+  local n_notice=0 n_tool=0 short="" list="" deps_ok=0
   list="$TOPTMP/gaps.list.$$"
   template_list "$d" > "$list"
   while IFS= read -r f; do
@@ -206,8 +265,11 @@ manifest_gaps() {
     want_skip="hashFiles($args) == ''"
     steps="$TOPTMP/steps.$lang.$$"
     steps_of "$f" > "$steps"
-    n_notice=0; n_tool=0
-    while IFS="$(printf '\t')" read -r name cond note; do
+    n_notice=0; n_tool=0; deps_ok=0
+    # a step gated on the decision is guarded only through a decision step
+    # that itself carries exactly the census guard
+    W="$want_run" awk -F'\t' '$4 == "deps" && $2 == ENVIRON["W"] { f = 1 } END { exit !f }' "$steps" && deps_ok=1
+    while IFS="$(printf '\t')" read -r name cond note sid; do
       short="${name%% #*}"
       case "$name" in
         actions/checkout@*)
@@ -224,6 +286,8 @@ manifest_gaps() {
             [ "$note" = "1" ] || printf '%s: notice-text: the skip step (%s) prints no ::notice:: annotation\n' "$lang.yml" "$short"
           elif [ "$cond" = "$want_run" ]; then
             n_tool=$((n_tool + 1))
+          elif [ "$cond" = "$GATE_INST_UV" ] || [ "$cond" = "$GATE_INST_PIP" ] || [ "$cond" = "$want_run$INST_NONE_TAIL" ]; then
+            [ "$deps_ok" = 1 ] || printf '%s: gate-unanchored: %s is gated on the decision step, which is not guarded %s\n' "$lang.yml" "$short" "$want_run"
           elif [ "$cond" = "-" ]; then
             printf '%s: guard-missing: %s has no if: guard\n' "$lang.yml" "$short"
           else
@@ -260,11 +324,30 @@ hf_nonempty() {
   return 1
 }
 
-# eval_guard <root> <if-expression> — prints run|skip|unknown
+# eval_guard <root> <if-expression> — prints run|skip|alt|unknown. SIM_INST
+# holds what the decision step chose in this simulation (uv, pip, or empty when
+# it did not run): a step gated on the decision skips with it when it did not
+# run, and is `alt` when the answer it gave rules the step out (the other
+# installer's path; the fail-closed step once an installer was chosen).
+SIM_INST=""
 eval_guard() {
-  local root="$1" cond="$2" args=""
+  local root="$1" cond="$2" args="" want=""
   case "$cond" in
     -) printf 'run\n'; return ;;
+    "$GATE_INST_UV"|"$GATE_INST_PIP")
+      want="${cond#steps.deps.outputs.installer == \'}"; want="${want%\'}"
+      if [ -z "$SIM_INST" ]; then printf 'skip\n'
+      elif [ "$SIM_INST" = "$want" ]; then printf 'run\n'
+      else printf 'alt\n'; fi ;;
+    "hashFiles("*") != ''$INST_NONE_TAIL")
+      args="${cond#hashFiles(}"; args="${args%%) != \'\'*}"
+      if ! hf_nonempty "$root" "$args"; then printf 'skip\n'
+      elif [ "$SIM_INST" = uv ] || [ "$SIM_INST" = pip ]; then printf 'alt\n'
+      else printf 'run\n'; fi ;;
+    "${INST_NONE_TAIL# && }")
+      # the fail-closed condition WITHOUT the manifest guard: it runs whenever
+      # no installer was chosen, an empty tree included
+      if [ "$SIM_INST" = uv ] || [ "$SIM_INST" = pip ]; then printf 'alt\n'; else printf 'run\n'; fi ;;
     "hashFiles("*") != ''")
       args="${cond#hashFiles(}"; args="${args%) != \'\'}"
       if hf_nonempty "$root" "$args"; then printf 'run\n'; else printf 'skip\n'; fi ;;
@@ -275,26 +358,45 @@ eval_guard() {
   esac
 }
 
-# simulate <template> <lang> <root> — prints "<tool_run> <tool_skip> <notice_verdict> <unknown>"
+# simulate <template> <lang> <root> — prints
+#   "<tool_run> <tool_skip> <notice_verdict> <unknown> <decision> <alt>"
+# decision: none (the template has no `deps` step), skip (its guard was
+# false), uv or pip (what the template's own decision script chose, executed
+# over <root>), fail (it exited non-zero: the job stops there, loudly, and no
+# later step is counted), empty (it exited 0 and chose nothing).
+# alt: steps not run because of the answer the decision gave (the other
+# installer's path, and the fail-closed step once an installer was chosen).
 simulate() {
-  local f="$1" lang="$2" root="$3" args="" want_skip="" steps="" name="" cond="" note="" v=""
-  local tr=0 ts=0 nv="absent" unk=0
+  local f="$1" lang="$2" root="$3" args="" want_skip="" steps="" name="" cond="" note="" sid="" v="" ds=""
+  local tr=0 ts=0 nv="absent" unk=0 alt=0 dec="none"
   args="$(census_args "$lang")"
   want_skip="hashFiles($args) == ''"
-  steps="$TOPTMP/sim.$lang.$$"
+  steps="$(mktemp "$TOPTMP/sim.XXXXXX")"
   steps_of "$f" > "$steps"
-  while IFS="$(printf '\t')" read -r name cond note; do
+  SIM_INST=""
+  while IFS="$(printf '\t')" read -r name cond note sid; do
     case "$name" in
       actions/checkout@*|'Security - Secret detection (gitleaks)'|'Governance - '*) continue ;;
     esac
     v="$(eval_guard "$root" "$cond")"
     if [ "$cond" = "$want_skip" ]; then
       nv="$v"
-    else
-      case "$v" in run) tr=$((tr + 1)) ;; skip) ts=$((ts + 1)) ;; *) unk=$((unk + 1)) ;; esac
+      continue
+    fi
+    case "$v" in run) tr=$((tr + 1)) ;; skip) ts=$((ts + 1)) ;; alt) alt=$((alt + 1)) ;; *) unk=$((unk + 1)) ;; esac
+    if [ "$sid" = "deps" ]; then
+      if [ "$v" = "run" ]; then
+        ds="$(mktemp "$TOPTMP/deps.XXXXXX")"
+        deps_script "$f" > "$ds"
+        dec="$(run_deps "$ds" "$root")"
+        case "$dec" in uv|pip) SIM_INST="$dec" ;; fail) break ;; esac
+      else
+        dec="skip"
+      fi
     fi
   done < "$steps"
-  printf '%s %s %s %s\n' "$tr" "$ts" "$nv" "$unk"
+  SIM_INST=""
+  printf '%s %s %s %s %s %s\n' "$tr" "$ts" "$nv" "$unk" "$dec" "$alt"
 }
 
 # mk_mirror <dir> — templates/ only; enough for every function above
@@ -344,8 +446,9 @@ else
 fi
 
 # T2 — every toolchain step guarded
-n_t2=$(( $(count_in "$GAPS" ': guard-missing: ') + $(count_in "$GAPS" ': guard-wrong: ') + $(count_in "$GAPS" ': toolchain-floor: ') + $(count_in "$GAPS" ': census-missing: ') ))
+n_t2=$(( $(count_in "$GAPS" ': guard-missing: ') + $(count_in "$GAPS" ': guard-wrong: ') + $(count_in "$GAPS" ': toolchain-floor: ') + $(count_in "$GAPS" ': census-missing: ') + $(count_in "$GAPS" ': gate-unanchored: ') ))
 n_guarded=0
+n_gated=0
 while IFS= read -r f; do
   lang="${f##*/}"; lang="${lang%.yml}"
   [ "$lang" = "other" ] && continue
@@ -353,11 +456,12 @@ while IFS= read -r f; do
   [ -n "$args" ] || continue
   steps_of "$f" > "$TOPTMP/t2.txt"
   n_guarded=$((n_guarded + $(count_in "$TOPTMP/t2.txt" "	hashFiles($args) != ''	")))
+  n_gated=$((n_gated + $(count_in "$TOPTMP/t2.txt" "	steps.deps.outputs.installer == ") + $(count_in "$TOPTMP/t2.txt" "	hashFiles($args) != ''$INST_NONE_TAIL	")))
 done < "$GH_LIST"
 if [ "$n_t2" -eq 0 ]; then
-  pass "T2 — every toolchain step is guarded != '' on its manifest ($n_guarded guarded steps across $n_lang templates)"
+  pass "T2 — every toolchain step is guarded != '' on its manifest ($n_guarded guarded directly across $n_lang templates, plus $n_gated python step(s) gated on a decision step that is)"
 else
-  fail_ "T2" "$n_t2 guard violation(s): $(grep -E ': (guard-missing|guard-wrong|toolchain-floor|census-missing): ' "$GAPS" | head -3 | tr '\n' ';' | cut -c1-240)"
+  fail_ "T2" "$n_t2 guard violation(s): $(grep -E ': (guard-missing|guard-wrong|toolchain-floor|census-missing|gate-unanchored): ' "$GAPS" | head -3 | tr '\n' ';' | cut -c1-240)"
 fi
 
 # T3 — nothing weakened: checkout, secret scan and governance stay unconditional on the manifest
@@ -369,29 +473,41 @@ else
 fi
 
 # T4 — evaluate the guards over an empty tree and over a scaffolded one
+# mk_sample <dir> <sample> — a sample is one file name, or several joined by +
+mk_sample() {
+  local p=""
+  for p in $(printf '%s\n' "$2" | tr '+' ' '); do : > "$1/$p" || return 1; done
+}
 t4_bad=""
 t4_tool=0
+t4_alt=0
 while IFS= read -r f; do
   lang="${f##*/}"; lang="${lang%.yml}"
   [ "$lang" = "other" ] && continue
   [ -n "$(census_args "$lang")" ] || continue
   E="$(newtmp)"; M="$(newtmp)"
   sample="$(census_sample "$lang")"
-  : > "$M/$sample"
+  mk_sample "$M" "$sample"
   set -- $(simulate "$f" "$lang" "$E")
-  e_run="$1"; e_skip="$2"; e_notice="$3"; e_unk="$4"
+  e_run="$1"; e_skip="$2"; e_notice="$3"; e_unk="$4"; e_dec="$5"; e_alt="$6"
   set -- $(simulate "$f" "$lang" "$M")
-  m_run="$1"; m_skip="$2"; m_notice="$3"; m_unk="$4"
-  if [ "$e_run" -ne 0 ] || [ "$e_skip" -lt 3 ] || [ "$e_notice" != "run" ] || [ "$e_unk" -ne 0 ]; then
-    t4_bad="$t4_bad $lang(empty:run=$e_run,skip=$e_skip,notice=$e_notice,unknown=$e_unk)"
+  m_run="$1"; m_skip="$2"; m_notice="$3"; m_unk="$4"; m_dec="$5"; m_alt="$6"
+  # empty: nothing runs, the notice does, and a decision step is never reached
+  if [ "$e_run" -ne 0 ] || [ "$e_skip" -lt 3 ] || [ "$e_notice" != "run" ] || [ "$e_unk" -ne 0 ] || [ "$e_alt" -ne 0 ] \
+     || { [ "$e_dec" != "none" ] && [ "$e_dec" != "skip" ]; }; then
+    t4_bad="$t4_bad $lang(empty:run=$e_run,skip=$e_skip,notice=$e_notice,unknown=$e_unk,decision=$e_dec)"
   fi
-  if [ "$m_skip" -ne 0 ] || [ "$m_run" -lt 3 ] || [ "$m_notice" != "skip" ] || [ "$m_unk" -ne 0 ]; then
-    t4_bad="$t4_bad $lang(with-$sample:run=$m_run,skip=$m_skip,notice=$m_notice,unknown=$m_unk)"
+  # the first sample: nothing skipped for want of a manifest, and where there
+  # is a decision step it chose an installer (the other installer's steps are alt)
+  if [ "$m_skip" -ne 0 ] || [ "$m_run" -lt 3 ] || [ "$m_notice" != "skip" ] || [ "$m_unk" -ne 0 ] \
+     || { [ "$m_dec" != "none" ] && [ "$m_dec" != "uv" ] && [ "$m_dec" != "pip" ]; }; then
+    t4_bad="$t4_bad $lang(with-$sample:run=$m_run,skip=$m_skip,notice=$m_notice,unknown=$m_unk,decision=$m_dec)"
   fi
   t4_tool=$((t4_tool + m_run))
+  t4_alt=$((t4_alt + m_alt))
 done < "$GH_LIST"
 if [ -z "$t4_bad" ]; then
-  pass "T4 — over an empty tree every toolchain step skips and the notice runs; with the manifest present all $t4_tool toolchain steps run and the notice skips ($n_lang templates)"
+  pass "T4 — over an empty tree every toolchain step skips, no decision step is reached, and the notice runs; with the first manifest present $t4_tool toolchain steps run, the notice skips, and $t4_alt step(s) do not run because of the installer chosen (the other path, and the fail-closed step) ($n_lang templates)"
 else
   fail_ "T4" "guard evaluation disagrees with the intent:$t4_bad"
 fi
@@ -442,22 +558,44 @@ else
   fail_ "T5" "$(grep -c . "$t5_bad") violation(s): $(head -3 "$t5_bad" | tr '\n' ';' | cut -c1-240)"
 fi
 
-# T6 — one case per language: each census manifest name ALONE enables the toolchain.
+# T6 — one case per language: each census manifest name ALONE enables the
+# toolchain — the notice skips and nothing is skipped for want of a manifest.
+# Where the template has a decision step (python), a manifest it cannot
+# install from stops the job at that step, loudly (it exits non-zero; #499's
+# suite pins its ::error:: text), never a silent green; and across the samples
+# the decision must reach both installers, so the uv and pip paths are each
+# proven reachable.
 while IFS= read -r f; do
   lang="${f##*/}"; lang="${lang%.yml}"
   [ "$lang" = "other" ] && continue
   [ -n "$(census_args "$lang")" ] || continue
-  t6_bad=""; t6_n=0
+  t6_bad=""; t6_n=0; t6_loud=""; t6_seen=""
   for sample in $(census_samples "$lang"); do
-    M="$(newtmp)"; : > "$M/$sample"
+    M="$(newtmp)"; mk_sample "$M" "$sample"
     set -- $(simulate "$f" "$lang" "$M")
     t6_n=$((t6_n + 1))
-    if [ "$2" -ne 0 ] || [ "$1" -lt 3 ] || [ "$3" != "skip" ] || [ "$4" -ne 0 ]; then
-      t6_bad="$t6_bad $sample(run=$1,skip=$2,notice=$3,unknown=$4)"
-    fi
+    t6_seen="$t6_seen $5"
+    case "$5" in
+      fail)
+        if [ "$2" -ne 0 ] || [ "$1" -lt 1 ] || [ "$3" != "skip" ] || [ "$4" -ne 0 ]; then
+          t6_bad="$t6_bad $sample(run=$1,skip=$2,notice=$3,unknown=$4,decision=$5)"
+        else
+          t6_loud="$t6_loud $sample"
+        fi ;;
+      none|uv|pip)
+        if [ "$2" -ne 0 ] || [ "$1" -lt 3 ] || [ "$3" != "skip" ] || [ "$4" -ne 0 ]; then
+          t6_bad="$t6_bad $sample(run=$1,skip=$2,notice=$3,unknown=$4,decision=$5)"
+        fi ;;
+      *) t6_bad="$t6_bad $sample(decision=$5)" ;;
+    esac
   done
+  case "$t6_seen" in
+    *" none"*) ;;
+    *) case "$t6_seen" in *" uv"*) ;; *) t6_bad="$t6_bad [no sample reaches the uv path:$t6_seen]" ;; esac
+       case "$t6_seen" in *" pip"*) ;; *) t6_bad="$t6_bad [no sample reaches the pip path:$t6_seen]" ;; esac ;;
+  esac
   if [ -z "$t6_bad" ]; then
-    pass "T6-$lang — each of $t6_n manifest name(s) alone enables every toolchain step and skips the notice"
+    pass "T6-$lang — each of $t6_n manifest sample(s) alone enables the toolchain and skips the notice${t6_loud:+; the decision step stops the job loudly for:$t6_loud}"
   else
     fail_ "T6-$lang" "a recognised manifest alone still skips the toolchain:$t6_bad"
   fi
@@ -603,15 +741,17 @@ fi
 # of python.yml, self-consistently: T2 (guard-wrong against the census), T1
 # (notice-manifest) and T6-python (pyproject.toml alone skips) must all fire.
 MT6="$(newtmp)/fw"
+PY_ARGS="'requirements.txt', 'pyproject.toml', 'Pipfile', 'uv.lock'"
 if ! mk_mirror "$MT6"; then
   fail_ "MT6 setup" "could not mirror the framework"
 else
   tgt="$MT6/templates/pipelines/ci/github/python.yml"
   before="$(mktemp "$TOPTMP/mt6.XXXXXX")"; cp "$tgt" "$before"
-  sed "s#hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile')#hashFiles('requirements.txt', 'Pipfile')#" "$before" > "$tgt"
+  sed "s#hashFiles($PY_ARGS)#hashFiles('requirements.txt', 'Pipfile', 'uv.lock')#" "$before" > "$tgt"
   n_ch="$(_changed_lines "$before" "$tgt")"
-  if [ "$n_ch" -lt 18 ]; then
-    fail_ "MT6 setup" "the mutation changed $n_ch line(s), expected >=18 (9 guards, before and after) — python.yml's guards are not in the census shape"
+  n_g="$(count_in "$before" "hashFiles($PY_ARGS)")"
+  if [ "$n_g" -lt 4 ] || [ "$n_ch" -ne $((2 * n_g)) ]; then
+    fail_ "MT6 setup" "the mutation changed $n_ch line(s) for $n_g guard line(s) (expected >=4 guards, two changed lines each) — python.yml's guards are not in the census shape"
   elif [ "$(count_in "$tgt" "'pyproject.toml'")" -ne 0 ]; then
     fail_ "MT6 setup" "'pyproject.toml' still present in the mutant"
   else
@@ -619,15 +759,72 @@ else
     M6="$(newtmp)"; : > "$M6/pyproject.toml"
     set -- $(simulate "$tgt" python "$M6")
     # The mutant's notice no longer matches the census condition, so the
-    # simulator counts it among the toolchain (run=1); the eight real
-    # toolchain steps must be the ones that SKIP on a pyproject.toml-only
-    # tree — that skip is the regression, and it is what T6-python asserts.
+    # simulator counts it among the toolchain (run=1); the real toolchain
+    # steps — and every step gated on the decision, which no longer runs —
+    # must be the ones that SKIP on a pyproject.toml-only tree. That skip is
+    # the regression, and it is what T6-python asserts.
     if [ "$(count_in "$TOPTMP/mt6.gaps" 'python.yml: guard-wrong: ')" -ge 1 ] \
        && [ "$(count_in "$TOPTMP/mt6.gaps" 'python.yml: notice-manifest: ')" -ge 1 ] \
-       && [ "$2" -ge 3 ]; then
-      pass "MT6 (MUTATION) — with pyproject.toml dropped from every python.yml guard, T2 and T1 name the drift and a pyproject.toml-only tree skips $2 toolchain steps again"
+       && [ "$2" -ge 3 ] && [ "$5" = "skip" ]; then
+      pass "MT6 (MUTATION) — with pyproject.toml dropped from every python.yml guard ($n_g lines), T2 and T1 name the drift and a pyproject.toml-only tree skips $2 toolchain steps, the decision step among them"
     else
-      fail_ "MT6 (MUTATION)" "dropping a manifest name was not caught: gaps=$(grep -c . "$TOPTMP/mt6.gaps") sim=run=$1,skip=$2,notice=$3"
+      fail_ "MT6 (MUTATION)" "dropping a manifest name was not caught: gaps=$(grep -c . "$TOPTMP/mt6.gaps") sim=run=$1,skip=$2,notice=$3,decision=$5"
+    fi
+  fi
+fi
+
+# MT7 — python.yml's fail-closed condition loses its manifest guard (back to
+# #499's bare form): T2 must name the step, and over an EMPTY tree the step
+# now runs — it exits 1, so a Phase 0 project with no dependency file is red
+# again, which is the defect this entry fixes.
+MT7="$(newtmp)/fw"
+if ! mk_mirror "$MT7"; then
+  fail_ "MT7 setup" "could not mirror the framework"
+else
+  tgt="$MT7/templates/pipelines/ci/github/python.yml"
+  before="$(mktemp "$TOPTMP/mt7.XXXXXX")"; cp "$tgt" "$before"
+  awk '
+    /^        if: hashFiles\(.*\) != .. && steps\.deps\.outputs\.installer != .uv. && steps\.deps\.outputs\.installer != .pip.$/ { sub(/hashFiles\(.*\) != .. && /, "") }
+    { print }
+  ' "$before" > "$tgt"
+  if [ "$(_changed_lines "$before" "$tgt")" -ne 2 ] \
+     || [ "$(count_in "$tgt" "        if: steps.deps.outputs.installer != 'uv' && steps.deps.outputs.installer != 'pip'")" -ne 1 ]; then
+    fail_ "MT7 setup" "the mutation did not turn exactly one guarded fail-closed condition into the bare one"
+  else
+    manifest_gaps "$MT7/templates/pipelines/ci/github" > "$TOPTMP/mt7.gaps"
+    E7="$(newtmp)"
+    set -- $(simulate "$tgt" python "$E7")
+    if [ "$(count_in "$TOPTMP/mt7.gaps" 'python.yml: guard-wrong: Stop if no installer was chosen')" -ge 1 ] && [ "$1" -ge 1 ]; then
+      pass "MT7 (MUTATION) — with the fail-closed condition's manifest guard removed, T2 names the step and over an empty tree $1 step(s) run (the fail-closed step: red at Phase 0) — T4's empty-tree arm"
+    else
+      fail_ "MT7 (MUTATION)" "removing the fail-closed guard was not caught: gaps=$(head -2 "$TOPTMP/mt7.gaps" | tr '\n' ';') sim=run=$1,skip=$2,decision=$5"
+    fi
+  fi
+fi
+
+# MT8 — delete the decision step's own guard in python.yml: T2 must name the
+# step, and over an EMPTY tree the decision step runs and FAILS (#499's
+# ::error::), so a Phase 0 project with no dependency file is red again.
+MT8="$(newtmp)/fw"
+if ! mk_mirror "$MT8"; then
+  fail_ "MT8 setup" "could not mirror the framework"
+else
+  tgt="$MT8/templates/pipelines/ci/github/python.yml"
+  before="$(mktemp "$TOPTMP/mt8.XXXXXX")"; cp "$tgt" "$before"
+  awk '
+    deps && /^        if: hashFiles\(/ { deps = 0; next }
+    { deps = ($0 ~ /^        id: deps[[:space:]]*$/); print }
+  ' "$before" > "$tgt"
+  if [ "$(_changed_lines "$before" "$tgt")" -ne 1 ]; then
+    fail_ "MT8 setup" "the mutation did not remove exactly one line — the decision step's guard is not on the line after its id"
+  else
+    manifest_gaps "$MT8/templates/pipelines/ci/github" > "$TOPTMP/mt8.gaps"
+    E8="$(newtmp)"
+    set -- $(simulate "$tgt" python "$E8")
+    if [ "$(count_in "$TOPTMP/mt8.gaps" 'python.yml: guard-missing: Find the dependency file')" -ge 1 ] && [ "$5" = "fail" ]; then
+      pass "MT8 (MUTATION) — with the decision step's guard deleted, T2 names it and over an empty tree the template's own decision script runs and fails — T4's empty-tree arm"
+    else
+      fail_ "MT8 (MUTATION)" "deleting the decision step's guard was not caught: gaps=$(head -2 "$TOPTMP/mt8.gaps" | tr '\n' ';') sim=run=$1,skip=$2,decision=$5"
     fi
   fi
 fi
