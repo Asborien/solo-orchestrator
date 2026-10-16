@@ -770,10 +770,11 @@ with open(path, "w") as f:
     # `## BL-301:` — adoption records test_command AND, when the operator kept
     # the scan's command, writes it to .claude/test-command (`## BL-318:` G1),
     # which the commit-time test check runs first. Named, never written: the
-    # hook runs that line with `sh -c` on every source commit, and BL-318
-    # writes it only from a command the scan offered — never from free text.
+    # hook runs its first line that is neither blank nor a comment with `sh -c`
+    # on every source commit, and BL-318 writes it only from a command the scan
+    # offered — never from free text.
     test_command)
-      print_warn "test_command's enforced copy is .claude/test-command (the commit-time test check runs its first line, or its own detection when the file is absent) — this does not write that file; edit it yourself to change what your commits run."  # BL-301-TESTCMD-WARN
+      print_warn "test_command's enforced copy is .claude/test-command: the commit-time test check runs the first line in it that is neither blank nor a comment, or its own detection when the file is absent. This does not write that file — edit it yourself, or create it if it is absent, to change what your commits run."  # BL-301-TESTCMD-WARN
       ;;
   esac
   command -v jq >/dev/null 2>&1 || print_warn "jq not found — PROJECT_INTAKE.md was not re-rendered; it refreshes on the next section save."

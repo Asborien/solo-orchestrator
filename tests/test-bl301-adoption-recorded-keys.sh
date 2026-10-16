@@ -533,8 +533,9 @@ echo "=== W — test_command's second home is named, never written ==="
 # W1 — since `## BL-318:` G1, adoption writes the command the operator kept to
 # `.claude/test-command`, and the commit-time test check runs THAT file, never
 # this answer. So amending test_command must say so in a [WARN] naming the
-# file (`# BL-301-TESTCMD-WARN`), and must leave the file byte-identical: the
-# hook runs its first line with `sh -c` on every source commit, and BL-318
+# file (`# BL-301-TESTCMD-WARN`) and saying which line of it runs — the first
+# that is neither blank nor a comment — and must leave the file byte-identical:
+# the hook runs that line with `sh -c` on every source commit, and BL-318
 # writes it only from a command the scan offered, never from free text.
 TESTCMD_FILE_BODY='uv run --frozen pytest'
 W1="$(newtmp)/proj"
@@ -544,28 +545,29 @@ else
   before_t="$(_cksum "$W1/.claude/test-command")"
   wiz "$W1" --set-answer test_command "uv run pytest -q"
   if [ "$WIZ_RC" -eq 0 ] && [ "$(jq_answer test_command "$W1")" = "uv run pytest -q" ] \
-     && grep -F '[WARN]' "$W1/run.out" | grep -F '.claude/test-command' >/dev/null \
+     && grep -F '[WARN]' "$W1/run.out" | grep -F '.claude/test-command' | grep -F 'neither blank nor a comment' >/dev/null \
      && [ "$before_t" = "$(_cksum "$W1/.claude/test-command")" ]; then
-    pass "W1 — test_command is amended (rc=$WIZ_RC), the [WARN] names .claude/test-command, and that file is byte-identical"
+    pass "W1 — test_command is amended (rc=$WIZ_RC), the [WARN] names .claude/test-command and the line of it that runs, and that file is byte-identical"
   else
-    fail_ "W1" "rc=$WIZ_RC test_command=[$(jq_answer test_command "$W1")]; warn $(grep -F '[WARN]' "$W1/run.out" | grep -F '.claude/test-command' >/dev/null && echo present || echo MISSING); .claude/test-command $([ "$before_t" = "$(_cksum "$W1/.claude/test-command")" ] && echo unchanged || echo CHANGED)"
+    fail_ "W1" "rc=$WIZ_RC test_command=[$(jq_answer test_command "$W1")]; warn $(grep -F '[WARN]' "$W1/run.out" | grep -F '.claude/test-command' | grep -F 'neither blank nor a comment' >/dev/null && echo present || echo MISSING); .claude/test-command $([ "$before_t" = "$(_cksum "$W1/.claude/test-command")" ] && echo unchanged || echo CHANGED)"
   fi
 fi
 
 # W2 — no file (adoption writes none when the answer was changed or the scan
-# offered nothing): the warning still names it, the amend does not create it,
-# and an adoption-recorded key with no second home (timeline) names nothing.
+# offered nothing): the warning still names it and says to create it, the
+# amend does not create it, and an adoption-recorded key with no second home
+# (timeline) names nothing.
 W2="$(newtmp)/proj"
 if ! mk_adopted "$W2"; then
   fail_ "W2 setup" "could not build the fixture"
 else
   wiz "$W2" --set-answer test_command "uv run pytest -q"; rc_t=$WIZ_RC
-  warn_t="$(grep -F '[WARN]' "$W2/run.out" | grep -c -F '.claude/test-command')"
+  warn_t="$(grep -F '[WARN]' "$W2/run.out" | grep -F '.claude/test-command' | grep -c -F 'create it if it is absent')"
   wiz "$W2" --set-answer timeline "Q1"; rc_l=$WIZ_RC
   warn_l="$(grep -c -F '.claude/test-command' "$W2/run.out")"
   if [ "$rc_t" -eq 0 ] && [ "$warn_t" = "1" ] && [ ! -e "$W2/.claude/test-command" ] && [ ! -L "$W2/.claude/test-command" ] \
      && [ "$rc_l" -eq 0 ] && [ "$warn_l" = "0" ]; then
-    pass "W2 — with no .claude/test-command the [WARN] still names it and the file is not created; amending timeline names it nowhere"
+    pass "W2 — with no .claude/test-command the [WARN] still names it and says to create it, and the file is not created; amending timeline names it nowhere"
   else
     fail_ "W2" "test_command rc=$rc_t warn lines=$warn_t (want 1); file $([ -e "$W2/.claude/test-command" ] && echo CREATED || echo absent); timeline rc=$rc_l mentions=$warn_l (want 0)"
   fi
@@ -661,7 +663,7 @@ D_NOTE_DEFAULT=49
 D_RECORDED_CHECK=51
 D_NOTE=53
 D_UNUSABLE=63
-D_TESTCMD_WARN=115
+D_TESTCMD_WARN=116
 
 # MA1 — THE OLD VERDICT REINSTATED: the recorded-key check always says
 # "absent". A1's scenario must then be REFUSED; a wizard-owned key still works.
