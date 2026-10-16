@@ -1055,14 +1055,22 @@ check_tools() {
 check_plugins_mcp() {
   print_step "Checking plugins and MCP servers..."
 
-  if ! command -v jq &>/dev/null || [ ! -f "$HOME/.claude/settings.json" ]; then
-    register_manual "Plugin/MCP check skipped" "Requires jq and ~/.claude/settings.json"
+  # `## BL-311:` THE FILES THIS SESSION READS, not fixed $HOME paths: with
+  # CLAUDE_CONFIG_DIR set, Claude Code keeps settings.json and .claude.json
+  # inside it. The Context7 row below already asked through
+  # is_context7_mcp_registered, which honours it; the Qdrant row read
+  # ~/.claude.json directly, so the two rows answered for different
+  # configurations.
+  local _vi_set=""
+  _vi_set="$(soif_claude_settings_path)"
+  if ! command -v jq &>/dev/null || [ ! -f "$_vi_set" ]; then
+    register_manual "Plugin/MCP check skipped" "Requires jq and $_vi_set"
     return
   fi
 
   # Superpowers
   local sp_installed
-  sp_installed=$(jq -r '.enabledPlugins["superpowers@claude-plugins-official"] // false' "$HOME/.claude/settings.json" 2>/dev/null || echo "false")
+  sp_installed=$(jq -r '.enabledPlugins["superpowers@claude-plugins-official"] // false' "$_vi_set" 2>/dev/null || echo "false")
   if [ "$sp_installed" = "true" ]; then
     register_pass "Superpowers plugin installed"
   else
@@ -1078,9 +1086,8 @@ check_plugins_mcp() {
     register_manual "Context7 MCP not configured" "Install Node.js first, then: claude mcp add context7 -- npx -y @upstash/context7-mcp@latest"
   fi
 
-  # Qdrant MCP — check both config locations
-  if ([ -f "$HOME/.claude/settings.json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$HOME/.claude/settings.json" >/dev/null 2>&1) || \
-     ([ -f "$HOME/.claude.json" ] && jq -e '.mcpServers.qdrant // .mcpServers["mcp-server-qdrant"] // empty' "$HOME/.claude.json" >/dev/null 2>&1); then
+  # Qdrant MCP — both config locations THIS session reads (helpers-full.sh)
+  if is_qdrant_mcp_entry_present; then   # BL-311-VERIFY-QDRANT
     register_pass "Qdrant MCP configured"
   else
     register_manual "Qdrant MCP not configured" "Requires Docker + uv. See docs/reference/cli-setup-addendum.md"
@@ -1741,6 +1748,37 @@ _tool_install_valid_package() {
 # payload already proved hostile intent).
 _tool_install_dispatch_structured() {
   local cmd="$1"
+
+  # `## BL-316:` two matrix rows that are not `<pkg-mgr> install <pkg>` and must
+  # not go through the legacy `bash -c` path. Matched EXACTLY, whole string: a
+  # lookalike (an extra argument, a chained command, another path) falls through
+  # to Layer 2, where `bash` is not an allowed head and it is refused.
+  #   * gitleaks on Linux: a framework-owned installer that pins the version and
+  #     checks the download's SHA-256 before installing. It is run from beside
+  #     THIS script, never from a path the matrix supplies.
+  #   * Superpowers: the same command `## BL-284:`'s fix_superpowers runs, so the
+  #     matrix row and that fixer have one owner of the argv.
+  # Once either arm has RUN, a failure returns 2, never `$?`: the caller reads 1
+  # as "no shape matched" and hands the string to Layer 2, which re-ran the
+  # Superpowers install through the deprecated path and answered a failed
+  # gitleaks install with an unrelated "disallowed leading token" refusal.
+  local _vetted=""
+  case "$cmd" in
+    'bash "${SOLO_SCRIPTS_DIR:-scripts}/install-gitleaks.sh"') _vetted="install-gitleaks.sh" ;;   # BL-316-VETTED-INSTALLER
+    'claude plugin install --scope user superpowers@claude-plugins-official') _vetted="fix_superpowers" ;;   # BL-316-SUPERPOWERS-ROUTE
+  esac
+  if [ "$_vetted" = "fix_superpowers" ]; then
+    print_info "fix_tool_install [structured]: fix_superpowers" >&2
+    fix_superpowers && return 0; return 2   # BL-316-SUPERPOWERS-RC
+  elif [ -n "$_vetted" ]; then
+    if [ ! -f "${SCRIPT_DIR:-}/$_vetted" ]; then
+      _tool_install_refuse "$cmd" "the framework's installer is not beside verify-install.sh (${SCRIPT_DIR:-}/$_vetted); refresh it with: bash scripts/upgrade-project.sh --sync-framework"
+      return 2
+    fi
+    print_info "fix_tool_install [structured]: bash ${SCRIPT_DIR:-}/$_vetted" >&2
+    bash -- "${SCRIPT_DIR:-}/$_vetted" && return 0; return 2   # BL-316-VETTED-RC
+  fi
+
   # Tokenize via read -a (split on $IFS = space/tab/newline). This
   # rejects multi-line input by design — we want any newline in the
   # install_cmd to land us off the structured path (the legacy

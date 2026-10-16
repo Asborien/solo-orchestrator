@@ -17,7 +17,7 @@
 #       down. A stranger FINGERPRINT never gets this far: the validator refuses
 #       it as stale (§6.3), which the dispositions-template suite pins.
 #   R4  every adoption writes the `adoption` row, naming the tier and the
-#       commit it was adopted at, and the ledger is committed
+#       commit adoption started from, and the ledger is committed
 #   R5  a clean personal adoption still writes the join table, with its scan
 #       block and empty lists (§6.3: "required even at findingCount 0")
 #   R6  a personal adoption with NO scanner records its acknowledgement in the
@@ -33,6 +33,12 @@
 #       on dispositions, so nothing upstream filters the file — an incomplete
 #       disposition (no name) is not written down as a decision
 set -uo pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSED=0; FAILED=0; SKIPPED=0
@@ -59,7 +65,7 @@ _base() {   # _base DIR — a project with its own history
 }
 _run() {    # _run DIR TAG AUDIENCE [args...] — sets RUN_RC
   local p="$1" tag="$2" aud="$3"; shift 3
-  printf '%s\n1\n1\n1\n1\n' "$aud" > "$WORK/ans-$tag"
+  printf '%s\nstandard\n1\n1\n1\n1\n' "$aud" > "$WORK/ans-$tag"   # the tier, then the track (`## BL-311:` row 8)
   ( cd "$p" && bash "$REPO_ROOT/scripts/adopt-project.sh" "$@" < "$WORK/ans-$tag" ) \
     > "$WORK/$tag.out" 2> "$WORK/$tag.err"
   RUN_RC=$?
@@ -160,7 +166,7 @@ _nopath_run() {   # _nopath_run DIR TAG [args...]
   # ubuntu runner a narrowed PATH hides more than on macOS, and a "Tooling
   # Configuration" confirmation appears that five answers ran out before
   # (PR #446, R6/R7 red on CI only). Unread answers are harmless.
-  printf '1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n' > "$WORK/ans-$tag"
+  printf '1\nstandard\n1\n1\n1\n1\n1\n1\n1\n1\n1\n' > "$WORK/ans-$tag"   # the tier, the track, then the rest
   ( cd "$p" && PATH=/usr/bin:/bin bash "$REPO_ROOT/scripts/adopt-project.sh" "$@" < "$WORK/ans-$tag" ) \
     > "$WORK/$tag.out" 2> "$WORK/$tag.err"
   RUN_RC=$?

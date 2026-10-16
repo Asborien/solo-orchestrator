@@ -24,15 +24,27 @@ _adopt_session_language() {
   adopt_report_read "$1" '.stack.languages[0].name // ""' | tr '[:upper:]' '[:lower:]'
 }
 
-# _adopt_session_qdrant — init.sh's predicate: an MCP entry already registered,
-# or a Qdrant container running with uvx to launch the server. Read in a
-# SUBSHELL so helpers-full.sh's definitions never leak into the driver.
-# `SOIF_ADOPT_QDRANT=yes|no` is a TEST SEAM: no suite may start a container.
+# _adopt_session_qdrant — is Qdrant REGISTERED for this Claude Code session?
+# Read in a SUBSHELL so helpers-full.sh's definitions never leak into the
+# driver. `SOIF_ADOPT_QDRANT=yes|no` is a TEST SEAM: no suite may start a
+# container.
+#
+# `## BL-311:` THIS USED TO BE init.sh's PREDICATE, AND HALF OF IT WAS WRONG
+# HERE. init.sh's second arm — a Qdrant container running and uvx present —
+# REGISTERS the server before it writes the project's declaration. Adoption's
+# copy took the arm and skipped the registering, so it declared a server no
+# session had: .claude/settings.local.json is not among the MCP locations
+# Claude Code documents (~/.claude.json and .mcp.json —
+# code.claude.com/docs/en/mcp), but the SessionStart hook reads it, marks
+# Qdrant REQUIRED, and every file edit is then blocked on a tool the session
+# does not have. The MCP step (adopt-mcp.sh) now offers the registration
+# itself, so the only honest question left here is whether the session has
+# one — asked of the files the session reads (CLAUDE_CONFIG_DIR,
+# helpers-core.sh).
 _adopt_session_qdrant() {
   case "${SOIF_ADOPT_QDRANT:-}" in yes) return 0 ;; no) return 1 ;; esac
   ( . "$ADOPT_CORE_LIB_DIR/helpers-full.sh" >/dev/null 2>&1 || exit 1
-    is_qdrant_mcp_entry_present && exit 0
-    is_qdrant_container_running && command -v uvx >/dev/null 2>&1 ) >/dev/null 2>&1
+    is_qdrant_mcp_entry_present ) >/dev/null 2>&1   # BL-311-SESSION-QDRANT-PREDICATE
 }
 
 adopt_write_session_layer() {                          # BL-242-SESSION-STAGE
@@ -87,6 +99,31 @@ adopt_write_session_layer() {                          # BL-242-SESSION-STAGE
     fi
   fi
 
+  # ── `## BL-322:` S1 — the runtime files those hooks write, ignored ─────────
+  # The out-of-band detector rewrites .claude/last-checked-commit.txt and the MCP
+  # tracker .claude/tool-usage.json in every session; in an adopted project they
+  # sat untracked (dogfood run 3, finding 15). init.sh's .gitignore template
+  # ignores both; adoption never edits the project's own ignore files, so the rule
+  # goes in a file the framework owns, .claude/.gitignore, committed with the
+  # adoption. One the project already has is theirs and is left alone
+  # (keep-theirs, no archive row, as `# BL-318-TESTCMD-KEEP`). Only these two:
+  # init's other .claude/ runtime lines are for files an adoption never writes
+  # (.claude/cache/ needs a manifest `currency` block, last-gate-pass.txt the
+  # strict terminal-commit check, framework-gate.sh, which adoption does not
+  # install). .claude/approvals.jsonl is the Guardrails' file and
+  # .claude/tdd-warn-ledger.jsonl a tracked audit trail; neither is ignored here.
+  # (The stop hook's "Uncommitted source changes" over those two is the
+  # Guardrails' source-file test, handed to them.)
+  if [ -e "$root/$ADOPT_SESSION_IGNORE_REL" ] || [ -L "$root/$ADOPT_SESSION_IGNORE_REL" ] || adopt_path_under_link "$root" "$ADOPT_SESSION_IGNORE_REL"; then   # BL-322-ADOPT-IGNORE-KEEP
+    adopt_note "$ADOPT_SESSION_IGNORE_REL is already yours, so it was left alone. If git shows"
+    adopt_note ".claude/last-checked-commit.txt or .claude/tool-usage.json as untracked, add these"
+    adopt_note "two lines to it: /last-checked-commit.txt and /tool-usage.json"
+  else
+    _adopt_session_ignore_rules | adopt_write_file "$root" "$ADOPT_SESSION_IGNORE_REL" || return 1   # BL-322-ADOPT-IGNORE-WRITE
+    adopt_note "Wrote $ADOPT_SESSION_IGNORE_REL: git ignores the two files the session hooks rewrite"
+    adopt_note "(.claude/last-checked-commit.txt, .claude/tool-usage.json). Your .gitignore is unchanged."
+  fi
+
   # ── the vendored skills: framework-wins, theirs archived ──────────────────
   for s in $(soif_vendored_skills); do
     [ -f "$fw/templates/generated/skills/$s/SKILL.md" ] || continue
@@ -119,8 +156,21 @@ adopt_write_session_layer() {                          # BL-242-SESSION-STAGE
       adopt_note "alone, so no project collection was declared."
     fi
   else
-    adopt_note "No Qdrant server was found, so no MCP declaration was written — as init.sh does."
+    adopt_note "Qdrant is not registered for Claude Code, so no project collection was declared."
   fi
   return 0
 }
 ADOPT_SESSION_SETTINGS_REL=".claude/settings.json"
+ADOPT_SESSION_IGNORE_REL=".claude/.gitignore"
+
+# _adopt_session_ignore_rules — the body of .claude/.gitignore (`## BL-322:`).
+# A leading `/` anchors a rule to .claude/, the folder this file is in. The same
+# two paths are in templates/generated/gitignore-base.tmpl (init.sh) and in
+# upgrade-project.sh's `# BL-174-GITIGNORE-BACKFILL`.
+_adopt_session_ignore_rules() {
+  printf '%s\n' \
+    "# Solo Orchestrator's runtime files. The framework's session hooks rewrite them" \
+    "# in every session; they are not project content. Written by adoption." \
+    "/last-checked-commit.txt" \
+    "/tool-usage.json"
+}

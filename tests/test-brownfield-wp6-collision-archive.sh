@@ -95,6 +95,12 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 DRIVER="$REPO_ROOT/scripts/adopt-project.sh"
 LIB_DIR="$REPO_ROOT/scripts/lib/adopt"
 L_ARCHIVE="$LIB_DIR/adopt-archive.sh"
@@ -336,9 +342,12 @@ jq '.phaseMap.suggestedPhase = 2' "$REPORT" > "$TOPTMP/report.json" 2>/dev/null
 # judgment sections and the data classification moved to Act 3's interview
 # (§8.2 step 7, §8.3a-A7). The first line is the tier — 2 is organizational,
 # which is the tier this suite's ratchet assertions are written against.
+# `## BL-311:` row 8 made it six: the track follows the tier, answered
+# `standard`.
 _ans() {
   cat <<'ANS'
 2
+standard
 1
 1
 1

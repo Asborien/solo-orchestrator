@@ -616,6 +616,13 @@ for i in $(seq 0 $((TOOL_COUNT - 1))); do
   if [ "$CHECK_RC" -ne 0 ]; then
     if [ "$CHECK_RC" -eq 2 ]; then                                              # BL-235-THIRD-STATE
       print_warn "$NAME: configured, but working could not be confirmed${CHECK_NOTE:+ — $CHECK_NOTE}"
+    elif [ "$CATEGORY" = "mcp_server" ]; then
+      # `## BL-311:` AN MCP SERVER IS NOT INSTALLED, IT IS REGISTERED — with THIS
+      # Claude Code session's configuration, which probe-tool.sh now reads where
+      # CLAUDE_CONFIG_DIR puts it. "not installed" sent the operator to look for
+      # a package; the fix is `claude mcp add`, and the row says which question
+      # it answered.
+      print_warn "$NAME: NOT registered with Claude Code${CHECK_NOTE:+ — $CHECK_NOTE}"   # BL-311-CV-NOT-REGISTERED
     else
       print_warn "$NAME: not installed${CHECK_NOTE:+ — $CHECK_NOTE}"
     fi
@@ -730,6 +737,173 @@ for i in $(seq 0 $((TOOL_COUNT - 1))); do
     fi
   fi
 done
+
+# ── `## BL-318:` G5 — THIS PROJECT's Development Guardrails against the clone ──
+# The matrix row above (the `git_repo` handler) answers one question: is the
+# CLONE behind its remote? Nothing answered the other one — is the copy this
+# PROJECT runs (`.claude/framework/`, versioned by `.claude/manifest.json` ->
+# `frameworkVersion`) older than the clone? Dogfood run 2's adoptee ran 4.3.0
+# beside a newer clone, and no line anywhere said so.
+#
+# Behind within one MAJOR version -> a [WARN] and the refresh command in the "Update commands" list, so
+# session-version-check.sh can offer it (ask first, every session start, Karl's
+# 2026-10-05 ruling). The command is the PROJECT's own scripts/refresh-guardrails.sh,
+# which pulls the clone `--ff-only` itself before copying, so when the clone row
+# above is also behind, its `git pull` (listed first) and this command agree.
+# Equal or ahead -> an [OK] row and nothing to do. Anything this cannot read ->
+# "cannot tell" with the reason: never silence, and never "up to date".
+#
+# The clone is `${CDF_HOME:-$HOME/.claude-dev-framework}` — the same clone the
+# refresh reads (scripts/lib/cdf-refresh.sh, check-updates.sh), so the version
+# offered is the version the command installs.
+#
+# STRICT MAJOR.MINOR.PATCH, digits only, at most nine per part. version_gte
+# above strips prefixes and suffixes and lets a failed `[ -gt ]` fall through,
+# so "abc" meets every minimum; that is tolerable for a tool's --version text
+# and wrong here, where the input is a value in a file and a wrong answer is a
+# false "up to date". Nine digits keep every part inside `[`'s integer range.
+GUARDRAILS_ROW="Development Guardrails in this project"
+GUARDRAILS_REFRESH_CMD="bash scripts/refresh-guardrails.sh"
+
+_cv_xyz_valid() {
+  local _re='^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$'
+  [[ "${1:-}" =~ $_re ]]                                                          # BL-318-G5-VALID
+}
+
+# _cv_xyz_cmp A B — lt, eq or gt, numerically, part by part. Both already valid.
+_cv_xyz_cmp() {
+  local _i=0 _x="" _y=""
+  local -a _av=() _bv=()
+  IFS='.' read -r -a _av <<< "$1" || :
+  IFS='.' read -r -a _bv <<< "$2" || :
+  for _i in 0 1 2; do
+    _x="${_av[$_i]}"; _y="${_bv[$_i]}"
+    if [ "$_x" -lt "$_y" ]; then echo lt; return 0; fi                            # BL-318-G5-CMP
+    if [ "$_x" -gt "$_y" ]; then echo gt; return 0; fi
+  done
+  echo eq
+}
+
+# _cv_gr_show VALUE — a value read from a file, shown as version characters only
+# ([0-9A-Za-z._+-]; every other byte is `?`) and at most 40 of them. The
+# manifest is the project's, so its text must not steer what reads this report:
+# escaping was not enough (review round 1, R-7). `"frameworkVersion": "BELOW
+# MINIMUM"` survived _cv_render_safe verbatim, and session-version-check.sh greps
+# the whole report for BELOW MINIMUM, so the session start said "URGENT — Do NOT
+# proceed with any work"; a U+2028 or 40 characters of instructions passed too.
+_cv_gr_show() {
+  printf '%s' "$1" | LC_ALL=C tr -c '0-9A-Za-z._+-' '?' | LC_ALL=C cut -c1-40     # BL-318-G5-SAFE
+}
+
+_cv_guardrails_row() {
+  local _clone="${CDF_HOME:-$HOME/.claude-dev-framework}"
+  local _mf=".claude/manifest.json" _inst="" _avail="" _why=""
+  [ -d ".claude/framework" ] || return 0                                          # BL-318-G5-FRAMEWORK-DIR
+  echo ""
+  echo -e "${BOLD}── Development Guardrails (this project) ──${NC}"
+  if [ ! -f "$_mf" ]; then
+    _why="this project has no .claude/manifest.json, so its installed version is unknown"   # BL-318-G5-NO-MANIFEST
+  elif ! jq -e 'type == "object"' "$_mf" >/dev/null 2>&1; then
+    _why=".claude/manifest.json is not a JSON object"                             # BL-318-G5-BAD-JSON
+  else
+    _inst="$(jq -r '(.frameworkVersion // empty) | tostring' "$_mf" 2>/dev/null || :)"
+    if [ -z "$_inst" ]; then
+      _why=".claude/manifest.json records no frameworkVersion"                    # BL-318-G5-NO-KEY
+    elif ! _cv_xyz_valid "$_inst"; then
+      _why=".claude/manifest.json records frameworkVersion '$(_cv_gr_show "$_inst")', which is not a MAJOR.MINOR.PATCH version"   # BL-318-G5-BAD-INSTALLED
+    elif [ ! -f "$_clone/FRAMEWORK_VERSION" ]; then
+      _why="no Guardrails clone with a FRAMEWORK_VERSION at $_clone to compare against"   # BL-318-G5-NO-CLONE
+    else
+      _avail="$(tr -d '[:space:]' < "$_clone/FRAMEWORK_VERSION" 2>/dev/null || :)"
+      if ! _cv_xyz_valid "$_avail"; then
+        _why="the clone's FRAMEWORK_VERSION at $_clone holds '$(_cv_gr_show "$_avail")', which is not a MAJOR.MINOR.PATCH version"   # BL-318-G5-BAD-CLONE
+      fi
+    fi
+  fi
+  if [ -n "$_why" ]; then
+    print_warn "$GUARDRAILS_ROW: cannot tell whether an update is available — $_why"
+    return 0
+  fi
+  case "$(_cv_xyz_cmp "$_inst" "$_avail")" in
+    lt)
+      # A new MAJOR version is a migration, not this update (review round 1,
+      # R-3): CDF ships migrations/ for majors, and its sync.sh stops to say
+      # "MAJOR version bump detected … Migration may be needed." With no restart,
+      # 5.x hooks would run at once against 4.x settings. Warned, never offered,
+      # and scripts/refresh-guardrails.sh refuses the same case.
+      if [ "${_inst%%.*}" -lt "${_avail%%.*}" ]; then                             # BL-318-G5-MAJOR
+        print_warn "$GUARDRAILS_ROW: ${_inst} installed, ${_avail} available — a new MAJOR version, which needs a Guardrails migration (see ${_clone}/migrations/), not scripts/refresh-guardrails.sh"
+      else
+        print_warn "$GUARDRAILS_ROW: ${_inst} installed, ${_avail} available"
+        # `## BL-320:` 4.4.0+ beside this project's pre-schema-2 question writer
+        # would be a mixed install that cannot approve a commit by reply: not
+        # offered (no command, so the session start tells it as a notice); the
+        # framework sync, which moves both halves, is named instead.
+        _cv_gr_mixed_row "$_avail" && return 0   # BL-320-CV-MIXED
+        UPDATES+=("$GUARDRAILS_ROW ${_inst} → ${_avail}"); UPDATE_CMDS+=("$GUARDRAILS_REFRESH_CMD"); UPDATE_NAMES+=("$GUARDRAILS_ROW")   # BL-318-G5-OFFER
+      fi
+      ;;
+    eq)
+      print_ok "$GUARDRAILS_ROW: ${_inst} — up to date"
+      PASS_COUNT=$((PASS_COUNT + 1))
+      ;;
+    *)
+      print_ok "$GUARDRAILS_ROW: ${_inst} — newer than the clone's ${_avail}; nothing to update"
+      PASS_COUNT=$((PASS_COUNT + 1))
+      ;;
+  esac
+}
+# ── `## BL-320:` the minimum Guardrails version, and missing registrations ──
+# SOIF_GUARDRAILS_MIN (scripts/lib/guardrails.sh, the one place the number is
+# written): below it the user cannot approve a commit by answering the agent's
+# question with an option id — the Guardrails' approval design B arrived in
+# 4.4.0. The row says so whatever the clone holds; when the clone is newer the
+# update offer above is the remedy, and when it is not, session-version-check.sh
+# tells it as a notice (there is nothing to offer until the clone is updated).
+# Worded "below", never the generic "BELOW MINIMUM", which session-version-check
+# reads as URGENT for a tool (the G5 row's own sanitiser lesson, review R-7).
+#
+# At or above it, with nothing newer to install, a project can still lack the
+# registration a release's new hook needs (4.4.0's record-approval.sh, after a
+# refresh from an older version): `refresh-guardrails.sh` adds it, so the row
+# offers that command, naming what is missing (soif_cdf_register_hooks check —
+# the clone's own entries). Nothing is said when it cannot tell (no lib, no
+# usable clone): the version row above already reported what it could read.
+if [ -f "$SCRIPT_DIR/lib/guardrails.sh" ]; then
+  # shellcheck source=scripts/lib/guardrails.sh
+  . "$SCRIPT_DIR/lib/guardrails.sh"
+fi
+_CV_GR_SYNC_CMD="bash ~/solo-orchestrator/scripts/upgrade-project.sh --sync-framework"
+_cv_gr_mixed_row() {   # VERSION — print the mixed-install row and succeed, or fail quietly
+  command -v soif_gr_mixed >/dev/null 2>&1 || return 1
+  soif_gr_mixed . "$1" || return 1
+  print_warn "$GUARDRAILS_ROW: this project's Solo scripts still write the older approval question, which Guardrails ${1} cannot take an answer to; update both together with the framework sync, not the Guardrails alone: ${_CV_GR_SYNC_CMD}"
+  return 0
+}
+_cv_gr_minimum_rows() {
+  local _clone="${CDF_HOME:-$HOME/.claude-dev-framework}" _inst _avail _missing _n _names _verb
+  command -v soif_gr_below_min >/dev/null 2>&1 || return 0
+  [ -d ".claude/framework" ] || return 0
+  _inst="$(soif_gr_installed_version .)"
+  soif_gr_xyz_valid "$_inst" || return 0
+  if soif_gr_below_min "$_inst"; then
+    print_warn "$GUARDRAILS_ROW: ${_inst} is below ${SOIF_GUARDRAILS_MIN}, the minimum for this framework's approval questions: until it is updated, a commit cannot be approved by answering the agent's question with an option id"   # BL-320-CV-MIN
+    return 0
+  fi
+  _avail="$(tr -d '[:space:]' < "$_clone/FRAMEWORK_VERSION" 2>/dev/null || :)"
+  soif_gr_xyz_valid "$_avail" && [ "$(soif_gr_xyz_cmp "$_inst" "$_avail")" = lt ] && return 0
+  _cv_gr_mixed_row "$_inst" && return 0
+  _missing="$(soif_cdf_register_hooks "$PWD" "$_clone" check 2>/dev/null)" || return 0
+  [ -n "$_missing" ] || return 0
+  _n="$(printf '%s\n' "$_missing" | grep -c .)"
+  _names="$(printf '%s\n' "$_missing" | LC_ALL=C tr -c '0-9A-Za-z._\n-' '?' | paste -sd, - | sed 's/,/, /g')"
+  _verb="are"; [ "$_n" = 1 ] && _verb="is"
+  print_warn "$GUARDRAILS_ROW: ${_inst}, but ${_n} of its hook registrations ${_verb} missing from .claude/settings.json (${_names})"
+  UPDATES+=("$GUARDRAILS_ROW ${_inst}: register ${_names}"); UPDATE_CMDS+=("$GUARDRAILS_REFRESH_CMD"); UPDATE_NAMES+=("$GUARDRAILS_ROW")   # BL-320-CV-REG
+}
+
+_cv_guardrails_row                                                                # BL-318-G5-CALL
+_cv_gr_minimum_rows
 
 # --- Summary ---
 echo ""
