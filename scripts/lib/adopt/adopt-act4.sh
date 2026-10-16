@@ -58,7 +58,7 @@ _adopt_act4_record_errors() {
   jq -r --arg stamp "$stamp" --arg tax "$tax" --arg keys "$ADOPT_ACT4_ANSWER_KEYS" '
     def axes: ["interview.users","interview.availability","interview.exposure","interview.scalability","interview.dataClassification","interview.inProduction"];
     ( if .schemaVersion != 1 then "schemaVersion is not 1" else empty end ),
-    ( if (.adoptedAtCommit | type) != "string" or .adoptedAtCommit != $stamp then "adoptedAtCommit is not the commit this project was adopted at (\($stamp))" else empty end ),   # BL-242-ACT4-REFUSE-COMMIT
+    ( if (.adoptedAtCommit | type) != "string" or .adoptedAtCommit != $stamp then "adoptedAtCommit is not the commit adoption started from (\($stamp), the tip just before the adoption commit)" else empty end ),   # BL-242-ACT4-REFUSE-COMMIT
     ( if (.interview | type) != "object" then "interview is missing or not an object" else empty end ),
     ( if (.interview.inProduction | type) != "boolean" then "interview.inProduction is missing or not true/false" else empty end ),   # BL-242-ACT4-REFUSE-INPROD
     ( if (.interview.dataClassification | type) != "string" or ((.interview.dataClassification) as $c | ($tax | split(" ") | index([$c]))) == null then "interview.dataClassification is not one of: \($tax)" else empty end ),   # BL-242-ACT4-REFUSE-DC
@@ -211,6 +211,11 @@ adopt_act3_next() {                                    # BL-242-ACT3-NEXT
   adopt_note "session asks what this project is for, judges whether the technology fits those"
   adopt_note "answers, writes a verdict and a plan, and runs the finisher that records them."
   adopt_note "The project stays at phase 0 whatever the verdict."
+  # `## BL-322:` S2 — said again here, at the end of the run, where it is read.
+  if [ "${ADOPT_CLAUDE_MD_REPLACED:-0}" = 1 ]; then   # BL-322-ACT3-RULES
+    adopt_note "Until it has run, the rules written in your old CLAUDE.md do not load. Nothing of"
+    adopt_note "it was carried over but the imports named above, if any."
+  fi
 }
 
 _adopt_act4_documents() {
@@ -248,10 +253,31 @@ _adopt_act4_merge() {
 # the "in-core arms read an adopted flag and never source module code" rule
 # (§3.1), applied. It departs from v2.2's A6, which dropped the Act-2-written
 # brief; the reason is this lint, and `## BL-242:` records it.
+#
+# Step 10's auto-mode sentence (# BL-311-ASSESSMENT-AUTO-MODE): Claude Code's
+# auto-mode classifier reads the finisher's command, not the clone path its
+# `jq` lookup resolves to, so the user-settings line in docs/adoption.md step 2
+# may not clear it. The agent is told to hand the exact command to the human,
+# never to work around the refusal. resume.sh prints this file and the agent
+# relays it, so the bypass detector reads the sentence both ways: its wording
+# is checked against scripts/lib/bypass-patterns.sh, line by line and joined,
+# by tests/test-bl311-e-clone-path.sh (C8). It offers only the `!` route and
+# names no terminal or shell: an agent's paraphrase of a terminal route matched
+# terminal_workaround (measured), and the sentinel that raises blocks
+# `git commit` at Act 4. C8 forbids both words in the paragraph.
+#
+# `## BL-322:` S4 (dogfood run 3, findings 17 and 18): step 9 says what the
+# pre-filled adoptedAtCommit is (the stamp's anchor; _adopt_act4_record_errors
+# refuses any other value), that exposure has no intake wizard key, and that
+# the wizard's uptime key is the intake's own question, not the interview's
+# availability answer; step 8 says the release history was not
+# carried. Seeding RELEASE_NOTES.md from `git tag` was not built: a tag names a
+# release and says nothing a user reads, so the file would gain headings with no
+# notes; the assessment asks instead.
 adopt_write_assessment_prompt() {                      # BL-242-ASSESSMENT-PROMPT
   local root="$1" commit
   commit="$(jq -r '.adoption.adoptedAtCommit // ""' "$root/.claude/manifest.json" 2>/dev/null)"
-  [ -n "$commit" ] || { adopt_refuse "the assessment prompt needs the adoption commit, and the stamp has none"; return 1; }
+  [ -n "$commit" ] || { adopt_refuse "the assessment prompt needs the commit adoption started from (adoptedAtCommit), and the stamp has none"; return 1; }
   adopt_write_file "$root" ".claude/adoption/assessment-prompt.md" <<PROMPT || return 1
 This project was just adopted into the Solo Orchestrator framework. You are running its ASSESSMENT
 (Act 3 of adoption). Nothing is decided yet, and the project rests at phase 0 whatever you find.
@@ -261,7 +287,8 @@ Read first:
 - .claude/adoption/scout-report.json — what the scan measured. It is evidence; it decides nothing.
 - PROJECT_INTAKE.md — what adoption could fill in. The judgement cells are blank on purpose.
 - The "Adoption Record" section at the end of APPROVAL_LOG.md, and the adoption archive it names —
-  the documents this project had before adoption. Adoption replaced them and merged nothing.
+  the documents this project had before adoption. The archive's MANIFEST.md says which of them
+  adoption replaced, which it composed with, and which it only copied; it merged nothing.
 
 Then, WITH ME — ask, do not infer:
 1. The five requirement axes: how many people use it (users); whether it needs high availability
@@ -285,6 +312,15 @@ Then, WITH ME — ask, do not infer:
 7. Write the plan to docs/phase-0/adoption-plan.md.
 8. Fold what is worth keeping from the archived documents into CLAUDE.md, FEATURES.md, BUGS.md and
    RELEASE_NOTES.md, and tell me what you moved.
+   If CLAUDE.md has a section "Carried over from your CLAUDE.md": it keeps loading the files
+   the old CLAUDE.md imported, and the files it lists under "Its Markdown does not show for
+   certain", but not the rules written in the old file itself, so fold those in. Ask me whether
+   each file listed under "Its Markdown does not show for certain" was meant as an import.
+   Then keep each import you still want, outside that section, and delete the section, marker
+   lines included.
+   RELEASE_NOTES.md is the framework's blank template: adoption did not carry this project's
+   release history into it. List the releases with git tag (and CHANGELOG.md, if there is one),
+   ask me which to record, and add those.
    PROJECT_INTAKE.md opens with a SOIF-PROVENANCE comment block: keep it exactly as it is, first in
    the file — the finisher refuses a file whose header is missing or altered.
 9. Write .claude/adoption/assessment-record.json in exactly this shape:
@@ -305,14 +341,23 @@ Then, WITH ME — ask, do not infer:
      "plan": { "path": "docs/phase-0/adoption-plan.md", "summary": "..." },
      "verdictArtifact": ".claude/adoption/verdict.md" }
 
+   "adoptedAtCommit" is already filled in: it is the commit this project was at just before the
+   adoption commit, which adoption recorded as its anchor, not the adoption commit itself. Keep it
+   exactly as printed; the finisher refuses any other value.
    "answers" may use ONLY these intake wizard keys, with string values:
    $ADOPT_ACT4_ANSWER_KEYS
-   The finisher refuses any other key.
+   The finisher refuses any other key. Exposure has no intake wizard key: it lives only in
+   interview.exposure. Availability lives in interview.availability; the wizard's uptime key is the
+   intake's own uptime expectation, so add it to "answers" only if you asked that question.
 10. Run the finisher, and show me everything it prints:
 
     bash "\$(jq -r .source_dir .claude/orchestrator-source.json)/scripts/adopt-project.sh" --act4 --root .
 
     If it refuses, fix what it names and run it again. Nothing is written until the record passes.
+    If Claude Code's auto mode refuses the command itself (a permission denial, not the finisher's own
+    [REFUSED] line), do not work around it, and do not change any setting. Ask me to type that exact
+    command after ! at the Claude Code prompt and wait for its output: the finisher asks no
+    questions, so it works there.
 
 Do not write PRODUCT_MANIFESTO.md — Phase 0 produces it. Do not change .claude/phase-state.json —
 the project stays at phase 0.

@@ -87,7 +87,7 @@ _adoptee() {
 # $WORK/<name>.out so a case can assert on what the operator was told.
 _adopt() {
   local p="$1" tag="$2"
-  printf '2\n1\n1\n1\n1\n' > "$WORK/ans"
+  printf '2\nstandard\n1\n1\n1\n1\n' > "$WORK/ans"   # the tier, then the track (`## BL-311:` row 8)
   ( cd "$p" && bash "$REPO_ROOT/scripts/adopt-project.sh" \
       --scan-report "$WORK/scan/scout-report.json" < "$WORK/ans" ) \
     > "$WORK/$tag.out" 2> "$WORK/$tag.err"
@@ -264,7 +264,7 @@ b8() {
 
 b9() {
   local label="B9 the commit-time-scanner stub is retired, not merely silent"
-  local bad="" called f
+  local bad="" called="" f=""
   grep -q 'NOT DONE — the commit-time scanners' "$WORK/plain.out" \
     && bad="$bad [the run still announces the scanners as NOT DONE]"
   grep -q 'adopt_stub_hooks()' "$REPO_ROOT/scripts/lib/adopt/adopt-stubs.sh" \
@@ -280,9 +280,16 @@ b9() {
   while IFS= read -r f; do
     [ -n "$f" ] && sed -e 's/^[[:space:]]*#.*$//' -e 's/[[:space:]]#.*$//' "$f" >> "$WORK/stubstrip"
   done < "$WORK/stubsrc"
+  # ZERO since `## BL-322:` S4 retired the last one, the framework-script
+  # collision notice, which said "LEFT ALONE" about scripts the same run had
+  # just replaced (R-S2-6). Zero is also what a scan that read nothing finds,
+  # so the scan must have read the driver and its modules (S4 review, R-S4-7):
+  # 16 files and ~11,000 lines on 2026-10-08, floors set well under both.
+  [ "$(grep -c . "$WORK/stubsrc")" -ge 10 ] || bad="$bad [the scan listed $(grep -c . "$WORK/stubsrc") source file(s), want at least 10]"
+  [ "$(grep -c 'adopt_' "$WORK/stubstrip")" -ge 1000 ] || bad="$bad [the scan read $(grep -c 'adopt_' "$WORK/stubstrip") line(s) naming adopt_, want at least 1000]"
   called="$(grep -ohE '\badopt_stub_[a-z_]+' "$WORK/stubstrip" | LC_ALL=C sort -u | grep -c .)"
-  [ "$called" -eq 1 ] || bad="$bad [the called-stub set is $called, not 1 — re-derive it and update this case deliberately]"
-  [ -z "$bad" ] && pass "$label (1 stub still called)" || fail_ "$label" "$bad"
+  [ "$called" -eq 0 ] || bad="$bad [the called-stub set is $called, not 0 — re-derive it and update this case deliberately]"
+  [ -z "$bad" ] && pass "$label (no stub still called)" || fail_ "$label" "$bad"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -446,7 +453,7 @@ b15() {
   chmod +x "$p/.git/hooks/pre-commit"
   # Refused on the first run by their own hook, so the adoption stops before the
   # hooks are installed — the only window in which an archived copy can go.
-  printf '2\n1\n1\n1\n1\n' > "$WORK/ans"
+  printf '2\nstandard\n1\n1\n1\n1\n' > "$WORK/ans"   # the tier, then the track (`## BL-311:` row 8)
   ( cd "$p" && BLOCKIT=1 bash "$REPO_ROOT/scripts/adopt-project.sh" \
       --scan-report "$WORK/scan/scout-report.json" < "$WORK/ans" ) > "$WORK/gone.out" 2>&1
   arc="$( cd "$p" && ls -d .claude/adoption-archive/*/ 2>/dev/null | head -1 )"
@@ -489,7 +496,7 @@ b17() {
   local label="B17 a render that is incomplete is NOT reported as installed, and replaces nothing"
   local p="$WORK/trunc" bad=""
   _adoptee "$p" own || { fail_ "$label" "could not build the adoptee"; return; }
-  printf '2\n1\n1\n1\n1\n' > "$WORK/ans"
+  printf '2\nstandard\n1\n1\n1\n1\n' > "$WORK/ans"   # the tier, then the track (`## BL-311:` row 8)
   ( cd "$p" && SOIF_ADOPT_HOOK_FAULT=pctrunc bash "$REPO_ROOT/scripts/adopt-project.sh" \
       --scan-report "$WORK/scan/scout-report.json" < "$WORK/ans" ) > "$WORK/trunc.out" 2>&1
   ADOPT_RC=$?
@@ -511,7 +518,7 @@ b17b() {
   local label="B17b a render that is complete but NOT executable is not reported as installed"
   local p="$WORK/noexec" bad=""
   _adoptee "$p" || { fail_ "$label" "could not build the adoptee"; return; }
-  printf '2\n1\n1\n1\n1\n' > "$WORK/ans"
+  printf '2\nstandard\n1\n1\n1\n1\n' > "$WORK/ans"   # the tier, then the track (`## BL-311:` row 8)
   ( cd "$p" && SOIF_ADOPT_HOOK_FAULT=pcnoexec bash "$REPO_ROOT/scripts/adopt-project.sh" \
       --scan-report "$WORK/scan/scout-report.json" < "$WORK/ans" ) > "$WORK/noexec.out" 2>&1
   ADOPT_RC=$?

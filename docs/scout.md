@@ -57,7 +57,9 @@ IDENTICAL
 
 The guarantee is Scout's, not your project's. See
 [`--run-tests`](#the-one-thing-that-runs-your-code) — the one place Scout will
-execute code you wrote, and it is off unless you ask.
+execute code you wrote, and it is off unless you ask. What that command can
+create in your tree, manager by manager, is in
+[What `--run-tests` can change](#what---run-tests-can-change).
 
 ### 2. Zero dependency
 
@@ -92,9 +94,14 @@ Scout — a read-only look at a codebase.
   --version     print Scout's version and exit
   --help        print this and exit
 
-Scout never changes the project it looks at. Without --out it writes nothing
-at all except its own output. It needs `gitleaks` for the secrets section; if
-that is missing the section says so rather than reporting a clean scan.
+Scout never writes into the project it looks at; without --out it writes
+nothing at all except its own output. --run-tests runs the project's own
+tools, and they can: the package manager may create untracked files of its
+own (a .venv, for one), and the tests write whatever they always write. The
+manager rewrites no tracked file: Scout passes the flags that prevent it
+(docs/scout.md lists each manager's). It needs `gitleaks` for the secrets
+section; if that is missing the section says so rather than reporting a
+clean scan.
 
 Exit codes: 0 a scan completed (findings are not errors); 2 bad usage or an
 unreadable target.
@@ -130,9 +137,35 @@ has a credential behind it.
 
 - **Package managers in use:** none found
 - **Build / manifest files:** package.json
-- **How the tests are run:** `node test/run.js` (found in package.json scripts.test)
+- **How the tests are run:** `npm test` (found in package.json scripts.test (`node test/run.js`); run through npm because no lockfile names a package manager, and npm ships with Node)
 - **Where the automated checks live:** github
 ```
+
+**The test command goes through the project's package manager** (`## BL-311:`
+row 4). A tool the project installs lives in the environment its manager keeps —
+`.venv` for uv, `node_modules/.bin` for npm — which is not on `PATH`, so a bare
+`pytest` or a `scripts.test` body such as `vitest run` exits 127 on a suite that
+passes. The dogfood run that found this reported exit 127 for a suite passing
+1071/0. So:
+
+| Found | Command Scout runs and reports |
+|---|---|
+| `pytest` config, and `uv.lock` / `poetry.lock` / `pdm.lock` / `Pipfile.lock` or `Pipfile` | `uv run --frozen pytest` / `poetry run pytest` / `pdm run pytest` / `pipenv run pytest` |
+| `pytest` config, `requirements.txt` or no manager | `pytest`, unchanged — your activated environment is the `PATH` |
+| `package.json` `scripts.test`, and `pnpm-lock.yaml` / `yarn.lock` / `package-lock.json` / `bun.lock` or `bun.lockb` / `deno.lock` | `pnpm --config.verify-deps-before-run=false test` / `yarn test` / `npm test` / `bun run test` / `deno task test` |
+| `package.json` `scripts.test`, no lockfile | `npm test` — npm ships with Node |
+
+`bun run test`, not `bun test`: `bun test` is Bun's own test runner and never
+reads `scripts.test`. The `--frozen` on uv and the `--config.…=false` on pnpm
+stop those two rewriting your lockfile when `--run-tests` runs them — see
+[What `--run-tests` can change](#what---run-tests-can-change). The evidence (the
+`source` field, "found in …" above) says which file chose the manager, and
+keeps the script body. **When several managers
+are in evidence** — a project that moved from poetry to uv often keeps the old
+lockfile a while — Scout takes the first in lockfile precedence (uv, then poetry,
+then pdm, then pipenv; pnpm, then yarn, then npm, then bun, then deno), names the
+others it saw, and asks you to confirm which one the project uses. A declared
+`make test` target is still used as it is.
 
 ### `phaseMap` — how far along the project looks
 
@@ -149,7 +182,7 @@ This is a ceiling, not a verdict: maximum satisfied rung; evidence for the Phase
 |---|---|---|
 | 1 | yes | README.md (the product is described in writing) |
 | 2 | yes | docs/ARCHITECTURE.md (the technical shape is documented) |
-| 3 | yes | test corpus at test/, runnable with `node test/run.js` |
+| 3 | yes | test corpus at test/, runnable with `npm test` |
 | 4 | yes | .github/workflows/deploy.yml (a deploy or release lane) |
 ```
 
@@ -171,7 +204,7 @@ Observed on a fixture whose rungs are yes / no / no / yes:
   "rungs": [
     { "rung": 1, "evidence": "README.md (the product is described in writing)", "satisfied": true },
     { "rung": 2, "evidence": "no architecture or design document found — looked for PROJECT_BIBLE.md, ARCHITECTURE.md, DESIGN.md, docs/architecture*, docs/design*, docs/adr*, docs/rfcs", "satisfied": false },
-    { "rung": 3, "evidence": "a test command exists (`node test/run.js`) but no test corpus was found", "satisfied": false },
+    { "rung": 3, "evidence": "a test command exists (`npm test`) but no test corpus was found", "satisfied": false },
     { "rung": 4, "evidence": ".github/workflows/deploy.yml (a deploy or release lane)", "satisfied": true }
   ],
   "note": "maximum satisfied rung; evidence for the Phase 0 intake, never a placement"
@@ -277,14 +310,42 @@ Scout found **6** things here that the framework also has an opinion about. It m
 
 | What you have | What would happen to it | Why |
 |---|---|---|
-| `.claude/settings.json` | kept a copy, then replaced | The scaffolder OVERWRITES this file, then merges its own hook registrations into its own output — theirs is not consulted. |
-| `.git/hooks/pre-commit` | kept a copy, then replaced | OVERWRITTEN today, unguarded. Husky, lefthook, pre-commit-framework and hand-rolled hooks are all destroyed. |
+| `.claude/settings.json` | kept a copy; yours stays, and the framework adds to it | Adoption keeps a copy, then composes: your keys, rules and hooks stay, and the framework's rules and hooks are added beside them. A symlink, a read-only file, or one that is not a JSON object is left alone. |
+| `.git/hooks/pre-commit` | kept a copy, then replaced | Adoption keeps a copy, then installs the framework's hook in its place; adopt-project.sh --re-add .git/hooks/pre-commit puts yours back. A read-only hook is left alone. |
 | | *(what it does today)* | Invokes npm. Advisory only: a hook can do anything, and this names only the tools Scout recognises. |
-| `.git/hooks/*.sample` | kept a copy, then replaced | 14 sample hooks git wrote at init. The scaffolder DELETES them (rm -f) so it does not misdetect the tree as an existing project. |
+| `.git/hooks/*.sample` | yours stays | 14 sample hooks git wrote at init. Adoption leaves them alone; git never runs a .sample hook. |
 | `.github/workflows/ci.yml` | not touched at all | Never archived, never touched. The framework installs its gates as its own files so a working pipeline is not taken offline on day one. |
 | `.github/workflows/deploy.yml` | not touched at all | Never archived, never touched. …|
-| `CHANGELOG.md` | yours stays | OVERWRITTEN from a template today. Under adoption it is treated as theirs: kept, and reconciled by the interview. |
+| `CHANGELOG.md` | yours stays | Adoption never writes it; the assessment reads it for your release history. |
 ```
+
+**The documents adoption replaces say so** (`## BL-322:` S2, `# BL-322-SCOUT-DOCS`).
+`CLAUDE.md`, `PROJECT_INTAKE.md`, `FEATURES.md`, `BUGS.md`, `RELEASE_NOTES.md`,
+`docs/INDEX.md`, `docs/IDENTIFIERS.md` and `docs/archive/README.md` read *kept a
+copy, then replaced*: adoption archives each one and writes the framework's
+version. Until dogfood run 3 these rows said *yours stays* — the same day that
+adoption replaced the project's `CLAUDE.md`. The `CLAUDE.md` row adds what
+happens to it: its `@` imports of files still in the project are carried into
+the new one, and the rules written in it load again only once the assessment
+folds them in. `CHANGELOG.md` is the one document that stays yours: adoption
+never writes it. Scout sources no adoption code, so the set is spelled twice;
+`tests/test-bl322-s2-project-rules.sh` (S1) holds the two equal.
+
+**Every row says what adoption does to that file** (`## BL-322:` S4). The
+bucket is adoption's own record of the path, the archive `MANIFEST`'s
+disposition: *kept a copy, then replaced* where it is `replaced`; *kept a copy;
+yours stays, and the framework adds to it* where it is `composed` (your
+`.claude/settings.json` and your commit-msg hook); *yours stays* where adoption
+only copies the file into its archive (`.mcp.json`, `.claude/settings.local.json`,
+git hooks other than pre-commit and commit-msg) or never touches it
+(`.claude-backup/`, the sample hooks, `.gitignore`, `CHANGELOG.md`). Several of
+those rows said *kept a copy, then replaced* until then: they described what
+`init.sh` does to a new project, not what adoption does, and so did several
+notes ("OVERWRITTEN today", "the scaffolder…"), the `CHANGELOG.md` and
+uncommitted-work rows among them. A `.claude/phase-state.json` row says
+adoption stops on that project.
+`tests/test-bl322-s4-wording.sh` (S1) holds every row to a real adoption of the
+same tree, on disk and in its `MANIFEST`.
 
 **Your CI is the deliberate exception** — inspected and reported on, never
 touched. Breaking your deploys on day one would be an unforgivable way to say
@@ -298,6 +359,50 @@ Some of your automated checks do things that would work against the safety rails
 |---|---|---|
 | `.github/workflows/deploy.yml` | 3 | A deploy triggered by a branch push rather than a tag or a dispatch reaches production without crossing the release gate. |
 ```
+
+#### Would your ignore rules stop the adoption? (`collisions.ignoreRules`)
+
+Adoption stops, before it writes anything, if your ignore rules would keep one of
+its files out of its commit: it checks every file before it writes the first one
+(`## BL-322:` S3). Scout
+runs that same check, from the same code (`scripts/lib/scout/scout-ignore.sh`,
+which adoption sources), over the files an adoption writes whatever you answer,
+so you learn about a block before you answer any of adoption's questions. In
+dogfood run 3 the first adoption stopped on k-pdf's `.gitignore` line 20, `lib/`
+(a standard Python template line), after every question had been answered. Scout
+on that commit, `0bb0465`, now says:
+
+```text
+## Would your ignore rules stop the adoption?
+
+**Yes: adoption would stop before it writes anything.** Your ignore rules refuse **26** of the files adoption must write, and it will not leave a project half-installed. The rule(s), as `git check-ignore -v` names each:
+
+  .gitignore, line 20: `lib/` refuses 26 of them (for example scripts/lib/accumulation.sh)
+    It has no leading slash, so it matches `lib` at any depth, not only at the top: here it matched scripts/lib.
+    One-line fix, if the rule was meant for the top-level lib/ only: change line 20 of .gitignore to `/lib/`.
+    Whether it was is your judgement: if it is meant to ignore every lib/ at any depth, anchoring it is wrong, and these files stay refused until the rule changes. Adoption never edits your ignore files.
+```
+
+The rule lines are the ones adoption's own block prints. A block is also said in
+one line at the top of the report. The JSON carries `checked`, `why` (when it was
+not checked), `pathsChecked`, `wouldBlock`, every `refused` path, the `rules`
+(`source`, `line`, `pattern`, `refuses`, `example`), the `explanation` lines and
+`notChecked`.
+
+**What it does not predict, and says so:** `.claude/test-command` (written only
+when you keep the scan's test command) and the Development Guardrails' own files
+(installed only when their clone is on the machine). Adoption checks those itself
+before it writes anything. **What never stops an adoption, so it is not counted:**
+the archive of your own files that adoption replaces, `APPROVAL_LOG.md` and
+`.claude/bypass-audit.json` — adoption leaves whichever of them your rules ignore
+out of its commit.
+
+**It needs the framework beside it.** Scout reads the list of files adoption
+writes from the Solo Orchestrator clone it runs from (`init.sh`'s copy lines, the
+framework's templates and guides). Copied out on its own, it reports
+`checked: false` and says why. `tests/test-bl322-s3-ignore-preflight.sh` holds
+Scout's list equal to the list a real adoption's rehearsal writes, and Scout's
+answer equal to adoption's on the same tree.
 
 ### `testsBaseline` — what the tests do today
 
@@ -317,7 +422,7 @@ up. Bounded by `SCOUT_TEST_TIMEOUT` (default 300 seconds). Observed:
 
 ```json
 {
-  "testCommand": { "value": "node test/run.js", "source": "package.json scripts.test" },
+  "testCommand": { "value": "npm test", "source": "package.json scripts.test (`node test/run.js`); run through npm because no lockfile names a package manager, and npm ships with Node" },
   "commandRan": true,
   "reason": "Run once, with its output discarded rather than captured — test output is free text and free text is where a credential ends up.",
   "exitCode": 0,
@@ -329,11 +434,49 @@ up. Bounded by `SCOUT_TEST_TIMEOUT` (default 300 seconds). Observed:
 }
 ```
 
-**Scout's read-only guarantee covers Scout. It does not cover your test
-command.** A test suite that writes fixtures, touches a database, or hits the
-network will do all of that under `--run-tests`. That is exactly why the flag is
-opt-in: a scanner that runs an unknown repository's test command by default is a
-trap, not a convenience.
+#### What `--run-tests` can change
+
+Scout itself writes nothing into your project, with or without `--run-tests`.
+The flag runs **your** test command, in your real tree, through your package
+manager — and two things there can write:
+
+**The package manager — no tracked file, in any of the nine measured below,
+because Scout stops the two that would.** By default `uv run` locks before it
+runs ("when `uv run` is used, the project is locked and synced before invoking
+the requested command" — uv docs), and pnpm, since 11, installs before it runs
+(`verifyDepsBeforeRun` defaults to `install`: "Automatically runs install if
+`node_modules` is not up to date" — pnpm docs). Either one rewrote a committed lockfile in Scout's own measurement,
+so Scout passes each the documented flag that prevents it. The others leave
+tracked files alone without a flag. What each may create is untracked:
+
+| Manager | Scout runs | Rewrites a tracked file by default? | Flag Scout passes | May create (untracked) |
+|---|---|---|---|---|
+| uv | `uv run --frozen pytest` | **yes** — `uv.lock`, when it is behind `pyproject.toml` | `--frozen`: "use the lockfile without checking if it is up-to-date"; its twin `UV_FROZEN`: "uv will run without updating the `uv.lock` file" | `.venv/`, which uv writes with its own `.gitignore` of `*`; and, when the project is built with setuptools, **`<name>.egg-info/`** from uv's editable install of the project (`src/<name>.egg-info/` in a src layout), which shows in `git status` as untracked unless your `.gitignore` names it |
+| poetry | `poetry run pytest` | no | none | a virtualenv under Poetry's cache directory, outside the project (in `.venv` instead when `virtualenvs.in-project` is set or a `.venv` exists) |
+| pdm | `pdm run pytest` | no | none | `.venv/` (ignored by its own `.gitignore`) and **`.pdm-python`**, the interpreter path, which PDM's docs say not to commit — it shows in `git status` as untracked unless your `.gitignore` names it |
+| pipenv | `pipenv run pytest` | no | none | a virtualenv under `~/.local/share/virtualenvs/`, outside the project (in `.venv` when one exists or `PIPENV_VENV_IN_PROJECT` is set); and **a new `Pipfile`** when the project has a `Pipfile.lock` but no `Pipfile` |
+| pnpm | `pnpm --config.verify-deps-before-run=false test` | **yes** — `pnpm-lock.yaml`, when `package.json` is ahead of it, plus a `node_modules` install | `--config.verify-deps-before-run=false`: "`false` - Disables dependency checks" | nothing |
+| yarn | `yarn test` | no | none | nothing |
+| npm | `npm test` | no | none | nothing |
+| bun | `bun run test` | no | none | nothing in the project — a package Bun auto-installs goes to its global cache |
+| deno | `deno task test` | no | none | nothing |
+
+Measured on 2026-09-30, each on a committed lockfile made stale by a later
+commit to its manifest, then one run: uv 0.11.3, poetry 2.5.1, pdm 2.29.2,
+pipenv 2026.8.0, pnpm 11.28.3 (pnpm 8, 9 and 10 accept the flag and run the
+script too), yarn 1.22.22 and 4.18.1, npm 11.12.1, bun 1.4.2, deno 2.9.7.
+**A later release can change a default**; uv is re-measured by
+`tests/test-bl311-c-scout-runner-ignore-rule.sh` on every run where uv is
+installed, and the others are not re-measured. A Python project with none of
+those files keeps a bare `pytest`, and a Node one with no lockfile runs
+`npm test`, whose row applies.
+
+**Your tests — whatever they always write.** A suite that writes fixtures,
+caches (`.pytest_cache`), coverage files or snapshots, touches a database, or
+hits the network does all of that under `--run-tests`, exactly as it does when
+you run it. Scout cannot stop a test suite writing, and does not try. That is
+exactly why the flag is opt-in: a scanner that runs an unknown repository's test
+command by default is a trap, not a convenience.
 
 ### `intakePrefill` — what the interview can skip
 
@@ -348,7 +491,7 @@ The setup interview asks about fifteen things. Scout classifies each one:
 | …
 | Data & Integrations (incl. 5.5 Data Classification & ZDR) | **you must answer this one** | there is no way to work it out from your files, and the project cannot move forward without it |
 | …
-| Testing & Bug Tracking | `node test/run.js` | package.json scripts.test |
+| Testing & Bug Tracking | `npm test` | package.json scripts.test (`node test/run.js`); run through npm because no lockfile names a package manager, and npm ships with Node |
 | Tooling Configuration | `(none detected)` | no package manager was in evidence |
 | Agent Initialization Prompt | `(generated from the completed intake)` | run_section_13 writes it from the answers above; it asks no question of its own |
 ```

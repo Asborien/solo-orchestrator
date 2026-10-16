@@ -380,9 +380,27 @@ here.
   HOUSE RULES).
   - **Adding a test is still a ONE-LINE edit** — append it to the canonical
     array. The lane is sharded (matrix `shard: [lint-sweep, lint-scan, sast,
-    slow-misc, adopt, commit-hooks, mcp, rest]`), but only the measured long poles are pinned to a
-    shard by the `pin_*` arrays; `rest` is the COMPLEMENT, so a new entry
-    lands there automatically.
+    slow-misc, adopt, adopt-b, commit-hooks, mcp, mcp-mutants, rest]`, ten
+    legs since 2026-10-07), but only the
+    measured long poles are pinned to a shard by the `pin_*` arrays; `rest`
+    is the COMPLEMENT, so a new entry lands there automatically.
+  - **A case that needs a real Guardrails clone reads the pinned fixture,
+    never `~/.claude-dev-framework` on CI** (`## BL-322:` S5).
+    `tests/test-helpers/cdf-fixture.sh` is the one way in:
+    `SOIF_TEST_CDF_FIXTURE`, a clone of CDF at the pin in that file, which the
+    "Fetch the pinned Guardrails fixture" step fetches on every unit-shard and
+    full leg; each suite copies it into its own temp dir with
+    `cdf_fixture_copy`. Under `CI` a missing or wrong fixture FAILS the case;
+    locally it falls back to `~/.claude-dev-framework` when that is new enough
+    and has the history, else SKIPS. A suite that runs
+    `verify-install.sh --auto-fix` gives it a temp HOME with a stand-in clone
+    (`# BL-322-S5-HOME`): with the runner's HOME it clones CDF over the
+    network, which is how `rest` once leaked a clone that later suites
+    silently depended on. That covers those three suites only: others can still
+    reach the real HOME (`tests/test-bl312-tldr-mode.sh` U1 runs
+    `upgrade-project.sh`, whose `# BL-320-UP-PULL` pulls
+    `~/.claude-dev-framework`), so run any suite that runs `upgrade-project.sh`
+    with `HOME="$(mktemp -d)"`.
   - **Never write the literal array-opening token (`tests`+`=`+`(`) anywhere
     else in that file below the array.** `_build_unit_list_set` scopes with an
     UNANCHORED `awk '/tests=\(/'` and does not strip comments, so a second

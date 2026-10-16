@@ -102,7 +102,7 @@ Throughout the rest of this section, the tier breakdown describes the **shape of
 - `light`: every tier applies to Claude. Your terminal commits skip Tier 2 hooks but are still captured by Tier 1 CI and recorded post-hoc by the audit detector.
 - `no`: every tier applies to Claude. Your terminal commits are entirely unchecked by the framework.
 
-**Tier 1 — Mechanically enforced (CI pipeline).** These checks run automatically on every push. They block merges when they fail. You cannot accidentally bypass them.
+**Tier 1 — Mechanically enforced (CI pipeline).** These checks run automatically in your CI: on GitHub, on a push to `main` and on pull requests to `main` (a push to any other branch runs nothing); on GitLab and Bitbucket, on every push. They block merges when they fail. You cannot accidentally bypass them.
 
 | Control | Mechanism |
 |---|---|
@@ -128,7 +128,7 @@ Throughout the rest of this section, the tier breakdown describes the **shape of
 | SAST quick scan (Semgrep) | Pre-commit hook — blocks commit on findings; CI runs full scan | Pre-commit scans only staged files with `p/owasp-top-ten`. `--no-verify` skips the hook; the CI scan is a hard backstop and (in `strict` mode) the audit detector records the bypass. |
 | TDD ordering check (BL-072) | **`commit-msg`** git hook (covers both agent and human/editor commits) delegating to `pre-commit-gate.sh --terminal-mode --tdd-only`. **Tier-keyed on `deployment`+`poc_mode`:** WARN-only on Personal / Private-POC (and unscaffolded repos); **hard block** (rc=1) on Sponsored-POC / Production. Fires when a `feat`/`fix`/`refactor` commit ships implementation with no matching test. | Heuristic — checks test-file presence, not test quality; excludes `*.md`, lockfiles, and pure deletions. On a hard-block tier, `SOLO_TDD_ATTESTED=1` (recorded to `.claude/process-state.json::tdd_attestations[]`) is the attested escape — an escape that cannot be durably recorded refuses the commit. See the Builder's Guide, "TDD ordering enforcement (BL-072)." |
 | Schema migration check | Pre-commit hook — warns when schema files are edited directly in Phase 2+ | Only active in Phase 2+; initial schema creation in Phase 0-1 is expected |
-| TDD discipline (RED-GREEN-REFACTOR) | Superpowers plugin (optional) | Strongly encourages, does not prevent non-TDD code from being committed |
+| TDD discipline (RED-GREEN-REFACTOR) | Superpowers plugin (required once the Development Guardrails are installed: they block source edits until a Superpowers skill has run) | Strongly encourages, does not prevent non-TDD code from being committed |
 
 **Tier 3 — Guided (LLM instructions and human discipline).** These are rules written in CLAUDE.md, the Builder's Guide, and the Project Bible. The AI agent follows them. You review the output at decision gates. There is no automated backstop if the agent ignores them or you skip the review.
 
@@ -306,15 +306,15 @@ These are not framework-specific issues — they apply to any AI-assisted develo
 ### What the Script Asks You
 
 ```bash
-git clone https://github.com/kraulerson/solo-orchestrator.git
-cd solo-orchestrator
+git clone https://github.com/kraulerson/solo-orchestrator.git ~/solo-orchestrator
+cd ~/solo-orchestrator
 chmod +x init.sh
 ./init.sh --project-dir my-project
 ```
 
-Running init.sh from inside the clone is the supported flow. `--project-dir my-project` — a bare folder name — creates the project **beside** the clone, as a sibling of `solo-orchestrator/`, and skips the directory prompt below. Pass an absolute path instead and it is used exactly as given. Plain `./init.sh` with no flags still works and asks you interactively. Either way init refuses a target that would write onto the framework itself — the clone, anything inside it, or another copy of solo-orchestrator.
+The framework lives at `~/solo-orchestrator` — the README and the adoption guide clone to the same place, and the commands later in this guide that run a script from the clone (`--sync-framework`, below) assume it. Running init.sh from inside the clone is the supported flow. `--project-dir my-project` — a bare folder name — creates the project **beside** the clone, as a sibling of `solo-orchestrator/` (here `~/my-project`), and skips the directory prompt below. Pass an absolute path instead and it is used exactly as given. Plain `./init.sh` with no flags still works and asks you interactively. Either way init refuses a target that would write onto the framework itself — the clone, anything inside it, or another copy of solo-orchestrator.
 
-The script prompts for 7 inputs (6 if you passed `--project-dir`):
+The script prompts for the inputs below (it skips the directory prompt if you passed `--project-dir`):
 
 | Prompt | What You Enter | Guidance |
 |---|---|---|
@@ -324,6 +324,7 @@ The script prompts for 7 inputs (6 if you passed `--project-dir`):
 | **Project track** | Light / Standard / Full | **Light:** internal tools, <10 users, skip market audit. **Standard:** external users, moderate complexity. **Full:** enterprise buyers, sensitive data, pen testing mandatory. |
 | **Personal or Organizational** | Personal / Organizational | Organizational adds governance pre-flight requirements and approval authority structures. |
 | **Primary language** | TypeScript, Python, Rust, C#, Kotlin, Java, Go, Dart, Swift, Other | Determines the CI pipeline template (testing, linting, SAST, dependency audit). |
+| **TL;DR mode** — *"Do you want every reply to end with a plain-English summary of what happened, your options and a recommendation? [y/N]"* | `y` for yes; Enter (or anything else) for no | Off unless you say yes. On, every reply the agent gives you ends with one plain-English TL;DR: what happened, what it means for you, next steps, what is waiting on you, your options with their pros and cons, a recommendation with its reasoning, what happens if you do nothing, and every command you must run in a fenced block. See [TL;DR mode](#tldr-mode) below. |
 | **Project directory** | Path — press Enter to accept the default | Where the project is created. The default is the **clone's parent directory** plus your project name, i.e. a sibling of `solo-orchestrator/` (it falls back to `~/projects/` only if that parent cannot be resolved). Typing a bare name here resolves against that same parent, so it also lands beside the clone; type an absolute path to put it anywhere else. Skipped entirely when you pass `--project-dir`. |
 
 ### What Gets Generated
@@ -358,7 +359,7 @@ Either way, the **Phase 1→2 gate enforces a verified remote**, keyed on the sa
 
 | File | Created By | You Must | Notes |
 |---|---|---|---|
-| `CLAUDE.md` | init.sh (starter version) | Update at each phase transition and end of each session | The starter version works until you configure optional enhancements. When you add Superpowers, Context7, or Qdrant, replace with the [enhanced template](cli-setup-addendum.md#6-claudemd). |
+| `CLAUDE.md` | init.sh (starter version) | Update at each phase transition and end of each session | The starter version works until you configure the tools in the CLI Setup Addendum. When you add Superpowers, Context7, or Qdrant, replace with the [enhanced template](cli-setup-addendum.md#6-claudemd). |
 | `PROJECT_INTAKE.md` | init.sh (blank template) | Fill out completely before Phase 0 | The primary input to the entire process |
 | `APPROVAL_LOG.md` | init.sh (empty with headers) | Add entries at each phase gate | Append-only — never edit previous entries |
 | `.github/workflows/ci.yml` | init.sh (language-specific) | Nothing — works on first push | Modify only if adding a secondary language |
@@ -373,7 +374,7 @@ Either way, the **Phase 1→2 gate enforces a verified remote**, keyed on the sa
 | `scripts/intake-wizard.sh` | init.sh (copied) | Run to fill out the Intake | Guided script or AI-assisted conversation |
 | `scripts/resume.sh` | init.sh (copied) | Run at session start | Prints the exact first message to paste — state-aware: intake prompt, Phase-0 initialization prompt (Intake §13), or the classic resume prompt |
 | `templates/intake-suggestions/` | init.sh (copied) | Nothing | Context-aware suggestions for the wizard |
-| **Superpowers** | You (optional) | Install plugin, configure in CLAUDE.md | See [CLI Setup Addendum](cli-setup-addendum.md#1-superpowers) |
+| **Superpowers** | You (required: the Development Guardrails block source edits without it) | Install plugin, configure in CLAUDE.md | See [Required: Superpowers](#required-superpowers) |
 | **Context7 MCP** | You (optional) | One command to add MCP server | See [CLI Setup Addendum](cli-setup-addendum.md#4-context7) |
 | **Qdrant MCP** | You (optional) | Docker + MCP server config | See [CLI Setup Addendum](cli-setup-addendum.md#5-qdrant) |
 
@@ -386,6 +387,7 @@ The manifest is a JSON file maintained jointly by CDF (for framework version pin
 - `host` — git host type: `github` | `gitlab` | `bitbucket` | `other`. Written at init time; consumed by host-aware scripts to route calls through the correct driver.
 - `mode` — project mode: `personal` | `org`. Controls protection bar and some governance paths.
 - `remote_url` — HTTPS clone URL of the remote created at init.
+- `tldr_mode` — `true` or `false`: whether every reply ends with a plain-English TL;DR ([TL;DR mode](#tldr-mode)). Absent reads as `false`.
 
 Scripts should always read these via `jq` (e.g., `jq -r '.host' .claude/manifest.json`) rather than parsing manually.
 
@@ -409,6 +411,23 @@ snyk auth                     # Authenticate Snyk CLI
 
 Both are one-time per machine.
 
+### Required: Superpowers
+
+The Development Guardrails that `init.sh` installs block every edit to a source file until a Superpowers skill has run in the Claude Code session, and without the Superpowers plugin there is no skill to run. Install it before the first change to source code, for your user, then start a new Claude Code session:
+
+```bash
+claude plugin install --scope user superpowers@claude-plugins-official
+```
+
+If the install says the marketplace `claude-plugins-official` is not found,
+add it, then run the install again. Claude Code adds that marketplace the first
+time it starts an interactive session, so a computer where it never has lacks
+it:
+
+```bash
+claude plugin marketplace add anthropics/claude-plugins-official
+```
+
 ### Optional Enhancements
 
 After init, you can configure additional tooling. These are not required for your first project, but each addresses a specific pain point. **Configure them when you feel the pain, not during initial setup** — except Context7, which is useful from Phase 1.
@@ -416,11 +435,10 @@ After init, you can configure additional tooling. These are not required for you
 | Tool | What It Does | When to Configure | Setup Effort |
 |---|---|---|---|
 | **Context7 MCP** | Gives the AI up-to-date library documentation instead of relying on training data | **Before Phase 1** — helps the AI make accurate architecture and implementation decisions | One command, no prerequisites |
-| **Superpowers** | Agentic skills plugin — strict TDD, subagent-driven development, systematic debugging, git worktrees | **Before Phase 2** — accelerates the Build Loop significantly | One command, no prerequisites |
 | **Qdrant MCP** | Persistent semantic memory across sessions — the AI remembers project decisions and patterns | **Phase 1** — offered automatically when Docker is available. Each project gets an isolated collection. | Requires Docker (Colima or Docker Desktop) |
 | **Development Guardrails for Claude Code** | Git hook-based guardrails for coding standards, security scanning, documentation | Auto-installed by init.sh | Already done |
 
-See the [CLI Setup Addendum](cli-setup-addendum.md) for detailed instructions, or use the [Quick Setup](cli-setup-addendum.md#quick-setup--all-recommended-enhancements) to configure all three at once.
+See the [CLI Setup Addendum](cli-setup-addendum.md) for detailed instructions, or use the [Quick Setup](cli-setup-addendum.md#quick-setup--all-recommended-enhancements) to configure these and Superpowers at once.
 
 ---
 
@@ -562,6 +580,20 @@ Section 13 of the Intake contains a ready-to-use initialization prompt. `bash sc
 
 You also provide the Builder's Guide (`docs/reference/builders-guide.md`) and the relevant Platform Module.
 
+### TL;DR mode
+
+An opt-in reply format, chosen once — at the `init.sh` question above, or by adoption's last question — and switched whenever you like:
+
+```bash
+bash scripts/reconfigure-project.sh --tldr-mode on    # or: off
+```
+
+When it is on, every reply the agent gives you ends with exactly one plain-English **TL;DR**, written for someone who is not a programmer and restated in full every time (never "as above"). It carries eight parts: what happened; what it means for you; next steps; what is waiting on you; the options; the pros and cons of each; a recommendation with its reasoning; and what happens if you do nothing — plus every command you must run, in a fenced block. It sits on top of the [Messaging Standard](messaging-standard.md), which already asks for five of those parts in every *summary*; TL;DR mode asks for all eight in every *reply*.
+
+**How it is kept.** The choice is `tldr_mode` in `.claude/manifest.json`. While it is on, your `CLAUDE.md` carries a short "TL;DR Mode" section telling the agent what the TL;DR contains, and a Stop hook (`scripts/hooks/tldr-check.sh`) sends back — at most once per turn — any reply with no TL;DR outside a code block. The hook checks that a TL;DR is *there*, not what it says. It is registered in every project `init.sh` or adoption creates, whether the mode is on or off, and does nothing while it is off; a project created before it existed gets the script from `--sync-framework` and the registration from `reconfigure-project.sh --tldr-mode on`. `reconfigure-project.sh --tldr-mode` changes the manifest key and the `CLAUDE.md` section together and makes sure the hook is registered; it commits nothing, and it is a change of its own — beside another option it refuses. Running `--tldr-mode on` while it is already on writes the section again with the current wording, which is how a project picks up a wording change after an upgrade; anything edited inside the section is replaced, and the run says so. A non-interactive `init.sh` reads it from `"tldr_mode": true` in its `--config` file and leaves it off without that key.
+
+**If it cannot tell, it stays out of the way.** No `jq`, a manifest it cannot read, or a key that is not exactly `true` all count as off. That is deliberate — it is a format you asked for, not a safety check — and a missing `jq` is said in one line rather than silently skipped.
+
 ### The Agent's Operating Model
 
 The agent works autonomously between decision gates. It reads your Intake, follows the Builder's Guide, and builds. It stops when:
@@ -596,6 +628,76 @@ If tools are out of date, the script offers interactive update options:
 - **Skip** — prints the manual update commands for later
 
 **Critical rule:** The agent will not proceed with Phase 2+ work if any required security tool (Semgrep, gitleaks, Snyk) is below its minimum version. This prevents building against outdated security scanning.
+
+**This project's Development Guardrails.** The `git_repo` row above says whether the Guardrails *clone* is behind its remote. In a project that has `.claude/framework/`, the check also compares the version this *project* runs (`.claude/manifest.json` → `frameworkVersion`) with the clone's (`FRAMEWORK_VERSION` in `~/.claude-dev-framework`, or in `$CDF_HOME` when you set it). When the project is older, every session start offers the update:
+
+- The agent tells you both versions and asks you to type `!` and then this command at the Claude Code prompt:
+
+  ```bash
+  bash scripts/refresh-guardrails.sh
+  ```
+
+- The agent does not run it itself: the update replaces the Guardrails that check the agent's own work, so starting it is your decision. (The Guardrails block the agent editing `.claude/framework/` and `.claude/manifest.json` directly; they do not block this command, so the agent's restraint here is an instruction, not a check.)
+- It first runs `git pull --ff-only` on the Guardrails clone. Every project on this machine shares that clone, and the pull can bring a newer version than the one you were offered.
+- Then it copies the clone's Guardrails hooks and rules into `.claude/framework/` and records the new version in `.claude/manifest.json`. In `.claude/settings.json` it only adds the Guardrails hook registrations the project lacks — 4.4.0's `record-approval.sh`, which reads your answer to the agent's approval question, is one — and lists each; it removes, reorders and rewrites nothing there (`## BL-320:`; the rest of refreshing settings is `## BL-319:`). It ends with an `[OK]` line, or a `[FAIL]` line naming what did not land.
+- The same check names a project whose Guardrails are below 4.4.0 — the minimum for this framework's approval questions — and offers the refresh to a project at 4.4.0 or later that lacks one of those registrations. The minimum stays 4.4.0, though 4.4.1 closes ways an agent could approve its own commit; once the Guardrails clone holds 4.4.1, a project at 4.4.0 is offered it like any other update. With 4.4.1 your own override, `bash .claude/framework/hooks/mark-evaluated.sh "what you approved"` run in a separate terminal window, also shows a six-digit code there that you type back to approve ([docs/adoption.md, *7. Your first change*](https://github.com/kraulerson/solo-orchestrator/blob/main/docs/adoption.md#7-your-first-change), *The override*; also in your clone, `~/solo-orchestrator/docs/adoption.md`).
+- It refuses a new MAJOR version (a Guardrails migration — the session start reports that case as a notice and offers no command), an uncommitted change in the clone's hooks or rules, a symlink in `.claude/framework/`, and Guardrails 4.4.0 or later over this project's own question writer when that writer predates them (`## BL-320:` — the session start names the framework sync instead, which updates both). When it refuses, nothing in this project is changed; the shared clone may already have been pulled.
+- The new hooks apply from the agent's next tool call: Claude Code runs each hook from its file every time, so no restart is needed. Only the Guardrails' own session-start message stays the old one until the next session.
+- Say no and the session carries on. The offer comes back at every session start until the versions match, so if a Guardrails hook is blocking you wrongly, start a new session and accept it — or type the command at any time.
+
+`scripts/check-updates.sh` compares the same two versions when you run it by hand, and points at the same command.
+
+When the check cannot read one of the two versions — no `.claude/manifest.json`, no `frameworkVersion` in it, no clone, or a value that is not `MAJOR.MINOR.PATCH` — it says "cannot tell whether an update is available" and why, instead of staying silent.
+
+#### What to do with each message
+
+When something needs attention, the session start hands the agent a message it must tell you about in its first reply, before any other work. When everything is up to date, there is no message. Each kind, in plain words:
+
+- **`VERSION CHECK`, with warnings, `Update commands (run manually):`, and the question "Would you like me to run these updates now, or skip for this session?"** A tool on your computer has a newer version, or is not installed; each command updates or installs one tool, for every project on the computer. Nothing here stops your work, so **skip** is a safe answer when you are in the middle of something; say yes when you have a few minutes. A `not installed` line for a tool your current work does not use can wait — Snyk, for one, is used by the Phase 3 validation scans, not by a commit. Two lines in this message are exceptions:
+  - **`Superpowers: not installed`.** With the Development Guardrails installed, every edit to a source file is blocked until this Claude Code plugin is there. Install it, then start a new Claude Code session:
+
+    ```bash
+    claude plugin install --scope user superpowers@claude-plugins-official
+    ```
+
+    If it says the marketplace `claude-plugins-official` is not found, add it first ([Required: Superpowers](#required-superpowers) says why):
+
+    ```bash
+    claude plugin marketplace add anthropics/claude-plugins-official
+    ```
+
+  - **`Qdrant MCP: NOT registered with Claude Code`** or **`Context7 MCP: NOT registered with Claude Code`.** The memory server or the documentation server is not set up for Claude Code. The session works without it — it is not checked until it is registered. Set it up when convenient (the [CLI Setup Addendum](cli-setup-addendum.md) gives the commands), or skip it.
+- **`URGENT — VERSION CHECK FAILED`, with a tool marked `BELOW MINIMUM`.** A tool is older than the oldest version the framework accepts, and the agent is told not to do any work until you deal with it. Update it first: say yes when the agent offers the command listed under the warning, then start a new session so the check runs again.
+- **`GUARDRAILS UPDATE OFFER`.** Your project's Development Guardrails are older than the copy on this computer. Usually say yes, at a moment when nothing is half-done. You type it, not the agent: `!` and then the command the offer shows, at the Claude Code prompt — today that is the one below. Then commit `.claude/framework/` and `.claude/manifest.json` (and `.claude/settings.json`, when the command says it added a registration). The offer also comes when the Guardrails version is current but a hook registration is missing (the line says `hook registrations is missing from .claude/settings.json`, or `are missing`). If a Guardrails check is blocking you when it should not, this update may be the fix. Say no and it asks again at the next session start. More under *This project's Development Guardrails*, above.
+
+  ```bash
+  bash scripts/refresh-guardrails.sh
+  ```
+
+- **`GUARDRAILS NOTICE`, saying `a new MAJOR version`.** A much newer Guardrails version is on this computer. Moving to it is a migration, not an update, so there is no command to offer. Carry on: your project keeps the version it has, and nothing breaks. Do not let the agent attempt the migration; read the notes in the `migrations/` folder the notice names, or ask for help, before you do it yourself.
+- **A Guardrails line saying `is below 4.4.0, the minimum for this framework's approval questions`.** Until the project's Guardrails are 4.4.0 or later, a commit cannot be approved by answering the agent's question with an option id: the agent approves its own commits the older way. Beside a `GUARDRAILS UPDATE OFFER`, accept the offer. In a `GUARDRAILS NOTICE` there is nothing newer in the Guardrails clone to install: update the clone first (every project on this computer uses it), and the next session start offers this project's update:
+
+  ```bash
+  git -C ~/.claude-dev-framework pull --ff-only
+  ```
+
+- **`GUARDRAILS NOTICE`, saying `still write the older approval question`.** The Guardrails clone holds 4.4.0 or later, but this project's own Solo scripts predate the approval question that version answers. Updating the Guardrails alone would leave no way to approve a commit by reply, so it is not offered (and `scripts/refresh-guardrails.sh` refuses it). Update both together with the framework sync, from the project's folder — the notice prints the command, and [Keeping your project current](#keeping-your-project-current---sync-framework) explains it:
+
+  ```bash
+  bash ~/solo-orchestrator/scripts/upgrade-project.sh --sync-framework
+  ```
+
+  A project whose scripts predate this check has no such notice, and two of its own scripts can install 4.4.0 anyway: its Guardrails update offer, and its own `upgrade-project.sh` (`--backfill-only`, or a track or deployment change run from the project's copy). After that no reply can approve a commit. The same framework sync, run from the framework's up-to-date clone, repairs it; the framework's own `upgrade-project.sh` refuses the Guardrails-only refresh and names the sync.
+
+- **`GUARDRAILS NOTICE`, saying `cannot tell whether an update is available`.** The check could not read one of the two versions; the reason follows the dash. Carry on: it only means no update can be offered. If the reason says there is no Guardrails clone, get one:
+
+  ```bash
+  git clone https://github.com/kraulerson/claude-dev-framework.git ~/.claude-dev-framework
+  ```
+
+  For any other reason the project's `.claude/manifest.json` is not what the check expects. Leave it alone (the Guardrails do not let the agent edit it) and ask for help when convenient.
+
+In a project's first sessions the agent's search of its memory finds nothing; that is normal, because nothing has been stored yet.
 
 #### Extending the Version Check
 
@@ -1231,7 +1333,9 @@ cd ~/projects/your-project
 bash scripts/upgrade-project.sh --backfill-only     # lightest upgrade — syncs CDF only, no track/deployment change
 ```
 
-`--backfill-only` is the lightest invocation: it refreshes CDF assets (and runs the manifest backfills) without changing your track or deployment. Any full `upgrade-project.sh` run (e.g. `--track`, `--deployment`, `--to-production`) also refreshes CDF assets as part of the upgrade.
+To update the Guardrails and nothing else, run `bash scripts/refresh-guardrails.sh` instead: it runs the same CDF refresh without the manifest, skills and helper-script backfills, and the session start offers it whenever your project is older than the clone ([Session-Start Version Check](#session-start-version-check)).
+
+`--backfill-only` is the lightest upgrade invocation: it refreshes CDF assets (and runs the manifest backfills) without changing your track or deployment. Any full `upgrade-project.sh` run (e.g. `--track`, `--deployment`, `--to-production`) also refreshes CDF assets as part of the upgrade.
 
 What the refresh does:
 
@@ -1267,6 +1371,16 @@ bash ~/solo-orchestrator/scripts/upgrade-project.sh --sync-framework
 
 Always run `--dry-run` first. It prints one line per file it *would* change and
 touches nothing on disk — no tmp files, no CDF calls, no manifest writes.
+
+**Asking Claude Code to run it for you?** The clone is outside your project, so
+Claude Code's auto mode can refuse the command (`[Code from External]`) — it was
+in the 2026-09-27 test run, where the agent had cloned the framework itself in that
+same session — and the agent cannot change its own permissions to get past that.
+Before the session starts, you add one line to your user settings that names
+the clone as trusted code to run, and if Claude is still refused, you run the
+command yourself:
+[Before you start: let Claude Code run the framework's scripts](https://github.com/kraulerson/solo-orchestrator/blob/main/docs/adoption.md#2-before-you-start-let-claude-code-run-the-frameworks-scripts)
+(also in your clone, `~/solo-orchestrator/docs/adoption.md`).
 
 **What it syncs (applies for you):**
 
@@ -1383,7 +1497,7 @@ The framework ships with two categories of evaluation prompts that provide indep
 
 ```bash
 # From the solo-orchestrator repository root — run all reviews
-cd /path/to/solo-orchestrator
+cd ~/solo-orchestrator
 chmod +x evaluation-prompts/Framework/run-reviews.sh
 ./evaluation-prompts/Framework/run-reviews.sh
 
@@ -1485,20 +1599,23 @@ All scripts live in `scripts/` and can be run with `bash scripts/<name>.sh`. Scr
 | `check-changelog.sh` | CHANGELOG.md currency check — warns when source changed without a changelog entry; `SOIF_STRICT_CHANGELOG=true` turns the warning into a failing step | Automatic (CI) | 2+ |
 | `check-session-state.sh` | CLAUDE.md freshness check — warns when it lags HEAD by more than N commits / T hours; `SOIF_STRICT_SESSION=true` turns the warning into a failing step | Automatic (CI) | 2+ |
 | `check-versions.sh` | Tool version comparison against minimums | `bash scripts/check-versions.sh` | Any |
+| `refresh-guardrails.sh` | Updates this project's Development Guardrails to the clone's version: `.claude/framework/` and the manifest version, never `.claude/settings.json` (BL-318 G5) | Offered at session start; type `!` then `bash scripts/refresh-guardrails.sh` | Any |
 | `check-updates.sh` | Framework update availability check | `bash scripts/check-updates.sh` | Any |
 | `intake-wizard.sh` | Interactive project intake questionnaire | `bash scripts/intake-wizard.sh` | Pre-0 |
 | `upgrade-project.sh` | Track/deployment upgrade (Light→Standard, personal→org) | `bash scripts/upgrade-project.sh --help` | Any |
-| `reconfigure-project.sh` | Regenerate CLAUDE.md, APPROVAL_LOG header, intake-progress, CI/release pipelines on name/platform/language change (track/deployment use upgrade-project.sh) | `bash scripts/reconfigure-project.sh --help` | Any |
+| `reconfigure-project.sh` | Regenerate CLAUDE.md, APPROVAL_LOG header, intake-progress, CI/release pipelines on name/platform/language change (track/deployment use upgrade-project.sh); switch TL;DR mode (`--tldr-mode on\|off`) | `bash scripts/reconfigure-project.sh --help` | Any |
 | `resolve-tools.sh` | Tool matrix resolution by platform/language/track/phase | `bash scripts/resolve-tools.sh --dev-os <os> --platform <p> --language <l> --track <t> --phase <n>` (no `--help` handler) | Any |
 | `resume.sh` | Generate session resume context for copy/paste | `bash scripts/resume.sh` | Any |
 | `check-gate.sh` | Host-aware remediation helper for gate failures (branch protection and friends) | `bash scripts/check-gate.sh --help` | Any |
 | `check-maintenance.sh` | Maintenance cadence check | `bash scripts/check-maintenance.sh` | 4+ |
 | `check-pr-review.sh` | The push-time review gate — refuses a push with no adversarial review recorded against HEAD | Automatic (pre-push hook) | 2+ |
+| `ci-verify-sha256.sh` | Checks a downloaded file against a pinned SHA-256 by computing and comparing it; `install-gitleaks.sh` uses it | `bash scripts/ci-verify-sha256.sh <file> <expected-sha256>` | Any |
 | `cut-release.sh` | The post-1.0 release cut | `bash scripts/cut-release.sh` | 4+ |
 | `delta.sh` | The post-1.0 delta track's operator front door (open, close and cut deltas) | `bash scripts/delta.sh --help` | 4+ |
 | `detect-out-of-band-commits.sh` | Records user-terminal commits made outside the hooks (BL-030) | Automatic (SessionStart hook) | 2+ |
 | `escalate-to-user.sh` | The documented alternative to bypassing a gate — hands the decision to you (BL-029) | `bash scripts/escalate-to-user.sh --help` | Any |
 | `install-filesystem-gates.sh` | Installs the strict-mode git hooks (BL-030) | `bash scripts/install-filesystem-gates.sh` | Any |
+| `install-gitleaks.sh` | Installs a pinned, checksum-verified gitleaks on Linux (x86_64, aarch64) — the tool matrix's Linux recipe, run for you by init, upgrade, verify-install and adoption; on macOS use `brew install gitleaks` | `bash scripts/install-gitleaks.sh` | Any |
 | `lint-backlog-references.sh` | Closed backlog entries must cite a PR or SHA (in a generated project it self-declares nothing to validate unless a backlog file exists) | Automatic (pre-commit hook) | Any |
 | `lint-counter-antipattern.sh` | Refuses the `((x++))`-under-`set -e` class of counter bug in shell scripts | Automatic (pre-commit hook) | Any |
 | `lint-fixture-envelopes.sh` | Refuses test fixtures still using the retired envelope shape — shipped, but wired into no hook or pipeline in a generated project; run it by hand | `bash scripts/lint-fixture-envelopes.sh` | Any |
