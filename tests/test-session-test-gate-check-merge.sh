@@ -331,6 +331,81 @@ else
 fi
 teardown
 
+# ════════════════════════════════════════════════════════════════════
+echo ""
+echo "=== BL-311: the user config files the hook reads (# BL-311-GATE-CONFIG) ==="
+# ════════════════════════════════════════════════════════════════════
+# A server registered in the files THIS Claude Code session reads is REQUIRED
+# (session-mcp-gate.sh then blocks every edit until it answers); one registered
+# anywhere else is not. With CLAUDE_CONFIG_DIR UNSET those files are
+# ~/.claude.json and ~/.claude/settings.json — the default setup, and the one
+# where a wrong path fails OPEN: the gate stops requiring a server the session
+# has. With it SET they are inside it, and ~/.claude.json is not read.
+# Hermetic: a temp HOME and an explicit CLAUDE_CONFIG_DIR (or `env -u`) on
+# every run, so the host's own configuration never answers.
+_gc_reg() {   # FILE — register qdrant and context7 in FILE
+  mkdir -p "$(dirname "$1")"
+  printf '{"mcpServers":{"qdrant":{"command":"uvx"},"context7":{"command":"npx"}}}\n' > "$1"
+}
+_gc_req() {   # HOOK HOME CFG(empty = unset) — "[qdrant_required,context7_required]"
+  local hook="$1" home="$2" cfg="$3" d=""
+  d="$(mktemp -d)"; mkdir -p "$d/.claude"
+  if [ -n "$cfg" ]; then
+    ( cd "$d" && printf '{"source":"startup"}' | env HOME="$home" CLAUDE_CONFIG_DIR="$cfg" bash "$hook" >/dev/null 2>&1 )
+  else
+    ( cd "$d" && printf '{"source":"startup"}' | env -u CLAUDE_CONFIG_DIR HOME="$home" bash "$hook" >/dev/null 2>&1 )
+  fi
+  jq -c '[.mcp_requirements.qdrant_required, .mcp_requirements.context7_required]' "$d/.claude/tool-usage.json" 2>/dev/null
+  rm -rf "$d"
+}
+GC_FAILS=0; GC_FAILED_IDS=""
+gc_cases() {   # HOOK — C1..C3; bumps GC_FAILS and reports unless GC_QUIET=1
+  local hook="$1" t="" got=""
+  GC_FAILS=0; GC_FAILED_IDS=""
+  t="$(mktemp -d)"
+  _gc_reg "$t/h1/.claude.json"
+  got="$(_gc_req "$hook" "$t/h1" "")"
+  if [ "$got" = "[true,true]" ]; then [ "${GC_QUIET:-0}" = 1 ] || pass "C1: CLAUDE_CONFIG_DIR UNSET — servers registered in ~/.claude.json are REQUIRED (the default setup does not fail open)"
+  else GC_FAILS=$((GC_FAILS + 1)); GC_FAILED_IDS="$GC_FAILED_IDS C1"; [ "${GC_QUIET:-0}" = 1 ] || fail_ "C1" "requirements '$got' (want [true,true]) — the unset branch does not read ~/.claude.json"; fi
+  _gc_reg "$t/h2/.claude/settings.json"
+  got="$(_gc_req "$hook" "$t/h2" "")"
+  if [ "$got" = "[true,true]" ]; then [ "${GC_QUIET:-0}" = 1 ] || pass "C2: CLAUDE_CONFIG_DIR UNSET — servers registered in ~/.claude/settings.json are REQUIRED"
+  else GC_FAILS=$((GC_FAILS + 1)); GC_FAILED_IDS="$GC_FAILED_IDS C2"; [ "${GC_QUIET:-0}" = 1 ] || fail_ "C2" "requirements '$got' (want [true,true]) — the unset branch does not read ~/.claude/settings.json"; fi
+  _gc_reg "$t/h3/.claude.json"; mkdir -p "$t/cfg3"
+  got="$(_gc_req "$hook" "$t/h3" "$t/cfg3")"
+  _gc_reg "$t/cfg3/.claude.json"
+  got="$got $(_gc_req "$hook" "$t/h3" "$t/cfg3")"
+  if [ "$got" = "[false,false] [true,true]" ]; then [ "${GC_QUIET:-0}" = 1 ] || pass "C3: CLAUDE_CONFIG_DIR SET — ~/.claude.json is not read; \$CLAUDE_CONFIG_DIR/.claude.json is"
+  else GC_FAILS=$((GC_FAILS + 1)); GC_FAILED_IDS="$GC_FAILED_IDS C3"; [ "${GC_QUIET:-0}" = 1 ] || fail_ "C3" "requirements (home-only, then cfg) '$got' (want '[false,false] [true,true]')"; fi
+  rm -rf "$t"
+}
+gc_cases "$HOOK"
+
+# Mutation proofs: the ONE marked line replaced in a copy of the hook, the
+# replacement asserted to have landed and to parse, then C1-C3 re-run against
+# the copy — which must fail.
+_gc_mut() {   # LABEL WANT-CASE REPLACEMENT-LINE
+  local label="$1" want="$2" repl="$3" m="" n=""
+  m="$(mktemp -d)"; cp "$HOOK" "$m/hook.sh"
+  n="$(MUT_REPL="$repl" awk '/# BL-311-GATE-CONFIG$/ { print ENVIRON["MUT_REPL"]; c++; next } { print } END { print c + 0 > "/dev/stderr" }' \
+        "$HOOK" 2>&1 >"$m/hook.sh")"
+  if [ "$n" != 1 ] || ! grep -qxF -- "$repl" "$m/hook.sh" || ! bash -n "$m/hook.sh" 2>/dev/null; then
+    fail_ "$label" "the mutation did not apply (sites=$n)"; rm -rf "$m"; return
+  fi
+  GC_QUIET=1 gc_cases "$m/hook.sh"
+  case " $GC_FAILED_IDS " in
+    *" $want "*) pass "$label" ;;
+    *) fail_ "$label" "not killed by $want (failed:${GC_FAILED_IDS:- none})" ;;
+  esac
+  rm -rf "$m"
+}
+_gc_mut "MC1: the unset branch pointed at \$HOME/.claude/.claude.json — killed by C1" C1 \
+  '  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then _cc_set="$CLAUDE_CONFIG_DIR/settings.json"; _cc_json="$CLAUDE_CONFIG_DIR/.claude.json"; else _cc_set="$HOME/.claude/settings.json"; _cc_json="$HOME/.claude/.claude.json"; fi   # BL-311-GATE-CONFIG'
+_gc_mut "MC2: the unset branch's settings.json pointed elsewhere — killed by C2" C2 \
+  '  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then _cc_set="$CLAUDE_CONFIG_DIR/settings.json"; _cc_json="$CLAUDE_CONFIG_DIR/.claude.json"; else _cc_set="$HOME/settings.json"; _cc_json="$HOME/.claude.json"; fi   # BL-311-GATE-CONFIG'
+_gc_mut "MC3: CLAUDE_CONFIG_DIR ignored (fixed \$HOME paths) — killed by C3" C3 \
+  '  _cc_set="$HOME/.claude/settings.json"; _cc_json="$HOME/.claude.json"   # BL-311-GATE-CONFIG'
+
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

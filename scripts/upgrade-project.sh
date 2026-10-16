@@ -154,13 +154,55 @@ _upgrade_fail() {
 # Graceful: the wrapper warns + returns 0 when the CDF clone is absent; the
 # `|| print_warn` is belt-and-suspenders so a refresh hiccup can NEVER abort
 # the upgrade — the CDF sync is an ADDITION, not a gate.
+# `## BL-320:` (review round 1, R-4) NOT A MIXED INSTALL. Guardrails 4.4.0 and
+# later take an approval only as the user's answer to a schema-2 question; a
+# project whose own scripts/pending-approval.sh or bypass detector predates that
+# (soif_gr_writer_schema reads their SOIF_APPROVAL_SCHEMA line) would be left
+# with no way to approve a commit by reply. So the refresh is skipped there,
+# loudly, and the framework sync — which moves both halves — is named. The clone
+# is pulled first (as refresh_cdf_assets would), so the version checked is the
+# version that would be installed. On a tier change the writer was refreshed
+# above, and on --sync-framework the scripts are synced before this runs, so
+# only --backfill-only (or an incomplete sync) meets the refusal.
+_up_mixed_skip() {
+  print_warn "Development Guardrails NOT refreshed: this project's Solo scripts still write the older approval question, which Guardrails $1 cannot take an answer to, so installing them alone would leave no way to approve a commit by reply (BL-320)."
+  print_info "Update both together with the framework sync, from this project's folder (the path to your own clone of the framework, if it is elsewhere):"
+  print_info "  bash ~/solo-orchestrator/scripts/upgrade-project.sh --sync-framework"
+}
+# The clone cannot be updated without a prompt (offline, or an ssh remote that
+# needs a passphrase — final check, N-2): the version CDF's own pull would then
+# install is unknown, so a project whose writer is old is not refreshed either.
+_up_unreachable_skip() {
+  print_warn "Development Guardrails NOT refreshed: the Guardrails clone could not be updated without a prompt (offline, or its remote needs a passphrase), so the version this refresh would install is unknown — and this project's Solo scripts still write the older approval question, which Guardrails 4.4.0 and later cannot take an answer to (BL-320)."
+  print_info "Update both together with the framework sync, from this project's folder (the path to your own clone of the framework, if it is elsewhere):"
+  print_info "  bash ~/solo-orchestrator/scripts/upgrade-project.sh --sync-framework"
+}
 _refresh_cdf_assets_solo() {
+  local _up_cdf="" _up_want="" _up_pulled=1 _up_w=""
   if [ -f "$SCRIPT_DIR/lib/cdf-refresh.sh" ]; then
     print_step "Refreshing CDF framework assets (BL-001)"
+    _up_cdf="${CDF_HOME:-$HOME/.claude-dev-framework}"   # BL-320-UP-CLONE
+    if [ -f "$SCRIPT_DIR/lib/guardrails.sh" ]; then
+      # shellcheck source=scripts/lib/guardrails.sh
+      . "$SCRIPT_DIR/lib/guardrails.sh"
+      [ ! -d "$_up_cdf/.git" ] || soif_gr_git_noprompt -C "$_up_cdf" pull --ff-only --quiet >/dev/null 2>&1 || _up_pulled=0   # BL-320-UP-PULL
+      _up_want="$(tr -d '[:space:]' < "$_up_cdf/FRAMEWORK_VERSION" 2>/dev/null || :)"
+      soif_gr_mixed "$PROJECT_ROOT" "$_up_want" && { _up_mixed_skip "$_up_want"; return 0; }   # BL-320-UP-MIXED
+      _up_w="$(soif_gr_writer_schema "$PROJECT_ROOT")"
+      [ "$_up_pulled" = 1 ] || [ "$_up_w" = none ] || [ "$_up_w" -ge 2 ] || { _up_unreachable_skip; return 0; }   # BL-320-UP-UNREACHABLE
+    fi
     # shellcheck source=/dev/null
     . "$SCRIPT_DIR/lib/cdf-refresh.sh"
     solo_refresh_cdf "$PROJECT_ROOT" "$NON_INTERACTIVE" \
       || print_warn "CDF asset refresh skipped (non-fatal — upgrade continues)"
+    # `## BL-320:` (c2) a release that adds a Guardrails hook (4.4.0's
+    # record-approval.sh) runs only once .claude/settings.json registers it;
+    # the refresh above copies files only. Add the entries the manifest's
+    # activeHooks call for and the file lacks — never removing, reordering or
+    # rewriting one — and name each. Non-fatal here, like the refresh.
+    if [ -f "$SCRIPT_DIR/lib/guardrails.sh" ] && [ -d "$_up_cdf" ]; then
+      soif_cdf_register_hooks "$PROJECT_ROOT" "$_up_cdf" || print_warn "Guardrails hook registrations not checked (non-fatal — upgrade continues); the reason is above"   # BL-320-UP-REGISTER
+    fi
   fi
 }
 
@@ -199,7 +241,9 @@ _bl015_sentinel_guard() {
     echo "" >&2
     echo "  Pending question: \"$pa_question\" (offered $pa_offered)" >&2
     echo "  Options:" >&2
-    jq -r '.options[]? // empty | "    " + .' "$PENDING_APPROVAL_FILE" >&2
+    # `## BL-320:` a schema-2 question's options are objects; each is shown with
+    # what picking it does. A schema-1 option is shown as written.
+    jq -r 'if .schema == 2 then (.options // [])[]? | "    \(.id // "?") — \(.text // "") [\(if .approves == "commit" then "approves committing the staged change" else "approves nothing" end)]" else (.options // [])[]? | "    " + tostring end' "$PENDING_APPROVAL_FILE" >&2   # BL-320-UP-SENTINEL-RENDER
   else
     echo "" >&2
     echo "  Sentinel file $PENDING_APPROVAL_FILE exists but is malformed." >&2
@@ -340,6 +384,118 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+# BL-177-HELP-FIRST — help, then the project check, BEFORE anything else runs.
+# Help used to sit ~1,400 lines down, after the idempotent backfill and after
+# the --sync-framework / --plan / --validate-only dispatches, each of which
+# exits inside itself: `--help` wrote .claude/skills/ into whatever directory
+# it ran in, and `--sync-framework --help` did the whole sync (#419, #426).
+# The project check moved up with it for the same reason — every mode below
+# needs a project, and the backfill used to reach `cd ""` first (a silent
+# no-op in bash 3.2, "null directory" and rc 1 in bash 5).
+# --- Help ---
+if [ "$SHOW_HELP" = true ]; then
+  echo ""
+  echo -e "${BOLD}Solo Orchestrator — Project Upgrade${NC}"
+  echo ""
+  echo "Upgrades a project's track, deployment type, or both."
+  echo "Run this from your project directory (where .claude/phase-state.json lives)."
+  echo ""
+  echo -e "${BOLD}Usage:${NC}"
+  echo "  scripts/upgrade-project.sh --track standard           # Track upgrade (light->standard, etc.)"
+  echo "  scripts/upgrade-project.sh --track full               # Track upgrade to full"
+  echo "  scripts/upgrade-project.sh --deployment organizational # Add governance framework"
+  echo "  scripts/upgrade-project.sh --to-production            # POC -> Production (auto-bumps track to standard if light; remove POC)"
+  echo "  scripts/upgrade-project.sh --to-sponsored-poc         # Private POC -> Sponsored POC"
+  echo "  scripts/upgrade-project.sh --to-private-poc           # Personal -> Private POC"
+  echo "  scripts/upgrade-project.sh --help                     # This help message"
+  echo ""
+  echo -e "${BOLD}Mode flags (BL-018):${NC}"
+  echo "  --non-interactive       Force non-interactive mode (skips Y/N confirmations even on a tty)."
+  echo "                          Auto-detected when stdin is not a tty; this flag overrides for clarity."
+  echo "                          It also forces --sync-framework's consent paths to the declared-flag"
+  echo "                          channel (hooks need --install-hooks; docs need --apply-doc-updates)."
+  echo "  --validate-only         Parse + validate flags, print resolved JSON to stdout, exit 0."
+  echo "                          No filesystem reads of project state; no mutation."
+  echo ""
+  echo -e "${BOLD}Read-only staging (BL-109 Currency System):${NC}"
+  echo "  --plan                  Stage a framework UPDATE PLAN into a dated run folder under"
+  echo "                          docs/updates/<YYYY-MM-DD>_<fwsha>_<hhmmss>-<pid>/ for review."
+  echo "                          Read-only: writes ONLY inside the run folder, applies nothing,"
+  echo "                          prompts for nothing. Derives per-item verbs (add/update/retire/"
+  echo "                          rename), diffs, mechanical changelog roll-ups, A1 three-way"
+  echo "                          candidates (CLAUDE.md/PROJECT_INTAKE.md) and A2 structural diffs"
+  echo "                          (PRODUCT_MANIFESTO.md/PROJECT_BIBLE.md). Run it from inside your"
+  echo "                          project via the framework clone's copy, exactly like --sync-framework."
+  echo "                          Review UPDATE-PLAN.md, tick items, then apply (a later slice)."
+  echo ""
+  echo -e "${BOLD}Same-tier framework sync (BL-099):${NC}"
+  echo "  --sync-framework        Refresh vendored gate scripts, helper libs, hooks, and framework"
+  echo "                          docs from the FRAMEWORK checkout being run — NO track/deployment"
+  echo "                          change. Run it from inside your project via the framework clone's"
+  echo "                          copy: cd <project> && bash <framework>/scripts/upgrade-project.sh --sync-framework"
+  echo "  --dry-run               (with --sync-framework) Preview every action and write NOTHING."
+  echo "  --install-hooks         (with --sync-framework) Authorize hook install/refresh in"
+  echo "                          non-interactive contexts (interactive runs always prompt)."
+  echo "  --apply-doc-updates <skip|sidecar|overwrite>"
+  echo "                          (with --sync-framework) DECLARE what a non-interactive run does"
+  echo "                          with a drifted framework reference doc (docs/reference/*.md)."
+  echo "                          Omit it and a non-interactive sync applies NOTHING — it only"
+  echo "                          prints the drift notice. Interactive runs always ask instead."
+  echo "                            skip      — notice only (explicit form of the default)"
+  echo "                            sidecar   — write <doc>.new beside it; your file untouched"
+  echo "                            overwrite — replace in place; REQUIRES --confirm-doc-overwrite,"
+  echo "                                        and always keeps a dated <doc>.bak.<YYYY-MM-DD>"
+  echo "                                        (it refuses to overwrite if that backup can't be"
+  echo "                                        written, leaving your file untouched, exit != 0)."
+  echo "                          Any apply whose write does NOT land (unwritable file/dir, no space)"
+  echo "                          is reported as a [FAIL] naming the doc, leaves your original bytes"
+  echo "                          intact, and makes the whole sync exit non-zero — never a silent [OK]."
+  echo "  --confirm-doc-overwrite (with --sync-framework --apply-doc-updates overwrite) The second,"
+  echo "                          destructive-step consent. Without it a non-interactive overwrite"
+  echo "                          is refused. Interactive runs prompt regardless (default: No)."
+  echo "                          Rendered docs (CLAUDE.md/PROJECT_INTAKE.md) are notice-only under"
+  echo "                          EVERY flag combination — this mode never rewrites them, and never"
+  echo "                          writes anything beside them (no .new, no .bak, no template copy)."
+  echo ""
+  echo -e "${BOLD}--to-production pre-condition gate (code-upgrade-project-8):${NC}"
+  echo "  --to-production refuses to clear poc_mode for organizational projects"
+  echo "  unless APPROVAL_LOG.md Pre-Phase 0 rows 1-6 are all dated. Operators can"
+  echo "  acknowledge missing rows out-of-band via:"
+  echo "  --ack-preconditions=<N1,N2,...>"
+  echo "                          Comma-separated row numbers (1-6) to mark as"
+  echo "                          satisfied. Honored only with --non-interactive."
+  echo "                          Writes a user_terminal row to .claude/bypass-audit.json."
+  echo "                          Example: --non-interactive --ack-preconditions=2,3,5,6"
+  echo ""
+  echo -e "${BOLD}Flags can be combined:${NC}"
+  echo "  scripts/upgrade-project.sh --track standard --deployment organizational"
+  echo "  scripts/upgrade-project.sh --validate-only --to-production"
+  echo "  scripts/upgrade-project.sh --to-production --non-interactive --ack-preconditions=2,3,5,6"
+  echo ""
+  echo -e "${BOLD}Upgrade paths:${NC}"
+  echo "  Track:       light -> standard, light -> full, standard -> full"
+  echo "  Deployment:  personal -> organizational (adds governance framework)"
+  echo "  POC modes:   private_poc -> sponsored_poc, private_poc -> production,"
+  echo "               sponsored_poc -> production"
+  echo ""
+  echo -e "${BOLD}What gets updated:${NC}"
+  echo "  - .claude/phase-state.json (track)"
+  echo "  - .claude/tool-preferences.json (track in context)"
+  echo "  - CLAUDE.md (POC watermarks removed, governance section added)"
+  echo "  - PROJECT_INTAKE.md (track/deployment fields, governance section)"
+  echo "  - APPROVAL_LOG.md (restructured for organizational if deployment changes)"
+  echo "  - Tool resolution (new tools surfaced for the upgraded track)"
+  echo ""
+  exit 0
+fi
+
+# --- Validate project root ---
+if [ -z "$PROJECT_ROOT" ]; then
+  print_fail "No Solo Orchestrator project found."
+  print_info "Run this script from your project directory (where .claude/phase-state.json lives)."
+  exit 1
+fi
 
 # BL-018: --to-* flags are mutually exclusive (combining them produces undefined upgrade paths).
 _to_count=0
@@ -486,7 +642,13 @@ if [ "$BACKFILL_ONLY" != true ]; then _bl015_sentinel_guard; fi
 # --sync-framework path can invoke it AFTER its guards + source-check instead of
 # before them.
 _run_idempotent_backfill() {
-( cd "$PROJECT_ROOT"
+# BL-177-BACKFILL-GUARD — structural, whatever the caller: no project root, or
+# a root with neither project marker, and the backfill writes nothing. Before
+# this, blocks 5 and 6 below (skills sync, BL-088 copies) wrote into the
+# invocation directory.
+[ -n "${PROJECT_ROOT:-}" ] || return 0
+( cd "$PROJECT_ROOT" || exit 0
+  [ -f .claude/phase-state.json ] || [ -f .claude/manifest.json ] || exit 0
   # --- Host-aware migration (spec 2026-04-21) ---
   # Projects created before the host-aware gate need the flat CI template
   # layout migrated into per-host subfolders and the manifest backfilled
@@ -810,13 +972,18 @@ _run_idempotent_backfill() {
   # BL-081 ordering) so BOTH --backfill-only and the full upgrade heal it.
   # Idempotent: cp overwrites identically; the -ef self-copy guard skips the
   # in-framework-repo invocation (source and dest resolve to the same file).
+  #   • scripts/lib/guardrails.sh, lib/bypass-audit.sh, lib/bypass-patterns.sh
+  #     — `## BL-320:` (review round 1, R-3). The refreshed pending-approval.sh
+  #     and bypass detector source them: without guardrails.sh `--offer`
+  #     refuses every question, and a bypass-audit.sh from before BL-320 has no
+  #     reader for the user's picks. A tier change refreshes the writer below,
+  #     so the libs it needs ship here, for every path.
   if [ -d scripts ]; then
     mkdir -p scripts/lib
-    for _bl088_rel in \
-      "lib/tdd-classify.sh" \
-      "lib/phase2-state.sh" \
-      "lib/cdf-refresh.sh" \
-      "run-phase3-validation.sh"; do
+    _bl088_list="lib/tdd-classify.sh lib/phase2-state.sh lib/cdf-refresh.sh run-phase3-validation.sh"
+    _bl088_list="$_bl088_list lib/guardrails.sh"   # BL-320-UP-CLOSURE-GR
+    _bl088_list="$_bl088_list lib/bypass-audit.sh lib/bypass-patterns.sh"   # BL-320-UP-CLOSURE-BA
+    for _bl088_rel in $_bl088_list; do
       _bl088_src="$SCRIPT_DIR/$_bl088_rel"
       _bl088_dst="scripts/$_bl088_rel"
       [ -f "$_bl088_src" ] || continue
@@ -829,7 +996,7 @@ _run_idempotent_backfill() {
       esac
       print_ok "scripts/$_bl088_rel backfilled (BL-088 source-closure)"
     done
-    unset _bl088_rel _bl088_src _bl088_dst
+    unset _bl088_rel _bl088_src _bl088_dst _bl088_list
   fi
 )
 }
@@ -1578,11 +1745,14 @@ _run_sync_framework() {
     print_info "[dry-run] would refresh CDF framework assets (BL-001)."
   else
     _run_idempotent_backfill
-    _refresh_cdf_assets_solo
   fi
 
   # (e) script sync + (f) hooks + doc drift + pin.
   _bl099_sync_scripts        # BL-099-SYNC
+  # `## BL-320:` (review round 1, R-4) the Guardrails AFTER the scripts: the
+  # refresh refuses a mixed install, judged from the project's own question
+  # writer, so the writer must already be the synced one when it looks.
+  [ "$DRY_RUN" = true ] || _refresh_cdf_assets_solo   # BL-320-SYNC-ORDER
   _bl099_sync_commitmsg_hook
   _bl099_sync_precommit_hook
   _bl099_sync_prepush_notice   # BL-243-SYNC-SKIP-LOUD
@@ -1731,109 +1901,9 @@ if [ "$SHOW_HELP" != true ] \
   exit 1
 fi
 
-# --- Help ---
-if [ "$SHOW_HELP" = true ]; then
-  echo ""
-  echo -e "${BOLD}Solo Orchestrator — Project Upgrade${NC}"
-  echo ""
-  echo "Upgrades a project's track, deployment type, or both."
-  echo "Run this from your project directory (where .claude/phase-state.json lives)."
-  echo ""
-  echo -e "${BOLD}Usage:${NC}"
-  echo "  scripts/upgrade-project.sh --track standard           # Track upgrade (light->standard, etc.)"
-  echo "  scripts/upgrade-project.sh --track full               # Track upgrade to full"
-  echo "  scripts/upgrade-project.sh --deployment organizational # Add governance framework"
-  echo "  scripts/upgrade-project.sh --to-production            # POC -> Production (auto-bumps track to standard if light; remove POC)"
-  echo "  scripts/upgrade-project.sh --to-sponsored-poc         # Private POC -> Sponsored POC"
-  echo "  scripts/upgrade-project.sh --to-private-poc           # Personal -> Private POC"
-  echo "  scripts/upgrade-project.sh --help                     # This help message"
-  echo ""
-  echo -e "${BOLD}Mode flags (BL-018):${NC}"
-  echo "  --non-interactive       Force non-interactive mode (skips Y/N confirmations even on a tty)."
-  echo "                          Auto-detected when stdin is not a tty; this flag overrides for clarity."
-  echo "                          It also forces --sync-framework's consent paths to the declared-flag"
-  echo "                          channel (hooks need --install-hooks; docs need --apply-doc-updates)."
-  echo "  --validate-only         Parse + validate flags, print resolved JSON to stdout, exit 0."
-  echo "                          No filesystem reads of project state; no mutation."
-  echo ""
-  echo -e "${BOLD}Read-only staging (BL-109 Currency System):${NC}"
-  echo "  --plan                  Stage a framework UPDATE PLAN into a dated run folder under"
-  echo "                          docs/updates/<YYYY-MM-DD>_<fwsha>_<hhmmss>-<pid>/ for review."
-  echo "                          Read-only: writes ONLY inside the run folder, applies nothing,"
-  echo "                          prompts for nothing. Derives per-item verbs (add/update/retire/"
-  echo "                          rename), diffs, mechanical changelog roll-ups, A1 three-way"
-  echo "                          candidates (CLAUDE.md/PROJECT_INTAKE.md) and A2 structural diffs"
-  echo "                          (PRODUCT_MANIFESTO.md/PROJECT_BIBLE.md). Run it from inside your"
-  echo "                          project via the framework clone's copy, exactly like --sync-framework."
-  echo "                          Review UPDATE-PLAN.md, tick items, then apply (a later slice)."
-  echo ""
-  echo -e "${BOLD}Same-tier framework sync (BL-099):${NC}"
-  echo "  --sync-framework        Refresh vendored gate scripts, helper libs, hooks, and framework"
-  echo "                          docs from the FRAMEWORK checkout being run — NO track/deployment"
-  echo "                          change. Run it from inside your project via the framework clone's"
-  echo "                          copy: cd <project> && bash <framework>/scripts/upgrade-project.sh --sync-framework"
-  echo "  --dry-run               (with --sync-framework) Preview every action and write NOTHING."
-  echo "  --install-hooks         (with --sync-framework) Authorize hook install/refresh in"
-  echo "                          non-interactive contexts (interactive runs always prompt)."
-  echo "  --apply-doc-updates <skip|sidecar|overwrite>"
-  echo "                          (with --sync-framework) DECLARE what a non-interactive run does"
-  echo "                          with a drifted framework reference doc (docs/reference/*.md)."
-  echo "                          Omit it and a non-interactive sync applies NOTHING — it only"
-  echo "                          prints the drift notice. Interactive runs always ask instead."
-  echo "                            skip      — notice only (explicit form of the default)"
-  echo "                            sidecar   — write <doc>.new beside it; your file untouched"
-  echo "                            overwrite — replace in place; REQUIRES --confirm-doc-overwrite,"
-  echo "                                        and always keeps a dated <doc>.bak.<YYYY-MM-DD>"
-  echo "                                        (it refuses to overwrite if that backup can't be"
-  echo "                                        written, leaving your file untouched, exit != 0)."
-  echo "                          Any apply whose write does NOT land (unwritable file/dir, no space)"
-  echo "                          is reported as a [FAIL] naming the doc, leaves your original bytes"
-  echo "                          intact, and makes the whole sync exit non-zero — never a silent [OK]."
-  echo "  --confirm-doc-overwrite (with --sync-framework --apply-doc-updates overwrite) The second,"
-  echo "                          destructive-step consent. Without it a non-interactive overwrite"
-  echo "                          is refused. Interactive runs prompt regardless (default: No)."
-  echo "                          Rendered docs (CLAUDE.md/PROJECT_INTAKE.md) are notice-only under"
-  echo "                          EVERY flag combination — this mode never rewrites them, and never"
-  echo "                          writes anything beside them (no .new, no .bak, no template copy)."
-  echo ""
-  echo -e "${BOLD}--to-production pre-condition gate (code-upgrade-project-8):${NC}"
-  echo "  --to-production refuses to clear poc_mode for organizational projects"
-  echo "  unless APPROVAL_LOG.md Pre-Phase 0 rows 1-6 are all dated. Operators can"
-  echo "  acknowledge missing rows out-of-band via:"
-  echo "  --ack-preconditions=<N1,N2,...>"
-  echo "                          Comma-separated row numbers (1-6) to mark as"
-  echo "                          satisfied. Honored only with --non-interactive."
-  echo "                          Writes a user_terminal row to .claude/bypass-audit.json."
-  echo "                          Example: --non-interactive --ack-preconditions=2,3,5,6"
-  echo ""
-  echo -e "${BOLD}Flags can be combined:${NC}"
-  echo "  scripts/upgrade-project.sh --track standard --deployment organizational"
-  echo "  scripts/upgrade-project.sh --validate-only --to-production"
-  echo "  scripts/upgrade-project.sh --to-production --non-interactive --ack-preconditions=2,3,5,6"
-  echo ""
-  echo -e "${BOLD}Upgrade paths:${NC}"
-  echo "  Track:       light -> standard, light -> full, standard -> full"
-  echo "  Deployment:  personal -> organizational (adds governance framework)"
-  echo "  POC modes:   private_poc -> sponsored_poc, private_poc -> production,"
-  echo "               sponsored_poc -> production"
-  echo ""
-  echo -e "${BOLD}What gets updated:${NC}"
-  echo "  - .claude/phase-state.json (track)"
-  echo "  - .claude/tool-preferences.json (track in context)"
-  echo "  - CLAUDE.md (POC watermarks removed, governance section added)"
-  echo "  - PROJECT_INTAKE.md (track/deployment fields, governance section)"
-  echo "  - APPROVAL_LOG.md (restructured for organizational if deployment changes)"
-  echo "  - Tool resolution (new tools surfaced for the upgraded track)"
-  echo ""
-  exit 0
-fi
+# --- Help --- and --- Validate project root --- now sit directly after
+# argument parsing (# BL-177-HELP-FIRST). See there.
 
-# --- Validate project root ---
-if [ -z "$PROJECT_ROOT" ]; then
-  print_fail "No Solo Orchestrator project found."
-  print_info "Run this script from your project directory (where .claude/phase-state.json lives)."
-  exit 1
-fi
 
 # --- Prerequisites ---
 if ! command -v jq &>/dev/null; then
@@ -3372,6 +3442,9 @@ MATRIX_DIR="$ORCHESTRATOR_ROOT/templates/tool-matrix"
 upgrade_auto_install_from_resolver() {
   local resolver_output="$1"
   local auto_count="$2"
+  # `## BL-316:` a matrix row may name "${SOLO_SCRIPTS_DIR:-scripts}/install-gitleaks.sh";
+  # resolve it beside the resolver this run used, not against the caller's cwd.
+  export SOLO_SCRIPTS_DIR="${SOLO_SCRIPTS_DIR:-$ORCHESTRATOR_ROOT/scripts}"   # BL-316-SCRIPTS-DIR
   local _ui=0
   while [ "$_ui" -lt "$auto_count" ]; do
     local _tool_name _stages_json _st
@@ -3692,9 +3765,13 @@ if [ -d scripts/lib ]; then
 fi
 
 print_step "Refreshing framework helper scripts (BL-009, BL-015)"
+# `## BL-320:` (review round 1, R-3) the bypass detector writes the other
+# approval question; it moves with pending-approval.sh, or the project keeps
+# raising a bypass question the Development Guardrails 4.4.0 cannot answer.
 if [ -d scripts ]; then
-  for helper in pending-approval.sh lint-uat-scenarios.sh; do
+  for helper in pending-approval.sh lint-uat-scenarios.sh hooks/bypass-detector.sh; do   # BL-320-UP-DETECTOR
     if [ -f "$SCRIPT_DIR/$helper" ]; then
+      mkdir -p "scripts/$(dirname "$helper")"
       # When invoked as `bash scripts/upgrade-project.sh` from the project root,
       # $SCRIPT_DIR resolves to scripts/ — the source and destination are the
       # same file. BSD cp returns non-zero on identical source/dest, which under

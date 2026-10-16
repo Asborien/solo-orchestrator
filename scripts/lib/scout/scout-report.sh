@@ -263,9 +263,46 @@ _scout_emit_collisions() {
     done < "$work/coldetail"
   fi
   printf '],\n'
+  _scout_emit_ignore "$work"
   printf '    "note": %s\n' \
     "$(scout_json_str "Report-only. Scout changed none of these files and adoption would not change the audit-only ones at all. Findings name the rule, the file and the line; the matched text is deliberately not quoted.")"
   printf '  },\n'
+  return 0
+}
+
+# SCOUT_IGNORE_NOT_PREDICTED — what `ignoreRules` leaves out, said in both views.
+SCOUT_IGNORE_NOT_PREDICTED="Not predicted here, because they depend on your answers or on a choice: .claude/test-command and the Development Guardrails' own files. Adoption checks those itself before it writes anything. Not counted, because they never stop an adoption: the archive of your own files that adoption replaces (.claude/adoption-archive/), APPROVAL_LOG.md and .claude/bypass-audit.json. Adoption leaves whichever of them your rules ignore out of its commit."
+
+# _scout_emit_ignore WORK — `collisions.ignoreRules` (`## BL-322:` S3), trailing
+# comma included. Every value is read from the files scout_ignore_scan wrote; a
+# file that is missing reads as "not checked", never as clean.
+_scout_emit_ignore() {
+  local work="$1" TAB="" first=1 src="" ln="" pat="" cnt="" ex="" chk="" blk="" n=""
+  TAB=$(printf '\t')
+  chk="$(_scout_meta "$work" ignchecked)"; blk="$(_scout_meta "$work" ignblock)"
+  n="$(_scout_meta "$work" ignpaths)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  printf '    "ignoreRules": {\n'
+  printf '      "checked": %s,\n' "$(_scout_bool "$chk")"
+  printf '      "why": %s,\n' "$(scout_json_str_or_null "$(_scout_meta "$work" ignwhy)")"
+  printf '      "pathsChecked": %s,\n' "$n"
+  printf '      "wouldBlock": %s,\n' "$(_scout_bool "$blk")"   # BL-322-S3-REPORT-BLOCK
+  printf '      "refused": %s,\n' "$(scout_json_array_from_file "$work/ignrefused")"
+  printf '      "rules": ['
+  if [ -s "$work/ignrules" ]; then
+    while IFS="$TAB" read -r src ln pat cnt ex; do
+      [ -n "$src" ] || continue
+      case "$ln" in ''|*[!0-9]*) ln=0 ;; esac
+      case "$cnt" in ''|*[!0-9]*) cnt=0 ;; esac
+      [ "$first" -eq 1 ] || printf ', '
+      printf '{"source": %s, "line": %s, "pattern": %s, "refuses": %s, "example": %s}' \
+        "$(scout_json_str "$src")" "$ln" "$(scout_json_str "$pat")" "$cnt" "$(scout_json_str "$ex")"
+      first=0
+    done < "$work/ignrules"
+  fi
+  printf '],\n'
+  printf '      "explanation": %s,\n' "$(scout_json_array_from_file "$work/ignexplain")"
+  printf '      "notChecked": %s\n' "$(scout_json_str "$SCOUT_IGNORE_NOT_PREDICTED")"
+  printf '    },\n'
   return 0
 }
 
@@ -363,8 +400,18 @@ scout_emit_markdown() {
   highest=$(_scout_meta "$work" highest)
 
   printf '# Scout report\n\n'
-  printf 'A read-only look at **%s**. Scout changed nothing — it only read.\n\n' \
-    "$(_scout_meta "$work" repoRoot)"
+  # `--run-tests` ran the project's own tools in its tree, so "changed nothing"
+  # is no longer Scout's to promise (`## BL-311:`, review R-BL311C-1). The
+  # command is named HERE: this report has no testsBaseline heading to point
+  # at, and its tests section does not repeat it (review R-BL311C2-3). A run
+  # implies a command — tbran is 1 only after a non-empty testcmd ran.
+  if [ "$(_scout_meta "$work" tbran)" = "1" ]; then   # BL-311-SCOUT-REPORT-RAN
+    printf 'A look at **%s**. Scout itself wrote nothing into it, but `--run-tests` ran the project'"'"'s own test command, `%s`, there once, and anything that command or its package manager created is theirs, not Scout'"'"'s.\n\n' \
+      "$(_scout_meta "$work" repoRoot)" "$(cut -f1 < "$work/testcmd")"   # BL-311-SCOUT-REPORT-RAN-CMD
+  else
+    printf 'A read-only look at **%s**. Scout changed nothing — it only read.\n\n' \
+      "$(_scout_meta "$work" repoRoot)"
+  fi
   printf '| | |\n|---|---|\n'
   printf '| Looked at | %s |\n' "$(_scout_meta "$work" scannedAt)"
   printf '| Scout version | %s |\n' "$(scout_module_version)"
@@ -377,6 +424,11 @@ scout_emit_markdown() {
   else
     printf 'This version looked at everything it knows how to look at: **%s**.\n\n' \
       "$(printf '%s' "$SCOUT_SECTIONS_EMITTED" | sed -e 's/ /, /g')"
+  fi
+  # `## BL-322:` S3 — a stop the operator would otherwise meet only after
+  # answering every adoption question is said at the top, as well as below.
+  if [ "$(_scout_meta "$work" ignblock)" = "1" ]; then
+    printf '> **Adoption would stop before it writes anything here.** See "Would your ignore rules stop the adoption?" below.\n\n'
   fi
 
   # ── What it is built with ────────────────────────────────────────────────
@@ -447,6 +499,7 @@ scout_emit_markdown() {
 
   _scout_md_secrets    "$work"
   _scout_md_collisions "$work"
+  _scout_md_ignore     "$work"
   _scout_md_tests      "$work"
   _scout_md_prefill    "$work"
   return 0
@@ -569,7 +622,7 @@ _scout_md_secrets() {
 _scout_md_bucket_phrase() {
   case "$1" in
     archive-and-replace) printf 'kept a copy, then replaced' ;;
-    marker-composed)     printf 'left alone; the framework adds to it' ;;
+    marker-composed)     printf 'kept a copy; yours stays, and the framework adds to it' ;;   # BL-322-S4-SCOUT-COMPOSED-PHRASE
     audit-only)          printf 'not touched at all' ;;
     keep-theirs)         printf 'yours stays' ;;
     *)                   printf '%s' "$1" ;;
@@ -609,6 +662,37 @@ _scout_md_collisions() {
     done < "$work/coldetail"
     printf '\n'
   fi
+  return 0
+}
+
+# _scout_md_ignore WORK — `## BL-322:` S3, for a person: will adoption stop on
+# this project's ignore rules, and what to change. The rule lines are the ones
+# adoption's own block prints, verbatim, in a code block so their backticks
+# survive.
+_scout_md_ignore() {
+  local work="$1" n="" k=""
+  printf -- '---\n\n'
+  printf '## Would your ignore rules stop the adoption?\n\n'
+  n="$(_scout_meta "$work" ignpaths)"
+  if [ "$(_scout_meta "$work" ignchecked)" != "1" ]; then
+    if [ "$(_scout_meta "$work" ignblock)" = "1" ]; then
+      printf '**Yes: adoption would stop before it writes anything.** %s\n\n' "$(_scout_meta "$work" ignwhy)"
+    else
+      printf '**Not checked.** %s\n\n' "$(_scout_meta "$work" ignwhy)"
+    fi
+    return 0
+  fi
+  if [ "$(_scout_meta "$work" ignblock)" = "1" ]; then
+    k="$(grep -c . "$work/ignrefused" 2>/dev/null)"
+    printf '**Yes: adoption would stop before it writes anything.** Your ignore rules refuse **%s** of the files adoption must write, and it will not leave a project half-installed. The rule(s), as `git check-ignore -v` names each:\n\n' "${k:-0}"   # BL-322-S3-MD-BLOCK
+    printf '```\n'
+    cat "$work/ignexplain"
+    printf '```\n\n'
+    printf 'Change the rule, then scan again. Neither Scout nor adoption edits your ignore files. Every refused path is in the JSON report, under `collisions.ignoreRules.refused`.\n\n'
+  else
+    printf '**No.** None of the %s files adoption writes whatever you answer is refused by your ignore rules.\n\n' "${n:-0}"
+  fi
+  printf '%s\n\n' "$SCOUT_IGNORE_NOT_PREDICTED"
   return 0
 }
 

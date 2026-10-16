@@ -23,6 +23,12 @@
 #   C9  a symlinked .github/workflows is read and never written through
 #   C10 a file that cannot be read is reported as unread, never as clean
 set -uo pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSED=0; FAILED=0; SKIPPED=0
@@ -88,10 +94,11 @@ jobs:
 Y
 _commit "$G" package.json src/index.ts README.md .github/workflows/release.yml .github/workflows/lint.yml
 SHA_REL="$(_sha "$G/.github/workflows/release.yml")"; SHA_LINT="$(_sha "$G/.github/workflows/lint.yml")"
-# The tier, then ONE keep-or-retire (release.yml; lint.yml is clean), then the
-# intake's confirmations — ten of them, because how many the intake asks
-# depends on the environment and unread answers are harmless.
-_run "$G" gh 1 2 1 1 1 1 1 1 1 1 1 1
+# The tier, the track (`## BL-311:` row 8), then ONE keep-or-retire
+# (release.yml; lint.yml is clean), then the intake's confirmations — ten of
+# them, because how many the intake asks depends on the environment and unread
+# answers are harmless.
+_run "$G" gh 1 standard 2 1 1 1 1 1 1 1 1 1 1
 GRC=$RUN_RC
 
 c1() {
@@ -181,8 +188,9 @@ c8() {
   printf 'on: push\njobs:\n  t:\n    steps:\n      - run: x\n        continue-on-error: true\n' > "$p/.github/workflows/t.yml"
   _commit "$p" package.json src/index.ts README.md .github/workflows/t.yml
   before="$(cd "$p" && git rev-parse HEAD)"
-  # The tier and nothing else: the keep-or-retire question finds no answer.
-  _run "$p" unanswered 1
+  # The tier and the track and nothing else: the keep-or-retire question finds
+  # no answer.
+  _run "$p" unanswered 1 standard
   [ "$RUN_RC" -ne 0 ] || bad="$bad [rc 0 with the question unanswered]"
   [ "$(cd "$p" && git rev-parse HEAD)" = "$before" ] || bad="$bad [a commit landed]"
   [ -z "$(cd "$p" && git status --porcelain)" ] || bad="$bad [files were written]"

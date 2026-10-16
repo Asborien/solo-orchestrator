@@ -17,8 +17,9 @@
 #                         entries deliberately.
 #                         BL-190: the lane is SHARDED. The list below is
 #                         still one canonical array; a matrix job
-#                         (`unit-shard`) partitions it across five parallel
-#                         runners, and a zero-work `unit` job aggregates
+#                         (`unit-shard`) partitions it across parallel
+#                         runners (five at BL-190, ten since 2026-10-07 —
+#                         see `pin_adopt_b`), and a zero-work `unit` job aggregates
 #                         them so the branch-protection check name survives.
 #                         Nothing was demoted to the full lane: the set of
 #                         tests that gate a PR is byte-identical before and
@@ -178,7 +179,7 @@ jobs:
       # PR author sees one failure and cannot tell what else is broken.
       fail-fast: false
       matrix:
-        shard: [lint-sweep, lint-scan, sast, slow-misc, adopt, commit-hooks, rest]
+        shard: [lint-sweep, lint-scan, sast, slow-misc, adopt, adopt-b, commit-hooks, mcp, mcp-mutants, rest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (v7.0.1)
@@ -292,6 +293,48 @@ jobs:
           sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
+      - name: Install zsh (legs with a suite marked NEEDS-ZSH)
+        # The ubuntu runner image ships no zsh. This step installs it ONLY on
+        # the legs named in its `if:` list (`## BL-322:` S2, Karl 2026-10-07):
+        # installed on all nine legs it cost 9-17s each, and 89-92s on the two
+        # legs PR #503's run 37676814405 cancelled at the cap. The list is
+        # EMPTY today, measured: no suite runs zsh. BL-311 added it for the
+        # S22p/S22q/S22m paste-into-zsh cases, and BL-311 round 13 (8b5a031)
+        # removed those cases with the Qdrant recreate commands they pasted.
+        # A suite that needs zsh says so with a `# NEEDS-ZSH` comment line
+        # (any case, indented or not; `## BL-322:` S5). What replaces
+        # "installed everywhere, so the pin map stays free to move" is a
+        # guard: the shard script refuses to run such a suite on a leg where
+        # zsh is absent (`# BL-322-ZSH-GUARD`), and the
+        # zsh-legs suite (test-bl322-zsh-legs) fails when one is pinned to, or
+        # falls into, a leg missing from this list. On a listed leg a failed
+        # install still fails the shard loudly rather than quietly dropping
+        # back to bash only: no continue-on-error, no `|| true`.
+        if: contains(fromJSON('[]'), matrix.shard)   # BL-322-ZSH-LEGS
+        run: sudo apt-get -o Acquire::Retries=3 update && sudo apt-get -o Acquire::Retries=3 install -y zsh   # BL-322-ZSH-INSTALL
+
+      - name: Fetch the pinned Guardrails fixture (BL-322 S5)
+        # `## BL-322:` S5. The cases that need a REAL Development Guardrails
+        # (CDF) clone (bl320 R10/E1, upgrade-cdf-refresh T1/T3-T5, bl318-g4g6
+        # P4/P4m/P4u) read ONE fixture: CDF at the full commit id pinned in
+        # tests/test-helpers/cdf-fixture.sh (CDF_FIXTURE_PIN, v4.4.1), fetched
+        # here once per leg with its whole history (the repository is ~0.5MB)
+        # and refused unless `git rev-parse HEAD` is the pin. Each suite copies
+        # it into its own temp dir, so no suite can change it, and under CI a
+        # missing or wrong fixture makes those cases FAIL, never skip. Before
+        # S5 they read a depth-1 clone of CDF main that `verify-install.sh
+        # --auto-fix` left in the runner's HOME, on `rest` only. A failed
+        # fetch fails the leg: no continue-on-error, nothing swallowed. So if
+        # GitHub or the CDF repository is unreachable, EVERY leg goes red, by
+        # design. Three tries, each abandoned when the transfer stalls below
+        # 1000 bytes/s for 30s; the step itself is capped at 3 minutes.
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          . tests/test-helpers/cdf-fixture.sh
+          cdf_fixture_fetch "$RUNNER_TEMP/cdf-fixture"
+          echo "SOIF_TEST_CDF_FIXTURE=$RUNNER_TEMP/cdf-fixture" >> "$GITHUB_ENV"
+
       - name: Run fast unit tests — shard ${{ matrix.shard }}
         env:
           SHARD: ${{ matrix.shard }}
@@ -318,7 +361,7 @@ jobs:
           # it. Delete a name here and its `pin_*` array is ORPHANED — it
           # no longer enters `pinned`, so those paths fall back into `rest`
           # and STILL RUN. Fail-safe, not silently dropped.
-          shard_names="lint-sweep lint-scan sast slow-misc adopt commit-hooks rest"
+          shard_names="lint-sweep lint-scan sast slow-misc adopt adopt-b commit-hooks mcp mcp-mutants rest"
 
           roster="|"
           shard_arms=0
@@ -567,6 +610,10 @@ jobs:
             tests/test-bl230-workflow-html-lint-surface.sh
             tests/host-drivers/error-translate.test.sh
             tests/test-bl253-adoption-state-parity.sh
+            tests/test-bl311-b-adopt-guardrails-track.sh
+            tests/test-bl311-c-scout-runner-ignore-rule.sh
+            tests/test-bl311-e-clone-path.sh
+            tests/test-bl311-d-relayed-escape.sh
             tests/test-bl254-ci-templates-call-shipped-scripts.sh
             tests/test-lint-user-guide-scripts.sh
             tests/test-bl255-sed-replacement-escape.sh
@@ -575,6 +622,7 @@ jobs:
             tests/test-bl263-bl264-uat-template-dom.sh
             tests/test-bl284-verify-install-context.sh
             tests/test-bl281-resume-after-115.sh
+            tests/test-upgrade-help-and-projectless.sh
             tests/test-bug010-intake-silent-paths.sh
             tests/test-bl282-set-answer.sh
             tests/test-bl301-adoption-recorded-keys.sh
@@ -583,6 +631,7 @@ jobs:
             tests/test-bl275-selfapproval-remedy.sh
             tests/test-bl287-reconfigure-ci-host.sh
             tests/test-bl288-scout-shallow-history-claim.sh
+            tests/test-bl308-gitleaks-vendored-clean.sh
             tests/test-bl278-sentinel-root.sh
             tests/test-bl280-bug-gate-unmeasured-source.sh
             tests/test-bl261-contributor-sast-live.sh
@@ -604,6 +653,23 @@ jobs:
             tests/test-brownfield-wp12c-production-exemption.sh
             tests/test-brownfield-wp9c-session-layer.sh
             tests/test-bl296-adopt-guardrails.sh
+            tests/test-bl311-adopt-mcp.sh
+            tests/test-bl311-adopt-mcp-mutants.sh
+            tests/test-bl311-mcp-add-order.sh
+            tests/test-bl316-installers.sh
+            tests/test-bl312-tldr-mode.sh
+            tests/test-bl318-g1-test-command.sh
+            tests/test-bl318-g5-guardrails-refresh.sh
+            tests/test-bl318-g2-resume-adoptee.sh
+            tests/test-bl318-g3-ci-template.sh
+            tests/test-bl318-g4g6.sh
+            tests/test-bl320-approval-schema2.sh
+            tests/test-bl322-s1-audit-loop.sh
+            tests/test-bl322-s2-project-rules.sh
+            tests/test-bl322-s3-ignore-preflight.sh
+            tests/test-bl322-s4-wording.sh
+            tests/test-bl322-zsh-legs.sh
+            tests/test-bl322-s5-hardening.sh
           )
 
           # ── BL-190 shard pins ──────────────────────────────────────────
@@ -780,13 +846,21 @@ jobs:
             #    90.3s vs a 40s claim is far outside that band. The move is
             #    justified on the suite measurement; the leg percentages above
             #    are context, not the evidence.
-            tests/test-bl200-syntax-detector.sh        #  44s on PR #416 — the `rest` shard's longest pole, moved when `rest` reached 11m12s of the 12m cap
+            # bl200-syntax-detector WAS HERE (from `rest`, 2026-09-16) and moved
+            #    to `pin_mcp_mutants` on 2026-10-07 with wp11 below, when this leg
+            #    measured 632s, 620s and 624s on the three runs in the
+            #    `pin_adopt_b` note. See that note.
             # ── Re-pinned 2026-09-24, the second move in one day. On PR #442
             #    this suite first cancelled `rest` (734s of 720s, nothing
             #    failing); pinned to `lint-scan`, it then took THAT leg to 699s —
             #    it costs ~172s on CI (lint-scan 527s -> 699s), more than the
             #    local 74s suggested. This leg was the lightest on the same run
             #    (493s), and lands near 665s with it.
+            # wp11-archive-classes WAS HERE from e4e2666 (PR #503, `## BL-322:`
+            #    S2's second placement, after the cap cancelled `adopt` at 722s on
+            #    run 37676814405). It went back to `pin_adopt` on 2026-10-07,
+            #    when the tenth leg took two suites out of `adopt`. See the
+            #    `pin_adopt_b` note.
           )
           pin_lint_scan=(
             tests/test-lint-counter-antipattern.sh     # 243s at pin time — T9 re-scans the real repo; BL-191 made that scan single-pass, so re-measure before repinning
@@ -904,6 +978,19 @@ jobs:
             #    527s to 699s of the 720s cap — 21s of slack, the same
             #    "approaching" state the move was meant to cure. See its note
             #    in `pin_lint_sweep`.
+            # bl318-g4g6 WAS HERE for one PR (#503) and is now unpinned, in
+            #    `rest`: on run 37676814405 the cap cancelled this leg at 717s,
+            #    606s of tests (g4g6 85s) behind a 110s setup, 89s of it the zsh
+            #    install step.
+            # ── Two from `adopt-b`, 2026-10-08 (`## BL-322:` S5 review round
+            #    3). On PR #506's run 37783982881 `adopt-b` took 523s and this
+            #    leg 481s (job start to end). That run's bl322-s2 took 102.4s
+            #    there; S5 takes it from 74s to 174s locally, so `adopt-b`
+            #    projects to ~660s with these two (92% of the cap) and ~595s
+            #    (83%) without, and this leg to ~547s (76%). Projections from
+            #    one run, not measurements: re-measure on this PR's run.
+            tests/test-bl322-s1-audit-loop.sh            #  33.8s on PR #506 (adopt-b) — from `adopt-b`
+            tests/test-f015-tamper-pin-allowlist.sh      #  32.4s on PR #506 (adopt-b) — from `adopt-b`
           )
           pin_sast=(
             tests/test-bl132-sast-index-scan.sh        #  77s on main, 213s on PR #278 — pinned at the worst case
@@ -916,7 +1003,8 @@ jobs:
             # then busted the 12-minute cap mid-run (PR #294 round 1, canceled during bl132
             # with pysemgrep still alive). It lived in `rest` (the complement) until
             # 2026-09-16, when `rest` reached 11m12s of the cap on PR #416 with it as the
-            # longest pole (44s); it is now pinned to `lint-sweep`, the lightest leg. Per the
+            # longest pole (44s); it went to `lint-sweep`, then the lightest leg, and on
+            # 2026-10-07 to `mcp-mutants` (see the `pin_adopt_b` note). Per the
             # cap's own doctrine above the timeout-minutes line, approaching the cap is the
             # RE-PIN signal — not a raise. semgrep is installed in EVERY shard (BL-190), so
             # the suite loses nothing by living away from this leg.
@@ -925,7 +1013,10 @@ jobs:
           pin_slow_misc=(
             tests/test-brownfield-wp9d-driver-edges.sh    #  32s local — Scout + full adoptions; `rest` was 9m36s of a 12m cap
             tests/test-brownfield-wp9d-window-rehearsal.sh #  22s local — same shape; pinned with its sibling
-            tests/test-brownfield-wp11-archive-classes.sh  #  36.5s on PR #442 — moved WITH wp7b, the complement's second pole: wp7b alone would leave it at ~89% of the cap, and it takes a new suite nearly every work package
+            # wp11-archive-classes WAS HERE and moved out on 2026-10-07 (to
+            #    `pin_adopt`, then to `pin_lint_sweep`, and back to `pin_adopt`
+            #    with the tenth leg): this leg's job ran 652s and 630s of 720s on
+            #    PR #502's run and the main run after it.
             tests/test-upgrade-sync-framework.sh       #  37s
             tests/test-plan-staging.sh                 #  34s
             # ── Re-pinned 2026-08-09, measured from runs 31332638444 (main @
@@ -972,6 +1063,10 @@ jobs:
             tests/test-brownfield-wp6-collision-archive.sh   #  ~61s in CI (36s local)
             tests/test-bl276-stdin-hang.sh               # 53s on PR #412 — the complement's new longest pole; bounds four stdin-hang cases with timeouts by design
             tests/test-bl233-wpb-accumulation.sh         # 43s on PR #412 — moved WITH bl276 so the complement lands near 85% of the cap, not 99%: run 35028774242 hit 748s against 720s with 0 failures
+            # Three from `rest` with the tenth leg, 2026-10-07 (the `pin_adopt_b` note):
+            tests/test-bl256-unearned-receipts.sh        # 25.5s at its slowest of three runs
+            tests/test-lint-bl-markers.sh                # 18.6s
+            tests/test-lint-diagnostic-destruction.sh    # 16.4s
           )
           # ── `adopt` — the brownfield adoption suites (2026-09-24) ─────────
           # PR #444 measured four legs within 140s of the 720s cap: lint-scan
@@ -980,13 +1075,84 @@ jobs:
           # four adoption packages still to land. Re-pinning could only move
           # the heat, so this is a sixth leg rather than a raised cap.
           # Per-suite figures are ::group:: spans from run 36040583339.
+          # This leg ran 585s (81% of the cap) on PR #477's merge run, so the
+          # BL-311 group B adoption suite is not added here: it sits in
+          # `pin_mcp`, beside its sibling, on a leg the split left far below
+          # the cap.
           pin_adopt=(
             tests/test-brownfield-wp9b-preflight-approval.sh  # 257s on PR #444 — moved from lint-scan
-            tests/test-brownfield-wp4-driver.sh               #  98s on PR #444 — moved from lint-sweep
+            # wp4-driver WAS HERE (from lint-sweep, 2026-09-24) and is in `pin_adopt_b` since 2026-10-07.
             tests/test-brownfield-dispositions-template.sh    #  48s on PR #444 — rest's top pole
             tests/test-bl253-adoption-state-parity.sh         #  36s on PR #444 — from rest
             tests/test-brownfield-wp12b-framework-docs.sh     #  20s on PR #444 — from rest
             tests/test-brownfield-wp12a-assessment.sh         #  new — one real adoption, then the Act 4 finisher run a dozen times
+            # bl322-s3-ignore-preflight WAS HERE for one PR (#504) and is in
+            # `pin_adopt_b` since 2026-10-07: on main run 37714043379 the cap
+            # cancelled this leg at 767s, inside that suite at 46 of its 47 cases.
+            # wp11-archive-classes was here for one PR (#503): on run 37676814405
+            # the cap cancelled this leg at 722s with every suite finished, 605s
+            # of tests behind a 117s setup. It went to `pin_lint_sweep`, and came
+            # back on 2026-10-07 when wp4 and bl322-s3 left (the `pin_adopt_b` note).
+            tests/test-brownfield-wp11-archive-classes.sh     #  42.0s at its slowest of three runs — real adoptions; the archive's classes and dispositions
+            tests/test-bl322-s4-wording.sh                    #  94s local, measured after review round 1 — three real adoptions, two more refused at the preflight, 48 mutants; here because this leg ran 420s of 720s on PR #505, the lightest of the ten
+          )
+          # ── `adopt-b` — the tenth leg (2026-10-07, Karl's decision) ─────────
+          # Re-pinning inside nine legs had stopped making room. Job times on
+          # PR #504's run 37713011459: adopt 699s, rest 673s, lint-sweep 632s,
+          # mcp 603s, lint-scan 542s, commit-hooks 504s, sast 496s, mcp-mutants
+          # 461s, slow-misc 414s — 5,024s, 558s a leg. The main run after it
+          # (37714043379, 69b06a5, the same tree) had the cap CANCEL `adopt` at
+          # 767s, inside bl322-s3 at case 46 of 47. Across those two runs of
+          # one tree, `mcp`'s suites took 572s and 459s, and single suites
+          # differed by up to 46% (bl318-g2: 25.6s and 17.5s).
+          #
+          # HOW THESE PINS WERE CHOSEN. Per suite, its SLOWEST ::group:: span on
+          # three runs: 37713011459 (PR #504), 37690850772 (main c324a0d) and
+          # 37714043379 (main 69b06a5). bl322-s3 is ~230s on the last, DERIVED:
+          # 213s to case 46, plus the ~15s case 47 and teardown took on PR #504.
+          # A leg is the sum of its suites' slowest spans plus 40s, just above
+          # the most (39s) any leg spent outside its suites on those runs.
+          # Before -> after, by that method:
+          #      lint-sweep   650s -> 572s      commit-hooks  556s -> 556s
+          #      lint-scan    563s -> 563s      mcp           648s -> 565s
+          #      sast         574s -> 574s      mcp-mutants   544s -> 579s
+          #      slow-misc    504s -> 564s      adopt-b         -  -> 585s
+          #      adopt        872s -> 555s      rest          716s -> 552s
+          # A sum of slowest spans is a CEILING, not a forecast: no run was
+          # slowest in every suite at once. On PR #504's spans alone (+28s,
+          # that run's mean overhead) the ten legs average 505s, the highest
+          # 559s. `sast` is untouched and its bl132 is the most volatile suite
+          # here (282s-390s on these runs, 417s on main run 37653263402).
+          #
+          # WHAT MOVED. Here: bl322-s3 and wp4-driver from `adopt`, bl322-s2
+          # from `mcp`, bl322-s1 and f015 from `rest` (both on to `lint-scan` in
+          # S5 review round 3). Elsewhere: wp11 back to
+          # `adopt`, bl200-syntax-detector `lint-sweep` -> `mcp-mutants`,
+          # delta-db-ledger-close `rest` -> `mcp`, and bl256 plus two lint
+          # suites `rest` -> `slow-misc`. Each lands last in its leg.
+          #
+          # A SUITE LEAVING `rest` NO LONGER LOSES CASES (`## BL-322:` S5).
+          # Until S5 tests/test-bl141-commitmsg-repair.sh left a depth-1
+          # Guardrails clone in the runner's HOME (`verify-install.sh
+          # --auto-fix`), and later `rest` suites ran cases only when it was
+          # there: bl320 R10 and E1 (124/0/0 with it, 122/0/2 without) and
+          # upgrade-cdf-refresh T1, T3, T4 and T5 (6/0/0, 2/0/4); bl318-g4g6's
+          # P4/P4m skipped on every leg, the clone being too shallow. Now
+          # bl141, bl145 and pr-review-gate (those three only; other suites
+          # can still reach the runner's HOME) run with a temp HOME and fetch
+          # nothing, and those cases read the pinned fixture the "Fetch the
+          # pinned Guardrails fixture" step fetches on every leg: they run on
+          # any leg, and under CI they FAIL rather than skip without it. Each
+          # of the six that left `rest` above was run locally with an empty
+          # HOME and matched its `rest` counts.
+          # NO DIGIT IN THE NAME: tests/test-bl322-zsh-legs.sh's `fixture` finds
+          # a pin array with `pin_[a-z_]+=\(`, which a `pin_adopt_2` slips past.
+          pin_adopt_b=(
+            tests/test-bl322-s3-ignore-preflight.sh           # 202.4s on PR #504; ~230s on main run 37714043379 (derived — cancelled at case 46 of 47) — from `adopt`
+            tests/test-brownfield-wp4-driver.sh               # 128.2s at its slowest of three runs — from `adopt`
+            tests/test-bl322-s2-project-rules.sh              # 113.2s — from `mcp`; ~120s local after S5 review round 1 (74s before it: 48 more mutants, one more adoption); 150s after round 2 (D1, 12 more mutants); 174s after round 3 (D2, 9 more); 102.4s on PR #506
+            # bl322-s1-audit-loop and f015 WERE HERE until S5 review round 3 and
+            #    are in `pin_lint_scan` (its note says why).
           )
           # ── `commit-hooks` — the suites that drive real commits through real
           # hooks (2026-09-24). The same tree ran slow-misc at 8m49s and then
@@ -1001,6 +1167,61 @@ jobs:
             tests/test-brownfield-wp9c-session-layer.sh  # new — six real adoptions
             tests/test-brownfield-wp7f-provenance.sh   # new — one real adoption, then the checker and the finisher
             tests/test-brownfield-wp7e-ci-carveout.sh  # new — real adoptions, CI files read and one written
+            # From `rest`, 2026-10-05: that leg's job ran 638s of 720s on PR #498 (89%) and
+            # 624s on main run 37400574352, and this suite was its longest pole both times.
+            # This leg's job ran 450s and 388s on those runs.
+            tests/test-bl296-adopt-guardrails.sh       # 79s and 77s on those two runs — real adoptions through the Guardrails installer
+            # bl318-g4g6 WAS HERE and moved out on 2026-10-07: this leg's job ran
+            #    652s on PR #502's run 37651729332 and 699s on the main run after
+            #    it, 37653263402 (91% and 97% of 720s). It is unpinned now, in
+            #    `rest` (job 581s, 428s and 481s on those runs and PR #503's
+            #    37676814405; near 672s, 519s and 566s with its 89s, 91s and 85s).
+          )
+          # ── `mcp` and `mcp-mutants` — the BL-311 group A suite, in two files
+          # (2026-09-30). The history, all on PR #477:
+          #   - Unpinned, tests/test-bl311-adopt-mcp.sh landed in `rest`, and
+          #     the cap cancelled that leg at 764s with nothing failed, the
+          #     suite at 55 of its 128 assertions (run 36720512756). `rest`
+          #     without it is ~559s job-level: 548s of job time had elapsed
+          #     when the suite started, plus ~10s for
+          #     tests/test-bl311-mcp-add-order.sh, which never ran. Every other
+          #     leg ran 400–648s of 720s on that run, so no re-pin could absorb
+          #     it, and it got a leg of its own, `mcp`.
+          #   - Projected at 566s, `mcp` measured 661s on the merge run — 92%
+          #     of the cap — and a leg that runs one file cannot be re-pinned.
+          #   - So the suite is now two files, a leg each. Its 57 cases stay in
+          #     tests/test-bl311-adopt-mcp.sh (~230s local) on `mcp`; its 71
+          #     mutation proofs are tests/test-bl311-adopt-mcp-mutants.sh
+          #     (~318s local) on `mcp-mutants`, which sources the cases file
+          #     for the cases each mutant re-runs (`# BL-311-MCP-SPLIT`). The
+          #     BL-311 group B adoption suite (42s local, measured) joins `mcp`,
+          #     the leg with the room, rather than `adopt` (585s, 81%, on the
+          #     same merge run).
+          #   - Measured on PR #490's run: `mcp` 314s and `mcp-mutants` 400s of
+          #     720s.
+          # If either leg nears the cap, the remedy is to split further — never
+          # to raise the cap (the doctrine above the timeout-minutes line).
+          pin_mcp=(                                       # 314s on PR #490's run, of 720s
+            tests/test-bl311-adopt-mcp.sh                 # ~230s local — the 57 cases, no mutant
+            tests/test-bl311-b-adopt-guardrails-track.sh  # 42s local, measured — one real adoption, four cases halted at the intake, 12 direct writer calls
+            tests/test-bl311-c-scout-runner-ignore-rule.sh  # 36s local without uv, as the runner has none (39s with uv, measured); Scout suites run ~2x local in CI — one real adoption, stubbed and real --run-tests, 35 mutants (M25 needs uv); here, not in `rest`, which measured 577s of 720s on PR #490
+            tests/test-bl316-installers.sh                  # 15s local, measured — two real adoptions, seven resolver runs, 11 mutants; here, not in `rest` (612s of 720s on PR #493)
+            tests/test-bl318-g1-test-command.sh             # 69s local, measured — four real adoptions plus three under mutants, 24 mutants; here, not in `rest` (620s of 720s on PR #495; `mcp` was 397s)
+            tests/test-bl318-g5-guardrails-refresh.sh       # 34-35s local, measured twice after the final check (E1 skips on CI: no clone; E0 runs) — 48 cases, 48 mutants; here, not in `rest` (test step 563s, job 596s of 720s on main run 37354155101; `mcp` step 352s)
+            tests/test-bl318-g2-resume-adoptee.sh           # 28s local, measured after review round 1 — two real adoptions and two Act 4 runs, 28 cases, 30 mutants; here, not in `rest` (job 615s of 720s on PR #497; `mcp` job 463s)
+            # bl322-s2-project-rules WAS HERE from PR #503 and is in `pin_adopt_b`
+            #    since 2026-10-07: it measured 102.8s, 113.2s and 76.6s on the
+            #    three runs in that note, not the ~70s it was pinned on, and this
+            #    leg's job ran 603s and 638s on the first two.
+            tests/test-delta-db-ledger-close.sh             # 29.8s at its slowest of three runs — from `rest` with the tenth leg (the `pin_adopt_b` note)
+          )
+          pin_mcp_mutants=(                               # 400s on PR #490's run, 355s on PR #494's, of 720s
+            tests/test-bl311-adopt-mcp-mutants.sh         # ~318s local — the 71 mutation proofs
+            tests/test-bl312-tldr-mode.sh                 # ~100s local, measured (100s and 105s after review round 1) — five completed adoptions and two refused, eight adoption mutants, 34 mutants in all; here, not in `rest` (518s of 720s on PR #494) or `mcp` (349s, four files)
+            tests/test-bl311-d-relayed-escape.sh          # 34s and 33s on PR #498 and main run 37400574352 — from `rest`, its second pole, moved with bl296 (to `commit-hooks`) so `rest` drops ~112s, to ~525s of 720s on PR #498's figures; this leg's job ran 457s and 456s on those runs
+            tests/test-bl318-g3-ci-template.sh            # 35s local, measured after review round 1 — two real adoptions and two under mutants, 24 cases and 36 mutants; here, not in `rest` (job 638s of 720s on PR #498) or `mcp` (job 521s on main run 37400574352); this leg's job ran 457s on PR #498
+            tests/test-bl200-syntax-detector.sh           # 35.9s at its slowest of three runs — from `lint-sweep` with the tenth leg (the `pin_adopt_b` note); semgrep is on every leg
+            tests/test-bl322-s5-hardening.sh              # ~60s local — runs bl141, bl145 and pr-review-gate once each, and 13 mutants; here because this leg ran 467s of 720s on PR #506, the lightest of the ten
           )
 
           # The ONLY thing that maps a roster name to a pin array. Both the
@@ -1016,7 +1237,10 @@ jobs:
               sast)       printf '%s\n' "${pin_sast[@]}" ;;
               slow-misc)  printf '%s\n' "${pin_slow_misc[@]}" ;;
               adopt)      printf '%s\n' "${pin_adopt[@]}" ;;
+              adopt-b)    printf '%s\n' "${pin_adopt_b[@]}" ;;
               commit-hooks) printf '%s\n' "${pin_commit_hooks[@]}" ;;
+              mcp)        printf '%s\n' "${pin_mcp[@]}" ;;
+              mcp-mutants) printf '%s\n' "${pin_mcp_mutants[@]}" ;;
               rest)       : ;;
               *) echo "shard roster: '$1' is in the roster but has no arm in pins_for" >&2
                  return 1 ;;
@@ -1098,6 +1322,28 @@ jobs:
 
           echo "shard '${SHARD}': ${#run_list[@]} of ${#tests[@]} unit tests"
           echo "partition verified: ${n_pinned} pinned + ${#rest_list[@]} rest == ${#tests[@]} canonical"
+
+          # ── `## BL-322:` S2 — zsh only where a suite says it needs it ──────
+          # A suite that runs zsh carries a `# NEEDS-ZSH` comment line, in any
+          # spelling (`## BL-322:` S5, R-S2-13): indented or not, any case,
+          # with or without a space after the `#`, a reason after it. The
+          # zsh-legs suite's Z5 fails an unmarked unit-lane suite that runs zsh.
+          # zsh is installed only on the legs the "Install zsh" step lists.
+          # Such a suite pinned to, or left in `rest` on, any other leg would
+          # run without the shell it tests. Refuse it here, by name, before
+          # any suite runs: a loud red, never a silent skip.
+          zsh_missing=""
+          if ! command -v zsh >/dev/null 2>&1; then   # BL-322-ZSH-GUARD-PROBE
+            for t in "${run_list[@]}"; do
+              if grep -qiE '^[[:space:]]*#[[:space:]]*NEEDS-ZSH' "${t}" 2>/dev/null; then   # BL-322-ZSH-GUARD
+                zsh_missing="${zsh_missing} ${t}"
+              fi
+            done
+          fi
+          if [ -n "${zsh_missing}" ]; then
+            echo "shard '${SHARD}': zsh is not installed on this leg, and these suites need it (# NEEDS-ZSH):${zsh_missing}. Add '${SHARD}' to the Install zsh step's if: list, or pin them to a leg on it." >&2
+            exit 1   # BL-322-ZSH-GUARD-EXIT
+          fi
 
           failed=()
           for t in "${run_list[@]}"; do
@@ -1256,6 +1502,17 @@ jobs:
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
+
+      - name: Fetch the pinned Guardrails fixture (BL-322 S5)
+        # The same step as the unit-shard job's (see its note): the full
+        # suite runs the same real-clone cases, and under CI they fail
+        # without it. An unreachable GitHub turns every full leg red too.
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          . tests/test-helpers/cdf-fixture.sh
+          cdf_fixture_fetch "$RUNNER_TEMP/cdf-fixture"
+          echo "SOIF_TEST_CDF_FIXTURE=$RUNNER_TEMP/cdf-fixture" >> "$GITHUB_ENV"
 
       - name: Run shard — ${{ matrix.shard }}
         # SKIP_KNOWN_FAILING left unset -> 0, so known-RED guards still run.

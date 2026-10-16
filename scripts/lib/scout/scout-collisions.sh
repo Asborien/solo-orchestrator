@@ -48,6 +48,20 @@
 #                      append, with an uninstall
 # audit-only           their pipelines: never archived, never touched (§7.4)
 # keep-theirs          project files; the framework's artifacts adapt (§7.5)
+#
+# `## BL-322:` S4 (review R-S2-7 of S2): A ROW'S BUCKET IS WHAT ADOPTION DOES TO
+# THAT PATH, read from adoption's own record of it — the archive MANIFEST's
+# `disposition` (`# BL-322-ARCHIVE-DISPO-SCRIPT` and its siblings in
+# scripts/lib/adopt/adopt-archive.sh): `replaced` is archive-and-replace,
+# `composed` is marker-composed, and `kept` (only copied into the archive) or no
+# archive row at all, with the file untouched, is keep-theirs. Several rows here
+# said "kept a copy, then replaced" for files adoption only copies (.mcp.json,
+# .claude/settings.local.json, git hooks other than pre-commit and commit-msg)
+# or composes (.claude/settings.json), or never touches (.claude-backup/, the
+# sample hooks, .gitignore): that was §1.2's measurement of the SCAFFOLDER,
+# init.sh, not of adoption. Scout sources no adoption code (M5), so the mapping
+# is spelled here; tests/test-bl322-s4-wording.sh S1 holds every row to a real
+# adoption of the same tree, on disk and in its MANIFEST.
 
 # _scout_col_add WORK PATH CLASS BUCKET DESC NOTE FINDINGS — one inventory row.
 #
@@ -169,8 +183,30 @@ VOCABIN
 # than a parse of the workflow graph — which is stated here rather than implied,
 # because the operator answers keep-or-retire on the strength of these rows.
 # Their failure direction is a false POSITIVE (a row to dismiss), never a false
-# negative that quietly certifies a pipeline that undermines the gates.
+# negative that quietly certifies a pipeline that undermines the gates — with one
+# exception, chosen and written down. Since `## BL-318:` G6(a) the deploy rule
+# does not read a deploy named only inside a longer command-line flag
+# (MSBuild's `-p:DeployOnBuild=true`, `--deploy-to=prod`): that false negative
+# is the price of not reporting Nuitka's `--no-deployment-flag` as a deploy.
 #
+# _scout_deploy_word FILE — rc 0 iff a line of FILE names a deploy OUTSIDE a
+# command-line flag. `## BL-318:` G6(a): the rule used to grep the whole file
+# for "deploy" after any non-letter, so a dash counted, and k-pdf's ci.yml —
+# no deploy step, one Nuitka `--no-deployment-flag=excluded-module-usage` —
+# was reported as a deploy reached by a branch push (dogfood run 2, findings 5
+# and 12). Flags are removed first, by the same rule adoption's detector uses
+# (`# BL-318-G6-DEPLOY-FLAG` in scripts/lib/adopt/adopt-ci.sh, which says what
+# counts as a flag, and `# BL-318-G6-DEPLOY-WHOLE` for a flag named `deploy`);
+# after that the word is matched as before. Both patterns are byte-identical to
+# adoption's, and tests/test-bl318-g4g6.sh D5 holds them so.
+_scout_deploy_word() {
+  LC_ALL=C awk '
+    { l = " " tolower($0); w = l; gsub(/[[:space:]"'\''(,=]--?[a-z0-9][^[:space:]"'\'',)=;&|<>]*/, " ", w) }   # BL-318-G6-DEPLOY-FLAG-SCOUT
+    l ~ /[[:space:]"'\''(,=]--?deploy([^a-z0-9_.:-]|$)/ { w = w " deploy" }   # BL-318-G6-DEPLOY-WHOLE-SCOUT
+    w ~ /[^a-z]deploy/ { f = 1; exit }
+    END { exit f ? 0 : 1 }' "$1" 2>/dev/null
+}
+
 # _scout_ci_rule_line RULE FILE — the first line number matching RULE, or empty.
 _scout_ci_rule_line() {
   local rule="$1" file="$2" n=""
@@ -184,7 +220,7 @@ _scout_ci_rule_line() {
       # the Phase 3->4 gate entirely: code reaches production without crossing
       # it. The presence of `tags:` or `workflow_dispatch` is treated as the
       # release lane being in play, which is deliberately generous.
-      if grep -qiE '(^|[^a-z])deploy' "$file" 2>/dev/null \
+      if _scout_deploy_word "$file" \
          && grep -qE '^[[:space:]]*push:' "$file" 2>/dev/null \
          && grep -qE '^[[:space:]]*branches:' "$file" 2>/dev/null \
          && ! grep -qE '^[[:space:]]*tags:|workflow_dispatch' "$file" 2>/dev/null; then
@@ -237,30 +273,38 @@ _scout_ci_files() {
 #   coldetail   `<rule>\t<path>\t<line>\t<why>`
 scout_collisions_scan() {
   local root="$1" work="$2" f n r rules line why nsamples desc hookbase
+  local class="" bucket="" note=""
   : > "$work/colentries"
   : > "$work/coldetail"
 
-  # ── AI-layer surfaces: archive-and-replace (§7.1) ─────────────────────────
+  # ── AI-layer surfaces (§7.1) ──────────────────────────────────────────────
+  bucket="marker-composed"   # BL-322-S4-SCOUT-SETTINGS
   [ -f "$root/.claude/settings.json" ] && _scout_col_add "$work" \
-    ".claude/settings.json" "ai-settings" "archive-and-replace" "" \
-    "The scaffolder OVERWRITES this file, then merges its own hook registrations into its own output — theirs is not consulted." ""
+    ".claude/settings.json" "ai-settings" "$bucket" "" \
+    "Adoption keeps a copy, then composes: your keys, rules and hooks stay, and the framework's rules and hooks are added beside them. A symlink, a read-only file, or one that is not a JSON object is left alone." ""
+  bucket="keep-theirs"   # BL-322-S4-SCOUT-LOCAL
   [ -f "$root/.claude/settings.local.json" ] && _scout_col_add "$work" \
-    ".claude/settings.local.json" "ai-settings-local" "archive-and-replace" "" \
-    "OVERWRITTEN today. This is the conventional home for a developer's personal MCP roster and it is UNTRACKED, so the loss is not recoverable from git." ""
+    ".claude/settings.local.json" "ai-settings-local" "$bucket" "" \
+    "Adoption copies it into its archive and leaves yours as it is. It usually holds your personal permissions, and is usually untracked." ""   # BL-322-S4-SCOUT-LOCAL-NOTE
+  bucket="keep-theirs"   # BL-322-S4-SCOUT-MCP
   [ -f "$root/.mcp.json" ] && _scout_col_add "$work" \
-    ".mcp.json" "mcp" "archive-and-replace" "" \
-    "Their MCP connections. Archived and restorable; re-adds are permitted and recorded." ""
+    ".mcp.json" "mcp" "$bucket" "" \
+    "Your MCP connections. Adoption copies the file into its archive and leaves yours as it is." ""
   for f in session-handoff sweep-triage zoom-out grill-with-docs; do
     [ -f "$root/.claude/skills/$f/SKILL.md" ] && _scout_col_add "$work" \
       ".claude/skills/$f/SKILL.md" "skill" "archive-and-replace" "" \
-      "A same-named skill is clobbered by an unguarded copy." ""
+      "Adoption keeps a copy, then installs the framework's skill of that name in its place. A symlink or a read-only file is left alone." ""
   done
+  # Adoption refuses a project that has this file (`_adopt_preflight_managed`):
+  # init.sh and adoption are its only writers.
+  bucket="keep-theirs"   # BL-322-S4-SCOUT-PHASESTATE
   [ -f "$root/.claude/phase-state.json" ] && _scout_col_add "$work" \
-    ".claude/phase-state.json" "framework-state" "archive-and-replace" "" \
-    "Framework state that the scaffolder rewrites wholesale." ""
+    ".claude/phase-state.json" "framework-state" "$bucket" "" \
+    "Adoption stops on a project that has this file: it reads it as a project already under this framework (built by init.sh, or an adoption that stopped part-way) and writes nothing." ""
   if [ -d "$root/.claude-backup" ]; then
-    _scout_col_add "$work" ".claude-backup/" "backup-dir" "archive-and-replace" "" \
-      "The scaffolder REMOVES this directory outright, on a justification that only holds for a brand-new project. On an existing one it is the vendored framework's pre-merge backup of .claude/ — the operator's own work." ""
+    bucket="keep-theirs"   # BL-322-S4-SCOUT-BACKUP
+    _scout_col_add "$work" ".claude-backup/" "backup-dir" "$bucket" "" \
+      "Adoption leaves it alone. If the Development Guardrails' installer backs up into it during adoption, adoption removes only the backup that run made." ""
   fi
 
   # ── Git hooks (§7.1: archive-and-replace, except where the framework
@@ -270,7 +314,7 @@ scout_collisions_scan() {
       desc=$(_scout_hook_description "$root/.git/hooks/pre-commit")
       _scout_col_add "$work" ".git/hooks/pre-commit" "git-hook" "archive-and-replace" \
         "$desc" \
-        "OVERWRITTEN today, unguarded. Husky, lefthook, pre-commit-framework and hand-rolled hooks are all destroyed." ""
+        "Adoption keeps a copy, then installs the framework's hook in its place; adopt-project.sh --re-add .git/hooks/pre-commit puts yours back. A read-only hook is left alone." ""
     fi
     if [ -f "$root/.git/hooks/commit-msg" ]; then
       desc=$(_scout_hook_description "$root/.git/hooks/commit-msg")
@@ -285,14 +329,16 @@ scout_collisions_scan() {
         *.sample|pre-commit|commit-msg) continue ;;
       esac
       desc=$(_scout_hook_description "$f")
-      _scout_col_add "$work" ".git/hooks/$hookbase" "git-hook" "archive-and-replace" \
-        "$desc" "Their hook. Archived with a restore line before the framework's set is installed." ""
+      bucket="keep-theirs"   # BL-322-S4-SCOUT-HOOK-OTHER
+      _scout_col_add "$work" ".git/hooks/$hookbase" "git-hook" "$bucket" \
+        "$desc" "Their hook. Adoption copies it into its archive and leaves it in place: the framework installs only pre-commit and commit-msg." ""
     done
     nsamples=$(ls -1 "$root/.git/hooks"/*.sample 2>/dev/null | grep -c '')
     case "$nsamples" in ''|*[!0-9]*) nsamples=0 ;; esac
     if [ "$nsamples" -gt 0 ]; then
-      _scout_col_add "$work" ".git/hooks/*.sample" "git-hook-sample" "archive-and-replace" \
-        "" "$nsamples sample hooks git wrote at init. The scaffolder DELETES them (rm -f) so it does not misdetect the tree as an existing project." ""
+      bucket="keep-theirs"   # BL-322-S4-SCOUT-SAMPLE
+      _scout_col_add "$work" ".git/hooks/*.sample" "git-hook-sample" "$bucket" \
+        "" "$nsamples sample hooks git wrote at init. Adoption leaves them alone; git never runs a .sample hook." ""
     fi
   fi
 
@@ -314,17 +360,32 @@ $(_scout_ci_files "$root")
 CIIN
 
   # ── Project files: keep theirs (§7.5) ────────────────────────────────────
-  for f in FEATURES.md CHANGELOG.md BUGS.md RELEASE_NOTES.md; do
-    [ -f "$root/$f" ] && _scout_col_add "$work" "$f" "project-doc" "keep-theirs" "" \
-      "OVERWRITTEN from a template today. Under adoption it is treated as theirs: kept, and reconciled by the interview." ""
-  done
-  for f in CLAUDE.md PROJECT_INTAKE.md; do
-    [ -f "$root/$f" ] && _scout_col_add "$work" "$f" "framework-doc" "keep-theirs" "" \
-      "Notice-only when present: no sidecar, no backup copy, no template overwrite. Adoption creates these only when they are absent." ""
+  # CHANGELOG.md only: adoption never writes it.
+  [ -f "$root/CHANGELOG.md" ] && _scout_col_add "$work" "CHANGELOG.md" "project-doc" "keep-theirs" "" \
+    "Adoption never writes it; the assessment reads it for your release history." ""   # BL-322-S4-SCOUT-CHANGELOG
+
+  # ── The documents adoption REPLACES (`## BL-322:` S2) ────────────────────
+  # These rows said "yours stays", and run 3's adoption replaced CLAUDE.md the
+  # same day. Adoption archives each of these, then writes the framework's
+  # version (`# BL-242-DOCS-STAGE`, and Act 2's intake). Scout sources no
+  # adoption code (M5), so the set is spelled here as well;
+  # tests/test-bl322-s2-project-rules.sh (S1) holds it equal to adoption's.
+  for f in CLAUDE.md PROJECT_INTAKE.md FEATURES.md BUGS.md RELEASE_NOTES.md docs/INDEX.md docs/IDENTIFIERS.md docs/archive/README.md; do
+    [ -f "$root/$f" ] || continue
+    class="project-doc"; case "$f" in CLAUDE.md|PROJECT_INTAKE.md) class="framework-doc" ;; esac
+    bucket="archive-and-replace"   # BL-322-SCOUT-DOCS
+    case "$f" in
+      CLAUDE.md) note="Archived, then replaced by the framework's CLAUDE.md. Its @ imports of files still in the project are carried into the new one; the rules written in it load again only once the assessment folds them in." ;;
+      PROJECT_INTAKE.md) note="Archived, then replaced by the intake adoption writes; the assessment folds in what is worth keeping." ;;
+      *) note="Archived, then replaced by the framework's template; the assessment folds in what is worth keeping." ;;
+    esac
+    case "$f" in PROJECT_INTAKE.md) ;; *) note="$note A symlink or a read-only file is left alone." ;; esac
+    _scout_col_add "$work" "$f" "$class" "$bucket" "" "$note" ""
   done
   if [ -f "$root/.gitignore" ]; then
-    _scout_col_add "$work" ".gitignore" "project-file" "marker-composed" "" \
-      "Replaced by a template copy today, and their rules are lost. §7.1 names no row for .gitignore; the composing-writer precedent (a marker-fenced append) is what this report proposes, and an operator can disagree with it here rather than discover it afterwards." ""
+    bucket="keep-theirs"   # BL-322-S4-SCOUT-GITIGNORE
+    _scout_col_add "$work" ".gitignore" "project-file" "$bucket" "" \
+      "Adoption leaves your ignore files alone; the ignore rules for its own runtime files go in .claude/.gitignore." ""
   fi
 
   # ── Uncommitted work (§1.2's last row) ───────────────────────────────────
@@ -338,7 +399,7 @@ CIIN
     case "$n" in ''|*[!0-9]*) n=0 ;; esac
     if [ "$n" -gt 0 ]; then
       _scout_col_add "$work" "(uncommitted working tree)" "working-tree" "audit-only" "" \
-        "$n path(s) are uncommitted. The scaffolder sweeps existing uncommitted work into a 'chore: initialize' commit WITH VERIFICATION BYPASSED. Commit or stash it yourself first — Scout will not touch it." ""
+        "$n path(s) are uncommitted. Adoption commits only the files it writes, named one by one; anything else you had in progress stays as you left it. Scout will not touch it." ""   # BL-322-S4-SCOUT-UNCOMMITTED
     fi
   fi
   return 0

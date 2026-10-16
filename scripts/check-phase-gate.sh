@@ -3274,7 +3274,7 @@ if [ -f "$TOOL_PREFS" ] && [ -x "$RESOLVER" ] && command -v jq &>/dev/null; then
                 docker start qdrant 2>/dev/null && echo -e "  ${GREEN}[OK]${NC} Existing Qdrant container started"
               else
                 docker run -d --name qdrant \
-                  -p 6333:6333 -p 6334:6334 \
+                  -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 \
                   -v qdrant_storage:/qdrant/storage \
                   --restart unless-stopped \
                   qdrant/qdrant:latest 2>&1 && echo -e "  ${GREEN}[OK]${NC} Qdrant running at http://localhost:6333"
@@ -3282,15 +3282,15 @@ if [ -f "$TOOL_PREFS" ] && [ -x "$RESOLVER" ] && command -v jq &>/dev/null; then
               # Register MCP if uvx available
               if command -v uvx &>/dev/null; then
                 project_name=$(jq -r '.project // "claude-memory"' .claude/phase-state.json 2>/dev/null)
-                if run_with_timeout 30 bash -c "echo y | claude mcp add -s user -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=$project_name qdrant -- uvx --python 3.13 mcp-server-qdrant >/dev/null 2>&1"; then
+                if run_with_timeout 30 bash -c "echo y | claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=$project_name -- uvx --python 3.13 mcp-server-qdrant >/dev/null 2>&1"; then
                   echo -e "  ${GREEN}[OK]${NC} Qdrant MCP registered (collection: $project_name)"
                 else
                   echo -e "  ${YELLOW}[WARN]${NC} Qdrant MCP registration timed out or failed"
-                  echo "  Register manually: claude mcp add -s user -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=$project_name qdrant -- uvx --python 3.13 mcp-server-qdrant"
+                  echo "  Register manually: claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=$project_name -- uvx --python 3.13 mcp-server-qdrant"
                 fi
               else
                 echo -e "  ${YELLOW}[WARN]${NC} uv/uvx not found. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
-                echo "  Then: claude mcp add -s user -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory qdrant -- uvx --python 3.13 mcp-server-qdrant"
+                echo "  Then: claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant"
               fi
             fi
           fi

@@ -1207,7 +1207,7 @@ io.open(f,"w",encoding="utf-8").write(s)
 PYN6
 _run "$N6" --gate phase_2_to_3; n6_out=$GOUT
 n6_refused=$(grep -c 'is not a single YYYY-MM-DD value' <<< "$n6_out")
-n6_shellerr=$(grep -c 'integer expression expected' <<< "$n6_out")
+n6_shellerr=$(grep -cE 'integer (expression )?expected' <<< "$n6_out")
 n6_owed=$(grep -c 'nothing owed' <<< "$n6_out")
 if [ "$n6_refused" -ge 1 ] && [ "$n6_shellerr" -eq 0 ] && [ "$n6_owed" -eq 0 ]; then
   pass "N6: a duplicate key in phase-state.json yields a window that does not reduce to a number — the gate names it and blocks, with no raw shell diagnostic leaking into the verdict"
@@ -2531,8 +2531,8 @@ io.open(f,"w",encoding="utf-8").write(s)
 PYM23
   m23_mut=$( ( cd "$M23F" && HOME="$M23F/home" bash "$MUT_ROOT/scripts/check-phase-gate.sh" --gate phase_2_to_3 2>&1 ) | _strip_ansi )
   m23_ctrl=$( ( cd "$M23F" && HOME="$M23F/home" bash "$CPG" --gate phase_2_to_3 2>&1 ) | _strip_ansi )
-  m23_m=$(grep -c 'integer expression expected' <<< "$m23_mut")
-  m23_c=$(grep -c 'integer expression expected' <<< "$m23_ctrl")
+  m23_m=$(grep -cE 'integer (expression )?expected' <<< "$m23_mut")
+  m23_c=$(grep -cE 'integer (expression )?expected' <<< "$m23_ctrl")
   if [ "$m23_m" -ge 1 ] && [ "$m23_c" -eq 0 ]; then
     pass "M23: removing the numeric guard leaks a raw shell diagnostic into a blocking verdict ($m23_c -> $m23_m) — the guard is reachable, which is exactly what the comment justifying its omission denied"
   else

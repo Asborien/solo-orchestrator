@@ -252,7 +252,8 @@ adopt_provenance_errors() {
   ' "$f")"
   if [ -n "$out" ]; then printf '%s\n' "$out"; return 0; fi
   # The SHAPE passed; now the MEANING. A calendar day, not 2026-02-30, and —
-  # when the caller knows it — the commit this project was adopted at.
+  # when the caller knows it — the commit adoption started from (the stamp's
+  # adoptedAtCommit: the tip before the adoption commit, `## BL-318:` G6(c)).
   day="$(LC_ALL=C awk '{sub(/\r$/,"")} /^reconstructed-at: /{print $2; exit}' "$f")"
   # The same `isoday` the dispositions validator uses.
   if ! printf '%s' "$day" | jq -Re '((try ((. + "T00:00:00Z") | fromdateiso8601 | todate | .[0:10]) catch "") == .)' >/dev/null 2>&1; then
@@ -262,7 +263,7 @@ adopt_provenance_errors() {
     sha="$(LC_ALL=C awk '{sub(/\r$/,"")} /^source: existing codebase at /{print $5; exit}' "$f")"
     case "$want" in
       "$sha"*) : ;;
-      *) printf 'the header names commit %s, but this project was adopted at %.12s\n' "$sha" "$want" ;;
+      *) printf 'the header names commit %s, but adoption started from %.12s\n' "$sha" "$want" ;;
     esac
   fi
 }
@@ -375,9 +376,12 @@ S13A
   # `sed` replacement carrying a literal newline does not work, and finding that
   # out at run time inside a writer is worse than two heredocs.
   if [ -d "$root/.claude/adoption-archive" ]; then
+    # Not "a restore line for each" (`## BL-311:`): a Guardrails-only project's
+    # archived manifest must not go back (`# BL-311-MANIFEST-READD-REFUSE`).
     cat <<'S13B'
-4. .claude/adoption-archive/ — anything of yours the adoption moved aside, with
-   a MANIFEST and a restore line for each.
+4. .claude/adoption-archive/ — anything of yours the adoption moved aside or
+   composed with, and a MANIFEST that gives, for each file, how to put it back
+   or why not to.
 S13B
   fi
 
@@ -413,6 +417,8 @@ S13C
 adopt_render_intake_progress() {
   local root="$1"
   local answers_json field title kind value prov
+  # `## BL-311:` review round 1 — never a track the question did not settle.
+  adopt_track_known ".claude/intake-progress.json" || return 1   # BL-311-TRACK-GUARD-IP
   answers_json="{}"
   while IFS="$(printf '\t')" read -r field title kind value prov; do
     [ -n "${field:-}" ] || continue
@@ -436,8 +442,9 @@ adopt_render_intake_progress() {
   #
   # ADOPTION KNOWS THREE OF THE SEVEN AND WRITES THE OTHER FOUR HONESTLY.
   # Known: `project_name` (the directory), `deployment` (the tier question —
-  # its only source) and `track` ("full", the same value
-  # `adopt_write_phase_state` records, so the two files cannot disagree).
+  # its only source) and `track` (the track question, `## BL-311:` row 8 — the
+  # same variable `adopt_write_phase_state` records, so the two files cannot
+  # disagree; it was the constant "full" in both until then).
   # Not known and therefore written EMPTY rather than guessed: `platform`,
   # `language`, `description` — an empty string satisfies the subscript and
   # reads as unanswered, while a guessed platform would be a fact nobody gave.
@@ -448,13 +455,164 @@ adopt_render_intake_progress() {
   # `project_name` — which is why `deployment` and `track` could be blanked with
   # every check green. A count in a comment can be load-bearing.)*
   jq -n --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson a "$answers_json" \
-        --arg pn "$ADOPT_PROJECT_NAME" --arg dep "$ADOPT_DEPLOYMENT" \
+        --arg pn "$ADOPT_PROJECT_NAME" --arg dep "$ADOPT_DEPLOYMENT" --arg tr "$ADOPT_TRACK" \
     '{version: 1, started_at: $at, last_section: 0, completed_sections: [],
       source: "adopt-project.sh",
-      project_name: $pn, platform: "", track: "full", deployment: $dep,
+      project_name: $pn, platform: "", track: $tr, deployment: $dep,
       language: "", description: "",
       answers: $a}' \
     | adopt_write_file "$root" ".claude/intake-progress.json"
+}
+
+# ── `.claude/test-command` — `## BL-318:` G1 ────────────────────────────────
+# adopt_write_test_command ROOT REPORT — the scan's test command, one line, into
+# the file the commit-time project-test check reads FIRST (`## BL-125:`,
+# `# BL-125-COMMIT-TESTS` in scripts/lib/hook-templates.sh) — when, and only
+# when, the operator KEPT it in the interview.
+#
+# WHY. Dogfood run 2: the interview offered `uv run --frozen pytest`, the
+# operator kept it, and nothing wrote it down. The check fell back to its own
+# detection — a bare `pytest` — got `command not found`, said PROJECT TESTS NOT
+# ENFORCED, and let the commit through.
+#
+# ONLY A KEPT OFFER IS WRITTEN (review round 1's R-1; the decision is the
+# coordinator's). The question is "Testing & Bug Tracking", and "change it" asks
+# "what is the right answer?" — so a changed answer is often prose, and a file
+# this hook runs with `sh -c` on every source commit is no place for prose.
+# The review measured it on round 1's tip: `pytest; bugs in GitHub Issues` was
+# written, the run said a failing suite would be blocked, and a commit with a
+# failing pytest LANDED (`;` returns the last command's code, 127 -> not
+# enforced). By the same review, `not sure` was written and replaced a fallback
+# that worked, and `test suite: uv run pytest` would block every commit as a
+# failed suite. What Scout records as `stack.testCommand.value` is one of a
+# fixed set of command strings (`_scout_test_command`, `_scout_python_test`,
+# `_scout_node_test`) or null, so "kept" — the recorded answer equals that
+# value — is the one case where the file's contents are known to be a command.
+# A changed answer is not written; the note says so, says what runs instead,
+# and gives the one line that writes a command. `sh -n` is gone with it: every
+# value this can now write is one of those strings. (Round 2 compared against
+# the interview's prefill instead, which is not always a command — below.)
+#
+# WHICH COMMAND: THE OFFER, VERBATIM, SCOUT'S FLAG INCLUDED. Scout adds
+# `--frozen` (uv) and `--config.verify-deps-before-run=false` (pnpm) so its own
+# run never rewrites a lockfile; its evidence line calls `uv run pytest` /
+# `pnpm test` the everyday command. The flag stays here, because this file is
+# run by a pre-commit hook in the developer's own working tree on every source
+# commit: `uv run` locks before it runs and pnpm 11 installs before it runs, so
+# with the lockfile behind its manifest the check would REWRITE A TRACKED FILE
+# under the commit it is checking (measured, uv 0.11.3: plain `uv run` left
+# ` M uv.lock`; `--frozen` left it untouched; `--locked` exits 2, which this
+# check would read as a failed suite). `--frozen` still syncs the environment
+# from the lockfile, so the tests run against exactly the locked dependencies.
+#
+# A `.claude/test-command` THE PROJECT ALREADY HAS — anything at that path, a
+# dangling symlink included, which a write would follow — is left exactly as it
+# is: the file is operator-owned, so it is theirs (adoption design v1 §7.5,
+# keep theirs), not a surface to archive and replace, and nothing written means
+# no archive row is needed (I20). The note says what the check will actually
+# run from it, read the way the hook reads it (`_adopt_testcmd_kept_note`).
+#
+# WHERE THE OFFER IS READ: `stack.testCommand.value`, NOT THE INTERVIEW'S
+# PREFILL (the final check's N1). When Scout finds no test command, its 11_5
+# prefill is the literal "(none detected)" (`scout_prefill_scan`) — a string
+# the operator is shown and can keep — while `stack.testCommand` is
+# `{"value": null, "source": null}`; when it finds one, the two carry the same
+# command. Round 2 read the prefill, so keeping "(none detected)" wrote it, and
+# because the file beats the hook's own detection, every commit then ran
+# `sh -c '(none detected)'` -> 127 -> not enforced, for good.
+#
+# NOT WRITTEN WHEN THE SCAN OFFERED NOTHING (a null `stack.testCommand.value`):
+# that question never named a command ("the scan found nothing to offer here.
+# What is the answer?" — or "(none detected)", kept or changed).
+#
+# NOT WRITTEN WHEN THE OFFER IS NPM'S PLACEHOLDER (the final check's N2).
+# `npm init` writes scripts.test as `echo "Error: no test specified" && exit 1`;
+# Scout offers `npm test` for it, and written here it would BLOCK every source
+# commit. The hook itself does not take that script for a suite (`# BL-183-NPM-NO-SIGPIPE`,
+# the BL-137 class), so without a file the commit lands with the loud
+# not-enforced warning. The check is here, on the needle the hook uses (`no test
+# specified`) in `stack.testCommand.source` — which carries the script body for
+# every package-manager arm of `_scout_node_test` — rather than in Scout, so
+# Scout's report, its interview offer and its `--run-tests` baseline stay as
+# they are: one writer changes, not every consumer of the report. It comes
+# BEFORE the changed-answer note, whose example line would otherwise install the
+# placeholder.
+adopt_write_test_command() {
+  local root="$1" report="$2" rel=".claude/test-command" cmd="" offered="" src=""
+  adopt_head "The test command your commits run"
+  if [ -e "$root/$rel" ] || [ -L "$root/$rel" ]; then   # BL-318-TESTCMD-KEEP
+    _adopt_testcmd_kept_note "$root/$rel"
+    return 0
+  fi
+  offered="$(jq -r '.stack.testCommand.value // ""' "$report" 2>/dev/null)"   # BL-318-TESTCMD-OFFER
+  src="$(jq -r '.stack.testCommand.source // ""' "$report" 2>/dev/null)"
+  cmd="$(awk -F '\t' '$1 == "test_command" { v = $4 } END { print v }' "$ADOPT_ANSWERS" 2>/dev/null)"
+  if [ -z "$offered" ]; then   # BL-318-TESTCMD-ASKED
+    adopt_note "Not written: the scan found no test command, so there was none to confirm. Until you"
+    adopt_note "write yours into .claude/test-command (one line, e.g. 'npm test'), the check that runs"
+    adopt_note "your tests on every commit runs only what it can detect itself, and says PROJECT"
+    adopt_note "TESTS NOT ENFORCED when that is nothing."
+    return 0
+  fi
+  if [ "${src#*no test specified}" != "$src" ]; then   # BL-318-TESTCMD-PLACEHOLDER
+    adopt_note "Not written: package.json's test script is npm's placeholder (it prints"
+    adopt_note "\"Error: no test specified\" and fails on purpose), so '$offered' would block every"
+    adopt_note "source commit. Until package.json has a real test script, the check that runs your"
+    adopt_note "tests on every commit finds nothing of yours to run, and says PROJECT TESTS NOT"
+    adopt_note "ENFORCED."
+    return 0
+  fi
+  if [ "$cmd" != "$offered" ]; then   # BL-318-TESTCMD-KEPT
+    adopt_note "Not used as a command: you changed this answer, and the question is about testing in"
+    adopt_note "general, so adoption did not write it to .claude/test-command."
+    adopt_note "Until a command is there, the check that runs your tests on every commit"
+    adopt_note "runs only the command it detects on its own (pytest through uv, poetry, pdm or pipenv;"
+    adopt_note "npm test; cargo test; go test), and says PROJECT TESTS NOT ENFORCED when it finds none"
+    adopt_note "it can run. To give it a command, run this from the project's folder, with your command"
+    adopt_note "between the quotes:"
+    adopt_note "  echo '$offered' > .claude/test-command"
+    return 0
+  fi
+  printf '%s\n' "$cmd" | adopt_write_file "$root" "$rel" || return 1   # BL-318-TESTCMD-WRITE
+  adopt_note "Wrote .claude/test-command: $cmd"
+  adopt_note "Every commit that stages a source file runs it, and a commit whose tests fail is"
+  adopt_note "blocked. It is the command the scan offered and you kept; edit that one line to"
+  adopt_note "change it (to a faster subset, if the whole suite is slow)."
+  case "$cmd" in
+    *--frozen*|*verify-deps-before-run=false*)
+      adopt_note "The flag in it stays: it stops the check from rewriting your lockfile in the middle of a commit."   # BL-318-TESTCMD-FLAG-WHY
+      ;;
+  esac
+  return 0
+}
+
+# _adopt_testcmd_kept_note FILE — what the commit-time check will run from the
+# project's own FILE (review round 1's R-5), read the way the hook reads it: the
+# hook takes the file only when `[ -e ]` holds (a dangling symlink fails that and
+# the hook falls back to its own detection), then the first line that is not
+# blank and not a `#` comment, with every CR removed and the ends trimmed.
+_adopt_testcmd_kept_note() {
+  local f="$1" tgt="" line=""
+  adopt_note "You already have .claude/test-command, so adoption left it exactly as it is."
+  if [ -L "$f" ]; then
+    tgt="$(readlink "$f" 2>/dev/null)"
+    adopt_note "It is a symlink to ${tgt:-a target readlink could not name}."   # BL-318-TESTCMD-LINK
+  fi
+  if [ ! -e "$f" ]; then   # BL-318-TESTCMD-DANGLING
+    adopt_note "That target does not exist, so the commit-time check ignores the file and runs only the"
+    adopt_note "command it detects on its own."
+    return 0
+  fi
+  if [ -r "$f" ] && [ -s "$f" ]; then
+    line="$(awk '{ gsub(/\r/, "") } /^[[:space:]]*(#|$)/ { next } { print; exit }' "$f" 2>/dev/null)"
+    line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  fi
+  if [ -n "$line" ]; then   # BL-318-TESTCMD-SAYS
+    adopt_note "Every commit that stages a source file runs: $line"
+  else
+    adopt_note "Nothing in it is runnable (it is empty, unreadable, or only blank lines and comments),"
+    adopt_note "so the check says PROJECT TESTS NOT ENFORCED until it holds a command."
+  fi
 }
 
 # ── The process-state file, and the merge that no longer rides with it ──────

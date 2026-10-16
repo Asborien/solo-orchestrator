@@ -63,6 +63,11 @@
 # copies or executes the scaffolder, so it is a unit-lane test outright and
 # must NOT appear in `lint-tests-registered.sh --list | grep unit-lane-exempt`.
 set -o pipefail
+# #422 — pin git's STOCK template, which is what CI runs with. Without this,
+# `git init` copies the operator's `init.templateDir`, which may carry no
+# hooks/, and this suite's fixtures write into .git/hooks/ without creating it.
+_stock_tpl="$(git --exec-path 2>/dev/null)/../../share/git-core/templates"
+if [ -d "$_stock_tpl/hooks" ]; then export GIT_TEMPLATE_DIR="$_stock_tpl"; fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -472,9 +477,16 @@ ci=$(jqv "$njson" '.stack.ciHost')
 if [ "$ts_files" = "13" ] && [ "$ts_conf" = "high" ] \
    && printf '%s' "$pm" | grep -q 'pnpm' \
    && printf '%s' "$bf" | grep -q 'package.json' \
-   && [ "$tc" = "vitest run" ] && [ "$tcs" = "package.json scripts.test" ] \
+   && [ "$tc" = "pnpm --config.verify-deps-before-run=false test" ] \
+   && [ "$tcs" = 'package.json scripts.test (`vitest run`); run through pnpm because pnpm-lock.yaml is present; Scout adds `--config.verify-deps-before-run=false` so its own run never installs or rewrites pnpm-lock.yaml, and day to day the command is `pnpm test`' ] \
    && [ "$ci" = "github" ]; then
-  pass "S1: node fixture — typescript(13,high), pnpm, package.json, testCommand from scripts.test, ciHost=github"
+  # `## BL-311:` row 4 — the script BODY is not a command (`node_modules/.bin`
+  # is not on PATH outside the package manager), so the value is how pnpm runs
+  # it and the body moved into the evidence, beside the lockfile that chose pnpm.
+  # The flag keeps pnpm 11 from installing (and rewriting pnpm-lock.yaml)
+  # before it runs the script (review R-BL311C-1), and the evidence says the
+  # flag is Scout's, not the project's (review R-BL311C2-5).
+  pass "S1: node fixture — typescript(13,high), pnpm, package.json, testCommand 'pnpm --config.verify-deps-before-run=false test' from scripts.test, ciHost=github"
 else
   fail_ "S1" "ts_files=$ts_files ts_conf=$ts_conf pm='$pm' bf='$bf' tc='$tc' tcs='$tcs' ci='$ci'"
 fi
