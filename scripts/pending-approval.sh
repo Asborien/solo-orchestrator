@@ -329,14 +329,15 @@ _pa_fp_reask() {
     return 0
   fi
   pats="$(jq -r '[.[] | select(.type == "claude_bypass_proposal" and .user_response == "PENDING") | (.details.pattern // empty)] | unique | join(", ")' "$ledger" 2>/dev/null)" || pats=""
-  q="$BYPASS_QUESTION_PREFIX (pattern: ${pats:-unknown}), asked again by the Orchestrator. Review .claude/bypass-audit.json before deciding. Reply with the option id: A1 to accept the proposal, A2 to decline it, A3 to close it as a false positive. $BYPASS_FALSE_POSITIVE_LEAD$reason"
+  q="$BYPASS_QUESTION_PREFIX (pattern: ${pats:-unknown}), asked again with a false-positive option. Review .claude/bypass-audit.json before deciding. Reply with the option id: A1 to accept the proposal, A2 to decline it, A3 to close it as a false positive. $BYPASS_FALSE_POSITIVE_LEAD$reason"
   tmpfile=$(mktemp "$project_root/.claude/pending-approval.json.XXXXXX") || { print_fail "Could not write the question. Nothing was changed."; return 1; }
   # BL-277-FP-QUESTION — labelled "bypass-false-positive", not "bypass-detector":
   # a proposal raised while it is open is NOT bound to it (`# BL-320-DETECT-COVER`
   # binds only the detector's own label), so A3 closes only the proposals the
-  # Orchestrator looked at.
+  # Orchestrator looked at. It names no asker and recommends A2, as the
+  # detector's question does: the terminal check does not prove who ran this.
   if ! jq -n --arg q "$q" --arg a1 "$BYPASS_ACCEPT_TEXT" --arg a2 "$BYPASS_DECLINE_TEXT" --arg a3 "$BYPASS_FALSE_POSITIVE_TEXT" --arg at "$(iso_timestamp_utc)" \
-      '{schema: 2, source: "bypass-false-positive", question: $q, options: [{id: "A1", text: $a1, approves: "none"}, {id: "A2", text: $a2, approves: "none"}, {id: "A3", text: $a3, approves: "none"}], recommendation: "A3", offered_at: $at}' > "$tmpfile"; then
+      '{schema: 2, source: "bypass-false-positive", question: $q, options: [{id: "A1", text: $a1, approves: "none"}, {id: "A2", text: $a2, approves: "none"}, {id: "A3", text: $a3, approves: "none"}], recommendation: "A2", offered_at: $at}' > "$tmpfile"; then
     rm -f "$tmpfile"; print_fail "Could not write the question. Nothing was changed."; return 1
   fi
   problems="$(soif_pa_v2_problems "$tmpfile")"

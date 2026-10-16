@@ -18280,8 +18280,9 @@ true — reading the ledger back mints no `claude` row — and the growth is lis
   can be recorded (`# BL-277-FP-ROUTE`), with nothing PENDING (`# BL-277-FP-PENDING-ROWS`), and with a
   question of another kind open (`# BL-277-FP-OTHER-QUESTION`); then it asks `[y/N]` with the reason
   shown (`# BL-277-FP-CONFIRM`). A "no" is "cancelled", rc 0, nothing moved. A "yes" asks the bypass
-  question again, labelled `source: "bypass-false-positive"` (`# BL-277-FP-QUESTION`), with A1 and A2
-  as before, a third option A3 (`BYPASS_FALSE_POSITIVE_TEXT`), and the reason at the end of the question
+  question again, labelled `source: "bypass-false-positive"` (`# BL-277-FP-QUESTION`), naming no asker
+  and recommending A2 (the terminal check does not prove who ran it), with A1 and A2 as before, a third
+  option A3 (`BYPASS_FALSE_POSITIVE_TEXT`), and the reason at the end of the question
   after `BYPASS_FALSE_POSITIVE_LEAD`, and binds every PENDING proposal to it (`# BL-277-FP-BIND`,
   `bypass_audit_rebind_pending`, `# BL-277-FP-REBIND`). The user answers by option id, twice, through
   the Guardrails' `record-approval.sh`, and `bypass_audit_close_from_approvals` closes the rows from

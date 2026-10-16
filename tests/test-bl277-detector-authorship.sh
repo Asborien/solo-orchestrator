@@ -543,6 +543,11 @@ chk_fp_closes() {
      and ([.options[].approves] | unique) == ["none"] and (.options[2].text == $fp)
      and (.question | startswith($pre)) and (.question | endswith($tail))' "$s" >/dev/null 2>&1 \
     || { echo "the question was not asked again with A3 and the reason: $(cat "$s" 2>/dev/null)"; return 1; }
+  # Whoever can run the command under a pseudo-terminal, or write the file, can
+  # put this question, so it names no asker and recommends declining, as the
+  # detector's own question does.
+  jq -e '.recommendation == "A2" and (.question | test("Orchestrator|operator"; "i") | not)' "$s" >/dev/null 2>&1 \
+    || { echo "the question names an asker or recommends other than A2: $(jq -c '{recommendation, question}' "$s" 2>/dev/null)"; return 1; }
   [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the operator's command closed the row itself"; return 1; }
   [ "$(q "$d" '.[0].details.sentinel_sha256')" = "$(sha_of "$s")" ] || { echo "the row is not bound to the new question"; return 1; }
   pick_a3 "$d" || { echo "fixture: the pick"; return 1; }

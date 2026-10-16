@@ -345,14 +345,15 @@ bypass_audit_close_pending() {
 BYPASS_QUESTION_PREFIX="Bypass proposal detected"
 BYPASS_ACCEPT_TEXT="Accept the bypass proposal recorded in .claude/bypass-audit.json (this approves no commit)"
 BYPASS_DECLINE_TEXT="Decline it"
-# `## BL-277:` the third answer, A3. Only the operator's re-ask puts it in a
-# question (scripts/pending-approval.sh --resolve --decision false-positive, a
-# terminal command); the detector's own question never carries it, so the
-# question the pre-commit gate relays to the agent names no false-positive
-# close. The operator's reason is the question's tail after the lead, so it is
-# text the user was shown before picking A3.
+# `## BL-277:` the third answer, A3. Only the re-ask puts it in a question
+# (scripts/pending-approval.sh --resolve --decision false-positive, a terminal
+# command); the detector's own question never carries it, so the question the
+# pre-commit gate relays to the agent names no false-positive close. The reason
+# is the question's tail after the lead, so it is text the user was shown
+# before picking A3. Neither names who asked: anyone who can run the command
+# under a pseudo-terminal, or write the file, can put the question.
 BYPASS_FALSE_POSITIVE_TEXT="Close it as a false positive: the matched text proposed nothing (this approves no commit)"
-BYPASS_FALSE_POSITIVE_LEAD="The operator's reason for closing it as a false positive: "
+BYPASS_FALSE_POSITIVE_LEAD="Reason given for closing it as a false positive: "
 
 # bypass_audit_close_from_approvals <project_root>
 # `## BL-320:` with the Development Guardrails 4.4.0 and later, the USER's
