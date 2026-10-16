@@ -1196,7 +1196,7 @@ bd_mutant() {
 # M35 — the Edit arm reads nothing: an Edit's proposal is never scanned. Killed by B1.
 bd_mutant M35 "# BL-336-EDIT-TEXT" '.tool_input.new_string // ""' '.tool_input.no_such_key // ""' 4 chk_edit_authored chk_edit_unrelated "the Edit arm reads no text"
 # M36 — the Edit arm reads the file's old contents too. Killed by B3.
-bd_mutant M36 "# BL-336-EDIT-TEXT" '.tool_input.new_string // ""' '(.tool_input.new_string // "") + "\n" + (.tool_response.originalFile // "")' 4 chk_edit_unrelated chk_edit_authored "the Edit arm reads originalFile"
+bd_mutant M36 "# BL-336-EDIT-TEXT" '.tool_input.new_string // ""' '.tool_input.new_string + "\n" + (.tool_response.originalFile // "")' 4 chk_edit_unrelated chk_edit_authored "the Edit arm reads originalFile"
 # M37 — the MultiEdit arm reads only the first edit. Killed by B2.
 bd_mutant M37 "# BL-336-MULTIEDIT-TEXT" '(.tool_input.edits // [])[]?' '(.tool_input.edits // [])[0:1][]?' 4 chk_multiedit_authored chk_edit_authored "the MultiEdit arm reads only its first edit"
 # M38 — the MultiEdit arm reads the old text it replaced too. Killed by B3.

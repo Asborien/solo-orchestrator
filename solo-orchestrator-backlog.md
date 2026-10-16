@@ -18311,13 +18311,13 @@ true — reading the ledger back mints no `claude` row — and the growth is lis
   which `init.sh` sources since #451 moved the roster out of it; this entry's hunk moved with it, inside
   the greenfield branch of the maintainer's `# BL-242-SETTINGS-BL277` guard, which is unchanged): the
   detector's PostToolUse registration is its own hook group with
-  `"matcher": "Bash|Write"` (the maintainer's ruling on #454: files the agent writes are still
-  scanned), instead of being
+  `"matcher": "Bash|Write|Edit|MultiEdit"` (the maintainer's ruling on #454: files the agent writes
+  are still scanned; `Edit|MultiEdit` added by `## BL-336:`), instead of being
   appended to group `[0]` and inheriting its absent matcher. The registration's idempotence probe
   (the `if ! jq -e` guard that stops a re-run appending a second group) was widened from group `[0]`
   to any group. Pinned by R6 in the unit suite: the roster, sourced, runs twice in greenfield mode on
-  the settings template, and the settings then hold exactly one detector, under matcher Bash|Write and
-  in no other group, the Stop arm once, and the tool tracker and commit recorder unscoped (only the detector
+  the settings template, and the settings then hold exactly one detector, under matcher
+  Bash|Write|Edit|MultiEdit and in no other group, the Stop arm once, and the tool tracker and commit recorder unscoped (only the detector
   moved). The second run is what reaches the probe; a second `init.sh` never can, because it refuses an
   existing directory. `tests/test-bl029-integration.sh` T1 (full lane) looks the registration up by
   matcher in a project `init.sh` produces.
@@ -18371,7 +18371,8 @@ passes. A mutant that fails any of that is reported as a SETUP failure, never as
 | M6 | pending-approval, `# BL-277-FP-REASON` | ≤ 6 | the reason guard → `if false; then` | D2 | D1 |
 | M7 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | the group written without `"matcher": "Bash\|Write"` | R6 | R5 |
 | M8 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 4 | the idempotence probe regressed to `[0].hooks[]?` | R6 | R5 |
-| M10 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | `"matcher": "Bash\|Write"` → `"matcher": "Bash\|Read\|Edit\|Write"` | R6 | R5 |
+| M10 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | the matcher widened to `Bash\|Read\|Write\|Edit\|MultiEdit` | R6 | R5 |
+| M40 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | the matcher narrowed to `Bash\|Write` (`## BL-336:`) | R6 | R5 |
 | M12 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | `"matcher": "Bash\|Write"` → `"matcher": "Bash"` (the ruling's case) | R6 | R5 |
 | M9 | roster (copied, sourced), `THE PostToolUse ARM IS GREENFIELD-ONLY FOR NOW` | ≤ 4 | the adoption guard → `if true; then` | R5 | — |
 | M11 | detector, `# BL-277-AUTHORSHIP` | ≤ 10 | the Write arm dropped: `if [ "$EVENT" = "Stop" ]; then` | W1 | S1, A1 |
@@ -18487,10 +18488,13 @@ the Status paragraph above; each point of the review, with the change and the ca
    directly (D4 and D6 do), the same shape as `test-gate.sh`'s callable `_unrecord_feature_apply`.
    Pre-existing, `--clear` and a bare `--resolve` still remove the question from any caller; those
    leave the rows PENDING.
-9. **`Edit` is not scanned** (pre-existing). An `Edit` result carries `oldString`/`newString`, none of
-   the four keys, so a proposal written into a file by `Edit` leaves no row, on `main` and here. The
-   ruling names `Write`; extending the scan to `Edit` would be a new surface, not built.
-10. **`Bash|Write` stops scanning `Agent` results on new projects, and an `Agent` result is
+9. **`Edit` and `MultiEdit` are scanned, as authored text (`## BL-336:`, built in this PR).** Their
+   results carry none of the four keys, so before BL-336 a proposal written into a file by `Edit` left
+   no row. The detector now reads `tool_input.new_string` for `Edit` (`# BL-336-EDIT-TEXT`) and each
+   `tool_input.edits[].new_string` for `MultiEdit` (`# BL-336-MULTIEDIT-TEXT`) — never `originalFile`,
+   `originalFileContents` or `old_string` — and `# BL-336-AUTHORED-TOOLS` makes both `claude`/PENDING
+   with the question raised. Pinned by B1, B2, B3 and M35-M40.
+10. **`Bash|Write|Edit|MultiEdit` stops scanning `Agent` results on new projects, and an `Agent` result is
     subagent-authored text.** It is the subagent's final report, top-level `content` (residual 1's
     counts). On `main`, with no matcher, a bypass proposal in a subagent's report raised the sentinel.
     Here it is not scanned on a new project, and on an existing project it is a `tool_output` row with
@@ -24917,6 +24921,18 @@ that files the agent writes are still scanned.
 MultiEdit, as authored text. Not `originalFile`, which would re-scan text the agent did not write. PR #454 narrows
 the hook's registration to `Bash|Write`; if it lands as is, the registration must also gain `Edit|MultiEdit`, or this
 decision does nothing.
+
+**Built in PR #454 (2026-10-16), with `## BL-277:`.** `scripts/hooks/bypass-detector.sh` reads
+`tool_input.new_string` for Edit (`# BL-336-EDIT-TEXT`) and every `tool_input.edits[].new_string` for MultiEdit
+(`# BL-336-MULTIEDIT-TEXT`), never `originalFile`, `originalFileContents` or `old_string`, and records both as
+authored (`# BL-336-AUTHORED-TOOLS`: actor `claude`, PENDING, the question raised). The registration in
+`scripts/lib/claude-settings.sh` (`# BL-277-MATCHER`, the one place init.sh and adoption write it; upgrade writes
+none) is `Bash|Write|Edit|MultiEdit`; adoption still registers no PostToolUse arm (`# BL-242-SETTINGS-BL277`).
+`tests/test-bl277-detector-authorship.sh` B1 (an Edit carrying a proposal), B2 (a MultiEdit whose second edit
+carries it), B3 (an Edit and a MultiEdit rewriting unrelated text while old_string and the old file contents carry a
+proposal: nothing recorded), R6 (the matcher), and mutants M35-M40, one per new line. A project whose detector sits
+in the unscoped group `[0]` (registered before #454) already runs it after Edit and MultiEdit, so the scan reaches it
+with the framework sync; a project registered under `Bash|Write` alone could only come from #454's unmerged head.
 
 ## BL-337: adoption never stamps the Currency System's block in `.claude/manifest.json`
 

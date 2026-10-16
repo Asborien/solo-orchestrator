@@ -4,13 +4,14 @@
 # Wires into Claude Code's PostToolUse and Stop hooks. Reads the JSON
 # envelope from stdin (per https://code.claude.com/docs/en/hooks),
 # extracts the relevant text (tool_response.{stdout,stderr,output,content}
-# for PostToolUse; last_assistant_message for Stop), scans against
+# for PostToolUse, or tool_input's new text for Edit and MultiEdit, BL-336;
+# last_assistant_message for Stop), scans against
 # bypass-patterns.sh, and writes a claude_bypass_proposal row to
 # bypass-audit.json on match. Stop passes with .stop_hook_active == true
 # are skipped to avoid re-entrant double-scanning.
 #
 # BL-277: the surfaces differ in AUTHORSHIP. A Stop match, or a match in a
-# Write result (the file the model just wrote), is text the model wrote: actor
+# Write, Edit or MultiEdit (text the model just wrote into a file), is text the model wrote: actor
 # "claude", user_response PENDING, and the pending-approval sentinel is raised.
 # Any other PostToolUse match is text a program printed: recorded under actor
 # "tool_output", user_response n/a, and no sentinel — reading a rule is not
@@ -505,14 +506,29 @@ STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false' 2>/dev/nul
 
 # Extract scannable text by event type.
 TEXT=""
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
 case "$EVENT" in
   PostToolUse)
-    # Claude Code envelope: .tool_response. Bash always carries .stdout (so
-    # .stderr is reached only when .stdout is absent); Write, Grep in content
-    # mode and Agent carry a top-level .content; Read nests its text under
-    # .file.content and Edit carries none of these, so neither is scanned.
-    # A missing field returns "" and the next guard exits.
-    TEXT=$(echo "$INPUT" | jq -r '.tool_response.stdout // .tool_response.stderr // .tool_response.output // .tool_response.content // ""' 2>/dev/null)
+    case "$TOOL_NAME" in
+      Edit)
+        # BL-336-EDIT-TEXT — the text the model wrote in: tool_input.new_string.
+        # Never originalFile or old_string, which the model did not write now.
+        TEXT=$(echo "$INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null)
+        ;;
+      MultiEdit)
+        # BL-336-MULTIEDIT-TEXT — every edit's new_string, one after another;
+        # never old_string or the file's old contents.
+        TEXT=$(echo "$INPUT" | jq -r '[(.tool_input.edits // [])[]? | objects | .new_string | strings ] | join("\n")' 2>/dev/null)
+        ;;
+      *)
+        # Claude Code envelope: .tool_response. Bash always carries .stdout (so
+        # .stderr is reached only when .stdout is absent); Write, Grep in content
+        # mode and Agent carry a top-level .content; Read nests its text under
+        # .file.content, so it is not scanned. A missing field returns "" and
+        # the next guard exits.
+        TEXT=$(echo "$INPUT" | jq -r '.tool_response.stdout // .tool_response.stderr // .tool_response.output // .tool_response.content // ""' 2>/dev/null)
+        ;;
+    esac
     ;;
   Stop)
     # Claude Code Stop envelope: .last_assistant_message (Claude's final
@@ -574,13 +590,15 @@ FIRST_PATTERN=""
 ROWS=""
 
 # BL-277-AUTHORSHIP — who wrote the scanned text. The Stop arm reads the
-# model's message, and a Write result carries the file the model wrote. Other
-# PostToolUse text is whatever a program printed, so its rows are recorded
-# under their own actor and await no decision: nobody proposed anything.
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
+# model's message, and a Write, Edit or MultiEdit carries text the model wrote
+# into a file. Other PostToolUse text is whatever a program printed, so its
+# rows are recorded under their own actor and await no decision.
 ACTOR="tool_output"
 USER_RESPONSE="n/a"
-if [ "$EVENT" = "Stop" ] || { [ "$EVENT" = "PostToolUse" ] && [ "$TOOL_NAME" = "Write" ]; }; then
+# BL-336-AUTHORED-TOOLS — the tools whose scanned text the model wrote.
+AUTHORED_TOOL=""
+case "$TOOL_NAME" in Write|Edit|MultiEdit) AUTHORED_TOOL=1 ;; esac
+if [ "$EVENT" = "Stop" ] || { [ "$EVENT" = "PostToolUse" ] && [ -n "$AUTHORED_TOOL" ]; }; then
   ACTOR="claude"
   USER_RESPONSE="PENDING"
 fi
