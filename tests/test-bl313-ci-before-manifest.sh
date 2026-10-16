@@ -30,7 +30,10 @@
 #   T0  the template list is derived (find), meets a floor of 10 (9 language templates plus other.yml), and every
 #       template has a census row — a new language cannot slip in unguarded
 #   T1  exactly one notice step per template, guarded `== ''` on the census
-#       manifest, and its body carries a `::notice::` annotation
+#       manifest, and its body carries a `::notice::` annotation; the step
+#       carries no key but name, if and run (review finding R-480-3:
+#       continue-on-error or working-directory on it turns a Phase 2 tree
+#       with no manifest green, and no other check could see either)
 #   T2  every toolchain step — everything that is not checkout, not the
 #       notice, not the secret scan and not `Governance -` — is guarded
 #       `!= ''` on the same manifest; floor of 3 such steps per template.
@@ -57,14 +60,23 @@
 #   T5  past Phase 1 a missing manifest FAILS, it does not skip green: the
 #       notice step's `run:` script is extracted and EXECUTED under
 #       `"$BASH" -e -o pipefail` (stricter than the runner's default `bash -e {0}`, under the
-#       interpreter this suite itself runs under) against four
-#       fixtures — `.claude/phase-state.json` at current_phase 3 and 2
-#       (rc 1, `::error::`), at current_phase 1 (rc 0, `::notice::`), and
-#       no phase-state at all (rc 0, `::notice::`). A review of the first
-#       cut found the gap: a Poetry or Pipenv project (the framework's own
+#       interpreter this suite itself runs under) against nine
+#       fixtures — `.claude/phase-state.json` at current_phase 3, 2 and
+#       "2" quoted (rc 1, `::error::`; R-480-2: every other phase reader
+#       accepts a quoted phase), at 1 and with no phase-state (rc 0,
+#       `::notice::`), a new project's manifest at phase 0 (rc 0,
+#       `::notice::`), and an ADOPTED project's record, indented as jq
+#       writes it or minified, at phase 0 and 1 (rc 1, an `::error::` that
+#       says it is adopted) and at 3 (rc 1). A review of the first cut
+#       found the gap: a Poetry or Pipenv project (the framework's own
 #       Python guidance) has no requirements.txt, and on a Phase 3 tree
 #       every toolchain step skipped and the check went green — "a check
-#       that cannot run must not pass".
+#       that cannot run must not pass". Review finding R-480-1 found the
+#       same for adoption, which always lands at phase 0: an adopted
+#       project whose manifest is none of the census files (setup.py, a
+#       nested package.json) went from red to green with nothing built.
+#   T7  the other half of R-480-1: with a manifest present an adopted tree
+#       simulates exactly as a new one does, every census sample.
 #   T6  one case per language: every manifest name in the census, placed
 #       ALONE in a fixture, enables every toolchain step and skips the
 #       notice. The census carries the manifests the harness itself
@@ -80,8 +92,11 @@
 # guard, invert one guard, guard the secret scan, delete the notice step,
 # delete the phase check's `exit 1`, drop one manifest name from every
 # guard of one template, drop the manifest guard from python's fail-closed
-# condition, delete python's decision-step guard. Each proves it landed
-# (changed-line count) and names the case that fails.
+# condition, delete python's decision-step guard, add continue-on-error to
+# typescript's notice step and working-directory to go's and python's (R-480-3),
+# delete java's adoption `exit 1` (R-480-1), put back dart's unquoted phase read
+# (R-480-2). Each proves it landed (changed-line count) and names the case
+# that fails.
 #
 # WHY `other.yml` IS OUT: its toolchain steps are TODO comments and its
 # dependency-audit step exits 1 by design until the operator configures a
@@ -148,23 +163,26 @@ template_list() {
 }
 
 # steps_of <template> — one line per step of the `test` job:
-#   <name-or-uses>\t<if-expression or ->\t<1 if the body carries ::notice::>\t<id or ->
+#   <name-or-uses>\t<if-expression or ->\t<1 if the body carries ::notice::>\t<id or ->\t<keys>
+# <keys> is every key of the step, comma-joined in order (the `- ` line's own
+# key first), so a key the step must not carry can be seen (R-480-3).
 # Scoped to the `test` job (indent-2 key) so the `sast` job's steps never
-# enter the census; a step opens at indent-6 `- `, its `if:` and `id:` sit at
-# indent 8.
+# enter the census; a step opens at indent-6 `- `, its keys sit at indent 8.
 steps_of() {
   awk '
-    function flush() { if (name != "") print name "\t" cond "\t" note "\t" id; name = "" }
-    BEGIN { injob = 0; name = ""; cond = "-"; note = 0; id = "-" }
+    function flush() { if (name != "") print name "\t" cond "\t" note "\t" id "\t" keys; name = "" }
+    BEGIN { injob = 0; name = ""; cond = "-"; note = 0; id = "-"; keys = "" }
     /^  test:[[:space:]]*$/ { injob = 1; next }
     injob && /^  [A-Za-z_][A-Za-z0-9_-]*:/ { flush(); injob = 0 }
     injob && /^      - / {
       flush()
       name = $0
+      keys = $0; sub(/^      - /, "", keys); sub(/:.*/, "", keys)
       sub(/^      - (name|uses):[[:space:]]*/, "", name)
       cond = "-"; note = 0; id = "-"
       next
     }
+    injob && /^        [A-Za-z_][A-Za-z0-9_-]*:/ { k = $0; sub(/^        /, "", k); sub(/:.*/, "", k); keys = keys "," k }
     injob && /^        if:[[:space:]]/ { cond = $0; sub(/^        if:[[:space:]]*/, "", cond) }
     injob && /^        id:[[:space:]]/ { id = $0; sub(/^        id:[[:space:]]*/, "", id) }
     injob && /::notice::/ { note = 1 }
@@ -244,12 +262,12 @@ run_notice() {
 
 # manifest_gaps <github-templates-dir> — one line per violation:
 #   <file>: <class>: <detail>
-# classes: census-missing notice-count notice-manifest notice-text
+# classes: census-missing notice-count notice-manifest notice-text notice-key
 #          guard-missing guard-wrong toolchain-floor checkout-guarded
 #          gitleaks-guarded governance-manifest gate-unanchored
 manifest_gaps() {
   local d="$1" f="" lang="" args="" want_run="" want_skip="" steps="" name="" cond="" note="" sid=""
-  local n_notice=0 n_tool=0 short="" list="" deps_ok=0
+  local n_notice=0 n_tool=0 short="" list="" deps_ok=0 k="" skeys=""
   list="$TOPTMP/gaps.list.$$"
   template_list "$d" > "$list"
   while IFS= read -r f; do
@@ -269,7 +287,7 @@ manifest_gaps() {
     # a step gated on the decision is guarded only through a decision step
     # that itself carries exactly the census guard
     W="$want_run" awk -F'\t' '$4 == "deps" && $2 == ENVIRON["W"] { f = 1 } END { exit !f }' "$steps" && deps_ok=1
-    while IFS="$(printf '\t')" read -r name cond note sid; do
+    while IFS="$(printf '\t')" read -r name cond note sid skeys; do
       short="${name%% #*}"
       case "$name" in
         actions/checkout@*)
@@ -284,6 +302,13 @@ manifest_gaps() {
           if [ "$cond" = "$want_skip" ]; then
             n_notice=$((n_notice + 1))
             [ "$note" = "1" ] || printf '%s: notice-text: the skip step (%s) prints no ::notice:: annotation\n' "$lang.yml" "$short"
+            # R-480-3: the skip step carries name, if and run and nothing else.
+            # continue-on-error would let its exit 1 through; working-directory,
+            # shell or env would run its check somewhere else or otherwise; each
+            # turns a Phase 2 tree with no manifest green.
+            for k in $(printf '%s\n' "$skeys" | tr ',' ' '); do
+              case "$k" in name|if|run) ;; *) printf '%s: notice-key: the skip step (%s) carries %s:, and may carry only name, if and run\n' "$lang.yml" "$short" "$k" ;; esac
+            done
           elif [ "$cond" = "$want_run" ]; then
             n_tool=$((n_tool + 1))
           elif [ "$cond" = "$GATE_INST_UV" ] || [ "$cond" = "$GATE_INST_PIP" ] || [ "$cond" = "$want_run$INST_NONE_TAIL" ]; then
@@ -367,14 +392,14 @@ eval_guard() {
 # alt: steps not run because of the answer the decision gave (the other
 # installer's path, and the fail-closed step once an installer was chosen).
 simulate() {
-  local f="$1" lang="$2" root="$3" args="" want_skip="" steps="" name="" cond="" note="" sid="" v="" ds=""
+  local f="$1" lang="$2" root="$3" args="" want_skip="" steps="" name="" cond="" note="" sid="" v="" ds="" skeys=""
   local tr=0 ts=0 nv="absent" unk=0 alt=0 dec="none"
   args="$(census_args "$lang")"
   want_skip="hashFiles($args) == ''"
   steps="$(mktemp "$TOPTMP/sim.XXXXXX")"
   steps_of "$f" > "$steps"
   SIM_INST=""
-  while IFS="$(printf '\t')" read -r name cond note sid; do
+  while IFS="$(printf '\t')" read -r name cond note sid skeys; do
     case "$name" in
       actions/checkout@*|'Security - Secret detection (gitleaks)'|'Governance - '*) continue ;;
     esac
@@ -438,11 +463,11 @@ GAPS="$TOPTMP/gaps.txt"
 manifest_gaps "$GH_DIR" > "$GAPS"
 
 # T1 — the notice step
-n_t1=$(( $(count_in "$GAPS" ': notice-count: ') + $(count_in "$GAPS" ': notice-manifest: ') + $(count_in "$GAPS" ': notice-text: ') ))
+n_t1=$(( $(count_in "$GAPS" ': notice-count: ') + $(count_in "$GAPS" ': notice-manifest: ') + $(count_in "$GAPS" ': notice-text: ') + $(count_in "$GAPS" ': notice-key: ') ))
 if [ "$n_t1" -eq 0 ]; then
   pass "T1 — every language template ($n_lang) carries exactly one ::notice:: skip step guarded == '' on its manifest"
 else
-  fail_ "T1" "$n_t1 notice violation(s): $(grep -E ': notice-(count|manifest|text): ' "$GAPS" | head -3 | tr '\n' ';' | cut -c1-240)"
+  fail_ "T1" "$n_t1 notice violation(s): $(grep -E ': notice-(count|manifest|text|key): ' "$GAPS" | head -3 | tr '\n' ';' | cut -c1-240)"
 fi
 
 # T2 — every toolchain step guarded
@@ -512,16 +537,35 @@ else
   fail_ "T4" "guard evaluation disagrees with the intent:$t4_bad"
 fi
 
-# T5 — the notice step EXECUTED: past Phase 1 it fails, before it notices.
-# mk_phase_fixture <dir> <phase|none>
+# T5 — the notice step EXECUTED: past Phase 1 it fails, and an ADOPTED project
+# fails at any phase (R-480-1: adoption lands at phase 0 with its code already
+# there, so "nothing to build yet" is never true of it); only a new project
+# before Phase 2 gets the notice.
+# mk_phase_fixture <dir> <phase|none> — <phase> is written as given, so `"2"`
+# writes a quoted phase (R-480-2: every other reader accepts one)
 mk_phase_fixture() {
   mkdir -p "$1/.claude" || return 1
   [ "$2" = "none" ] && return 0
   printf '{\n  "current_phase": %s,\n  "phase_gates": {}\n}\n' "$2" > "$1/.claude/phase-state.json"
 }
+# mk_manifest <dir> <adopted|adopted-min|new> — .claude/manifest.json. `adopted`
+# is the shape adoption writes: soif_adoption_stamp merges
+# `.adoption = {schemaVersion: 2, adopted: true, ...}` with jq, whose default
+# output is this indented form (`# BF-ADOPT-STAMP-MERGE`); `adopted-min` is the
+# same record minified; `new` is a project init.sh made, with no adoption block.
+mk_manifest() {
+  mkdir -p "$1/.claude" || return 1
+  case "$2" in
+    adopted)     printf '{\n  "host": "github",\n  "adoption": {\n    "schemaVersion": 2,\n    "adopted": true,\n    "adoptedAt": "2026-10-16T00:00:00Z",\n    "adoptedAtCommit": "0000000000000000000000000000000000000000",\n    "scannerReportSha256": ""\n  }\n}\n' ;;
+    adopted-min) printf '{"host":"github","adoption":{"schemaVersion":2,"adopted":true,"adoptedAt":"2026-10-16T00:00:00Z"}}\n' ;;
+    new)         printf '{\n  "host": "github",\n  "mode": "greenfield"\n}\n' ;;
+  esac > "$1/.claude/manifest.json"
+}
+# notice_said <script-file> <fixture-root> — what the notice script printed
+notice_said() { ( cd "$2" && "$BASH" -e -o pipefail "$1" 2>&1 ); }
 # t5_check <template> <lang> — prints violations, one per line
 t5_check() {
-  local f="$1" lang="$2" args="" want_skip="" script="" fx="" v=""
+  local f="$1" lang="$2" args="" want_skip="" script="" fx="" v="" spec="" ph="" mf="" want="" said=""
   args="$(census_args "$lang")"
   want_skip="hashFiles($args) == ''"
   script="$TOPTMP/notice.$lang.$$.sh"
@@ -529,21 +573,27 @@ t5_check() {
   if [ ! -s "$script" ]; then
     printf '%s: no run: | block on the notice step\n' "$lang.yml"; return
   fi
-  if [ "$(count_in "$script" 'current_phase')" -lt 1 ] || [ "$(count_in "$script" 'exit 1')" -lt 1 ]; then
-    printf '%s: notice script does not read current_phase and exit 1\n' "$lang.yml"
+  if [ "$(count_in "$script" 'current_phase')" -lt 1 ] || [ "$(count_in "$script" 'exit 1')" -lt 2 ]; then
+    printf '%s: notice script does not read current_phase and exit 1 twice (phase, adoption)\n' "$lang.yml"
   fi
-  fx="$(newtmp)"; mk_phase_fixture "$fx" 3
-  v="$(run_notice "$script" "$fx")"
-  [ "$v" = "1 error" ] || printf '%s: at current_phase 3 expected "1 error", got "%s"\n' "$lang.yml" "$v"
-  fx="$(newtmp)"; mk_phase_fixture "$fx" 2
-  v="$(run_notice "$script" "$fx")"
-  [ "$v" = "1 error" ] || printf '%s: at current_phase 2 expected "1 error", got "%s"\n' "$lang.yml" "$v"
-  fx="$(newtmp)"; mk_phase_fixture "$fx" 1
-  v="$(run_notice "$script" "$fx")"
-  [ "$v" = "0 notice" ] || printf '%s: at current_phase 1 expected "0 notice", got "%s"\n' "$lang.yml" "$v"
-  fx="$(newtmp)"; mk_phase_fixture "$fx" none
-  v="$(run_notice "$script" "$fx")"
-  [ "$v" = "0 notice" ] || printf '%s: with no phase-state.json expected "0 notice", got "%s"\n' "$lang.yml" "$v"
+  # <phase>/<manifest>/<expected>
+  for spec in 3/-/1error 2/-/1error '"2"/-/1error' 1/-/0notice none/-/0notice \
+              0/new/0notice 0/adopted/1adopted 1/adopted-min/1adopted 3/adopted/1error; do
+    ph="${spec%%/*}"; mf="${spec#*/}"; mf="${mf%%/*}"; want="${spec##*/}"
+    fx="$(newtmp)"; mk_phase_fixture "$fx" "$ph"
+    [ "$mf" = "-" ] || mk_manifest "$fx" "$mf"
+    v="$(run_notice "$script" "$fx")"
+    case "$want" in
+      1error)   [ "$v" = "1 error" ]  || printf '%s: at current_phase %s (manifest %s) expected "1 error", got "%s"\n' "$lang.yml" "$ph" "$mf" "$v" ;;
+      0notice)  [ "$v" = "0 notice" ] || printf '%s: at current_phase %s (manifest %s) expected "0 notice", got "%s"\n' "$lang.yml" "$ph" "$mf" "$v" ;;
+      1adopted)
+        said="$(notice_said "$script" "$fx")"
+        case "$v:$said" in
+          "1 error:"*"This project was adopted"*) ;;
+          *) printf '%s: adopted (%s) at current_phase %s expected "1 error" naming the adoption, got "%s"\n' "$lang.yml" "$mf" "$ph" "$v" ;;
+        esac ;;
+    esac
+  done
 }
 t5_bad="$TOPTMP/t5.txt"; : > "$t5_bad"
 while IFS= read -r f; do
@@ -553,9 +603,34 @@ while IFS= read -r f; do
   t5_check "$f" "$lang" >> "$t5_bad"
 done < "$GH_LIST"
 if [ ! -s "$t5_bad" ]; then
-  pass "T5 — executed: every notice step exits 1 with ::error:: at current_phase 2 and 3, and exits 0 with ::notice:: at phase 1 or with no phase-state ($n_lang templates, 4 fixtures each)"
+  pass "T5 — executed: every notice step exits 1 with ::error:: at current_phase 2 (bare or quoted) and 3 and for an adopted project at phase 0 or 1 (indented or minified record), and exits 0 with ::notice:: for a new project at phase 0 or 1 or with no phase-state ($n_lang templates, 9 fixtures each)"
 else
   fail_ "T5" "$(grep -c . "$t5_bad") violation(s): $(head -3 "$t5_bad" | tr '\n' ';' | cut -c1-240)"
+fi
+
+# T7 — R-480-1's other half: with a manifest present, adoption changes nothing.
+# Every census sample, simulated with and without an adopted record at phase 0,
+# gives the same result, and the notice skips in both.
+t7_bad=""; t7_n=0
+while IFS= read -r f; do
+  lang="${f##*/}"; lang="${lang%.yml}"
+  [ "$lang" = "other" ] && continue
+  [ -n "$(census_args "$lang")" ] || continue
+  for sample in $(census_samples "$lang"); do
+    M="$(newtmp)"; mk_sample "$M" "$sample"
+    MA="$(newtmp)"; mk_sample "$MA" "$sample"; mk_phase_fixture "$MA" 0; mk_manifest "$MA" adopted
+    r_new="$(simulate "$f" "$lang" "$M")"; r_ad="$(simulate "$f" "$lang" "$MA")"
+    t7_n=$((t7_n + 1))
+    set -- $r_ad
+    if [ "$r_new" != "$r_ad" ] || [ "$3" != "skip" ]; then
+      t7_bad="$t7_bad $lang/$sample(new=[$r_new] adopted=[$r_ad])"
+    fi
+  done
+done < "$GH_LIST"
+if [ -z "$t7_bad" ]; then
+  pass "T7 — with a manifest present an adopted tree runs exactly what a new one runs, notice skipped ($t7_n samples across $n_lang templates)"
+else
+  fail_ "T7" "adoption changed a tree that has its manifest:$t7_bad"
 fi
 
 # T6 — one case per language: each census manifest name ALONE enables the
@@ -729,7 +804,7 @@ else
     fail_ "MT5 setup" "the mutation did not remove exactly one line — python.yml's notice step has no exit 1 at the expected indent"
   else
     t5_check "$tgt" python > "$TOPTMP/mt5.bad"
-    if [ "$(count_in "$TOPTMP/mt5.bad" 'at current_phase 3 expected "1 error", got "0 error"')" -ge 1 ]; then
+    if [ "$(count_in "$TOPTMP/mt5.bad" 'at current_phase 3 (manifest -) expected "1 error", got "0 error"')" -ge 1 ]; then
       pass "MT5 (MUTATION) — with the exit 1 deleted, T5 executes the notice at phase 3 and sees rc 0 — the regression is caught"
     else
       fail_ "MT5 (MUTATION)" "deleting exit 1 changed nothing T5 can see: $(head -2 "$TOPTMP/mt5.bad" | tr '\n' ';')"
@@ -825,6 +900,86 @@ else
       pass "MT8 (MUTATION) — with the decision step's guard deleted, T2 names it and over an empty tree the template's own decision script runs and fails — T4's empty-tree arm"
     else
       fail_ "MT8 (MUTATION)" "deleting the decision step's guard was not caught: gaps=$(head -2 "$TOPTMP/mt8.gaps" | tr '\n' ';') sim=run=$1,skip=$2,decision=$5"
+    fi
+  fi
+fi
+
+# ins_notice_key <template> <line> — insert <line> right after the notice
+# step's `if: hashFiles(...) == ''` line; rc 0 iff exactly one line was added.
+ins_notice_key() {
+  local tgt="$1" line="$2" before=""
+  before="$(mktemp "$TOPTMP/ink.XXXXXX")"; cp "$tgt" "$before"
+  L="$line" awk '{ print } /^        if: hashFiles\(.*\) == ..$/ { print ENVIRON["L"] }' "$before" > "$tgt"
+  [ "$(_changed_lines "$before" "$tgt")" -eq 1 ] && [ "$(count_in "$tgt" "$line")" -eq 1 ]
+}
+# MT9-MT11 — R-480-3: a key the notice step must not carry. Each was measured
+# to survive every template suite before the notice-key check, and each turns
+# a Phase 2 tree with no manifest green on Actions: continue-on-error lets the
+# exit 1 through; working-directory runs the phase and adoption reads where
+# .claude/ is not, so both read as "new project, phase 0".
+for spec in "MT9|typescript|continue-on-error: true" "MT10|go|working-directory: .github" "MT11|python|working-directory: .github"; do
+  id="${spec%%|*}"; rest="${spec#*|}"; mlang="${rest%%|*}"; mkey="${rest#*|}"
+  MTD="$(newtmp)/fw"
+  if ! mk_mirror "$MTD"; then
+    fail_ "$id setup" "could not mirror the framework"
+  elif ! ins_notice_key "$MTD/templates/pipelines/ci/github/$mlang.yml" "        $mkey"; then
+    fail_ "$id setup" "the mutation did not add exactly one '$mkey' line to $mlang.yml's notice step"
+  else
+    manifest_gaps "$MTD/templates/pipelines/ci/github" > "$TOPTMP/$id.gaps"
+    if [ "$(count_in "$TOPTMP/$id.gaps" "$mlang.yml: notice-key: the skip step")" -ge 1 ] \
+       && [ "$(count_in "$TOPTMP/$id.gaps" "carries ${mkey%%:*}:")" -ge 1 ]; then
+      pass "$id (MUTATION) — '$mkey' on $mlang.yml's notice step: T1 refuses the key"
+    else
+      fail_ "$id (MUTATION)" "'$mkey' on $mlang.yml's notice step SURVIVED: $(head -2 "$TOPTMP/$id.gaps" | tr '\n' ';')"
+    fi
+  fi
+done
+
+# MT12 — R-480-1: delete the adoption check's `exit 1` from java.yml's notice
+# step: T5 must see an adopted phase-0 tree pass.
+MT12="$(newtmp)/fw"
+if ! mk_mirror "$MT12"; then
+  fail_ "MT12 setup" "could not mirror the framework"
+else
+  tgt="$MT12/templates/pipelines/ci/github/java.yml"
+  before="$(mktemp "$TOPTMP/mt12.XXXXXX")"; cp "$tgt" "$before"
+  awk '
+    /^        if: hashFiles\(.*\) == ..$/ { innotice = 1; ne = 0 }
+    /^      - / { innotice = 0 }
+    innotice && /^            exit 1$/ { ne++; if (ne == 2) next }
+    { print }
+  ' "$before" > "$tgt"
+  if [ "$(_changed_lines "$before" "$tgt")" -ne 1 ] || [ "$(count_in "$tgt" 'This project was adopted')" -ne 1 ]; then
+    fail_ "MT12 setup" "the mutation did not remove exactly the adoption check's exit 1"
+  else
+    t5_check "$tgt" java > "$TOPTMP/mt12.bad"
+    if [ "$(count_in "$TOPTMP/mt12.bad" 'java.yml: adopted (adopted) at current_phase 0 expected "1 error"')" -ge 1 ]; then
+      pass "MT12 (MUTATION) — with the adoption check's exit 1 deleted, T5 sees an adopted phase-0 tree with no build file pass"
+    else
+      fail_ "MT12 (MUTATION)" "deleting the adoption exit 1 changed nothing T5 can see: $(head -2 "$TOPTMP/mt12.bad" | tr '\n' ';')"
+    fi
+  fi
+fi
+
+# MT13 — R-480-2: put back the first cut's phase read (unquoted digits only)
+# in dart.yml: T5's `"current_phase": "2"` fixture must pass again.
+MT13="$(newtmp)/fw"
+if ! mk_mirror "$MT13"; then
+  fail_ "MT13 setup" "could not mirror the framework"
+else
+  tgt="$MT13/templates/pipelines/ci/github/dart.yml"
+  before="$(mktemp "$TOPTMP/mt13.XXXXXX")"; cp "$tgt" "$before"
+  NEWP="grep -o '\"current_phase\"[[:space:]]*:[[:space:]]*\"*[0-9][0-9]*\"*' .claude/phase-state.json 2>/dev/null | grep -o '[0-9][0-9]*' | head -1 || true)" \
+  OLDP="          phase=\$(grep -o '\"current_phase\"[[:space:]]*:[[:space:]]*[0-9]*' .claude/phase-state.json 2>/dev/null | grep -o '[0-9]*\$' || true)" \
+    awk 'index($0, ENVIRON["NEWP"]) { $0 = ENVIRON["OLDP"] } { print }' "$before" > "$tgt"
+  if [ "$(_changed_lines "$before" "$tgt")" -ne 2 ] || [ "$(count_in "$tgt" "grep -o '[0-9]*\$' || true)")" -ne 1 ]; then
+    fail_ "MT13 setup" "the mutation did not put back exactly one unquoted phase read"
+  else
+    t5_check "$tgt" dart > "$TOPTMP/mt13.bad"
+    if [ "$(count_in "$TOPTMP/mt13.bad" 'dart.yml: at current_phase "2" (manifest -) expected "1 error", got "0 notice"')" -ge 1 ]; then
+      pass "MT13 (MUTATION) — with the unquoted phase read put back, T5 sees a quoted current_phase \"2\" pass"
+    else
+      fail_ "MT13 (MUTATION)" "the unquoted phase read changed nothing T5 can see: $(head -2 "$TOPTMP/mt13.bad" | tr '\n' ';')"
     fi
   fi
 fi
