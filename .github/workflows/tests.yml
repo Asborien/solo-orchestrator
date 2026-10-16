@@ -18,8 +18,8 @@
 #                         BL-190: the lane is SHARDED. The list below is
 #                         still one canonical array; a matrix job
 #                         (`unit-shard`) partitions it across parallel
-#                         runners (five at BL-190, ten since 2026-10-07 —
-#                         see `pin_adopt_b`), and a zero-work `unit` job aggregates
+#                         runners (five at BL-190, eleven since 2026-10-16 —
+#                         see `pin_approval`), and a zero-work `unit` job aggregates
 #                         them so the branch-protection check name survives.
 #                         Nothing was demoted to the full lane: the set of
 #                         tests that gate a PR is byte-identical before and
@@ -1231,13 +1231,15 @@ jobs:
           )
           # ── `approval` — the eleventh leg (2026-10-16, after the contributor
           # PRs #452/#453/#482 landed). On main run 38953171960 (1163a9c) `rest`
-          # took 672s of 720s; the same tree's PR runs swing ~150s between legs
-          # (on #453's run `adopt` took 652s, on main 496s), so moving suites
-          # between legs buys no margin. These three were `rest`'s slowest on
+          # took 672s of 720s; one tree's legs swing a lot between runs (on
+          # main 7de2a91's run 38951238898 `rest` took 518s against 641s on
+          # #453's run 38949734641 of the same tree), so moving suites between
+          # legs buys no margin. These three were `rest`'s slowest on
           # that run, measured from its log (group start to PASS line):
           #      rest  672s -> ~426s        approval  - -> ~246s (+ setup)
-          # All three read the pinned Guardrails fixture, which every leg
-          # fetches (BL-322 S5), so they run the same here as in `rest`.
+          # bl318-g4g6 and bl320 read the pinned Guardrails fixture, which every
+          # leg fetches (BL-322 S5); bl274 reads no clone. All three gave their
+          # `rest` counts with an empty HOME and CI=true (review of this change).
           pin_approval=(
             tests/test-bl274-single-authority-attestation.sh  # 126.4s on main run 38953171960 (rest) — from `rest`
             tests/test-bl318-g4g6.sh                          #  81.3s — from `rest`
