@@ -36,12 +36,22 @@
 #   G*  the pre-commit gate: the verify-skipping commit is still denied; a
 #       ledger holding only tool-output rows does not block; an authored match
 #       does.
-#   D*  the third disposition of scripts/pending-approval.sh, which is
-#       operator-only: refused without a terminal on stdin, then confirmed at a
+#   D*  the third disposition, false-positive, which is the USER'S PICK:
+#       scripts/pending-approval.sh --resolve --decision false-positive closes
+#       nothing itself; it asks the bypass question again with a third option,
+#       A3, and the close is read from the user's pick of A3 in
+#       .claude/approvals.jsonl, as A1 and A2 are (`## BL-320:`). Before it
+#       asks, it is refused without a terminal on stdin and confirmed at a
 #       [y/N] prompt, the same two steps as `test-gate.sh --unrecord-feature`
 #       and `process-checklist.sh --reset`. The operator's side runs under a
 #       pseudo-terminal from script(1) and types its answer; P0 proves the
-#       pseudo-terminal is real, so D5's refusal is the guard's.
+#       pseudo-terminal is real, so D5's refusal is the guard's. D1's first
+#       half is also what an AGENT gets by running the command under a
+#       pseudo-terminal itself: a question for the user, and nothing closed.
+#   E1  the same round trip against the real Development Guardrails hooks (the
+#       pinned fixture, tests/test-helpers/cdf-fixture.sh): config-guard refuses
+#       the agent's writes to .claude/approvals.jsonl, record-approval.sh shows
+#       the user A3 and the reason, and the pick closes the rows.
 #   X*  malformed hook input.
 #   R5  the hook roster (scripts/lib/claude-settings.sh) in adoption mode
 #       still registers no PostToolUse detector: the maintainer's
@@ -74,7 +84,17 @@ pass()  { echo "  [PASS] $1"; PASSED=$((PASSED + 1)); }
 fail_() { echo "  [FAIL] $1 — $2"; FAILED=$((FAILED + 1)); }
 
 TOPTMP="$(mktemp -d)"
-trap 'rm -rf "$TOPTMP"' EXIT INT TERM
+# E1 runs the real Guardrails hooks, which keep their state in /tmp files named
+# by the project's hash; each hash E1 makes is listed here and its files go too.
+E_HASHES=""
+cleanup() {
+  local h
+  for h in $E_HASHES; do
+    rm -f "/tmp/.claude_evaluated_$h" "/tmp/.claude_approval_shown_$h" "/tmp/.claude_eval_log_$h"
+  done
+  rm -rf "$TOPTMP"
+}
+trap cleanup EXIT INT TERM
 newtmp() { mktemp -d "$TOPTMP/fixXXXXXX"; }
 # mirror_scripts — a copy of scripts/ for a mutant or a stub install to change.
 mirror_scripts() { local d; d="$(newtmp)/fw"; mkdir -p "$d" && cp -Rp "$REPO_ROOT/scripts" "$d/" && printf '%s' "$d"; }
@@ -83,6 +103,14 @@ for need in "$HOOK" "$GATE" "$PA" "$LIB" "$ROSTER" "$TEMPLATE"; do
   [ -f "$need" ] || { echo "  [FAIL] setup — $need not found"; echo ""; echo "Results: 0 passed, 1 failed"; exit 1; }
 done
 command -v jq >/dev/null 2>&1 || { echo "  [FAIL] setup — jq is required"; echo ""; echo "Results: 0 passed, 1 failed"; exit 1; }
+# The real Guardrails clone for E1: a private copy of the pinned fixture
+# (`## BL-322:` S5). 0 = here; 77 = not here, locally (E1 skips); 1 = the
+# fixture says E1 must run and cannot (E1 fails).
+# shellcheck source=/dev/null
+. "$REPO_ROOT/tests/test-helpers/cdf-fixture.sh" || { echo "  [FAIL] setup — cannot source tests/test-helpers/cdf-fixture.sh"; echo ""; echo "Results: 0 passed, 1 failed"; exit 1; }
+CDF_CLONE="$TOPTMP/cdf"; CDF_RC=0
+cdf_fixture_copy "$CDF_CLONE" 4.4.0 >/dev/null 2>&1 || CDF_RC=$?
+SKIPPED=0
 
 # --- fixtures: one per pattern in scripts/lib/bypass-patterns.sh, split so the
 # contiguous text exists only at run time -------------------------------------
@@ -100,13 +128,15 @@ fixture_for() {
 }
 FLAG_NV="--no-""verify"
 
-# frameworkVersion 4.3.0 is a Development Guardrails version older than
-# `## BL-320:`'s minimum, so scripts/pending-approval.sh takes --decision here
-# (the "legacy" route): with 4.4.0 and later it refuses --decision outright.
+# mk_proj DIR [VERSION] — VERSION is the Development Guardrails version in the
+# manifest, 4.4.0 by default: `## BL-320:`'s minimum, the "pick" route, where
+# the user answers a question by option id and scripts/pending-approval.sh
+# refuses the agent's --decision accept|decline. 4.3.0 is the older "legacy"
+# route, which still takes them; "test" reads as no version at all.
 mk_proj() {
-  local d="$1"
+  local d="$1" v="${2:-4.4.0}"
   mkdir -p "$d/.claude" || return 1
-  printf '%s\n' '{"frameworkVersion":"4.3.0","host":"other","mode":"personal","deployment":"personal","enforcement_level":"strict"}' \
+  jq -nc --arg v "$v" '{frameworkVersion:$v,host:"other",mode:"personal",deployment:"personal",enforcement_level:"strict"}' \
     > "$d/.claude/manifest.json" || return 1
   echo "[]" > "$d/.claude/bypass-audit.json" || return 1
   return 0
@@ -346,15 +376,33 @@ chk_gate_no_fp_pointer() {
 
 # D — the third disposition.
 REASON_FP="the matched text was a rule quoted from CLAUDE.md, nobody proposed it"
+# The library's fixed wording, read from the library itself so the suite cannot
+# drift from it.
+ACC_TEXT="$( . "$LIB" >/dev/null 2>&1; printf '%s' "${BYPASS_ACCEPT_TEXT:-}")"
+FP_TEXT="$( . "$LIB" >/dev/null 2>&1; printf '%s' "${BYPASS_FALSE_POSITIVE_TEXT:-}")"
+FP_LEAD="$( . "$LIB" >/dev/null 2>&1; printf '%s' "${BYPASS_FALSE_POSITIVE_LEAD:-}")"
+Q_PREFIX="$( . "$LIB" >/dev/null 2>&1; printf '%s' "${BYPASS_QUESTION_PREFIX:-}")"
+sha_of() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1" 2>/dev/null; } | awk '{print $1; exit}'; }
+sum_of() { [ -f "$1" ] && cksum < "$1" || printf 'ABSENT'; }
+# seed_pending DIR [VERSION] — an open proposal as the real detector leaves it:
+# one claude row, PENDING, bound to the detector's own schema-2 question.
 seed_pending() {
   local d="$1"
-  mk_proj "$d" || return 1
-  jq -nc '[{timestamp:"2026-09-18T00:00:00Z", session_id:"bl277", type:"claude_bypass_proposal", actor:"claude",
-            enforcement_level_at_event:"strict", details:{pattern:"no_verify", event:"Stop", excerpt:"x", severity:"normal"},
-            user_response:"PENDING", final_outcome:"recorded_only"}]' > "$(ledger "$d")" || return 1
-  jq -nc '{question:"bl277 q", options:["A1: yes","A2: decline"], recommendation:"A2", offered_at:"2026-09-18T00:00:00Z"}' \
-    > "$(sentinel "$d")" || return 1
+  mk_proj "$d" "${2:-4.4.0}" || return 1
+  run_hook "$HOOK" "$d" "$(env_stop "$(fixture_for no_verify)")"
+  [ -f "$(sentinel "$d")" ] && [ "$(q "$d" '[.[] | select(.user_response=="PENDING")] | length')" = "1" ] || return 1
   return 0
+}
+# pick_a3 DIR — what record-approval.sh does when the user picks A3 of the
+# question on disk: a pick record, then the question removed. picked_at is
+# fixed after every row this suite writes.
+pick_a3() {
+  local d="$1" s
+  s="$(sentinel "$d")"
+  jq -c --arg h "$(sha_of "$s")" '{event:"approval", source:"pick", session_id:"bl277", pick:"A3", approves:"none",
+      question:.question, option_text:(.options[] | select(.id=="A3") | .text), sentinel_sha256:$h, picked_at:"2099-01-01T00:00:00Z"}' \
+    "$s" >> "$d/.claude/approvals.jsonl" || return 1
+  mv "$s" "$d/q-answered.json"
 }
 # run_pa <script> <project> args... -> PA_RC — the agent's side: stdin is not a
 # terminal, whoever runs this suite.
@@ -409,26 +457,53 @@ run_tty() {
 # run_pa_tty <script> <project> args... -> PA_RC — the operator answers
 # ${PA_ANSWER-y} at the confirmation.
 run_pa_tty() { local script="$1" d="$2"; shift 2; run_tty "$d" "${PA_ANSWER-y}" bash "$script" "$@"; PA_RC="$TTY_RC"; return 0; }
+# unmoved <project> <sentinel cksum before> — the question on disk and every
+# row are as they were: one PENDING row, no reason, still bound to the question.
+unmoved() {
+  local d="$1" before="$2"
+  [ "$(sum_of "$(sentinel "$d")")" = "$before" ] || { echo "the question on disk changed"; return 1; }
+  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the row was closed"; return 1; }
+  [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] || { echo "a reason was written"; return 1; }
+  [ "$(q "$d" '.[0].details.sentinel_sha256')" = "$(sha_of "$(sentinel "$d")")" ] || { echo "the row was rebound"; return 1; }
+  return 0
+}
+# D1 — the operator's close, then the user's pick. The operator's command puts
+# the question again, with A3 and the reason, and closes nothing; the user's
+# pick of A3 closes the row as false_positive with the reason, read from the
+# pick record when the agent next runs --resolve.
 chk_fp_closes() {
-  local pa="$1" d ur fo why
+  local pa="$1" d s ur fo why
   d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
   run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+  s="$(sentinel "$d")"
+  [ "$PA_RC" = "0" ] || { echo "the operator's close: rc=$PA_RC, want 0"; return 1; }
+  grep -qF -e "$REASON_FP" "$TTY_OUT" 2>/dev/null || { echo "the confirmation did not show the reason"; return 1; }
+  jq -e --arg fp "$FP_TEXT" --arg tail "$FP_LEAD$REASON_FP" --arg pre "$Q_PREFIX" \
+    '.schema == 2 and .source == "bypass-false-positive" and ([.options[].id] == ["A1","A2","A3"])
+     and ([.options[].approves] | unique) == ["none"] and (.options[2].text == $fp)
+     and (.question | startswith($pre)) and (.question | endswith($tail))' "$s" >/dev/null 2>&1 \
+    || { echo "the question was not asked again with A3 and the reason: $(cat "$s" 2>/dev/null)"; return 1; }
+  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the operator's command closed the row itself"; return 1; }
+  [ "$(q "$d" '.[0].details.sentinel_sha256')" = "$(sha_of "$s")" ] || { echo "the row is not bound to the new question"; return 1; }
+  pick_a3 "$d" || { echo "fixture: the pick"; return 1; }
+  run_pa "$pa" "$d" --resolve
   ur="$(q "$d" '.[0].user_response')"; fo="$(q "$d" '.[0].final_outcome')"; why="$(q "$d" '.[0].details.false_positive_reason')"
-  [ "$PA_RC" = "0" ] || { echo "rc=$PA_RC, want 0"; return 1; }
-  [ ! -e "$(sentinel "$d")" ] || { echo "the sentinel is still present"; return 1; }
+  [ "$PA_RC" = "0" ] || { echo "--resolve after the pick: rc=$PA_RC, want 0"; return 1; }
   [ "$ur" = "false_positive" ] || { echo "user_response=$ur, want false_positive"; return 1; }
   [ "$fo" = "recorded_only" ] || { echo "final_outcome=$fo, want recorded_only"; return 1; }
   [ "$why" = "$REASON_FP" ] || { echo "the reason was not recorded on the row (got '$why')"; return 1; }
+  [ "$(q "$d" '.[0].details.pick')" = "A3" ] || { echo "the row does not say the user picked A3"; return 1; }
   return 0
 }
 # D2 runs on the operator's side, so the refusal it sees is the reason guard's
 # and not the terminal guard's.
 chk_fp_refuses_empty_reason() {
-  local pa="$1" d shape tab nl
+  local pa="$1" d shape tab nl before why
   tab="$(printf '\t')"; nl="
 "
   for shape in missing empty blank tab newline; do
     d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+    before="$(sum_of "$(sentinel "$d")")"
     case "$shape" in
       missing) run_pa_tty "$pa" "$d" --resolve --decision false-positive ;;
       empty)   run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "" ;;
@@ -437,33 +512,112 @@ chk_fp_refuses_empty_reason() {
       newline) run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$nl" ;;
     esac
     case "$PA_RC" in ''|NORUN|*[!0-9]*) echo "$shape reason: the command did not run (rc=$PA_RC)"; return 1 ;; 0) echo "$shape reason: rc=0, want a refusal"; return 1 ;; esac
-    [ -f "$(sentinel "$d")" ] || { echo "$shape reason: the sentinel was removed by a refused close"; return 1; }
-    [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "$shape reason: the row was closed by a refused close"; return 1; }
+    why="$(unmoved "$d" "$before")" || { echo "$shape reason: $why"; return 1; }
   done
   return 0
 }
 # D5 — the agent's side: a well-formed close with a reason, refused because
-# stdin is not a terminal. Nothing moves.
+# stdin is not a terminal. Nothing moves, and nothing is asked.
 chk_fp_needs_terminal() {
-  local pa="$1" d
+  local pa="$1" d before why
   d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  before="$(sum_of "$(sentinel "$d")")"
   run_pa "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
   [ "$PA_RC" -ne 0 ] || { echo "rc=0: the false-positive close ran with no terminal on stdin"; return 1; }
-  [ -f "$(sentinel "$d")" ] || { echo "the sentinel was removed by a refused close"; return 1; }
-  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the row was closed by a refused close"; return 1; }
-  [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] || { echo "a reason was written by a refused close"; return 1; }
+  why="$(unmoved "$d" "$before")" || { echo "$why"; return 1; }
+  return 0
+}
+# D10 — below the Guardrails minimum, or with no readable version, no pick can
+# be recorded, so nothing is asked: the operator's well-formed close is refused.
+chk_fp_needs_pick_route() {
+  local pa="$1" d v before why
+  for v in 4.3.0 test; do
+    d="$(newtmp)"; seed_pending "$d" "$v" || { echo "$v: fixture"; return 1; }
+    before="$(sum_of "$(sentinel "$d")")"
+    run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+    case "$PA_RC" in ''|NORUN|*[!0-9]*) echo "$v: the command did not run (rc=$PA_RC)"; return 1 ;; 0) echo "$v: rc=0, want a refusal"; return 1 ;; esac
+    why="$(unmoved "$d" "$before")" || { echo "$v: $why"; return 1; }
+  done
+  return 0
+}
+# D16 — the question asked again and no pick: the agent's --resolve withdraws
+# it, and every row stays PENDING. Getting past the terminal check (as an agent
+# can, under a pseudo-terminal) asks the user; it closes nothing.
+chk_fp_no_pick_no_close() {
+  local pa="$1" d
+  d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+  [ "$PA_RC" = "0" ] && jq -e '.source == "bypass-false-positive"' "$(sentinel "$d")" >/dev/null 2>&1 || { echo "fixture: not asked again (rc=$PA_RC)"; return 1; }
+  run_pa "$pa" "$d" --resolve
+  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "a --resolve with no pick closed the row as $(q "$d" '.[0].user_response')"; return 1; }
+  [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] || { echo "a reason was written with no pick"; return 1; }
+  return 0
+}
+# D11 — A3 picks the agent could arrange without the operator: a question it
+# wrote itself with A3 but no reason (or a reason of whitespace), picked by the
+# user. No reason the user was shown, so no close: the rows stay PENDING.
+chk_fp_pick_needs_reason() {
+  local pa="$1" d tail s
+  for tail in "" "$FP_LEAD   "; do
+    d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+    s="$(sentinel "$d")"
+    jq --arg fp "$FP_TEXT" --arg t "$tail" '.source = "bypass-false-positive" | .question = (.question + " " + $t)
+        | .options += [{id:"A3", text:$fp, approves:"none"}]' "$s" > "$s.new" && mv "$s.new" "$s"
+    jq --arg h "$(sha_of "$s")" '[.[] | .details.sentinel_sha256 = $h]' "$(ledger "$d")" > "$d/l" && mv "$d/l" "$(ledger "$d")"
+    pick_a3 "$d" || { echo "fixture: the pick"; return 1; }
+    run_pa "$pa" "$d" --resolve
+    [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "an A3 pick with no reason shown (tail '$tail') closed the row as $(q "$d" '.[0].user_response')"; return 1; }
+  done
+  return 0
+}
+# D13 — a question that is not about the proposals (a commit question) is the
+# user's to answer: the operator's close is refused and the question untouched.
+chk_fp_other_question() {
+  local pa="$1" d s before
+  d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  s="$(sentinel "$d")"
+  jq -nc '{schema:2, question:"Commit the fix?", options:[{id:"A1",text:"Commit it",approves:"commit"},{id:"A2",text:"Hold",approves:"none"}], recommendation:"A1", offered_at:"2026-09-18T00:00:00Z"}' > "$s"
+  before="$(sum_of "$s")"
+  run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+  case "$PA_RC" in ''|NORUN|*[!0-9]*) echo "the command did not run (rc=$PA_RC)"; return 1 ;; 0) echo "rc=0, want a refusal"; return 1 ;; esac
+  [ "$(sum_of "$s")" = "$before" ] || { echo "the commit question was replaced"; return 1; }
+  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the row was closed"; return 1; }
+  return 0
+}
+# D14 — nothing PENDING: nothing to ask about, so nothing is written.
+chk_fp_nothing_pending() {
+  local pa="$1" d
+  d="$(newtmp)"; mk_proj "$d" || { echo "fixture"; return 1; }
+  run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+  case "$PA_RC" in ''|NORUN|*[!0-9]*) echo "the command did not run (rc=$PA_RC)"; return 1 ;; 0) echo "rc=0, want a refusal"; return 1 ;; esac
+  [ ! -e "$(sentinel "$d")" ] || { echo "a question was written with no proposal to ask about"; return 1; }
+  return 0
+}
+# D15 — a proposal raised while the operator's question is open is not bound to
+# it, so the user's A3 closes only the proposals the operator looked at.
+chk_fp_later_proposal() {
+  local pa="$1" d
+  d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+  [ "$PA_RC" = "0" ] || { echo "fixture: the operator's close rc=$PA_RC"; return 1; }
+  run_hook "$HOOK" "$d" "$(env_stop "$(fixture_for force_push)")"
+  [ "$(q "$d" 'length')" = "2" ] || { echo "fixture: the later proposal was not recorded"; return 1; }
+  pick_a3 "$d" || { echo "fixture: the pick"; return 1; }
+  run_pa "$pa" "$d" --resolve
+  [ "$(q "$d" '.[0].user_response')" = "false_positive" ] || { echo "the proposal the operator looked at: $(q "$d" '.[0].user_response'), want false_positive"; return 1; }
+  [ "$(q "$d" '.[1].user_response')" = "PENDING" ] || { echo "a proposal raised after the operator asked was closed as $(q "$d" '.[1].user_response')"; return 1; }
   return 0
 }
 # D8 — a stub install (no scripts/lib/helpers-core.sh, the fallback at the top
 # of the script): the operator's well-formed close cannot be confirmed, so it
 # is refused and says why. <script> is the copy whose helpers are removed.
 chk_fp_stub_refuses() {
-  local pa="$1" d
+  local pa="$1" d before why
   d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  before="$(sum_of "$(sentinel "$d")")"
   run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
   case "$PA_RC" in ''|NORUN|*[!0-9]*) echo "the command did not run (rc=$PA_RC)"; return 1 ;; 0) echo "rc=0, want a refusal"; return 1 ;; esac
-  [ -f "$(sentinel "$d")" ] || { echo "the sentinel was removed"; return 1; }
-  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "the row was closed"; return 1; }
+  why="$(unmoved "$d" "$before")" || { echo "$why"; return 1; }
   grep -q 'helpers-core.sh' "$TTY_OUT" 2>/dev/null || { echo "the refusal does not name helpers-core.sh"; return 1; }
   if grep -q 'command not found' "$TTY_OUT" 2>/dev/null; then echo "the script ran a command it does not define"; return 1; fi
   return 0
@@ -474,14 +628,13 @@ stub_mirror() { local md; md="$(mirror_scripts)" && rm -f "$md/scripts/lib/helpe
 # presses Enter (the default is N). Cancelled as --unrecord-feature and --reset
 # cancel: rc 0, nothing moves.
 chk_fp_operator_declines() {
-  local pa="$1" d ans
+  local pa="$1" d ans before why
   for ans in n "$RUN_TTY_ENTER"; do
     d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+    before="$(sum_of "$(sentinel "$d")")"
     PA_ANSWER="$ans" run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
     [ "$PA_RC" = "0" ] || { echo "answer '$ans': rc=$PA_RC, want 0 (cancelled)"; return 1; }
-    [ -f "$(sentinel "$d")" ] || { echo "answer '$ans': the sentinel was removed"; return 1; }
-    [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "answer '$ans': the row was closed"; return 1; }
-    [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] || { echo "answer '$ans': a reason was written"; return 1; }
+    why="$(unmoved "$d" "$before")" || { echo "answer '$ans': $why"; return 1; }
   done
   return 0
 }
@@ -492,7 +645,7 @@ chk_lib_refuses_empty_reason() {
   for shape in blank tab newline; do
     case "$shape" in blank) why="  " ;; tab) why="$(printf '\t')" ;; newline) why="
 " ;; esac
-    d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+    d="$(newtmp)"; seed_pending "$d" 4.3.0 || { echo "fixture"; return 1; }
     ( . "$lib" && bypass_audit_close_pending "$d" false-positive "$why" ) >/dev/null 2>&1; rc=$?
     [ "$rc" -ne 0 ] || { echo "$shape reason: the library closed rows as false_positive"; return 1; }
     [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "$shape reason: the row was closed by a refused close"; return 1; }
@@ -535,7 +688,7 @@ chk_close_scope() {
 # a widened false-positive pattern cannot turn a typo into a false_positive close.
 chk_lib_refuses_unknown() {
   local lib="$1" d rc
-  d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  d="$(newtmp)"; seed_pending "$d" 4.3.0 || { echo "fixture"; return 1; }
   ( . "$lib" && bypass_audit_close_pending "$d" accpet "$REASON_FP" ) >/dev/null 2>&1; rc=$?
   [ "$rc" -ne 0 ] || { echo "the library accepted the decision 'accpet'"; return 1; }
   [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "an unknown decision closed the row as $(q "$d" '.[0].user_response')"; return 1; }
@@ -543,11 +696,13 @@ chk_lib_refuses_unknown() {
 }
 # D3 — accept and decline are unchanged, and carry no false_positive_reason:
 # the reason belongs to false-positive closes only. A --reason is passed so a
-# close that wrote it everywhere would write text, not just an empty key.
+# close that wrote it everywhere would write text, not just an empty key. The
+# agent's own --decision is the legacy route's (Guardrails 4.3.0): `## BL-320:`
+# refuses it from 4.4.0 on.
 chk_decline_still_declines() {
   local pa="$1" d dec ur fo
   for dec in decline accept; do
-    d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+    d="$(newtmp)"; seed_pending "$d" 4.3.0 || { echo "fixture"; return 1; }
     run_pa "$pa" "$d" --resolve --decision "$dec" --reason "$REASON_FP"
     case "$dec" in decline) ur="declined"; fo="abandoned" ;; accept) ur="accepted"; fo="bypassed" ;; esac
     [ "$PA_RC" -eq 0 ] && [ "$(q "$d" '.[0].user_response')" = "$ur" ] && [ "$(q "$d" '.[0].final_outcome')" = "$fo" ] \
@@ -555,6 +710,50 @@ chk_decline_still_declines() {
     [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] \
       || { echo "$dec wrote a false_positive_reason onto the row"; return 1; }
   done
+  return 0
+}
+
+# E1 — the false-positive round trip against the real Guardrails hooks. The
+# agent's two ways to write the answer file are refused by config-guard; the
+# user's first reply shows them A3 and the reason (record-approval.sh's render,
+# which reaches the user); the second records the pick; the agent's --resolve
+# then closes the row from it. Prints the reason and returns 1 on failure, 77
+# when the fixture is not here (locally).
+E_D=""
+e_hook() { ( cd "$E_D" && env -u CLAUDECODE CLAUDE_PROJECT_DIR="$E_D" bash "$E_D/.claude/framework/hooks/$1" ); }
+e_ups() { jq -nc --arg p "$1" --arg d "$E_D" --arg i "$2" '{session_id:"bl277-e", transcript_path:"/dev/null", cwd:$d, prompt_id:$i, permission_mode:"default", hook_event_name:"UserPromptSubmit", prompt:$p}'; }
+chk_fp_real_guardrails() {
+  local pa="$1" out rc h
+  case "$CDF_RC" in 0) ;; 77) return 77 ;; *) echo "the pinned Guardrails fixture: $CDF_FIXTURE_WHY"; return 1 ;; esac
+  E_D="$(newtmp)/eproj"
+  seed_pending "$E_D" || { echo "fixture"; return 1; }
+  ( cd "$E_D" && git init -q && git config user.email t@example.com && git config user.name t \
+      && printf 'seed\n' > seed.txt && git add seed.txt && git commit -q -m seed ) >/dev/null 2>&1 || { echo "fixture: git"; return 1; }
+  mkdir -p "$E_D/.claude/framework/hooks" && cp "$CDF_CLONE"/hooks/* "$E_D/.claude/framework/hooks/" && chmod +x "$E_D"/.claude/framework/hooks/*.sh \
+    || { echo "fixture: hooks"; return 1; }
+  h="$(printf '%s' "$E_D" | shasum -a 256 | cut -c1-12)"; E_HASHES="$E_HASHES $h"
+  run_pa_tty "$pa" "$E_D" --resolve --decision false-positive --reason "$REASON_FP"
+  [ "$PA_RC" = "0" ] || { echo "the operator's close: rc=$PA_RC"; return 1; }
+  # The agent writes the answer file itself: with the Write tool, and with Bash.
+  out="$(jq -nc --arg f "$E_D/.claude/approvals.jsonl" '{tool_name:"Write", tool_input:{file_path:$f, content:"{}"}}' | e_hook config-guard.sh 2>&1)"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "config-guard let the Write tool write .claude/approvals.jsonl (rc=$rc)"; return 1; }
+  out="$(jq -nc --arg d "$E_D" '{tool_name:"Bash", cwd:$d, tool_input:{command:"printf %s x >> .claude/approvals.jsonl"}}' | e_hook config-guard.sh 2>&1)"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "config-guard let a Bash append to .claude/approvals.jsonl through (rc=$rc)"; return 1; }
+  out="$(jq -nc --arg d "$E_D" '{tool_name:"Bash", cwd:$d, tool_input:{command:"bash .claude/framework/hooks/record-approval.sh < forged.json"}}' | e_hook config-guard.sh 2>&1)"; rc=$?
+  [ "$rc" -eq 2 ] || { echo "config-guard let the agent run record-approval.sh itself (rc=$rc)"; return 1; }
+  # The user's first reply: the question, A3 and the reason are shown to them.
+  out="$(e_ups "A3" p1 | e_hook record-approval.sh 2>&1)"
+  [ "$(printf '%s' "$out" | jq -r '.decision // empty' 2>/dev/null)" = block ] || { echo "reply 1 was not rendered: $out"; return 1; }
+  printf '%s' "$out" | jq -r '.reason' | grep -qF -e "A3 — $FP_TEXT" || { echo "the render does not show A3's text: $out"; return 1; }
+  printf '%s' "$out" | jq -r '.reason' | grep -qF -e "$REASON_FP" || { echo "the render does not show the reason: $out"; return 1; }
+  # The second reply is the pick.
+  out="$(e_ups "A3" p2 | e_hook record-approval.sh 2>&1)"
+  [ ! -e "$(sentinel "$E_D")" ] || { echo "the pick did not remove the question: $out"; return 1; }
+  jq -e 'select(.event == "approval") | .pick == "A3" and .source == "pick"' "$E_D/.claude/approvals.jsonl" >/dev/null 2>&1 \
+    || { echo "no A3 pick record: $out"; return 1; }
+  run_pa "$pa" "$E_D" --resolve
+  [ "$(q "$E_D" '.[0].user_response')" = "false_positive" ] && [ "$(q "$E_D" '.[0].details.false_positive_reason')" = "$REASON_FP" ] \
+    || { echo "the row after the pick: $(q "$E_D" '.[0] | [.user_response, .details.false_positive_reason] | join(" / ")')"; return 1; }
   return 0
 }
 
@@ -681,17 +880,29 @@ if [ "$p0_tty" = "0" ] && [ "$p0_pipe" -ne 0 ]; then
 else
   fail_ "P0" "terminal on stdin: operator side rc=$p0_tty (want 0), agent side rc=$p0_pipe (want non-zero); D1, D2 and D5 prove nothing"
 fi
-if why="$(chk_fp_closes "$PA")"; then pass "D1 — the operator's --decision false-positive closes the sentinel and records false_positive, recorded_only and the reason"
+if why="$(chk_fp_closes "$PA")"; then pass "D1 — the operator's --decision false-positive asks again with A3 and the reason and closes nothing; the user's A3 pick then closes the row as false_positive, recorded_only, with the reason"
 else fail_ "D1" "$why"; fi
-if why="$(chk_fp_refuses_empty_reason "$PA")"; then pass "D2 — a missing, empty, blank, tab-only or newline-only reason is refused: non-zero, sentinel kept, row still PENDING"
+if why="$(chk_fp_refuses_empty_reason "$PA")"; then pass "D2 — a missing, empty, blank, tab-only or newline-only reason is refused: non-zero, the question and the row unmoved"
 else fail_ "D2" "$why"; fi
-if why="$(chk_fp_needs_terminal "$PA")"; then pass "D5 — with no terminal on stdin a well-formed false-positive close is refused: non-zero, sentinel kept, row PENDING, no reason written"
+if why="$(chk_fp_needs_terminal "$PA")"; then pass "D5 — with no terminal on stdin a well-formed false-positive close is refused: non-zero, nothing asked, the row unmoved"
 else fail_ "D5" "$why"; fi
-if why="$(chk_fp_operator_declines "$PA")"; then pass "D7 — the operator answers no, or presses Enter, at the confirmation: cancelled, rc 0, sentinel kept, row PENDING, no reason written"
+if why="$(chk_fp_operator_declines "$PA")"; then pass "D7 — the operator answers no, or presses Enter, at the confirmation: cancelled, rc 0, nothing asked, the row unmoved"
 else fail_ "D7" "$why"; fi
+if why="$(chk_fp_needs_pick_route "$PA")"; then pass "D10 — below the Guardrails minimum, or with no readable version, the operator's close is refused: no pick can be recorded, so nothing is asked"
+else fail_ "D10" "$why"; fi
+if why="$(chk_fp_no_pick_no_close "$PA")"; then pass "D16 — asked again and no pick: --resolve withdraws the question and the row stays PENDING (past the terminal check is a question, not a close)"
+else fail_ "D16" "$why"; fi
+if why="$(chk_fp_pick_needs_reason "$PA")"; then pass "D11 — an A3 pick on a question with no reason the user was shown (none, or whitespace) closes nothing"
+else fail_ "D11" "$why"; fi
+if why="$(chk_fp_other_question "$PA")"; then pass "D13 — a commit question open: the operator's close is refused and the commit question untouched"
+else fail_ "D13" "$why"; fi
+if why="$(chk_fp_nothing_pending "$PA")"; then pass "D14 — nothing PENDING: refused, and no question written"
+else fail_ "D14" "$why"; fi
+if why="$(chk_fp_later_proposal "$PA")"; then pass "D15 — a proposal raised while the operator's question is open is not bound to it: A3 closes only the earlier one"
+else fail_ "D15" "$why"; fi
 SM="$(stub_mirror)"
 if [ -z "$SM" ] || [ -e "$SM/scripts/lib/helpers-core.sh" ]; then fail_ "D8 setup" "could not build a stub install"
-elif why="$(chk_fp_stub_refuses "$SM/scripts/pending-approval.sh")"; then pass "D8 — on a stub install (no helpers-core.sh) the operator's close is refused, naming the missing file: non-zero, sentinel kept, row PENDING"
+elif why="$(chk_fp_stub_refuses "$SM/scripts/pending-approval.sh")"; then pass "D8 — on a stub install (no helpers-core.sh) the operator's close is refused, naming the missing file: non-zero, nothing asked, the row unmoved"
 else fail_ "D8" "$why"; fi
 if why="$(chk_lib_refuses_empty_reason "$LIB")"; then pass "D4 — bypass_audit_close_pending itself refuses a blank, tab-only or newline-only reason and closes nothing"
 else fail_ "D4" "$why"; fi
@@ -701,6 +912,14 @@ if why="$(chk_close_scope "$LIB")"; then pass "D9 — accept, decline and false-
 else fail_ "D9" "$why"; fi
 if why="$(chk_decline_still_declines "$PA")"; then pass "D3 — decline and accept record what they did before, and write no false_positive_reason"
 else fail_ "D3" "$why"; fi
+
+echo "=== E — against the real Development Guardrails hooks ==="
+why="$(chk_fp_real_guardrails "$PA")"; rc=$?
+case "$rc" in
+  0)  pass "E1 — the real Guardrails: config-guard refuses the agent's writes to .claude/approvals.jsonl and its own run of record-approval.sh; the user is shown A3 and the reason, picks it, and --resolve closes the row as false_positive" ;;
+  77) echo "  [SKIP] E1 — no SOIF_TEST_CDF_FIXTURE and no Guardrails clone fit to copy: $CDF_FIXTURE_WHY"; SKIPPED=$((SKIPPED + 1)) ;;
+  *)  fail_ "E1" "$why" ;;
+esac
 
 echo "=== X — malformed hook input ==="
 x_fail=""
@@ -738,6 +957,16 @@ for spec in \
   "$PA|# BL-277-FP-OPERATOR" \
   "$PA|# BL-277-FP-CONFIRM" \
   "$PA|# BL-277-FP-STUB" \
+  "$PA|# BL-277-FP-DISPATCH" \
+  "$PA|# BL-277-FP-ROUTE" \
+  "$PA|# BL-277-FP-PENDING-ROWS" \
+  "$PA|# BL-277-FP-OTHER-QUESTION" \
+  "$PA|# BL-277-FP-QUESTION" \
+  "$PA|# BL-277-FP-BIND" \
+  "$LIB|# BL-277-FP-PICK-MAP" \
+  "$LIB|# BL-277-FP-PICK-WHY" \
+  "$LIB|# BL-277-FP-PICK-END" \
+  "$LIB|# BL-277-FP-REBIND" \
   "$ROSTER|# BL-277-MATCHER"; do
   f="${spec%%|*}"; m="${spec#*|}"
   n="$(S="$m" awk 'index($0, ENVIRON["S"]){c++} END{print c+0}' "$f")"
@@ -815,12 +1044,14 @@ if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'elif [ -n "$RAISE_PATTERN" 
   else pass "M3b (MUTATION) — the sentinel never raised: S2 and G3 kill it, S1 survives"; fi
 else fail_ "M3b setup" "$why"; fi
 
-# M4 — false-positive recorded as a decline. Killed by D1.
+# M4 — the library's false-positive close recorded as a decline. Killed by D9
+# (bypass_audit_close_pending directly: --resolve closes a false positive from
+# the user's pick, not through this arm).
 MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
 if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" 'user_resp="false_positive"; final_out="recorded_only"' 'user_resp="declined"; final_out="abandoned"' 4)"; then
-  if chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M4 (MUTATION)" "recording a false positive as a decline survived D1"
-  elif ! chk_decline_still_declines "$MP" >/dev/null 2>&1; then fail_ "M4 (MUTATION)" "the mutant broke decline too, so the kill proves nothing about D1"
-  else pass "M4 (MUTATION) — false-positive written as declined/abandoned: D1 kills it, D3 survives"; fi
+  if chk_close_scope "$ML" >/dev/null 2>&1; then fail_ "M4 (MUTATION)" "recording a false positive as a decline survived D9"
+  elif ! chk_decline_still_declines "$MP" >/dev/null 2>&1; then fail_ "M4 (MUTATION)" "the mutant broke decline too, so the kill proves nothing about D9"
+  else pass "M4 (MUTATION) — the library's false-positive close written as declined/abandoned: D9 kills it, D3 survives"; fi
 else fail_ "M4 setup" "$why"; fi
 
 # M5 — the library accepts a blank reason. Killed by D4 (the script's own guard shields D2).
@@ -975,6 +1206,44 @@ if why="$(mutate "$MP" "# BL-277-FP-STUB" '  prompt_yes_no() {' '  _no_prompt_ye
   else pass "M20 (MUTATION) — the stub install's confirmation fallback removed: D8 kills it"; fi
 else fail_ "M20 setup" "$why"; fi
 
+# fp_mutant <id> <file: lib|pa> <marker> <operative> <replacement> <max-distance> <killer> <survivor|-> <what>
+# One schema-2 false-positive mutant on a fresh mirror: <killer> must fail on it
+# and <survivor> (when named) must still pass, so the kill is <killer>'s.
+fp_mutant() {
+  local id="$1" which="$2" marker="$3" op="$4" rp="$5" maxd="$6" killer="$7" survivor="$8" what="$9" md f mp ml why
+  md="$(mirror_scripts)"; mp="$md/scripts/pending-approval.sh"; ml="$md/scripts/lib/bypass-audit.sh"
+  case "$which" in lib) f="$ml" ;; *) f="$mp" ;; esac
+  if ! why="$(mutate "$f" "$marker" "$op" "$rp" "$maxd")"; then fail_ "$id setup" "$why"; return; fi
+  if "$killer" "$mp" >/dev/null 2>&1; then fail_ "$id (MUTATION)" "$what survived $killer"
+  elif [ "$survivor" != - ] && ! "$survivor" "$mp" >/dev/null 2>&1; then fail_ "$id (MUTATION)" "the mutant broke $survivor too, so the kill proves nothing about $killer"
+  elif [ "$survivor" = - ]; then pass "$id (MUTATION) — $what: $killer kills it"
+  else pass "$id (MUTATION) — $what: $killer kills it, $survivor survives"; fi
+}
+# M25 — the pick-route guard removed: on a project whose Guardrails record no
+# pick, the question is asked anyway. Killed by D10.
+fp_mutant M25 pa "# BL-277-FP-ROUTE" 'if [ "$route" != pick ]; then' 'if false; then' 3 chk_fp_needs_pick_route chk_fp_closes "the operator's close asks where no pick can be recorded"
+# M26 — an A3 pick decides nothing. Killed by D1.
+fp_mutant M26 lib "# BL-320-AUDIT-DEC" 'then "false_positive"   # BL-277-FP-PICK-MAP' 'then "PENDING"   # BL-277-FP-PICK-MAP' 1 chk_fp_closes chk_decline_still_declines "the user's A3 pick leaves the row PENDING"
+# M27 — an A3 pick closes with no reason shown to the user. Killed by D11.
+fp_mutant M27 lib "# BL-320-AUDIT-DEC" ' and (($why | gsub("\\s"; "")) | length) > 0 then "false_positive"' ' then "false_positive"' 1 chk_fp_pick_needs_reason chk_fp_closes "an A3 pick on a question with no reason closes the row"
+# M28 — the whole question recorded as the reason. Killed by D1.
+fp_mutant M28 lib "# BL-320-AUDIT-AFTER" 'split($fpl) | if length > 1 then (.[1:] | join($fpl)) else "" end' '.' 1 chk_fp_closes - "the whole question read as the operator's reason"
+# M29 — an A3 close recorded as abandoned. Killed by D1.
+fp_mutant M29 lib "# BL-320-AUDIT-DEC" 'elif $ur == "declined" then "abandoned" else "recorded_only" end)' 'else "abandoned" end)' 12 chk_fp_closes chk_decline_still_declines "an A3 close written as final_outcome abandoned"
+# M30 — the proposals not bound to the operator's question: the user's pick on
+# it finds no row. Killed by D1.
+fp_mutant M30 pa "# BL-277-FP-BIND" 'if ! bypass_audit_rebind_pending "$project_root" "$sha"; then' 'if false; then' 3 chk_fp_closes chk_fp_needs_terminal "the PENDING proposals left bound to the old question"
+# M31 — the operator's question labelled as the detector's own: a proposal
+# raised while it is open binds to it, and A3 closes that one too. Killed by D15.
+fp_mutant M31 pa "# BL-277-FP-QUESTION" 'source: "bypass-false-positive"' 'source: "bypass-detector"' 8 chk_fp_later_proposal - "the operator's question labelled as the detector's"
+# M32 — a commit question replaced by the operator's. Killed by D13.
+fp_mutant M32 pa "# BL-277-FP-OTHER-QUESTION" "if [ -f \"\$sentinel\" ] && ! jq -e '.source == \"bypass-detector\" or .source == \"bypass-false-positive\"' \"\$sentinel\" >/dev/null 2>&1; then" 'if false; then' 3 chk_fp_other_question chk_fp_closes "a commit question replaced"
+# M33 — nothing PENDING, and a question is written anyway. Killed by D14.
+fp_mutant M33 pa "# BL-277-FP-PENDING-ROWS" '0) print_fail "No PENDING bypass proposal in .claude/bypass-audit.json: nothing to close as a false positive. Nothing was changed."; return 1 ;;' '0) : ;;' 4 chk_fp_nothing_pending chk_fp_closes "a question asked about nothing"
+# M34 — the false-positive close sent to main's --decision refusal: the
+# operator can no longer ask. Killed by D1; D3 (the legacy route) survives.
+fp_mutant M34 pa "# BL-277-FP-DISPATCH" 'if [ "$decision" = false-positive ]; then' 'if false; then' 3 chk_fp_closes chk_decline_still_declines "the false-positive close never dispatched"
+
 # M9 — the maintainer's adoption guard lifted, so adoption registers the
 # PostToolUse arm. Killed by R5.
 MI="$(newtmp)/claude-settings.sh"
@@ -986,6 +1255,6 @@ elif why="$(mutate "$MI" "THE PostToolUse ARM IS GREENFIELD-ONLY FOR NOW" \
 else fail_ "M9 setup" "$why"; fi
 
 echo ""
-echo "Results: $PASSED passed, $FAILED failed"
+echo "Results: $PASSED passed, $FAILED failed, $SKIPPED skipped"
 [ "$FAILED" -eq 0 ] && exit 0
 exit 1
