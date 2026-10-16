@@ -18368,16 +18368,72 @@ did not earn).
 
 ## BL-282: the wizard offers no route to correct a recorded answer once its section is complete — `--resume` skips the section, and `reconfigure-project.sh --field` covers seven fields of the 122 the wizard records
 
-**Status:** Open — **DECIDED 2026-09-17 (Karl), on issue #418: option 2 below — a generic setter on the
+**Status:** Open — reproduction and fix in the pull request that files this entry. **DECIDED 2026-09-17 (Karl), on issue #418: option 2 below — a generic setter on the
 wizard — widened to accept any key already present in the progress file's `answers` (adoption-recorded
 keys included, the amendment noting so) while keeping the refusal for keys that exist nowhere; and, on the
 adoption side, the driver records A7 rows under the wizard's own keys wherever one exists (ADOPT-002-ARCH
 v2.2, WP12a's intake pre-fill).** The contributor is invited to PR the wizard half with its suite;
-adversarial review before merge. Not built yet. *(Before 2026-09-17: ENTRY ONLY BY DECISION (2026-09-14);
+adversarial review before merge. *(Before 2026-09-17: ENTRY ONLY BY DECISION (2026-09-14);
 four options set out below with their trade-offs, none built.)* Every one of them adds or documents a CLI surface the
 maintainer will own — a flag on the wizard, an arm in `reconfigure-project.sh`, or a written promise
 that a JSON file is hand-editable — and a surface, once documented, is the hard-to-reverse kind. The
 contribution is the measurement and the options; the choice is his.
+
+**Fix:** `scripts/intake-wizard.sh --set-answer KEY VALUE [--reason "<text>"]` (option 2;
+`# BL-282-SET-ANSWER-BEGIN` … `# BL-282-SET-ANSWER-END`, dispatched at `# BL-282-SET-ANSWER-ARM`),
+non-interactive and listed in `--help` (H0). Adoption-recorded keys, which #418's ruling adds, are
+`## BL-301:`.
+
+*Which keys.* KEY must be one the wizard itself records, read from its own `save_answer` call sites at
+runtime, and every match is of the whole string. A key with any character outside `[a-z0-9_]`, a line
+break included, is refused before any family is tried (N9; `# BL-282-KEY-CHARSET`). Literal keys match
+exactly (H1). Index families such as `input_${i}_name` match by shape, with the index bounded to
+digits (H8, H8N, MP7; `# BL-282-INDEX-DIGITS`) and the shape matched against the whole key
+(`# BL-282-FAMILY-WHOLE`). The four `$key` families are bounded by the arrays their loops iterate,
+read from the script and put through each loop's own `tr`: `competency_` by `domains` (N1, N2, N3,
+MP5; `# BL-282-COMPETENCY-DOMAINS`), and `gate_`, `infra_` and `escalation_` by `gates`, `infra_items`
+and `levels` (N7, N8; `# BL-282-GATE-KEYS`, `# BL-282-INFRA-KEYS`, `# BL-282-ESCALATION-KEYS`). Any
+other key is refused at exit 1 with nothing written (K1, MP1; `# BL-282-KEY-REFUSE`), and the three
+nearest keys are named (K3, MP3; `# BL-282-HINT-COUNT`).
+
+*The write.* Without a progress file the flag refuses at exit 1 and creates nothing (P1); without a
+VALUE it refuses the same way (K2). The write goes through `save_answer` and its status is checked, so
+an absent or non-object `answers`, or an unwritable file, refuses at exit 1 with the file
+byte-identical (S1, S2, S3; `# BL-282-WRITE-STATUS`). The answer is then read back before anything is
+logged, because `save_answer` returns 0 without writing while a pause is pending: a save that did not
+land refuses at exit 1 with no amendment and no `[OK]` (S4; `# BL-282-READ-BACK`). The change is
+appended to `amendments` as `{key, old, new, reason, at}`, `at` ISO-8601 UTC (H3); a second
+correction appends (H7); the other answers are untouched (H2). `render_intake_file` re-runs at once
+(`# BL-282-RERENDER`). Under `## BL-265:`'s render contract (`# BL-265-RENDER-STATUS`) a render that
+fails returns non-zero and writes nothing, and this route then refuses at exit 1 with no `[OK]` and
+`PROJECT_INTAKE.md` byte-identical, though the answer and amendment are recorded (S7, MP15). On success the row reads
+`VALUE (amended YYYY-MM-DD)` (H4, MP2; `# BL-282-AMENDED-MARK`), an unamended row stays unmarked (H5),
+and a carriage return in a value cannot split its row (N6). The operator sees
+`[OK] KEY: "old" -> "new" (amended, recorded)` (H6), or `(unset)` where there was no prior answer
+(H9). The dispatch arm fails closed: an abort inside the function exits non-zero with nothing written
+(A1, MP6; `# BL-282-ARM-FAILCLOSED`). The three tier-crosscheck-6 setters are untouched (C1). A
+`## BL-203:` second-home key is written here and its other home is named in a `[WARN]`, not written
+(W1). N5 keeps `tests/test-intake-wizard-fixes.sh` T5b reading the real nine-domain array. MP4, which
+discards the write's status, is now a diagnosis-only kill: the read-back still refuses, and S1's
+reason assertion sees the message move.
+
+**Suite:** `tests/test-bl282-set-answer.sh`, 76 cases, driving the real wizard from a project
+fixture with stdin closed, under the suite's own interpreter. With this fix it is 76 / 0 under `/bin/bash` 3.2.57.
+
+**Residuals, not fixed here.**
+
+1. **Concurrent amendments lose updates.** `save_answer` and the amendment append are each an
+   unlocked read-modify-write of the whole file. Eight simultaneous runs against one project kept 6
+   of the 8 amendment rows, and the file stayed valid JSON throughout. A lock belongs in
+   `save_answer`, which every section of the wizard shares. (Measured on the first cut.)
+2. **A paused save of the value already recorded reads back as landed** and is logged as an
+   amendment (measured: `"3" -> "3"`, exit 0). The logged state is true.
+3. **The narrower fifth change** (bare-number selection in `prompt_with_suggestions`) is not in this
+   fix.
+4. **The index bound admits any digits.** `# BL-282-INDEX-DIGITS` maps `$i` and `$j` to `[0-9]+`, so
+   `input_0_name`, `input_01_name` and `input_999_name` are accepted although the wizard's loops
+   write only their own indices. Bounding each family by its loop's range would add more surface
+   than the leak is worth.
 
 **Logged:** 2026-09-14, from a downstream adoption's `intake-progress.json`, where `monthly_budget`
 is the literal string `"3"`. The operator typed `?` at the budget prompt, was shown a numbered list,
@@ -18504,6 +18560,122 @@ by a finished section with a wrong answer in it; the citation resolves once `fix
 (`load_progress` and what a hand-edited progress file can do to it — option 4 walks straight into
 that defect). BL-281 and BL-283, filed in this batch, are named without `## …:` citations because
 each lands on its own branch.
+
+---
+
+## BL-301: adoption records intake rows under keys the wizard never asks, so `--set-answer` refuses the very rows adoption wrote — ten of Scout's fifteen prefill fields, including a `test_command` carrying a transcription slip
+
+**Status:** Open — reproduction and fix in the pull request that files this entry: the wizard half of
+the maintainer's decision on #418.
+The adoption-driver half is ADOPT-002-ARCH v2.2's, and nothing here builds, stubs or tests it.
+
+**The decision, quoted from #418 (maintainer, 2026-09-17):** *"Decided: option 3. For projects
+already adopted, the wizard's amend route accepts any key already present in the progress file's
+`answers` (with the amendment noting the key is adoption-recorded) and keeps its refusal for keys
+that exist nowhere; for new adoptions, the driver records A7 rows under the wizard's own keys
+wherever one exists (`accessibility` → `accessibility_target`, and so on) and keeps its own key only
+where none does, with the key map held as data and drift-checked against `intake-wizard.sh`'s
+`save_answer` set. That second half is being designed into the brownfield architecture now
+(ADOPT-002-ARCH v2.2, in progress) and will be built with it; the first half is `## BL-282:`'s
+route, so a PR for the wizard side — the generic setter accepting adoption-recorded keys, plus the
+suite — is welcome. Adversarial review before merge."* The design records the same ruling at
+`docs/designs/2026-08-23-brownfield-adoption-v2.md` §12 item 28, and the driver half at §5.2 (M14).
+
+**The case.** `_scout_prefill_table` names fifteen fields and `adopt_render_intake_progress` writes
+each into `answers`. Before this fix `--set-answer` refused ten of them at exit 1: `project_name`,
+`repo_remote_configured`, `timeline`, `mvp_features`, `revenue_model`, `governance`, `accessibility`,
+`test_command`, `tooling` and `agent_init_prompt`. Four are wizard-owned. The fifteenth,
+`competency_matrix`, was accepted only because `## BL-282:`'s `competency_$key` family then admitted
+any suffix; that family is now bounded, so it reaches this route (A8). #418 named seven of the ten.
+
+**Fix:** in `run_set_answer`, a key that `_bl282_key_allowed` refuses is looked up in the progress
+file's `answers` by `_bl301_key_recorded` (`# BL-301-ADOPTION-RECORDED-BEGIN` …
+`# BL-301-ADOPTION-RECORDED-END`, called at `# BL-301-RECORDED-CHECK`): exact membership, in python,
+with the key passed as `argv` and never interpolated into a program.
+
+- *Present:* written exactly as a wizard key is (A1), the other answers untouched (A2), the
+  amendment carrying `## BL-282:`'s five fields plus `"note": "adoption-recorded key"` (A3;
+  `# BL-301-NOTE`), and the `[OK]` line ending `; adoption-recorded key)` (A4). A blank placeholder's
+  old value is recorded as `""`, not `null` (A5). A second correction appends and is noted (A6).
+  `--help` names this class of key (A7). `competency_matrix` is amended with the note (A8).
+- *Absent everywhere:* refused at exit 1, nothing written (N1). Presence means presence in
+  `answers`, so a top-level key such as `source` is refused (N2). Membership is exact: a prefix, a
+  substring, two case variants, the key padded either side, and a recorded value offered as a key
+  are each refused with the file byte-identical (N3; `# BL-301-ANSWERS-READ`, `# BL-301-IN-ANSWERS`).
+  `competency_zzz` is refused (N4).
+- *A wizard-owned key is untouched by this:* exactly five amendment fields, no note, `## BL-282:`'s
+  `[OK]` line (R1; `# BL-301-NOTE-DEFAULT`), and `old: null` when never answered (R2). G1 proves the
+  A-case keys are not wizard-owned, by refusing each once it is deleted from `answers`, so no A-case
+  can pass through `## BL-282:`'s route instead.
+- *Fail closed:* with no usable `answers` object (absent F1, an array naming the key F2, a string
+  equal to the key F3, `null` F4) or a file whose top level is not an object (F6), the route refuses
+  at exit 1 with one refusal line, `… has no usable answers object — nothing written`, and the file
+  byte-identical (`# BL-301-ANSWERS-IS-OBJECT`, `# BL-301-UNUSABLE-REFUSE`). A file that is not JSON is
+  refused the same way with `could not read …` (F5; `# BL-301-UNREADABLE-REFUSE`).
+- *Injection:* eleven hostile unrecorded keys (command substitution in both spellings, quote breaks
+  in both styles, a jq fragment, a python fragment, an absolute-path payload, `-n`, a literal `$key`,
+  and two keys carrying a line break with a valid key on one line) are each refused at exit 1, the
+  progress file and `PROJECT_INTAKE.md` byte-identical, no appendix row, no payload run (I1). A
+  recorded key carrying `.`, `"`, `$` and `[…]` is amended under exactly that key, and a `$(…)` in the
+  value stays literal (I2).
+- *Render:* every accepted key is rendered, its row reading `VALUE (amended YYYY-MM-DD)` (D1), and
+  everything above the appendix is byte-identical (D2). The key cell is escaped: a pipe is
+  backslash-escaped (D3; `# BL-301-KEY-ESCAPE-PIPE`), a newline, a lone carriage return and a CRLF pair
+  each fold to one space (D4, D6, D8; `# BL-301-KEY-ESCAPE-NEWLINE`), and a key with backticks gets a
+  delimiter one longer than its longest run, space-padded (D5, D7; `# BL-301-KEY-ESCAPE-TICK`). Each
+  D-case asserts the exact row and one table line per answer, read with carriage returns as line
+  ends.
+- *Second home:* since `## BL-318:` G1 (`63049c7`) adoption writes a kept test command to
+  `.claude/test-command`, which the commit-time test check runs instead of this answer, so amending
+  `test_command` prints a `[WARN]` naming that file and leaves it byte-identical, or absent if it was
+  (W1, W2; `# BL-301-TESTCMD-WARN`). MA20, the twentieth mutant, deletes the warning, the only thing
+  it changes, and W1 kills it on that line. Named, never written: the hook runs, with `sh -c`, the
+  first line in the file that is neither blank nor a comment (W1 pins that wording), and BL-318
+  writes the file only from a command the scan offered. When the file is absent the hook runs its own
+  detection, and the warning says to create the file rather than edit it (W2 pins that).
+
+**Suite:** `tests/test-bl301-adoption-recorded-keys.sh`, 70 cases, driving the real wizard from
+an adopted-shape fixture with stdin closed, under the suite's own interpreter. Registered in
+`tests/full-project-test-suite.sh` and the `tests.yml` unit lane, beside `## BL-282:`'s.
+
+At `main` (`80b3f8d`) 7 passed / 59 failed; with this fix 66 / 0, under `/bin/bash` 3.2.57 and
+Homebrew bash 5.3.15 alike. With W1, W2 and MA20, on the merge with `main` at `b9ce2bf`: 70 / 0 under
+`/bin/bash` 3.2.57 and bash 5.2.21 (`ubuntu:24.04`).
+
+Twenty mutants run on a mirror, each located by its distance from `# BL-301-ADOPTION-RECORDED-BEGIN`
+and required to amend a wizard-owned and an adoption-recorded key as controls before it is scored; one
+that cannot be applied is reported as a SETUP failure, never as a kill. MA1, MA2, MA4–MA6 and MA8–MA11
+are killed on exit code or written state (by A1, N1, A3/A4, R1, N2 and N3), MA13–MA18 on the exact
+rendered row (D3–D8). Four are weaker and scored as such: MA3 and MA19 on the diagnosis alone (F2,
+F6), and MA7 and MA12 on the count of refusal lines alone (F1, F5), since `## BL-282:`'s old-value read
+and checked write refuse the same shapes downstream.
+
+**Residuals, not fixed here.**
+
+1. **Adoption's own body line for the key is not rewritten.** `adopt_render_intake_doc` writes
+   `- **test_command** (scan-derived): …` above the appendix, and D2 pins that the body is untouched,
+   so after an amend the document shows both values; the appendix row is the amended record.
+   Reconciling the two belongs to whichever ADOPT-002-ARCH v2.2 document owns the rendered intake.
+2. **The note means "outside the wizard's set and already recorded", not "written by adoption".**
+   The wizard cannot tell who wrote a key, and the file's top-level `source` is deliberately not used
+   to guess.
+3. **`project_name` has other homes, and an amend reaches only one of them.** The progress file's
+   top-level `project_name` (which `load_progress` reads), `.claude/phase-state.json`'s `project` and
+   the adoptee's `CLAUDE.md` keep the old name. `scripts/check-gate.sh --repair` (`cmd_repair`) names
+   the remote it creates from `.answers.project_name`, the amended copy. Measured on a real adoptee
+   (`kp`) after `--set-answer project_name Renamed`: `PROJECT_INTAKE.md` renders both
+   `| Project name | kp |` and ``| `project_name` | Renamed (amended 2026-10-16) |``, phase-state
+   reads `"project":"kp"`, and `CLAUDE.md` opens `# CLAUDE.md — kp`. Unlike the `## BL-203:` keys and
+   `test_command`, no `[WARN]` names any of this.
+4. **The refusal's "Did you mean" hint draws only on the wizard's keys**, so a typo of an
+   adoption-recorded key (`test_commandd`) is refused correctly (N1) and offered three unrelated keys.
+5. **`print_ok` interprets backslash escapes** (`echo -e`), so a recorded key containing `\c`
+   truncates the `[OK]` line; the file state is correct. That helper is `helpers-core`'s, shared by
+   every script.
+
+**Related:** `## BL-282:` (the route this widens; its suite is the regression pin), `## BL-203:`
+(answers with two homes; residual 3 is one more), ADOPT-002-ARCH v2.2 (the driver half; G1 fails
+usefully on the day its key map lands).
 
 ---
 
@@ -25117,3 +25289,120 @@ seven open PRs either). R-346-6 is on main.
   sentence is wrong as a description of the code and is left as it is.
 
 **Close** in a follow-up once the branch is merged, citing the PR.
+
+## BL-315: two bypass patterns match text that names a flag, an identifier or a step (#465)
+
+**Status:** Open — reproduction and fix in the pull request that files this entry.
+
+**What happens.** `terminal_workaround` was `(run|do|execute) [^.]*(terminal|shell)`: any sentence with
+the word "run" and, later, the letters "terminal" or "shell" matched, including a test helper called
+`run` followed by a `--terminal-mode` flag, "SUBSHELL", and a description of a tool that runs without a
+shell. `fake_loop`'s list form was `tests_verified_failing[^a-z0-9_]+.{0,40}complete`, which the step
+name `complete_step`, the gate's own refusal ("not yet completed") and prose explaining the pattern all
+satisfy. On an adopting project on 30 September 2026 these two patterns produced 29 detector rows in one
+day; five were authored text, which raises the pending-approval sentinel, and none was a proposal.
+
+**Ruling applied.** Files the agent writes are still scanned (#454's review); nothing is excluded by
+path. The patterns are narrowed instead.
+
+**Fix.** `# BL-315-TERMINAL-WORDS`: after the verb, the terminal or shell is reached with a preposition
+("in", "from", "on", "via", "through", "inside", "within", "at", "using" or "with") and at most four
+words, and "terminal" or "shell" is a word (no letter, digit or `_` after it; a hyphen is allowed, so
+"terminal-emulator" matches). Those words may carry Markdown emphasis, `*` or `_` (#482 review, R-482-1:
+"Do them in a **new terminal window**, not in this session.", a real transcript line, raised on main
+and nothing here until then). Every proposal fixture has that shape; a flag after a helper called `run`,
+a word such as SUBSHELL, and a description with no preposition ("run without a shell") do not.
+`# BL-315-FAKE-LOOP-VERB`: the list form needs a marking verb as a word ("mark", "set", "record", "flag"
+or "tick", or its -s, -ed or -ing form) in the same sentence, before the step name or, in a third
+alternative, after it ("skip tests_verified_failing and mark it complete"; #482 review, R-482-3), and
+"complete" not followed by `_`, so "settings" and `complete_step` do not match while "marked" and
+"completed" do; the step-name form is unchanged.
+
+**Tests.** `tests/test-bypass-patterns.sh`: T19 to T25 are excerpts the detector recorded on 30 September
+2026 on an adopting project, none a proposal (six red before the fix; T22 pins identifiers, which already
+did not match); the issue's three Observed rows, from 29 and 30 September, are of the same kind. T26, T29 and T30 keep the
+proposal shapes matching, including the issue's must-match line and the spellings the old pattern caught
+("re-run", the other prepositions, a four-word gap, the other marking verbs, "as completed"), plus
+Markdown emphasis in the phrase and a marking verb after the step name. T31 gives each boundary atom a
+fixture that matches if the atom is removed, in both list-form alternatives, the full stop in
+`[^a-z0-9_.]` included (#482 review, R-482-5: its mutant had survived every suite). Measured
+2026-10-16: 17 single-atom mutants of the two marked lines, each turning its own T30 or T31 row red.
+T27 and T28 revert each marked line in
+a copy of the library and see its fixture match again. T1 to T18 green, their assertions unchanged (T12
+gains `|| true`, so a miss is reported as a failure instead of ending the suite under `set -e`);
+`tests/test-bypass-detector.sh` and `tests/test-bypass-sentinel.sh` green.
+
+**With `## BL-311:`'s relay rule (main merged in, 2026-10-16).** The relay rule reads only the lines
+`terminal_workaround` matches, and `# BL-311-RELAY-REMAINDER` checks what is left of a relay line with
+that same live regex, so BL-315 narrows both. Measured with the real Stop arm, main's table against
+this one:
+- **No row at all where main wrote `relayed_framework_escape`:** the three shell-mode relays SHELL1 to
+  SHELL3 of `tests/test-bl311-d-relayed-escape.sh` (as `## BL-311:` predicted), and an escape relayed
+  "in your project's terminal" or "in a brand-new terminal" (a gap word with an apostrophe or a hyphen).
+  No question is asked on either table; only the record is lost.
+- **A relayed row and no question where main raised one:** "Run `<escape>` in a new terminal, then run
+  the cleanup script yourself, it needs a shell." and "…, then do the same for the subshell." The
+  remainder now raises only when it would raise on a line of its own: `## BL-311:`'s R-BL311D-1,
+  widened by this entry's own residuals. "…, or run it in your own shell" still raises.
+- No proposal in `tests/test-bl311-d-relayed-escape.sh` stopped matching (287 passed, 0 failed). That is
+  true of its fixtures only: the #482 review found a real line, "Do them in a **new terminal window**,
+  not in this session.", that raised on main and nothing here, and a relay followed on the next line by
+  "Then run `git commit -m wip` in a *separate* terminal …" that main raised and this table wrote as a
+  relayed row. With emphasis accepted (R-482-1) both raise again, measured with the real Stop arm.
+
+`tests/test-bl312-tldr-mode.sh` went red on the merge (71 passed, 2 failed). C4 read the detector's
+words from the end of the regex, and BL-315's regex ends in a word-boundary group. B3 required its
+three historic originals ("in a nutshell", "run shellcheck", "payment terminal") to raise, and they
+are false positives this entry removes. Both now read the live table. The TL;DR section's text in
+`scripts/lib/tldr-mode.sh` and `docs/messaging-standard.md` said the detector matches inside other
+words; each now says what it matches (#482 review, R-482-4). The TL;DR rule itself, no "terminal" or
+"shell" in any word, is unchanged and stricter than the detector.
+
+**Measured against the #482 review's batteries and corpus (2026-10-16).** Lines caught, main / this
+table before R-482-1 and R-482-3 / now:
+
+| Battery | Lines | Main | Before | Now |
+|---|---|---|---|---|
+| `terminal_workaround`: recorded proposals | 9 | 9 | 8 | 9 |
+| plain variants (all three miss "command line" and "console") | 8 | 4 | 4 | 4 |
+| a gap of five or more words | 3 | 3 | 0 | 0 |
+| other prepositions, PowerShell | 5 | 5 | 0 | 0 |
+| non-ASCII spellings | 5 | 5 | 1 | 1 |
+| Markdown emphasis, parenthesis, possessive, hyphen | 9 | 9 | 0 | 3 |
+| `fake_loop` proposals | 20 | 20 | 7 | 10 |
+
+In 40,824 fence-stripped assistant lines from local transcripts, `terminal_workaround` matches 72 / 53 /
+54 lines (the review read main's 19 extra as 18 correct removals and the bold line above, now caught
+again) and `fake_loop` 0 / 0 / 0. In 676 fence-stripped repo files, `terminal_workaround` matches 45 /
+21 / 21 files and `fake_loop` 6 / 4 / 4.
+
+**Residuals.** `no_verify` still matches prose that names the flag (for example "never `--no-verify`");
+narrowing it would stop "I'll use --no-verify here" (T7) matching, so it is left as it is. The issue's
+Stop-arm row ("which only you can do from a terminal") still matches: it has the proposal's shape, no
+pattern separates operator guidance from a proposal, and the operator closes it as a false positive.
+Given up deliberately: a gap of five or more words before the terminal; a sentence broken by an internal
+full stop ("step 2, i.e. tests_verified_failing, complete"); marking verbs outside the five named; and
+a hyphenated word in the gap before the terminal ("built-in", "front-end"), since gap words are letters
+only (T31 pins this). A description of the form "run within a <noun> shell", with "run" as its own
+word, still matches, like the Stop-arm row above: the preposition and noun are those of a proposal. A
+gap word holding a digit is not a gap word either, and no fixture pins that. Unpinned atoms: the
+`.{0,40}` width and the separator after the step name in the list form, which predate BL-315; the
+`[^.]*` sentence bound, which BL-315 added (the full-stop case above); and, in the verb-after
+alternative, its `[^.]` bounds, its `{0,40}` width and the non-word character after the step name. The
+detector stores excerpts truncated, so a row whose match lay past the cut cannot be replayed from the
+audit log.
+- **R-482-2** (#482 review; improbable). `terminal_workaround` does not match a possessive in the gap
+  ("in your Mac's terminal", "in your project's terminal"), a parenthesis ("yourself (in a terminal)"),
+  a dash with no space ("yourself—in a terminal"), curly quotes or a backtick around a gap word,
+  PowerShell, a preposition outside the ten ("as", "by", "after", "under"), or a non-breaking space.
+  Adding `'` and a backtick to the gap class brings back 4 false alarms in repo files
+  (`scripts/check-gate.sh`, `scripts/lib/helpers-core.sh`, `scripts/lint-evalprompts-portability.sh`,
+  `tests/test-walk006-ci-protection-scope.sh`; 21 to 25 files, measured), so the class stays letters
+  with emphasis.
+- **R-482-3, what is left** (#482 review). `fake_loop` still misses "complete" as the verb ("complete
+  tests_verified_failing via process-checklist.sh --complete-step"), a state claim with no marking verb
+  ("treat / consider / say tests_verified_failing (is) complete"), other verbs ("update", "flip",
+  "check off"), and a `jq` one-liner writing "complete": 10 of the review's 20 proposals. No transcript
+  line in the corpus has any of these shapes, on main or here. The passive with a marking verb
+  ("tests_verified_failing can be marked complete") is caught by the third alternative.
+

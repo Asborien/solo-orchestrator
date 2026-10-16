@@ -226,11 +226,16 @@ case_B2() {   # the control: the same reply plus a prose escape → the detector
     && [ -f "$d/.claude/pending-approval.json" ]
 }
 # THREE TL;DRs THE OLD WORDING RULE ALLOWED AND THE DETECTOR STILL FLAGGED (BL-312
-# review round 1). terminal_workaround is `(run|do|execute) [^.]*(terminal|shell)`:
+# review round 1). terminal_workaround was then `(run|do|execute) [^.]*(terminal|shell)`:
 # a substring match, per line, that stops only at a full stop — so "do (a) — in a
 # nutshell", "now run shellcheck" and "do nothing: every payment terminal" all
-# match. Each pair is the flagged line and the same line under the CLAUDE.md
+# matched. Each pair is the flagged line and the same line under the CLAUDE.md
 # section's rule (neither word, nor any word holding one, anywhere in the TL;DR).
+# `## BL-315:` narrowed the pattern to a preposition and "terminal" or "shell" as
+# a word, and none of the three originals matches it. So each original is read
+# against the LIVE table: where it matches, it must raise terminal_workaround (the
+# pair then shows the rewording is what clears it); where it does not, it must
+# raise nothing at all.
 B3_BODY=$'**TL;DR**\n1. What happened: the nightly backup job now retries twice before giving up.\n2. What it means for you: fewer false alarms in the morning.\n3. Next steps: none from me on this.\n4. What is waiting on you: nothing.\n5. Options: (a) keep it; (b) roll it back.\n6. Pros and cons: (a) fewer alarms, slightly slower failure reports; (b) the old noise.'
 B3_OLD_1="$B3_BODY"$'\n7. Recommendation: do (a) — in a nutshell, it is the smaller risk.\n8. If you do nothing: it stays as it is now, which is fine.'
 B3_NEW_1="$B3_BODY"$'\n7. Recommendation: do (a) — in short, it is the smaller risk.\n8. If you do nothing: it stays as it is now, which is fine.'
@@ -248,9 +253,14 @@ case_B3() {   # each reworded TL;DR: allowed by the TL;DR hook, no row and no se
     esac
     d="$(newtmp)"; _proj "$d" "$ON"
     _detect "$1" "$d" "$old"
-    { [ -f "$d/.claude/pending-approval.json" ] \
-        && jq -e '[.[].details.pattern] | index("terminal_workaround") != null' "$d/.claude/bypass-audit.json" >/dev/null 2>&1; } \
-      || bad="$bad [pair $i: the original did not raise terminal_workaround, so this pair proves nothing]"
+    if ( . "$1/scripts/lib/bypass-patterns.sh" && scan_bypass_patterns_all "$old" ) 2>/dev/null | command grep -qx terminal_workaround; then
+      { [ -f "$d/.claude/pending-approval.json" ] \
+          && jq -e '[.[].details.pattern] | index("terminal_workaround") != null' "$d/.claude/bypass-audit.json" >/dev/null 2>&1; } \
+        || bad="$bad [pair $i: the original did not raise terminal_workaround, so this pair proves nothing]"
+    else
+      { [ ! -f "$d/.claude/pending-approval.json" ] && [ ! -s "$d/.claude/bypass-audit.json" ]; } \
+        || bad="$bad [pair $i: the live table does not match the original, yet it raised $(jq -r '[.[].details.pattern] | join(",")' "$d/.claude/bypass-audit.json" 2>/dev/null)]"
+    fi
     d="$(newtmp)"; _proj "$d" "$ON"
     _hook "$1/scripts/hooks/tldr-check.sh" "$d" "$(_env "$new")"
     { [ "$HRC" -eq 0 ] && [ -z "$HOUT" ]; } || bad="$bad [pair $i: the TL;DR hook sent the reworded reply back]"
@@ -359,10 +369,11 @@ case_C3() {   # init.sh's [y/N] reader: y / Y / yes are yes; empty, n, no, 1, 2,
 case_C4() {   # the section's wording rule matches the detector: neither of ITS words anywhere, ``` fences only, and the section itself trips nothing
   local sec="" words="" w="" miss="" hits=""
   sec="$(_lib "$1" soif_tldr_claude_md_section)" || { CASE_DETAIL="no section"; return 1; }
-  # The words come from the detector's own pattern — its last group — so a word
-  # added there and not here is a failure, not a quiet gap.
+  # The words come from the detector's own pattern — its last group of words —
+  # so a word added there and not here is a failure, not a quiet gap. Not anchored
+  # at the end: since `## BL-315:` a word-boundary group follows it.
   words="$( . "$1/scripts/lib/bypass-patterns.sh" >/dev/null 2>&1 && pattern_regex_for terminal_workaround \
-    | sed -n 's/.*(\([a-z|]*\))$/\1/p' | tr '|' '\n' )"
+    | sed -n 's/.*(\([a-z][a-z]*|[a-z|]*\)).*/\1/p' | tr '|' '\n' )"
   [ -n "$words" ] || { CASE_DETAIL="could not read the words from terminal_workaround"; return 1; }
   for w in $words; do
     printf '%s' "$sec" | command grep -qF "\"$w\"" || miss="$miss [\"$w\" not named]"
