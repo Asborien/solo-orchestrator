@@ -51,7 +51,12 @@
 #
 # THE ONE PLACE SCOUT RUNS PROJECT CODE is `--run-tests`, and it is opt-in for
 # that reason. Without it `testsBaseline.commandRan` is false and the report
-# says why.
+# says why. With it, READ-ONLY above stays true of Scout and stops being true of
+# the project: the test command runs in the real tree, through the project's
+# package manager. `_scout_python_test` / `_scout_node_test` pass the flags
+# that keep a manager from rewriting a TRACKED lockfile (`## BL-311:`, review
+# R-BL311C-1); the untracked files a manager creates (a `.venv`, pdm's
+# `.pdm-python`) and whatever the tests write are the project's own doing.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # `set -e` IS DELIBERATELY ABSENT, and this is the one place worth arguing.
@@ -68,7 +73,7 @@ SCOUT_SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCOUT_LIB_DIR="$SCOUT_SELF_DIR/lib/scout"
 
 for _part in scout-core scout-stack scout-phasemap scout-reality \
-             scout-secrets scout-collisions scout-testsbaseline scout-prefill \
+             scout-secrets scout-collisions scout-ignore scout-testsbaseline scout-prefill \
              scout-report; do
   if [ ! -f "$SCOUT_LIB_DIR/$_part.sh" ]; then
     echo "scout: missing $SCOUT_LIB_DIR/$_part.sh — Scout needs its own lib directory beside it." >&2
@@ -95,9 +100,14 @@ Scout — a read-only look at a codebase.
   --version     print Scout's version and exit
   --help        print this and exit
 
-Scout never changes the project it looks at. Without --out it writes nothing
-at all except its own output. It needs `gitleaks` for the secrets section; if
-that is missing the section says so rather than reporting a clean scan.
+Scout never writes into the project it looks at; without --out it writes
+nothing at all except its own output. --run-tests runs the project's own
+tools, and they can: the package manager may create untracked files of its
+own (a .venv, for one), and the tests write whatever they always write. The
+manager rewrites no tracked file: Scout passes the flags that prevent it
+(docs/scout.md lists each manager's). It needs `gitleaks` for the secrets
+section; if that is missing the section says so rather than reporting a
+clean scan.
 
 Exit codes: 0 a scan completed (findings are not errors); 2 bad usage or an
 unreadable target.
@@ -179,6 +189,10 @@ scout_reality_probes "$ROOT_ABS" "$SCOUT_WORK"
 # `intakePrefill` reads both that and the reality probes' remote answer.
 scout_secrets_scan       "$ROOT_ABS" "$SCOUT_WORK" project   # SCOUT-SECRETS-SURVEY-POLICY
 scout_collisions_scan    "$ROOT_ABS" "$SCOUT_WORK"
+# `## BL-322:` S3 — would the project's own ignore rules stop the adoption? It
+# reads the CI host the stack scan found, and the framework clone this script
+# lives in, which is where adoption copies its files from.
+scout_ignore_scan        "$ROOT_ABS" "$SCOUT_WORK" "$(cd "$SCOUT_SELF_DIR/.." && pwd)"   # BL-322-S3-SCOUT-CALL
 scout_testsbaseline_scan "$ROOT_ABS" "$SCOUT_WORK" "$RUN_TESTS"
 scout_prefill_scan       "$ROOT_ABS" "$SCOUT_WORK"
 

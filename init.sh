@@ -78,6 +78,12 @@ ACCEPT_LOCAL_ONLY_RISK=false
 DEFER_REMOTE_PUSH=false
 ENFORCEMENT_LEVEL=""
 CONFIRM_PITFALLS=0
+# `## BL-312:` TL;DR mode — OPT-IN. The interactive setup asks it ([y/N]); a
+# non-interactive run reads `tldr_mode` from --config and is off without it.
+# A non-interactive run with flags only (no --config) never reaches either, so
+# this line alone is what keeps it off there.
+# Always the JSON literal true or false: it is written with --argjson.
+TLDR_MODE=false   # BL-312-INIT-DEFAULT
 
 source "$SCRIPT_DIR/scripts/lib/helpers.sh"
 # BL-099: shared git-hook body generators (fallback pre-commit + commit-msg TDD
@@ -99,9 +105,15 @@ source "$SCRIPT_DIR/scripts/lib/currency-manifest.sh"
 # framework-side. (tests/test-currency-birth-stamp.sh + tests/test-plan-staging.sh
 # pin the byte-identity.)
 source "$SCRIPT_DIR/scripts/lib/render-project-docs.sh"
+# `## BL-312:` TL;DR mode's shared pieces — the question, the [y/N] reader,
+# the CLAUDE.md section and the Stop-hook registration the roster below uses.
+source "$SCRIPT_DIR/scripts/lib/tldr-mode.sh"
 # The session layer (permissions, hook roster, vendored skills) — shared with
 # the adoption driver so both give a project the same one (§10-WP9c).
 source "$SCRIPT_DIR/scripts/lib/claude-settings.sh"
+# `## BL-320:` the Development Guardrails' minimum version, approval questions,
+# hook registrations and the ask-first update of their shared clone.
+source "$SCRIPT_DIR/scripts/lib/guardrails.sh"
 
 # BL-199 (2026-07-29): the anchor a bare/relative --project-dir resolves
 # against. It is the PARENT OF THE DIRECTORY CONTAINING init.sh — NOT the cwd.
@@ -467,15 +479,19 @@ check_prerequisites() {
     print_info "Development Guardrails for Claude Code will be installed during project creation"
   fi
 
-  # --- Claude Code Superpowers plugin (recommended) ---
+  # --- Claude Code Superpowers plugin (required once the Guardrails are installed) ---
+  # `## BL-318:` G4 review round 1 (R-5): the Development Guardrails' enforce-superpowers
+  # hook (every profile) blocks every source-file edit until a Superpowers skill has run,
+  # so "recommended" undersold it; the message says so and gives the one command.
   if [ -f "$HOME/.claude/settings.json" ] && command -v jq &>/dev/null; then
     local sp_installed
     sp_installed=$(jq -r '.enabledPlugins["superpowers@claude-plugins-official"] // false' "$HOME/.claude/settings.json" 2>/dev/null || echo "false")
     if [ "$sp_installed" = "true" ]; then
       print_ok "Superpowers plugin installed"
     else
-      print_warn "Superpowers plugin not found (recommended — agentic skills for development)"
-      echo "  Install: Run claude → /plugins → search 'superpowers' → install"
+      print_warn "Superpowers plugin not found — required: the Development Guardrails block every source-file edit until a Superpowers skill has run"
+      echo "  Install: claude plugin install --scope user superpowers@claude-plugins-official"
+      echo "  (If it says the marketplace is not found: claude plugin marketplace add anthropics/claude-plugins-official)"
     fi
   else
     print_info "Superpowers plugin: cannot check (no Claude settings or jq missing)"
@@ -740,6 +756,27 @@ collect_project_info() {
   # the primary language here. You will need to add CI steps for secondary languages
   # manually in .github/workflows/ci.yml after project creation.
 
+  # `## BL-312:` TL;DR mode — one plain question, and it defaults to NO: Enter,
+  # anything but a yes, or end of input leaves it off. Switchable later with
+  # scripts/reconfigure-project.sh --tldr-mode on|off.
+  echo ""
+  echo -e "  ${BOLD}How the agent replies to you:${NC}"
+  echo "    TL;DR mode ends every reply with one plain-English summary: what happened, what it"
+  echo "    means for you, next steps, what is waiting on you, your options with their pros and"
+  echo "    cons, a recommendation with its reasoning, and what happens if you do nothing."
+  # ONLY AT A TERMINAL, the guard prompt_input and prompt_yes_no use: piped
+  # stdin is not a person, and reading it here would take the line meant for
+  # the next prompt — measured: tests/test-bl180-interactive-enforcement.sh's
+  # fed sequence lost its "Continue? Y" to this question, which read the Y as
+  # yes and turned the mode on. Not a terminal → off, said on stderr.
+  local tldr_answer=""
+  if [ -t 0 ] && [ -z "${CI:-}" ] && [ -z "${SOIF_NONINTERACTIVE:-}" ]; then   # BL-312-INIT-TTY-ONLY
+    read -rp "$(echo -e "  ${BOLD}${SOIF_TLDR_QUESTION} [y/N]${NC}: ")" tldr_answer || tldr_answer="" # lint-raw-read-prompt: allow init.sh interactive-only wizard, asked only at a terminal (NON_INTERACTIVE=true path bypasses collect_inputs_interactive entirely and reads tldr_mode from --config)
+  else
+    echo -e "${YELLOW}[WARN]${NC} Non-interactive context: the TL;DR mode question was not asked — TL;DR mode is off. Turn it on later: bash scripts/reconfigure-project.sh --tldr-mode on" >&2
+  fi
+  if soif_tldr_yes "$tldr_answer"; then TLDR_MODE=true; else TLDR_MODE=false; fi
+
   # Testing interval (default 2, configurable in Intake)
   TEST_INTERVAL=2
 
@@ -765,6 +802,7 @@ collect_project_info() {
   print_info "Project: $PROJECT_NAME"
   print_info "Platform: $PLATFORM | Track: $TRACK | Language: $LANGUAGE"
   print_info "Directory: $PROJECT_DIR"
+  print_info "TL;DR mode: $([ "$TLDR_MODE" = true ] && echo on || echo off)"
   echo ""
 
   read -rp "$(echo -e "${BOLD}Continue? [Y/n]${NC}: ")" confirm # lint-raw-read-prompt: allow init.sh interactive-only wizard (NON_INTERACTIVE=true path bypasses collect_inputs_interactive entirely; see init.sh:3532)
@@ -797,6 +835,10 @@ collect_project_info() {
 # ================================================================
 resolve_and_install_tools() {
   print_step "Resolving tool installation plan..."
+  # `## BL-316:` matrix install rows can name a framework script as
+  # "${SOLO_SCRIPTS_DIR:-scripts}/…" (gitleaks on Linux). This runs before any
+  # `cd`, so without it that path would resolve against the operator's shell.
+  export SOLO_SCRIPTS_DIR="${SOLO_SCRIPTS_DIR:-$SCRIPT_DIR/scripts}"   # BL-316-SCRIPTS-DIR
   local os_type="$OS_TYPE"
   local dev_os
   case "$os_type" in
@@ -1097,10 +1139,19 @@ resolve_and_install_tools() {
       fi
 
       print_info "Installing $tool_name..."
-      if eval "$tool_cmd" 2>/dev/null; then
+      # `## BL-316:` stderr is captured, not discarded: it is where an installer
+      # says WHY it failed (install-gitleaks.sh's checksum refusal). stdout still
+      # streams. The hint expands the one placeholder a matrix row may carry, so
+      # it can be pasted from any directory.
+      local _tool_err="" _tool_hint="$tool_cmd" _sd_tok='${SOLO_SCRIPTS_DIR:-scripts}'
+      if { _tool_err="$(eval "$tool_cmd" 2>&1 1>&3 3>&-)"; } 3>&1; then   # BL-316-INSTALL-STDERR
         print_ok "$tool_name installed"
       else
-        print_warn "Could not install $tool_name. Install manually: $tool_cmd"
+        case "$_tool_hint" in
+          *"$_sd_tok"*) _tool_hint="${_tool_hint%%"$_sd_tok"*}${SOLO_SCRIPTS_DIR:-scripts}${_tool_hint#*"$_sd_tok"}" ;;   # BL-316-INSTALL-HINT
+        esac
+        print_warn "Could not install $tool_name. Install manually: $_tool_hint"
+        if [ -n "$_tool_err" ]; then printf '%s\n' "$_tool_err" | sed 's/^/    /'; fi
       fi
     done
   fi
@@ -1416,7 +1467,16 @@ create_project() {
   # in every generated project — correct, but useless — so it ships with them.
   cp "$SCRIPT_DIR/scripts/probe-tool.sh" scripts/
   chmod +x scripts/probe-tool.sh 2>/dev/null || true
+  # `## BL-316:` the tool matrix's Linux gitleaks rows run this installer, and it
+  # checks its download with the verifier beside it; both ship with the matrix.
+  cp "$SCRIPT_DIR/scripts/install-gitleaks.sh" scripts/   # BL-316-SHIP-INSTALLER
+  cp "$SCRIPT_DIR/scripts/ci-verify-sha256.sh" scripts/   # BL-316-SHIP-VERIFIER
   cp "$SCRIPT_DIR/scripts/session-version-check.sh" scripts/
+  # `## BL-318:` G5: the command session-version-check.sh offers when this
+  # project's Development Guardrails are older than the clone. The human runs it
+  # after `!`, so it must already be in every project: generated, adopted and
+  # synced all read this cp line through soif_parse_shipped_scripts.
+  cp "$SCRIPT_DIR/scripts/refresh-guardrails.sh" scripts/   # BL-318-G5-SHIP
   cp "$SCRIPT_DIR/scripts/session-freshness-check.sh" scripts/   # BL-109 S2 (Currency System, Layer 1)
   cp "$SCRIPT_DIR/scripts/session-test-gate-check.sh" scripts/
   cp "$SCRIPT_DIR/scripts/session-intake-check.sh" scripts/   # BL-202 (intake/Phase-0 dead-air)
@@ -1436,6 +1496,11 @@ create_project() {
   cp "$SCRIPT_DIR/scripts/lib/bypass-audit.sh"       scripts/lib/
   cp "$SCRIPT_DIR/scripts/lib/bypass-patterns.sh"    scripts/lib/
   chmod +x scripts/hooks/bypass-detector.sh scripts/escalate-to-user.sh
+  # `## BL-312:` the TL;DR-mode Stop hook (registered unconditionally by the
+  # roster; it reads tldr_mode) and the lib reconfigure-project.sh switches it with.
+  cp "$SCRIPT_DIR/scripts/hooks/tldr-check.sh"      scripts/hooks/   # BL-312-SHIP-HOOK
+  cp "$SCRIPT_DIR/scripts/lib/tldr-mode.sh"         scripts/lib/     # BL-312-SHIP-LIB
+  chmod +x scripts/hooks/tldr-check.sh
   cp "$SCRIPT_DIR/scripts/pending-approval.sh" scripts/      # BL-015
   cp "$SCRIPT_DIR/scripts/lint-uat-scenarios.sh" scripts/    # BL-009
   cp "$SCRIPT_DIR/scripts/lint-fixture-envelopes.sh" scripts/  # BL-030
@@ -1489,6 +1554,7 @@ create_project() {
   cp "$SCRIPT_DIR/scripts/lib/tdd-classify.sh"      scripts/lib/
   cp "$SCRIPT_DIR/scripts/lib/phase2-state.sh"      scripts/lib/
   cp "$SCRIPT_DIR/scripts/lib/cdf-refresh.sh"       scripts/lib/
+  cp "$SCRIPT_DIR/scripts/lib/guardrails.sh"        scripts/lib/   # BL-320-SHIP
   cp "$SCRIPT_DIR/scripts/lib/adoption-stamp.sh"    scripts/lib/
   # ── DELTA-INSTALL-BEGIN ────────────────────────────────────────────────────
   # THE POST-1.0 DELTA MODULE (design 2026-08-02-delta-track-v1 §3.1, §11-WP8).
@@ -1543,7 +1609,7 @@ create_project() {
   cp "$SCRIPT_DIR/scripts/lib/host-errors.sh" scripts/lib/
   cp "$SCRIPT_DIR/scripts/host-drivers/"*.sh scripts/host-drivers/
   chmod +x scripts/host-drivers/*.sh
-  chmod +x scripts/validate.sh scripts/check-phase-gate.sh scripts/run-phase3-validation.sh scripts/check-gate.sh scripts/check-updates.sh scripts/resume.sh scripts/intake-wizard.sh scripts/resolve-tools.sh scripts/upgrade-project.sh scripts/reconfigure-project.sh scripts/verify-install.sh scripts/test-gate.sh scripts/check-versions.sh scripts/session-version-check.sh scripts/session-freshness-check.sh scripts/session-test-gate-check.sh scripts/session-intake-check.sh scripts/session-cadence-check.sh scripts/session-end-qdrant-reminder.sh scripts/session-mcp-gate.sh scripts/process-checklist.sh scripts/pre-commit-gate.sh scripts/track-tool-usage.sh scripts/pending-approval.sh scripts/lint-uat-scenarios.sh scripts/check-maintenance.sh scripts/lint-backlog-references.sh scripts/lint-counter-antipattern.sh scripts/lint-review-manifest.sh scripts/check-pr-review.sh scripts/record-pr-review.sh scripts/print-prepush-recipe.sh scripts/check-changelog.sh scripts/check-session-state.sh
+  chmod +x scripts/validate.sh scripts/check-phase-gate.sh scripts/run-phase3-validation.sh scripts/check-gate.sh scripts/check-updates.sh scripts/resume.sh scripts/intake-wizard.sh scripts/resolve-tools.sh scripts/upgrade-project.sh scripts/reconfigure-project.sh scripts/verify-install.sh scripts/test-gate.sh scripts/check-versions.sh scripts/session-version-check.sh scripts/refresh-guardrails.sh scripts/session-freshness-check.sh scripts/session-test-gate-check.sh scripts/session-intake-check.sh scripts/session-cadence-check.sh scripts/session-end-qdrant-reminder.sh scripts/session-mcp-gate.sh scripts/process-checklist.sh scripts/pre-commit-gate.sh scripts/track-tool-usage.sh scripts/pending-approval.sh scripts/lint-uat-scenarios.sh scripts/check-maintenance.sh scripts/lint-backlog-references.sh scripts/lint-counter-antipattern.sh scripts/lint-review-manifest.sh scripts/check-pr-review.sh scripts/record-pr-review.sh scripts/print-prepush-recipe.sh scripts/check-changelog.sh scripts/check-session-state.sh
 
   # Copy intake suggestion files
   mkdir -p templates/intake-suggestions
@@ -1735,17 +1801,18 @@ create_project() {
 
   print_info "Installing Development Guardrails for Claude Code..."
   if command -v git &>/dev/null; then
-    # Step 1: Check if framework is already installed; if so, pull latest
+    # Step 1: Check if framework is already installed; if so, offer its update
     local framework_valid=false
     if [ -d "$FRAMEWORK_CLONE/.git" ] && [ -f "$FRAMEWORK_CLONE/scripts/init.sh" ]; then
       print_ok "Development Guardrails for Claude Code found at $FRAMEWORK_CLONE"
-      # Pull latest to ensure we have the newest version
-      print_info "Checking for updates..."
-      if git -C "$FRAMEWORK_CLONE" pull --quiet 2>/dev/null; then
-        print_ok "Development Guardrails up to date"
-      else
-        print_warn "Could not pull latest updates (network issue?) — using existing version"
-      fi
+      # `## BL-320:` (Karl, 2026-10-06) ASK FIRST. This used to pull the
+      # clone, unasked, on every init: the clone is shared by every project
+      # on the computer, and it moved three times in one week without anyone
+      # choosing to update it. At a terminal the question shows the installed
+      # version (and the available one) and Enter means yes; with no one to ask
+      # it never pulls, and prints the command. Either way a clone below the
+      # minimum (SOIF_GUARDRAILS_MIN) is named.
+      soif_guardrails_clone_update "$FRAMEWORK_CLONE" "$NON_INTERACTIVE"   # BL-320-INIT-PULL
       framework_valid=true
     fi
 
@@ -2682,6 +2749,15 @@ generate_claude_md() {
   # verify focus). {template sha, rendered-output sha}.
   soif_currency_record_render_base A1 CLAUDE.md \
     "$SCRIPT_DIR/templates/generated/claude-md.tmpl" CLAUDE.md
+
+  # `## BL-312:` the TL;DR Mode section, only when the mode is on — AFTER the
+  # render base is captured, on purpose: the section is this project's choice,
+  # not template content, so the Currency System's three-way merge carries it
+  # as the project's own trailing text and reconfigure-project.sh can take it
+  # out again byte for byte.
+  if [ "$TLDR_MODE" = true ]; then
+    soif_tldr_apply_claude_md CLAUDE.md on || print_warn "TL;DR mode is on, but its section could not be added to CLAUDE.md; to add it: bash scripts/reconfigure-project.sh --tldr-mode on"   # BL-312-INIT-CLAUDE-MD
+  fi
 }
 
 generate_approval_log() {
@@ -3528,8 +3604,16 @@ JSON config schema (snake_case keys; all fields optional, missing → use flag/d
   "branch_protection_attested": false,
   "approvals_attested": false,
   "allow_existing_dir": false,
-  "no_remote_creation": false
+  "no_remote_creation": false,
+  "tldr_mode": false
 }
+
+tldr_mode (config key only; BL-312): true ends every reply the agent gives with
+one plain-English TL;DR — what happened, what it means for you, next steps, what
+is waiting on you, the options with their pros and cons, a recommendation with
+its reasoning, what happens if you do nothing, and every command to run in a
+fenced block. Must be a JSON boolean. Absent → false (off). Switch it later with
+scripts/reconfigure-project.sh --tldr-mode on|off.
 
 Examples:
   ./init.sh --non-interactive \
@@ -3594,7 +3678,7 @@ collect_inputs_non_interactive() {
     fi
 
     # Warn on unknown fields (forward-compat per spec § 5.4).
-    local known_fields="project description platform track deployment gov_mode language project_dir git_host visibility remote_url branch_protection_attested approvals_attested allow_existing_dir no_remote_creation accept_local_only_risk defer_remote_push"
+    local known_fields="project description platform track deployment gov_mode language project_dir git_host visibility remote_url branch_protection_attested approvals_attested allow_existing_dir no_remote_creation accept_local_only_risk defer_remote_push tldr_mode"
     local field
     for field in $(jq -r 'keys[]' "$CONFIG_FILE"); do
       if ! echo " $known_fields " | grep -q " $field "; then
@@ -3653,6 +3737,22 @@ collect_inputs_non_interactive() {
       cfg_defer_push=$(cfg_get defer_remote_push)
       [ "$cfg_defer_push" = "true" ] && ARG_DEFER_REMOTE_PUSH=true
     fi
+    # `## BL-312:` TL;DR mode — a JSON boolean, OFF when the key is absent.
+    # Read by TYPE, not through cfg_get: its `// empty` turns `false` into
+    # nothing, and a string "true" is a typo to report, not a yes to guess.
+    local cfg_tldr_type=""
+    cfg_tldr_type=$(jq -r 'if has("tldr_mode") then (.tldr_mode | type) else "absent" end' "$CONFIG_FILE" 2>/dev/null)
+    case "$cfg_tldr_type" in
+      absent) TLDR_MODE=false ;;
+      boolean) TLDR_MODE=$(jq -r '.tldr_mode' "$CONFIG_FILE") ;;   # BL-312-INIT-CONFIG
+      *)
+        fail "invalid config field tldr_mode" \
+             "tldr_mode must be the JSON boolean true or false; found a ${cfg_tldr_type:-unreadable value}." \
+             "write \"tldr_mode\": true (every reply ends with a plain-English TL;DR) or false, or leave it out (off)." \
+             "--config='$CONFIG_FILE'"
+        return 1
+        ;;
+    esac
   fi
 
   # ----- Pass 1: schema validation (per-input typing) -----
@@ -4048,6 +4148,7 @@ collect_inputs_non_interactive() {
       --argjson no_remote "$([ "$NO_REMOTE_CREATION" = true ] && echo true || echo false)" \
       --argjson accept_local_only "$([ "$ACCEPT_LOCAL_ONLY_RISK" = true ] && echo true || echo false)" \
       --argjson defer_push "$([ "$DEFER_REMOTE_PUSH" = true ] && echo true || echo false)" \
+      --argjson tldr_mode "$([ "$TLDR_MODE" = true ] && echo true || echo false)" \
       '{
         _validated: true,
         _resolved_at: $ts,
@@ -4067,7 +4168,8 @@ collect_inputs_non_interactive() {
         allow_existing_dir: $allow_dir,
         no_remote_creation: $no_remote,
         accept_local_only_risk: $accept_local_only,
-        defer_remote_push: $defer_push
+        defer_remote_push: $defer_push,
+        tldr_mode: $tldr_mode
       }'
   fi
   return 0
@@ -4181,6 +4283,8 @@ Non-interactive mode (for CI, UAT, AI agents):
   Defaults:                --track standard, --git-host github,
                            --visibility private, --description "",
                            --project-dir "$HOME/Code/$PROJECT"
+  TL;DR mode:              off unless the --config file sets "tldr_mode": true
+                           (see --help-non-interactive)
 
 Init logs are saved to <project>/.solo-orchestrator/init-TIMESTAMP.log
 HELPEOF
@@ -4389,6 +4493,7 @@ HELPEOF
   log_line "Track: $TRACK"
   log_line "Deployment: $DEPLOYMENT"
   log_line "POC Mode: ${POC_MODE:-none}"
+  log_line "TL;DR mode: $TLDR_MODE"
 
   if [ "$DRY_RUN" = true ]; then
     dry_run_summary
@@ -4625,7 +4730,9 @@ prepare_initial_state_for_commit() {
 
   # Seed manifest with all framework-managed fields. remote_url stays "" until
   # create_and_protect_remote actually creates the repo; if it doesn't, the
-  # empty value is the documented "no remote" sentinel.
+  # empty value is the documented "no remote" sentinel. `tldr_mode` (`## BL-312:`)
+  # is always written, true or false, so the choice is on record either way;
+  # it is on the adoption driver's Solo key list (`# BL-311-SOLO-KEYS`).
   local poc_val
   if [ -n "$POC_MODE" ]; then
     poc_val="$POC_MODE"
@@ -4638,25 +4745,25 @@ prepare_initial_state_for_commit() {
     tmp=$(mktemp)
     if [ -n "$poc_val" ]; then
       jq --arg h "$_RESOLVED_HOST" --arg m "$_RESOLVED_MODE" \
-         --arg dep "$DEPLOYMENT" --arg pm "$poc_val" --arg lvl "$ENFORCEMENT_LEVEL" \
-         '. + {host:$h, mode:$m, remote_url:"", deployment:$dep, poc_mode:$pm, enforcement_level:$lvl}' \
+         --arg dep "$DEPLOYMENT" --arg pm "$poc_val" --arg lvl "$ENFORCEMENT_LEVEL" --argjson tl "$TLDR_MODE" \
+         '. + {host:$h, mode:$m, remote_url:"", deployment:$dep, poc_mode:$pm, enforcement_level:$lvl, tldr_mode:$tl}' \
          "$manifest" > "$tmp" && mv "$tmp" "$manifest"
     else
       jq --arg h "$_RESOLVED_HOST" --arg m "$_RESOLVED_MODE" \
-         --arg dep "$DEPLOYMENT" --arg lvl "$ENFORCEMENT_LEVEL" \
-         '. + {host:$h, mode:$m, remote_url:"", deployment:$dep, poc_mode:null, enforcement_level:$lvl}' \
+         --arg dep "$DEPLOYMENT" --arg lvl "$ENFORCEMENT_LEVEL" --argjson tl "$TLDR_MODE" \
+         '. + {host:$h, mode:$m, remote_url:"", deployment:$dep, poc_mode:null, enforcement_level:$lvl, tldr_mode:$tl}' \
          "$manifest" > "$tmp" && mv "$tmp" "$manifest"
     fi
   else
     if [ -n "$poc_val" ]; then
       jq -n --arg h "$_RESOLVED_HOST" --arg m "$_RESOLVED_MODE" \
-            --arg dep "$DEPLOYMENT" --arg pm "$poc_val" --arg lvl "$ENFORCEMENT_LEVEL" \
-            '{host:$h, mode:$m, remote_url:"", deployment:$dep, poc_mode:$pm, enforcement_level:$lvl}' \
+            --arg dep "$DEPLOYMENT" --arg pm "$poc_val" --arg lvl "$ENFORCEMENT_LEVEL" --argjson tl "$TLDR_MODE" \
+            '{host:$h, mode:$m, remote_url:"", deployment:$dep, poc_mode:$pm, enforcement_level:$lvl, tldr_mode:$tl}' \
         > "$manifest"
     else
       jq -n --arg h "$_RESOLVED_HOST" --arg m "$_RESOLVED_MODE" \
-            --arg dep "$DEPLOYMENT" --arg lvl "$ENFORCEMENT_LEVEL" \
-            '{host:$h, mode:$m, remote_url:"", deployment:$dep, poc_mode:null, enforcement_level:$lvl}' \
+            --arg dep "$DEPLOYMENT" --arg lvl "$ENFORCEMENT_LEVEL" --argjson tl "$TLDR_MODE" \
+            '{host:$h, mode:$m, remote_url:"", deployment:$dep, poc_mode:null, enforcement_level:$lvl, tldr_mode:$tl}' \
         > "$manifest"
     fi
   fi
