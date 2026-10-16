@@ -37,7 +37,9 @@
 #      fail-closed step (R-1), the lockfile check, and the uv license check
 #      leaving the project's own package out (R-2). B4b runs BL-313's notice
 #      step, which declares no `shell:`, under both `bash -e` (what Actions
-#      uses then) and -eo pipefail, and requires the same answer
+#      uses then) and -eo pipefail, and requires the same answer, over a
+#      new project's tree and an adopted one's (R-480-1); B4c adopts a real
+#      setup.py project and runs the notice step of the file adoption wrote
 #   D  the guides' sentences about when the framework's CI runs
 #   M  mutants. Template and doc mutants edit a copy and re-run the named case
 #      on it (adoption copies the template verbatim, which A1/A2 prove and MA1
@@ -48,7 +50,7 @@
 # (`generate_ci`'s `cp`); it is not driven here, which keeps this suite out of
 # the init.sh lane.
 #
-# Four real adoptions (two under mutants), so tests.yml pins it to a leg with
+# Five real adoptions (two under mutants), so tests.yml pins it to a leg with
 # room. No init.sh, not an aggregator -> both lists. bash 3.2 safe.
 set -uo pipefail
 export SOIF_ADOPT_MCP=off              # `# BL-311-MCP-SEAM`
@@ -139,7 +141,8 @@ step_field() {
 # _pyproj DIR KIND — a committed Python project with its OWN workflow named CI
 # (the k-pdf shape; it also makes Scout report the GitHub host). KIND uv has
 # pyproject.toml + uv.lock and no requirements.txt; KIND req has
-# requirements.txt and no uv.lock.
+# requirements.txt and no uv.lock; KIND setup (R-480-1) has setup.py and
+# pytest.ini and none of the four files the python template recognises.
 _pyproj() {
   local p="$1" kind="$2"
   mkdir -p "$p/src" "$p/tests" "$p/.github/workflows" || return 1
@@ -151,6 +154,10 @@ _pyproj() {
     printf '[project]\nname = "kp"\nversion = "0.1.0"\n\n[tool.pytest.ini_options]\ntestpaths = ["tests"]\n' > "$p/pyproject.toml"
     printf 'version = 1\n' > "$p/uv.lock"
     ( cd "$p" && git add -- pyproject.toml uv.lock ) >/dev/null 2>&1 || return 1
+  elif [ "$kind" = setup ]; then
+    printf 'from setuptools import setup\nsetup(name="kp", version="0.1.0")\n' > "$p/setup.py"
+    printf '[pytest]\ntestpaths = tests\n' > "$p/pytest.ini"
+    ( cd "$p" && git add -- setup.py pytest.ini ) >/dev/null 2>&1 || return 1
   else
     printf 'pytest\n' > "$p/requirements.txt"
     printf '[pytest]\ntestpaths = tests\n' > "$p/pytest.ini"
@@ -406,49 +413,87 @@ case_B4() {
   [ "$D_RC" -ne 0 ] && [ -z "$D_GH" ] \
     && printf '%s\n' "$D_OUT" | _has '^::error::.*Missing: requirements.txt, uv.lock, pyproject.toml\.$'
 }
-# _notice FILE PHASE — run BL-313's notice step (the step whose `if:` is
-# GATE_NO_MANIFEST) in a tree with no dependency file and
-# .claude/phase-state.json at current_phase PHASE (`none`: no phase-state).
-# The step declares no `shell:`, so Actions runs it with `bash -e`; it is run
-# that way and as a `shell: bash` step (-eo pipefail), and the two must agree.
-# Prints "<rc> <error|notice|none>", "no-step", or "split: ...".
+# _notice_run DIR — run the notice step script at DIR/.step.sh in DIR. The step
+# declares no `shell:`, so Actions runs it with `bash -e`; it is run that way
+# and as a `shell: bash` step (-eo pipefail), and the two must agree. Prints
+# "<rc> <error|notice|none>", with " adopted" appended when the step said the
+# project is adopted, or "split: ...".
+_notice_run() {
+  local d="$1" o1="" o2="" r1=0 r2=0 k1="none" k2="none" a1="" a2=""
+  o1="$( cd "$d" && bash --noprofile --norc -e .step.sh 2>&1 )"; r1=$?
+  o2="$( cd "$d" && bash --noprofile --norc -eo pipefail .step.sh 2>&1 )"; r2=$?
+  case "$o1" in *"::error::"*) k1=error ;; *"::notice::"*) k1=notice ;; esac
+  case "$o2" in *"::error::"*) k2=error ;; *"::notice::"*) k2=notice ;; esac
+  case "$o1" in *"This project was adopted"*) a1=" adopted" ;; esac
+  case "$o2" in *"This project was adopted"*) a2=" adopted" ;; esac
+  if [ "$r1 $k1$a1" = "$r2 $k2$a2" ]; then echo "$r1 $k1$a1"; else echo "split: -e gave $r1 $k1$a1, -eo pipefail gave $r2 $k2$a2"; fi
+}
+# _notice FILE PHASE [MANIFEST] — run BL-313's notice step (the step whose `if:`
+# is GATE_NO_MANIFEST) in a tree with no dependency file and
+# .claude/phase-state.json at current_phase PHASE (`none`: no phase-state;
+# PHASE is written as given, so `"2"` is a quoted phase). MANIFEST writes
+# .claude/manifest.json: `adopted` is the record adoption's stamp merges with
+# jq (`# BF-ADOPT-STAMP-MERGE`, jq's indented output), `new` a project init.sh
+# made. Prints what _notice_run prints, or "no-step".
 _notice() {
-  local f="$1" ph="$2" d="" o1="" o2="" r1=0 r2=0 k1="none" k2="none"
+  local f="$1" ph="$2" mf="${3:-}" d=""
   d="$(newtmp)"
   step_field "$f" 4 "$GATE_NO_MANIFEST" 7 | tr '\037' '\n' > "$d/.step.sh"
   [ -s "$d/.step.sh" ] || { echo "no-step"; return 0; }
   mkdir -p "$d/.claude" || { echo "fixture"; return 0; }
   [ "$ph" = none ] || printf '{\n  "current_phase": %s,\n  "phase_gates": {}\n}\n' "$ph" > "$d/.claude/phase-state.json"
-  o1="$( cd "$d" && bash --noprofile --norc -e .step.sh 2>&1 )"; r1=$?
-  o2="$( cd "$d" && bash --noprofile --norc -eo pipefail .step.sh 2>&1 )"; r2=$?
-  case "$o1" in *"::error::"*) k1=error ;; *"::notice::"*) k1=notice ;; esac
-  case "$o2" in *"::error::"*) k2=error ;; *"::notice::"*) k2=notice ;; esac
-  if [ "$r1 $k1" = "$r2 $k2" ]; then echo "$r1 $k1"; else echo "split: -e gave $r1 $k1, -eo pipefail gave $r2 $k2"; fi
+  case "$mf" in
+    adopted) printf '{\n  "host": "github",\n  "adoption": {\n    "schemaVersion": 2,\n    "adopted": true,\n    "adoptedAt": "2026-10-16T00:00:00Z"\n  }\n}\n' > "$d/.claude/manifest.json" ;;
+    new)     printf '{\n  "host": "github",\n  "mode": "greenfield"\n}\n' > "$d/.claude/manifest.json" ;;
+  esac
+  _notice_run "$d"
 }
-# case_B4b — `## BL-313:` (Karl, 2026-10-16): NO dependency file. The decision
-# step and the fail-closed step are both behind GATE_MANIFEST (T7 and B8 pin
-# the exact text), so on such a tree neither runs, and every installer-gated
-# step skips with them. BL-313's notice step decides, executed here: from
-# current_phase 2 it fails the job with an ::error:: (a check that cannot run
-# must not pass), and before Phase 2, or with no phase-state, it passes with a
-# ::notice::.
+# case_B4b — `## BL-313:` (Karl, 2026-10-16, for NEW projects) and review
+# finding R-480-1. NO dependency file. The decision step and the fail-closed
+# step are both behind GATE_MANIFEST (T7 and B8 pin the exact text), so on such
+# a tree neither runs, and every installer-gated step skips with them. BL-313's
+# notice step decides, executed here: from current_phase 2 (bare or quoted,
+# R-480-2) it fails the job with an ::error::; an ADOPTED project fails at any
+# phase, because adoption lands at phase 0 with its code already there; only a
+# new project before Phase 2, or with no phase-state, passes with a ::notice::.
 case_B4b() {
-  local f="$1" rows="" dif="" fcs="" v="" got="" bad="" ph=""
+  local f="$1" rows="" dif="" fcs="" v="" got="" bad="" spec="" ph="" mf="" want=""
   rows="$(steps_tsv "$f")"
   dif="$(printf '%s\n' "$rows" | awk -F'\t' '$3 == "deps" { print $4; exit }')"
   fcs="$(printf '%s\n' "$rows" | GN="$GATE_NONE" awk -F'\t' '$4 == ENVIRON["GN"] { print $2 }')"
   [ "$dif" = "$GATE_MANIFEST" ] || bad="$bad [the decision step is not behind the manifest guard: if=[$dif]]"
   [ -n "$fcs" ] || bad="$bad [no fail-closed step behind the manifest guard]"
-  for ph in 2 3 1 0 none; do
-    v="$(_notice "$f" "$ph")"
-    got="$got phase-$ph=[$v]"
-    case "$ph" in
-      2|3) [ "$v" = "1 error" ]  || bad="$bad [current_phase $ph: expected 1 error, got $v]" ;;
-      *)   [ "$v" = "0 notice" ] || bad="$bad [current_phase $ph: expected 0 notice, got $v]" ;;
-    esac
+  for spec in '2//1 error' '3//1 error' '"2"//1 error' '1//0 notice' '0//0 notice' 'none//0 notice' \
+              '0/new/0 notice' '0/adopted/1 error adopted' '1/adopted/1 error adopted'; do
+    ph="${spec%%/*}"; mf="${spec#*/}"; mf="${mf%%/*}"; want="${spec##*/}"
+    v="$(_notice "$f" "$ph" "$mf")"
+    got="$got phase-$ph${mf:+/$mf}=[$v]"
+    [ "$v" = "$want" ] || bad="$bad [current_phase $ph${mf:+, $mf manifest}: expected $want, got $v]"
   done
   CASE_DETAIL="$got$bad"
   [ -z "$bad" ]
+}
+# case_B4c — R-480-1 through the REAL adoption: a Python project whose
+# dependency file is none of the four (setup.py + pytest.ini, the reviewer's
+# reproduction) is adopted with adopt-project.sh, and the notice step of the
+# solo-gates.yml it wrote is executed in that tree, against the manifest and
+# phase-state adoption wrote. It must fail and say the project is adopted.
+B4C_P=""
+case_B4c() {
+  local fw="$1" x="" have="" ph="" v=""
+  _adopted "$fw" setup b4c || { CASE_DETAIL="fixture"; return 1; }
+  B4C_P="$ADOPTED_P"
+  [ "$RUN_RC" -eq 0 ] || { CASE_DETAIL="adoption rc $RUN_RC: $(command grep -m1 -E 'REFUSED|BLOCKED' "$WORK/b4c.out")"; return 1; }
+  cmp -s "$B4C_P/.github/workflows/solo-gates.yml" "$fw/$TPL_REL" || { CASE_DETAIL="solo-gates.yml is not the python template"; return 1; }
+  for x in requirements.txt pyproject.toml Pipfile uv.lock; do [ -e "$B4C_P/$x" ] && have="$have $x"; done
+  [ -z "$have" ] || { CASE_DETAIL="the adoptee has a listed file:$have (the notice step would not run)"; return 1; }
+  ph="$(command grep -o '"current_phase"[[:space:]]*:[[:space:]]*"*[0-9][0-9]*"*' "$B4C_P/.claude/phase-state.json" 2>/dev/null | command grep -o '[0-9][0-9]*' | head -1)"
+  step_field "$B4C_P/.github/workflows/solo-gates.yml" 4 "$GATE_NO_MANIFEST" 7 | tr '\037' '\n' > "$B4C_P/.step.sh"
+  [ -s "$B4C_P/.step.sh" ] || { CASE_DETAIL="no notice step in the written solo-gates.yml"; return 1; }
+  v="$(_notice_run "$B4C_P")"
+  rm -f "$B4C_P/.step.sh"
+  CASE_DETAIL="adopted at current_phase=[$ph] adopted-flag=[$(jq -r '.adoption.adopted' "$B4C_P/.claude/manifest.json" 2>/dev/null)] notice=[$v]"
+  [ "$v" = "1 error adopted" ]
 }
 case_B5() {   # uv.lock without pyproject.toml is not a uv project, and the error names what is missing
   _decide "$1" uv.lock
@@ -559,7 +604,8 @@ check "B1 uv.lock with pyproject.toml: installer=uv" case_B1 "$SG"
 check "B2 requirements.txt: installer=pip" case_B2 "$SG"
 check "B3 all three files: uv wins" case_B3 "$SG"
 check "B4 Pipfile alone (inside the manifest guard, none of the three): the step fails with an ::error:: naming requirements.txt, uv.lock and pyproject.toml" case_B4 "$SG"
-check "B4b no dependency file (BL-313): the decision and fail-closed steps are not reached; the notice step fails at current_phase 2 and 3 and passes at 0, 1 or with no phase-state" case_B4b "$SG"
+check "B4b no dependency file (BL-313, R-480-1/2): the decision and fail-closed steps are not reached; the notice step fails at current_phase 2 (bare or quoted) and 3 and for an adopted project at 0 or 1, and passes for a new project at 0, 1 or with no phase-state" case_B4b "$SG"
+check "B4c R-480-1, the real adoption of a setup.py project (none of the four files): the written solo-gates.yml's notice step fails and says the project is adopted" case_B4c "$REPO_ROOT"
 check "B5 uv.lock alone: not a uv project; the ::error:: names requirements.txt and pyproject.toml" case_B5 "$SG"
 check "B6 pyproject.toml alone: the ::error:: names requirements.txt and uv.lock" case_B6 "$SG"
 check "B7 the lockfile check: uv lock --check for a uv project, a warning when it fails, the old arms for the rest" case_B7 "$SG"
@@ -756,6 +802,9 @@ tmutant MR1i "$T" '- name: Stop if no installer was chosen' "$GATE_MANIFEST && "
 tmutant MR1j "$T" '- name: Stop if no installer was chosen' ", 'uv.lock')" ')' case_B8 "BL-313: uv.lock drops out of the fail-closed condition's guard"
 tmutant MB10 "$T" '- name: Toolchain skipped - no Python manifest yet (Phase 0/1)' 'exit 1' 'exit 0' case_B4b "BL-313: from Phase 2 a tree with no dependency file passes"
 tmutant MB11 "$T" '- name: Toolchain skipped - no Python manifest yet (Phase 0/1)' '-ge 2' '-ge 3' case_B4b "BL-313: a Phase 2 tree with no dependency file passes"
+tmutant MB12 "$T" '- name: Toolchain skipped - no Python manifest yet (Phase 0/1)' ':[[:space:]]*true' ':true' case_B4b "R-480-1: the adoption check matches only minified JSON, so the indented record adoption writes with jq reads as not adopted"
+tmutant MB14 "$T" '- name: Toolchain skipped - no Python manifest yet (Phase 0/1)' "true' .claude/manifest.json" "true' .claude/adoption.json" case_B4b "R-480-1: the adoption check reads a file adoption never writes"
+tmutant MB13 "$T" '- name: Toolchain skipped - no Python manifest yet (Phase 0/1)' '[[:space:]]*"*[0-9][0-9]*"*' '[[:space:]]*[0-9][0-9]*' case_B4b "R-480-2: a quoted current_phase \"2\" reads as no phase, so the tree passes"
 tdel    MR1c "$T" '- name: Stop if no installer was chosen' case_B8 "R-1: the fail-closed step is removed"
 tmutant MR1d "$T" '- name: Stop if no installer was chosen' 'exit 1' 'exit 0' case_B8 "R-1: the fail-closed step no longer fails"
 tins    MR1e "$T" '- name: Stop if no installer was chosen' '        continue-on-error: true' case_T7 "R-1: the fail-closed step's failure is let through"
