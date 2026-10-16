@@ -21447,8 +21447,9 @@ signatures are unchecked for authorship whether or not this attestation exists.
   guide and the governance framework do not.
 - The recorder is the fourth copy in this script of the mkdir-lock / `mktemp` / `trap` / `mv` block
   (`lock_dir="$file.lockdir"` also in `_cpg_record_gate_date`, `_cpg_record_reviewer_attestation` and
-  `_cpg_record_accum_attestation`), and the pattern appears five more times across `scripts/`
-  (`run-phase3-validation.sh` twice, `track-tool-usage.sh`, `lib/bypass-audit.sh` twice). One shared
+  `_cpg_record_accum_attestation`), and the pattern appears six more times across `scripts/`
+  (`run-phase3-validation.sh` twice, `track-tool-usage.sh`, `lib/bypass-audit.sh` three times;
+  counted 2026-10-16 on main merged into this branch). One shared
   helper would change every site's error contract, and is not attempted here.
 - A `mktemp` or `mv` failure inside the lock returns 3, and no case reaches it: both need `.claude/`
   to refuse writes, and then the lock cannot be made and the run returns 3 there first. It is reachable
@@ -21463,11 +21464,20 @@ signatures are unchecked for authorship whether or not this attestation exists.
 - `jq`'s stderr file is made from an explicit `${TMPDIR:-/tmp}/soif-sa-jq.XXXXXX` template. BSD `mktemp`
   (macOS) ignores `TMPDIR` when given no template, and GNU honours it, so the bare form would put the
   file outside a fixture's `TMPDIR` on macOS only, and A31's cleanup check would pass there vacuously.
+- An agent can set the pair on its own Bash call, as a prefix to `bash scripts/check-phase-gate.sh`,
+  and the record's `by` is the git identity (`_cpg_gate_actor`: `user.name <user.email>`), so it does
+  not show that a person made the call. No bypass pattern raises on it: `scan_bypass_patterns_all`
+  matches neither that command nor the `[ATTESTED]` block (measured 2026-10-16). `SOLO_PR_REVIEW_ATTESTED` has the same
+  exposure. `SOLO_MCP_ATTESTED` does not: `scripts/session-mcp-gate.sh` reads it from the session's
+  environment, so it cannot be attached to one call after the session starts. Recorded as a residual
+  (Karl, 2026-10-16), consistent with the #404 decision.
+
 **Related:** `## BL-275:` (the same control, and why its remedy line cannot be made both true and
 consistent), `## BL-212:` (the same walker, its coverage stopping at Phase 1→2), `## BL-279:` (the
 A13 fixture that exposed the WARN-vs-block drift), `## BL-256:` (a green line read as a check that was
 performed), `## BL-149:` (a gate people cannot satisfy honestly is a gate they delete), `## BL-032:`
-(the attestation lineage).
+(the attestation lineage), `## BL-339:` (the one-maintainer organisation's protection check, decided
+2026-10-08: a required-approvals count of 0 is accepted only while this attestation stands).
 
 ---
 
