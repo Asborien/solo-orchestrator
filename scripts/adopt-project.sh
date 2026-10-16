@@ -3,9 +3,10 @@
 #
 # Point it at a project that already exists and it walks the operator through
 # bringing that project under the framework: it reads Scout's survey, shows
-# what the survey found, asks who the project is FOR, confirms the facts the
-# scan already derived, writes the project's state at PHASE 0, stamps the
-# adoption, and commits — exactly the files it wrote and nothing else.
+# what the survey found, asks who the project is FOR and which track it is on,
+# confirms the facts the scan already derived, writes the project's state at
+# PHASE 0, stamps the adoption, and commits — exactly the files it wrote and
+# nothing else.
 #
 # THIS SCRIPT IS ACT 2 OF FOUR, and its final block says so. Act 1 is Scout
 # (read-only, separate). Acts 3 and 4 — the requirements interview, the fitness
@@ -84,6 +85,10 @@
 #                                        VALIDATES the ledger's shape before
 #                                        appending (`## BL-227:` records the
 #                                        seven inline sites that still do not)
+#   scripts/lib/guardrails.sh            SOIF_GUARDRAILS_MIN and its compare
+#                                        (`## BL-320:`), so the adoption names
+#                                        Guardrails below the minimum from the
+#                                        one place the number is written
 #
 # Direction (M3) holds in one direction only: this module sources core, and no
 # core file names this module. That is why `init.sh` does NOT ship
@@ -125,7 +130,7 @@ ADOPT_LIB_DIR="$ADOPT_SELF_DIR/lib/adopt"
 ADOPT_CORE_LIB_DIR="$ADOPT_SELF_DIR/lib"
 
 # ── Core libs (M2's declared set) ───────────────────────────────────────────
-for _core in helpers-core.sh render-project-docs.sh claude-settings.sh adoption-stamp.sh scaffold-shipped-set.sh hook-templates.sh enforcement-level.sh tdd-classify.sh bypass-audit.sh; do
+for _core in helpers-core.sh render-project-docs.sh tldr-mode.sh claude-settings.sh adoption-stamp.sh scaffold-shipped-set.sh hook-templates.sh enforcement-level.sh tdd-classify.sh bypass-audit.sh guardrails.sh; do
   if [ ! -f "$ADOPT_CORE_LIB_DIR/$_core" ]; then
     echo "adopt-project: missing $ADOPT_CORE_LIB_DIR/$_core — run this from a complete framework clone." >&2
     exit 2
@@ -137,7 +142,7 @@ done
 # THE GUARD, BEFORE ARGUMENT PARSING — see the header. Sibling posture, kept.
 guard_not_in_framework || exit 1
 
-for _part in adopt-core adopt-evidence adopt-intake adopt-tools adopt-secrets adopt-state adopt-record adopt-docs adopt-ci adopt-session adopt-guardrails adopt-act4 adopt-archive adopt-stubs adopt-test-debt; do
+for _part in adopt-core adopt-evidence adopt-intake adopt-tools adopt-mcp adopt-secrets adopt-state adopt-record adopt-docs adopt-ci adopt-session adopt-guardrails adopt-act4 adopt-archive adopt-stubs adopt-test-debt; do
   if [ ! -f "$ADOPT_LIB_DIR/$_part.sh" ]; then
     echo "adopt-project: missing $ADOPT_LIB_DIR/$_part.sh — the driver needs its own lib directory." >&2
     exit 2
@@ -174,12 +179,17 @@ adoption. Point it at one of your own files as the archive MANIFEST names it
 (for example .git/hooks/pre-commit); it shows you what the framework thinks
 that trade costs, asks you to confirm, puts the file back exactly as it was,
 and records the choice in the audit trail. The framework's premise is
-opinionated enforcement, not confiscation — your files are yours.
+opinionated enforcement, not confiscation — your files are yours. The one file
+it will not put back is .claude/manifest.json: adoption changed none of your
+settings in it, and the archived copy has no adoption stamp, so restoring it
+would un-adopt the project.
 
 What it does, in order: reads the survey, offers what the survey found as
-EVIDENCE, asks who the project is for, confirms the answers the survey already
-derived, writes the project's state at phase 0, records the adoption, and
-commits exactly the files it wrote.
+EVIDENCE, asks who the project is for and which track it is on, confirms the
+answers the survey already derived, asks whether every reply the agent gives
+should end with a plain-English TL;DR (no answer means no), writes the
+project's state at phase 0, records the adoption, and commits exactly the files
+it wrote.
 
 Your project starts at phase 0 whatever the survey found. Nothing is marked as
 already done and no shortcut is taken past any gate — the questions about what

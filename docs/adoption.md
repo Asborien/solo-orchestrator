@@ -30,6 +30,10 @@ Everything on this page is output that was observed, pasted as it printed.
 
 ### What you need
 
+This is the one list of what adoption needs. The README's Prerequisites table
+is for `init.sh`, which builds a new project; you do not need that list to
+adopt, and the README points here rather than repeating this one.
+
 | Tool | Why | If it is missing |
 |---|---|---|
 | `git`, able to resolve a commit identity | Adoption ends in one commit on your current branch | Refused before anything is written. git can often derive an identity from the system when none is configured; the refusal fires only when it cannot |
@@ -38,11 +42,52 @@ Everything on this page is output that was observed, pasted as it printed.
 | `gitleaks` | The credential scan of your history | **Organizational**: the adoption stops, with no override. **Personal**: it can continue if you accept that on the record |
 | `semgrep` | The commit-time static-analysis pass | Every commit prints `semgrep not found — pre-commit SAST skipped.`; nothing blocks |
 | A clone of the Development Guardrails at `~/.claude-dev-framework` | The Claude Code rules and hooks a new project gets | Adoption completes without them and prints the two commands that install them later. Adoption never fetches the clone itself. Get it with `git clone https://github.com/kraulerson/claude-dev-framework.git ~/.claude-dev-framework` |
+| Docker running the Qdrant database, and the Qdrant MCP server registered with Claude Code (`uvx` launches it) | Memory across Claude Code sessions. Once it is registered, every session in the project must reach it (a successful `qdrant-find`) before it can change a file | Adoption checks it and, when this machine can (the `claude` command, Docker running, `uvx`), offers to set it up — showing the exact commands first. Skipped or impossible, adoption completes and prints the commands for later. See [The memory and documentation servers](#the-memory-and-documentation-servers) |
+| The Context7 MCP server registered with Claude Code (`npx` launches it) | Current library documentation for the agent. Once it is registered, every session must read documentation through it before it changes a file | Checked and offered the same way (needs the `claude` command and `npx`); otherwise its one command is printed |
+| Claude Code (the `claude` command) | The assessment, and every change you make after adoption, is a Claude Code session; Superpowers and the two servers above are added to it | Adoption itself completes, but it cannot offer to set up the two servers, and there is nothing to run the assessment in. See [Claude Code's documentation](https://docs.anthropic.com/en/docs/claude-code) |
+| Superpowers, a plugin for Claude Code | Needed once the Development Guardrails are installed (the clone row above): they block every edit to a source file until a Superpowers skill has run in the session, and without the plugin there is no skill to run | Adoption completes, but in Claude Code every edit to a source file is blocked with `BLOCKED — Source file edit requires the Superpowers workflow, but the Superpowers plugin is not enabled in this Claude Code configuration`. Guardrails older than 4.3.7 say `You MUST invoke superpowers:brainstorming before editing source files` instead, and the agent's attempt to run that skill fails as an unknown skill. Install it with the command below this table, then start a new Claude Code session |
+
+**Installing Superpowers.** One command, for your user, so every project on
+this computer has it:
+
+```bash
+claude plugin install --scope user superpowers@claude-plugins-official
+```
+
+If the install says the marketplace `claude-plugins-official` is not found,
+add it, then run the install again. Claude Code adds that marketplace the first
+time it starts an interactive session, so a computer where it never has lacks
+it:
+
+```bash
+claude plugin marketplace add anthropics/claude-plugins-official
+```
+
+Then start a new Claude Code session, as the Guardrails' own message says. To
+check that it is installed:
+
+```bash
+claude plugin list
+```
 
 Your project must be a normal git repository with at least one commit. A linked
 worktree, a submodule, or a repository with `core.hooksPath` configured is
 refused before anything is written, because the gates would be installed where
 git never looks.
+
+A project that **looks already under this framework** is refused the same way,
+before any question: one scaffolded by `init.sh` (it has
+`.claude/phase-state.json`), one already adopted, or one with any other
+`.claude/manifest.json`. The refusal reads
+`[REFUSED] this project already looks framework-managed: …` and names what it
+found. A project that has **only the Development Guardrails** is not refused
+(`## BL-311:` row 2): a `.claude/manifest.json` with a `frameworkVersion` and
+none of the keys this framework writes, a `.claude/framework/hooks/` directory
+beside it — the directory the Guardrails stage checks to know they are already
+installed (`# BL-311-GUARDRAILS-ONLY-FRAMEWORK`), so a `.claude/framework/`
+without `hooks/` is refused — and no `.claude/phase-state.json` is adopted, and
+every Guardrails setting is kept (see *The Development Guardrails for Claude
+Code*, below).
 
 ### 1. Get the framework
 
@@ -53,7 +98,119 @@ what your project needs into it.
 git clone https://github.com/kraulerson/solo-orchestrator.git ~/solo-orchestrator
 ```
 
-### 2. Look first — Scout writes nothing
+That location is the one every command on this page, the README and the User
+Guide uses. Clone it somewhere else and change each `~/solo-orchestrator` you
+copy, including in the settings line of step 2.
+
+### 2. Before you start: let Claude Code run the framework's scripts
+
+**If you type the commands on this page into a terminal yourself, skip this
+step** — Claude Code is not involved. It is for when you ask a Claude Code
+session in your project to run them, and **you have to do it, not the agent.**
+**One exception: the assessment's finisher is run by the session**
+([Act 4](#the-assessment--act-3-and-act-4--ships-wp12a)), so if you will run the
+assessment, do this step too. Its command finds the clone through
+`.claude/orchestrator-source.json` instead of naming `~/solo-orchestrator`, and
+the classifier reads commands, not what they print, so this step may not clear
+it; if auto mode refuses it, use the fallback at the end of this step.
+
+Claude Code's auto mode — the mode a session starts in by default since
+Claude Code 2.1.283 — has a classifier judge each command before it runs, and
+out of the box that classifier trusts only the folder the session started in
+and that repository's own remotes. `~/solo-orchestrator` is neither, so a
+framework script run from it can be refused before it starts. It was in the
+2026-09-27 dogfood run (`## BL-311:` row 6), where the agent had cloned the
+framework itself in that same session; the first line of the refusal, on Scout:
+
+```text
+Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Code from External].
+```
+
+The agent cannot clear that itself. When it then tried to work out a settings
+change on its own, that was refused too — `Reason: [Auto-Mode Bypass]` — because
+an agent widening its own permissions to get past a refusal is what that rule
+stops. So **you** tell auto mode the clone is yours. Add this to your settings
+in a text editor, **before you start the session**:
+
+```json
+{
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "Source control: also github.com/kraulerson/solo-orchestrator and its clone at ~/solo-orchestrator — the user's own install of the Solo Orchestrator framework: trusted as code to run, never as a destination for any project's code or data"
+    ]
+  }
+}
+```
+
+- **What it does, and what it does not.** It adds one line to what the
+  classifier is told about your setup: the clone is trusted **as code to run**,
+  not as someone else's code fetched into your project — and **not** as a place
+  to send anything. That second half matters. The classifier reads this same
+  list as the boundary for your data (Claude Code's documentation: *"any
+  destination not listed is a potential exfiltration target"*, so a listed one
+  counts as inside), and `github.com/kraulerson/solo-orchestrator` is a public
+  repository that belongs to the framework's author, not to you. So the line
+  itself says the clone and the repository are never a destination for any
+  project's code or data; keep that clause if you reword it. It approves
+  nothing in advance. Every command Claude runs from the clone
+  still goes to the classifier, which still judges what that command does, with
+  which arguments, to which folder. `"$defaults"` keeps Claude Code's built-in
+  lines; leave it out and your one line replaces all of them (measured on Claude
+  Code 2.1.285: 21 lines become 1).
+- **Where: your user settings, `~/.claude/settings.json`** (or
+  `$CLAUDE_CONFIG_DIR/settings.json` if you set `CLAUDE_CONFIG_DIR`). No file
+  there yet: save the block above as it is. A file already there: add the
+  `autoMode` block beside its other keys — or, if it already has an
+  `autoMode.environment` list, add the one line to that list. Not the project's
+  `.claude/settings.json`: Claude Code does not read `autoMode` from a
+  project's settings at all, so a repository cannot vouch for itself (measured:
+  the same block there does not show in the check below). In your user settings
+  the line applies to every Claude Code session on this machine. Lines from
+  settings your organization manages are combined with yours, not swapped for
+  them.
+- **Why not a permission rule,** as the refusal itself suggests (*"the user can
+  add a Bash permission rule to their settings"*)? A rule such as
+  `Bash(bash ~/solo-orchestrator/scripts/scout.sh *)` is applied before the
+  classifier runs, so Claude could then run that script with any arguments and
+  nothing would judge the call — Scout's `--run-tests` pointed at any folder,
+  which runs that folder's test code, or answers piped into the adoption
+  questions only you should answer — and in your user settings that holds for
+  every project on this machine.
+- **Not measured yet:** whether this line clears the `[Code from External]`
+  refusal, and whether the classifier honours the scoping — trusting the clone
+  as code to run while still treating the repository as outside your boundary
+  for data. The clean rerun of the dogfood run (`## BL-311:`) measures the
+  first; nothing measures the second yet. Until then, keep the fallback below
+  at hand.
+
+Check that Claude Code reads the line:
+
+```bash
+claude auto-mode config | grep -F '~/solo-orchestrator'
+```
+
+It prints your line. Nothing printed means it is not loaded: with a JSON
+mistake in the file, this command prints the built-in lines and no error
+(measured on Claude Code 2.1.285), and
+`jq empty "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"` names where it
+stopped reading — the mistake is on that line or the one before (measured: a
+missing comma at the end of line 2 is reported at line 3). Inside a session,
+`/permissions` → **Recently denied** lists each action auto mode refused.
+
+**If Claude is still refused, run the command yourself** — in your own
+terminal from the project's folder, or typed after `!` at the session's
+prompt, which Claude Code runs "directly without Claude's prior approval or
+interpretation" and whose output lands in the conversation. A script that
+asks you questions — adoption, `--re-add` — belongs in your own terminal:
+Claude Code's documentation does not say a `!` command can take your answers.
+Or press `Shift+Tab` once to leave auto mode for that step: the session then
+asks you, instead of the classifier, before it runs a command; keep pressing it
+until the status bar shows `⏵⏵ auto mode on` to go back. In `/permissions` →
+**Recently denied** you can also press `r` on the refused action to let Claude
+retry it with your approval.
+
+### 3. Look first — Scout writes nothing
 
 ```bash
 cd /path/to/your-project
@@ -64,18 +221,31 @@ bash ~/solo-orchestrator/scripts/scout.sh --out /tmp/scout --run-tests
 `--run-tests` if you do not want Scout to run your code — but it is the one way
 to learn **before adopting** whether your test suite passes today, and that
 matters: once adopted, a commit that touches source code runs your tests and is
-refused if they fail. See [Before you adopt: run Scout](#before-you-adopt-run-scout).
+refused if they fail. Scout runs the command through your package manager —
+`uv run --frozen pytest`, `poetry run pytest`, `npm test` and so on — because
+a bare `pytest` cannot see a tool installed in the project's own environment
+([how Scout picks it](scout.md#stack--what-this-project-is-built-with)). It runs
+in your real tree: the manager may create untracked files of its own (a `.venv`),
+and Scout passes the flags that keep uv and pnpm from rewriting your lockfile
+([what it can change](scout.md#what---run-tests-can-change)). See
+[Before you adopt: run Scout](#before-you-adopt-run-scout).
 
-### 3. Adopt
+Scout also says whether your ignore rules would stop the adoption — a `lib/` line
+in `.gitignore` that also matches the framework's `scripts/lib/`, say — with the
+same check adoption runs before it writes anything, so you can change the rule
+before you answer any of adoption's questions
+([what it reports](scout.md#would-your-ignore-rules-stop-the-adoption-collisionsignorerules)).
+
+### 4. Adopt
 
 ```bash
 cd /path/to/your-project
 bash ~/solo-orchestrator/scripts/adopt-project.sh --scan-report /tmp/scout/scout-report.json
 ```
 
-Without `--scan-report` it runs its own survey. It asks one question a scan
-cannot answer — **who the project is for** — and that answer sets its
-enforcement tier:
+Without `--scan-report` it runs its own survey. It asks two questions a scan
+cannot answer — **who the project is for**, which sets its enforcement tier,
+and **the project's track** ([the track question](#then-the-track)). The first:
 
 ```text
 Who is this project for?
@@ -83,12 +253,17 @@ Who is this project for?
    2) A company, a client, or people who are paying for it
 ```
 
-Then it confirms what the survey found, writes the project's state at phase 0,
-and commits. **Your uncommitted work is never staged**; the commit contains only
+If the Qdrant or Context7 server is missing and this machine can set it up, it
+also offers to — an **optional** question; no answer means skip it
+([The memory and documentation servers](#the-memory-and-documentation-servers)).
+Then it confirms what the survey found, asks — last, and optional: no answer
+means **no** — whether every reply the agent gives should end with a
+plain-English TL;DR ([TL;DR mode](#last-tldr-mode)), writes the project's state
+at phase 0, and commits. **Your uncommitted work is never staged**; the commit contains only
 files adoption wrote. Exit codes: `0` adopted; `1` did not complete (a refusal,
 a stop, or a halt); `2` bad usage.
 
-### 4. If it stops
+### 5. If it stops
 
 - **Credential findings in your history** (organizational): the run lists them —
   rule, file and line, never the value — and prints a dispositions file **already
@@ -109,13 +284,97 @@ a stop, or a halt); `2` bad usage.
   install `gitleaks` and run again.
 - **Every `date` must be a real calendar day written `YYYY-MM-DD`.** "tomorrow",
   "0000-00-00" and 2026-02-30 are refused.
-- **Your own pre-commit hook refused the adoption commit**: fix or bypass that
-  hook, then run `adopt-project.sh --finish`. It commits exactly the files the
-  first run wrote.
-- **Anything else** prints a `[REFUSED]` or `[BLOCKED]` line naming the cause, and
-  says whether anything was written.
+- **Your ignore rules refuse files adoption must write**: nothing is written. The
+  block lists the refused paths and, under them, each rule that refuses them as
+  `git check-ignore -v` reports it — file, line and pattern, once per rule with
+  its count — and the one-line fix where there is one. The common case:
 
-### 5. Afterwards
+  ```text
+  The rule(s) that refuse them, as `git check-ignore -v` names each:
+    .gitignore, line 2: `lib/` refuses 24 of them (for example scripts/lib/accumulation.sh)
+      It has no leading slash, so it matches `lib` at any depth, not only at the top: here it matched scripts/lib.
+      One-line fix, if the rule was meant for the top-level lib/ only: change line 2 of .gitignore to `/lib/`.
+  ```
+
+  Whether the rule meant *every* `lib/` is your call; adoption never edits your
+  ignore files. A rule from a personal excludes file (`core.excludesFile`, or
+  git's default `$XDG_CONFIG_HOME/git/ignore` — usually `~/.config/git/ignore` —
+  when that is not set) or from `.git/info/exclude` is named as such, with which
+  of your repositories read it: it is not in the repository, so nobody else has
+  it. If git cannot name the rule, the block says so and gives the command to
+  ask it: `git check-ignore -v --no-index -- <path>`. Scout's report predicts
+  this block, with the same lines, before you start (`## BL-322:` S3); after you
+  change the rule, scan again.
+- **Your own pre-commit hook refused the adoption commit**: fix or bypass that
+  hook, then run `bash ~/solo-orchestrator/scripts/adopt-project.sh --finish`
+  from the project. It commits exactly the files the first run wrote.
+- **Anything else** prints a `[REFUSED]` or `[BLOCKED]` line naming the cause, and
+  says whether anything was written to the project.
+- **If you had answered "set it up now" to the memory and documentation
+  servers**, nothing has run yet when a question, the ignore-rule check or the
+  archive check stops the run: those commands wait until every check that can
+  stop the adoption has passed, just before its first file is written
+  (`## BL-322:` S3; in dogfood run 3 they ran at the question, and a run the
+  ignore check then stopped had already registered two servers). Your Claude
+  Code configuration is as it was, and the next run asks again. If the run stops
+  *after* they ran — a file adoption could not write, or your own commit hook
+  refusing the adoption commit — a server
+  they registered is in your Claude Code user configuration, outside the
+  project, and it stays registered. The stop is then labelled `[BLOCKED]`, not
+  `[REFUSED]`, because the run had begun; it says nothing was written to the
+  project, and names each server it registered ("Outside this project, this run
+  DID register …"). Run adoption again and it
+  finds them registered and does not offer to register them again. To see
+  them, or to remove one the message named:
+
+  ```bash
+  claude mcp list
+  claude mcp remove -s user context7
+  claude mcp remove -s user qdrant
+  ```
+
+### 6. Afterwards
+
+**First, if a Claude Code session is open in this project, close it and start a
+new one.** The checks, and the memory and documentation servers, that adoption
+set up only take effect in a session started after adoption: a session that was
+already open has no record of its own start, and the framework's MCP check
+blocks every file edit in it (measured in the 2026-09-27 dogfood run). The run's
+closing block says so too.
+
+**The new session opens with a report on your tools**, and sometimes on the
+Guardrails, which the agent must tell you about before anything else: updates
+it offers to run, a tool below the minimum version, a Guardrails update or
+notice. [What to do with each message](user-guide.md#what-to-do-with-each-message)
+says, in plain words, which you can skip and which you cannot.
+
+**If the project already had the Development Guardrails, that new session may
+offer to update them.** Adoption keeps an existing install as it found it (see
+"The Development Guardrails for Claude Code" below). When its version is older
+than your clone's, every session start says so, with both versions, and asks
+you to type `!` and then this command at the Claude Code prompt:
+
+```bash
+bash scripts/refresh-guardrails.sh
+```
+
+The agent is told not to run it for you: it replaces the Guardrails that check
+the agent's own work, so starting it is your decision. The command first runs
+`git pull --ff-only` on the Guardrails clone, which every project on this
+machine shares, so it can install a newer version than the one offered. Then it
+copies the clone's Guardrails hooks and rules into `.claude/framework/` and
+records the new version in `.claude/manifest.json`; it does not change
+`.claude/settings.json`. It refuses a new MAJOR version (that is a migration,
+and the session start tells you so instead of offering the command), an
+uncommitted change in the clone's hooks or rules, and a symlink in
+`.claude/framework/`. When it refuses, nothing in this project is changed; the
+shared clone may already have been pulled. The new hooks apply from the agent's next tool call,
+so no restart is needed. Say no and the offer comes back at the next session
+start, so a session that a Guardrails defect is blocking can be restarted and
+the fix accepted then. Commit `.claude/framework/` and `.claude/manifest.json`
+afterwards. Moving from a version before 4.4.0 to 4.4.0 or later this way
+changes how you approve a commit: see [7. Your first change](#7-your-first-change).
+Then:
 
 ```bash
 bash scripts/resume.sh
@@ -124,13 +383,23 @@ bash scripts/resume.sh
 It prints the **assessment prompt** — paste it into Claude Code. That session
 asks you what the project is for, gives a verdict with its reasoning, and runs
 the finisher that records it ([The assessment](#the-assessment--act-3-and-act-4--ships-wp12a)).
-Run `resume.sh` again afterwards and it opens Phase 0; the agent reads the
+Saving what the assessment wrote is the first commit the agent makes in this
+project, so it goes through the approval step in
+[7. Your first change](#7-your-first-change).
+Run `resume.sh` again afterwards and it prints this project's Phase 0 prompt
+(Section 13 of `PROJECT_INTAKE.md`), even if your project brought a
+`PRODUCT_MANIFESTO.md` of its own. Once Phase 0 writes the manifesto, or
+changes the one you brought, `resume.sh` prints the ordinary resume prompt
+instead. The agent reads the
 `CLAUDE.md` adoption wrote. If you
 already had a `CLAUDE.md`, `BUGS.md` or the like, the run named each one it
 replaced — the framework's version is in place and yours is in the archive,
 **not merged** until the assessment conversation folds in what is worth keeping
 (or you copy it across yourself —
-[The framework documents](#the-framework-documents--ship-wp12b)). From your next commit on, the message gates and the
+[The framework documents](#the-framework-documents--ship-wp12b)). Your
+`CLAUDE.md`'s `@` imports of files still in the project are carried into the new
+one, so those files keep loading; **the rules written inside your old
+`CLAUDE.md` do not load** until the assessment folds them in, and the run says so. From your next commit on, the message gates and the
 commit-time scanners run. Your replaced files are in
 `.claude/adoption-archive/<timestamp>/`, each with a restore line in its
 `MANIFEST.md` — and one command puts any of them back:
@@ -139,13 +408,217 @@ commit-time scanners run. Your replaced files are in
 bash ~/solo-orchestrator/scripts/adopt-project.sh --re-add .git/hooks/pre-commit
 ```
 
+### 7. Your first change
+
+What to expect the first time the agent commits in an adopted project — the
+assessment's own files first, then your first change to code — and what the
+framework expects of a change while the project is at phase 0. The Guardrails
+behaviour below was read from their hooks (versions 4.3.7, 4.4.0 and 4.4.1).
+
+**What the framework expects at phase 0.** The Builder's Guide builds in
+Phase 2: Phase 0 decides what the product is ("If it is not defined in Phase 0,
+the AI is not permitted to build it in Phase 2"), Phase 1 designs it, and the
+`CLAUDE.md` adoption wrote tells the agent to follow the phases in order. No
+check blocks a commit because the project is at phase 0: the Build Loop's
+commit checks start at phase 2 — `check_commit_ready` in
+`scripts/process-checklist.sh` lets every commit through below it, and the
+`feat:` commit-message check does the same. Neither the guide nor the scripts
+say whether a small fix to code the project already had may go in before
+Phase 0 is done. So it is your decision:
+
+- **If it can wait**, do Phase 0 first. This prints the prompt that starts or
+  resumes it:
+
+  ```bash
+  bash scripts/resume.sh
+  ```
+
+- **If the assessment recorded the project as in production and the fix cannot
+  wait**, open a delta: for such a project the delta track opens below phase 4
+  (the in-production paragraph under
+  [The assessment](#the-assessment--act-3-and-act-4--ships-wp12a)):
+
+  ```bash
+  bash scripts/delta.sh --open --describe "what is broken, in your own words"
+  ```
+
+- **Otherwise, if you decide to go ahead**, tell the agent so: it reads the same
+  rule in `CLAUDE.md` and may point it out. The change then goes through every
+  check below.
+
+**Before the agent can edit a source file**, two checks must be met in each
+session:
+
+- **Memory and documentation.** When Qdrant or Context7 is registered, the
+  agent's first file edit in a session is blocked until it has searched its
+  memory (`qdrant-find`) and read documentation through Context7 (`query-docs`;
+  finding the library with `resolve-library-id` is not enough). In a new
+  project the memory search finds nothing at first, and that is normal.
+- **Superpowers.** The Guardrails block every edit to a source file until the
+  agent has run a Superpowers skill in this session. For a change with no
+  approved design that is `superpowers:brainstorming`, which ends with the agent
+  showing you a short design and waiting for your yes; for a design you already
+  approved, a skill that carries it out, such as
+  `superpowers:test-driven-development`. A skill counts until the next
+  successful commit, a new or cleared session, or the end of the session, so
+  after each commit the agent runs one again before its next source edit. Test
+  files are not source files to this check, so the agent can write the failing
+  test first. Without the plugin, see [What you need](#what-you-need).
+
+**The approval step: what the agent asks, and what you approve.** The
+Guardrails block every commit the agent runs until you have approved it. When
+the change is ready, the agent:
+
+1. stages exactly the files it means to commit;
+2. records a question in `.claude/pending-approval.json`
+   (`scripts/pending-approval.sh --offer`), tells you its evaluation (pros,
+   cons, alternatives) and the options, each with an id such as `A1` (commit
+   these files) or `A2` (do not commit yet), and stops. The question itself
+   says which options approve the commit; at least one approves nothing.
+
+Each approval covers one commit; the next commit needs a new question. If the
+agent tries to commit before you approve, the commit is blocked with a message
+that starts `BLOCKED — Commit requires`. That is the check doing its job: the
+agent should ask you instead.
+
+**The stop check and the commit check.** At the end of every reply the
+Guardrails' stop check looks for unfinished work. With source changes not yet
+committed and no question recorded, it says
+`Uncommitted source changes. Commit before finishing.` That does not overrule
+the approval step: the same message tells the agent, when the commit is waiting
+on you, to record the question and stop, and once
+`.claude/pending-approval.json` exists the stop check lets the agent stop and
+wait. A reply that ends with a question for you is the expected shape, not a
+stuck agent: answer the question.
+
+**How you answer depends on your Guardrails version.** This prints it:
+
+```bash
+jq -r .frameworkVersion .claude/manifest.json
+```
+
+- **4.4.0 and later.** Reply with the option id first — `A1`, or
+  `A1 — go ahead`. The framework then shows you the question, what each option
+  does, the staged files and the git hooks that will run, ending
+  `Reply with the option id again (for example: A1) to confirm.`; that second
+  reply is the approval. The agent then commits with one lone command
+  (*The commit is one lone command*, below). A
+  reply that does not start with an option id approves nothing, and changing
+  what is staged after you approve cancels the approval. Two things can still
+  stop this working:
+  - **`The pending question cannot be answered`** means the question was written
+    in the older format. This framework's `scripts/pending-approval.sh`,
+    `scripts/escalate-to-user.sh` and bypass detector write the current one
+    (`## BL-320:`); a project whose copies of those scripts are older still
+    writes the old one — its `scripts/pending-approval.sh --help` does not
+    mention `--approves`. Ask the agent to rewrite the question (the message
+    gives it the format), and bring the project's scripts up to date with the
+    same-tier refresh, which you run yourself
+    ([Keeping your project current](user-guide.md#keeping-your-project-current---sync-framework)).
+  - **Guardrails brought up to 4.4.0 from an earlier version.** The hook that
+    reads your reply, `record-approval.sh`, runs only once
+    `.claude/settings.json` registers it. `bash scripts/refresh-guardrails.sh`
+    and `upgrade-project.sh` now add every Guardrails hook registration the
+    project is missing and list each one (`## BL-320:`), but a project updated
+    before they did may lack it. This prints `0` when it is missing:
+
+    ```bash
+    grep -c record-approval .claude/settings.json
+    ```
+
+    The session start then offers the refresh, which adds only what is
+    missing; accept it, or use the override below for each commit until you
+    do. (A project created or adopted with 4.4.0 already in the clone has it.)
+    When the project's own scripts are older than the 4.4.0 question, the
+    session start offers no Guardrails-only update at all and names the
+    framework sync, which brings both. A project whose scripts are older still
+    can install 4.4.0 alone two ways — its own copy of that offer, and its own
+    `upgrade-project.sh` (`--backfill-only`, or a track or deployment change
+    run from the project's copy) — and the same sync, run from the framework's
+    up-to-date clone, repairs it.
+- **4.3.7.** Answer in your own words. The agent clears the question
+  (`scripts/pending-approval.sh --resolve`), records your approval by running
+  `bash .claude/framework/hooks/mark-evaluated.sh "<what you approved>"` on its
+  own, and commits. This framework needs 4.4.0 for the reply route above, and
+  every session start offers the update.
+- **Older than 4.3.7** — the dogfood project's 4.3.0, for one. The Guardrails
+  block the agent from staging `.claude/manifest.json`, which the assessment's
+  finisher lists, and they accept `mark-evaluated.sh` only as a lone command,
+  with nothing chained or redirected, and their block message does not say so;
+  the dogfood agent was blocked twice trying to run it. Accept
+  the Guardrails update the session start offers ([section 6](#6-afterwards)),
+  or stage the files and use the override yourself.
+
+**4.4.1** closes ways an agent could approve its own commit: running the
+override itself, feeding the hook that reads your reply a reply it made up,
+or writing the Guardrails' approval marker under a name split with quotes. This framework's
+minimum stays 4.4.0 (`SOIF_GUARDRAILS_MIN` in `scripts/lib/guardrails.sh`);
+once your Guardrails clone holds 4.4.1, every session start of a project at
+4.4.0 offers it like any other update.
+
+**The commit is one lone command.** After your approving pick, the agent
+commits with exactly `git commit -m "subject" -m "body"`: one `-m` per
+paragraph, nothing before it (not even `cd … &&`), nothing after it (no
+`&&`, `;` or pipe), no `-a` and no file names. While an approval is open the
+Guardrails refuse any other shape, and the refusal says
+`it is not a lone git commit`. They also refuse a commit command whose text,
+the message included,
+names a path the Guardrails protect, such as
+`.claude/settings.json`, `.claude/manifest.json`, `.claude/framework`,
+`.claude/approvals.jsonl`, `.git/hooks` or `.git/config`, or, from 4.4.1, one
+of their hook scripts that create or clear an approval (`mark-evaluated.sh`, `record-approval.sh`, `marker-tracker.sh`,
+`session-start.sh`, `session-end.sh`, `stop-checklist.sh`,
+`mark-plan-closed.sh`). For such a message
+the agent writes the message to a file outside the project with the Write tool and commits with `git commit -F <that file>`;
+rewording the message works too. The agent sees the same rule when it records
+the question (`scripts/pending-approval.sh --offer`) and in the commit check's
+hold message; dogfood run 3 had to learn it from refusals (`## BL-322:`).
+
+**The override.** You can record an approval yourself, from the project's
+folder, once the change is staged:
+
+```bash
+bash .claude/framework/hooks/mark-evaluated.sh "what you approved, in a few words"
+```
+
+With Guardrails 4.4.0 and later, run it in a separate terminal window: it
+refuses to run inside Claude Code, a command typed after `!` included, and it
+approves only the change staged at that moment. **With 4.4.1 and later it
+also asks you to type a code back at that terminal.** It shows the staged
+tree and your reason, then a line like
+`Type 418093 and press Enter to approve (anything else cancels):` with a
+six-digit code of its own; type that code and press Enter. Anything else
+approves nothing (`Cancelled: the code was not typed back. Nothing was approved.`).
+It reads the code from the terminal, not from its input, so a pipe cannot
+answer it and a window with no terminal is refused.
+A terminal driver such as `expect` can, so what stops the agent
+is not the code: the Guardrails refuse to let the agent run this script at
+all, by its name, from any folder. Then clear the
+question the agent recorded — this framework's own commit check blocks every commit while
+`.claude/pending-approval.json` exists, and the override does not remove it:
+
+```bash
+bash scripts/pending-approval.sh --resolve
+```
+
+Then tell the agent to commit it, with the one lone command above.
+
+**The commit's own checks.** Whoever commits, the commit-time checks adoption
+installed run next ([The commit-time scanners](#the-commit-time-scanners--ship-wp73)).
+Among them: your project's own test suite, which blocks a commit it fails
+([Three things to know](#three-things-to-know-before-you-rely-on-it) covers
+when it cannot run), and the test-before-code check — a `fix:`, `feat:` or
+`refactor:` commit that changes code with no test gets a warning on a personal
+project and is blocked on an organizational one.
+
 ---
 
 ## Contents
 
 - [Quick start: install and use](#quick-start-install-and-use)
 - [Before you adopt: run Scout](#before-you-adopt-run-scout)
-- [The one question](#the-one-question)
+- [The two questions](#the-two-questions)
+- [The memory and documentation servers](#the-memory-and-documentation-servers)
 - [Where it lands: phase 0, always](#where-it-lands-phase-0-always)
 - [The reverse intake](#the-reverse-intake)
 - [What gets written, and in what order](#what-gets-written-and-in-what-order)
@@ -164,8 +637,8 @@ bash ~/solo-orchestrator/scripts/adopt-project.sh --re-add .git/hooks/pre-commit
 consume its report instead of re-scanning:
 
 ```bash
-bash /path/to/solo-orchestrator/scripts/scout.sh --out ./scan
-bash /path/to/solo-orchestrator/scripts/adopt-project.sh --scan-report ./scan/scout-report.json
+bash ~/solo-orchestrator/scripts/scout.sh --out ./scan
+bash ~/solo-orchestrator/scripts/adopt-project.sh --scan-report ./scan/scout-report.json
 ```
 
 Run it first. It is the cheapest way to find out that this project has an AWS key
@@ -191,12 +664,17 @@ adoption. Point it at one of your own files as the archive MANIFEST names it
 (for example .git/hooks/pre-commit); it shows you what the framework thinks
 that trade costs, asks you to confirm, puts the file back exactly as it was,
 and records the choice in the audit trail. The framework's premise is
-opinionated enforcement, not confiscation — your files are yours.
+opinionated enforcement, not confiscation — your files are yours. The one file
+it will not put back is .claude/manifest.json: adoption changed none of your
+settings in it, and the archived copy has no adoption stamp, so restoring it
+would un-adopt the project.
 
 What it does, in order: reads the survey, offers what the survey found as
-EVIDENCE, asks who the project is for, confirms the answers the survey already
-derived, writes the project's state at phase 0, records the adoption, and
-commits exactly the files it wrote.
+EVIDENCE, asks who the project is for and which track it is on, confirms the
+answers the survey already derived, asks whether every reply the agent gives
+should end with a plain-English TL;DR (no answer means no), writes the
+project's state at phase 0, records the adoption, and commits exactly the files
+it wrote.
 
 Your project starts at phase 0 whatever the survey found. Nothing is marked as
 already done and no shortcut is taken past any gate — the questions about what
@@ -218,7 +696,7 @@ driver never calls `create_project()`.
 
 ---
 
-## The one question
+## The two questions
 
 Before it asks anything, the driver shows what the scan noticed — as **evidence
 that decides nothing**, each line carrying its own confidence:
@@ -245,7 +723,7 @@ that decides nothing**, each line carrying its own confidence:
    the Phase 0 questions, never a shortcut past them.
 ```
 
-Then it asks **one question**, and it is not about your code:
+Then it asks **the first question**, and it is not about your code:
 
 ```text
 Who is this project for?
@@ -258,15 +736,535 @@ Who is this project for?
 
 ```text
 [REFUSED] This question has no default and no skip, and no answer was given: who the project is for
-          Adoption did not begin. Nothing was committed and nothing was written.
+          Adoption did not begin. Nothing was committed and nothing was written to this project.
 ```
 
 That answer sets your project's **tier**, and the tier decides how strictly the
 framework treats you — most visibly, how hard it stops when a secret scan finds
-something. It is the one thing adoption asks because it is the one thing no
-amount of reading your code can determine.
+something. No amount of reading your code can determine it.
+
+### Then the track
+
+Straight after it, adoption asks the project's **track** (`## BL-311:` row 8 —
+until then it wrote `full`, the enterprise track, without asking). It is the
+question a new project gets from `init.sh`, with the same three descriptions.
+Observed, answering `1` (Light) on a personal project:
+
+```text
+Project tracks:
+   Light    — Internal tools, prototypes, POCs. <10 users. Minimal governance.
+   Standard — External users, moderate complexity. Market audit, user testing.
+   Full     — Enterprise buyers, sensitive data. Pen testing, legal review mandatory.
+Project track:
+   1) light
+   2) standard
+   3) full
+   Answer with the number or the words:
+   Production builds require Standard or Full track.
+   Light track skips market validation, user testing, and security hardening.
+Select a track:
+   1) standard
+   2) full
+   Answer with the number or the words:
+   Track: standard
+```
+
+The same two rules apply as for a new project:
+
+- **Light needs a Private POC.** Adoption asks no POC question and lands every
+  project as a production build, so a Light answer is always asked again, as
+  above, between Standard and Full.
+- **Full on a personal project is confirmed.** Observed:
+
+  ```text
+     Full track is designed for organizational projects with enterprise compliance.
+     For personal projects, Standard track provides external-user readiness without
+     enterprise overhead (pen testing, legal review). You can upgrade later.
+  Continue with Full track?
+     1) choose a different track
+     2) continue with Full track
+     Answer with the number or the words:
+  ```
+
+  `choose a different track` asks the track again.
+
+Unlike `init.sh`'s `[y/N]`, nothing here has a default: an empty answer or the
+end of your input stops the run before anything is written, naming the question
+(`no answer was given: the project track`, or `…: whether to keep the Full
+track`). The answer is recorded once, in both `.claude/phase-state.json` and
+`.claude/intake-progress.json`, and the `CLAUDE.md` adoption writes carries it.
+A script answers it on standard input like every other question — the option's
+number or its words, one per line.
+
+### Last, TL;DR mode
+
+After the survey's confirmations and before anything is written, adoption asks
+one more question (`## BL-312:`) — whether every reply the agent gives should end
+with a plain-English TL;DR. Observed, answering `yes`:
+
+```text
+══ How the agent replies to you
+   TL;DR mode ends every reply with one plain-English summary: what happened, what it
+   means for you, next steps, what is waiting on you, your options with their pros and
+   cons, a recommendation with its reasoning, and what happens if you do nothing.
+   You can switch it later: bash scripts/reconfigure-project.sh --tldr-mode on (or off).
+
+Do you want every reply to end with a plain-English summary of what happened, your options and a recommendation? (No answer means no.)
+   1) no
+   2) yes
+   Answer with the number or the words:
+   TL;DR mode: on
+```
+
+**Like the server question, it is optional, and no answer means no** — unlike
+the tier and the track. An empty answer or the end of your input turns it off
+and says so (`No answer — TL;DR
+mode is off.`); `1` or `no` is off; `2` or `yes` is on; anything else stops the
+run before anything is written, as every question does (`'maybe' is not one of
+the answers offered for: TL;DR mode`).
+
+**Why it is last.** A script that pipes its answers — and the framework's own
+tests do — was written for the questions before it. Asked anywhere earlier,
+this question would take an answer meant for a later one and shift the rest.
+Last, a script's answers run out before it (no) or reach it with a spare `1`
+(also no — "no" is listed first for that reason), so a stray answer can never
+turn it on.
+
+The answer is written to `.claude/manifest.json` as `tldr_mode: true` or
+`false` — always, so the choice is on record either way. On, `CLAUDE.md` gets a
+short "TL;DR Mode" section stating the eight parts, and the Stop hook
+`scripts/hooks/tldr-check.sh` sends back, once per turn, any reply with no
+TL;DR outside a code block. The hook is registered in `.claude/settings.json`
+either way — beside your Development Guardrails' `stop-checklist.sh`, if you
+have them, and the framework's own Stop hooks — and does nothing while the
+mode is off. `bash scripts/reconfigure-project.sh --tldr-mode on|off` switches
+it; the user guide's TL;DR mode section has the rest.
 
 ---
+
+## The memory and documentation servers
+
+A Claude Code session in an adopted project is checked for two MCP servers:
+**Qdrant** (memory across sessions) and **Context7** (current library
+documentation). The check (`scripts/session-mcp-gate.sh`) blocks every file edit
+until each server that is **registered** has answered a call that session — and
+does not require one that is registered nowhere. So what matters is which of
+three states each server is in, and adoption tells you:
+
+| State | What a Claude Code session in this project does |
+|---|---|
+| Registered, and answering | Works. Each session calls it before its first file edit |
+| Registered, but nothing answers | **Blocks every file edit** until it answers |
+| Not registered | Works without it — no memory of earlier sessions, or no library documentation. Its check switches on in the first session after you register it |
+
+Adoption reads the registrations from the files a Claude Code session started
+from the same shell reads: `~/.claude.json` and `~/.claude/settings.json`, or —
+when `CLAUDE_CONFIG_DIR` is set — `.claude.json` and `settings.json` inside that
+directory, **and nothing under your home directory**. That is Claude Code's own
+rule, and before this step adoption did not follow it: it read `~/.claude.json`
+for a session that did not, saw a Qdrant server that session did not have, and
+declared it for the project.
+
+After the credential scan, when something is missing and this machine can act,
+it shows the exact commands and asks. This was recorded with stand-in `claude`
+and `docker` commands, so nothing was registered on the machine that produced
+it; the two paths are shortened (that run's `CLAUDE_CONFIG_DIR` was a scratch
+directory):
+
+```text
+══ The memory and documentation servers Claude Code uses here
+   Read from the two files a Claude Code session started from here reads:
+     …/cfg/.claude.json
+     …/cfg/settings.json
+   Context7 (current library documentation): NOT registered for Claude Code.
+   Qdrant (memory across sessions): NOT registered for Claude Code.
+
+   This would run, exactly as written:
+     claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
+     docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+     claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
+   The claude commands change your Claude Code configuration for every project,
+   not only this one. Nothing is written into this project.
+Set them up now? (No answer means skip it.)
+   1) skip it
+   2) set it up now
+   Answer with the number or the words:
+```
+
+**`skip it` is listed first on purpose**: an answer of `1` meant for another
+question — a script that answers `1` to everything — skips, rather than
+registering servers for every project on the machine.
+
+`set it up now` (or `2`) does not run them yet. They change your Claude Code
+configuration for every project, so they wait until the checks that can stop
+the adoption before it writes have passed — every question, the ignore-rule
+check and the archive check — and run just before the first file is written
+(`## BL-322:` S3). A stop after that (a file it cannot write, your own commit
+hook) leaves them registered and says so:
+
+```text
+   Answer with the number or the words: 2
+   Noted. Nothing has run yet: these run once the checks that can stop this
+   adoption before it writes have passed. A stop before then registers nothing;
+   a later stop (a file it cannot write, your own commit hook) leaves the
+   registration, and says so.
+```
+
+Then they run, from the run's own scratch directory, under their own heading;
+the run reads the registrations back and asks Claude Code itself whether it can
+start each server (`claude mcp get`, the same check `claude mcp list` runs) — it
+claims only what those show:
+
+```text
+══ Setting up the memory and documentation servers
+   Running: claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
+   Running: docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+   Running: claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
+
+   Afterwards:
+   Context7 (current library documentation): registered for Claude Code.
+   Qdrant (memory across sessions): registered, and answering at http://localhost:6333.
+
+   Context7: Claude Code's own check (claude mcp get) says it starts.
+   Qdrant: Claude Code's own check (claude mcp get) says it starts.
+```
+
+If Claude Code cannot start a server it now has registered — `uvx` cannot fetch
+its Python, say — that is the worst state, because registered means required,
+and the run says so as a block, with Claude Code's own command to undo it
+(recorded with a stand-in that refuses to start Qdrant):
+
+```text
+   Qdrant: Claude Code's own check says it could NOT start it — stub: qdrant cannot be started.
+
+   BLOCKED UNTIL FIXED: Qdrant IS registered, but Claude Code could NOT start it (stub: qdrant cannot be started).
+     Every file edit in this project is blocked until it can. To back the registration out:
+       claude mcp remove qdrant -s user
+```
+
+Qdrant is registered only once its database answers, and not at all if its
+container fails to start: a registered server with nothing behind it would
+block every file edit. If a container named `qdrant` already exists, the plan
+says `docker start qdrant` instead of `docker run`; if a database already
+answers on port 6333, only the registration is offered. **A new container's
+ports are published on `127.0.0.1` only** — without an address, `-p` publishes
+on every network interface unless your Docker daemon sets a default bind
+address, and this database has no API key. (Docker's own documentation adds
+that on Docker Engine older than 28.0.0 on Linux, hosts on the same network
+segment can reach even ports published on `127.0.0.1` — moby/moby#45610.)
+
+A container that already exists keeps whatever binding it was created with, so
+whenever adoption finds one it reads it (`docker inspect`: the port bindings,
+whether it was created with `-P` (`--publish-all`) or on the host's network,
+and whether `QDRANT__SERVICE__API_KEY` — in any letter case, as Qdrant reads
+it — is set in its environment, never its value), on every path — even when
+nothing is missing. It says so before the question, and every later
+`docker start` hint points back at it, when the container runs on the host's
+network (every interface of this machine), when a binding names `0.0.0.0`
+(every interface), `::` (every IPv6 address), no host address, or any address
+other than `127.0.0.1` and `::1`, and when it was created with `-P`, which
+publishes on random ports of every interface. Loopback is only what is left
+when none of those holds. When Docker is not running, the inspect fails or its
+answer cannot be parsed, every `docker start` hint says the bindings could not
+be read and how to check them. Recorded with a stand-in
+`docker` shaped like a real container on the `qdrant_storage` volume with no
+API key in its environment; `~/solo-orchestrator` stands for the framework
+checkout, printed as its full path:
+
+```text
+   Your existing qdrant container's ports name no host address, which Docker
+   publishes on every network interface unless your Docker daemon sets a default
+   bind address: while it runs, other machines on your network may be able to reach
+   it — and no API key is set in its environment (a key in a Qdrant config file would not show here).
+   Starting it keeps that. To publish it on 127.0.0.1 (loopback) instead, it has to
+   be recreated, and removing a container can delete its data.
+   (On Docker Engine older than 28.0.0 on Linux, hosts on the same network segment
+   can reach even ports published on 127.0.0.1 — moby/moby#45610.)
+   Adoption changed nothing about this container, and prints no commands to recreate
+   it. How to do that without losing its data:
+   "Recreating an exposed Qdrant container" in ~/solo-orchestrator/docs/adoption.md.
+```
+
+**It prints no command to recreate the container — for any container.**
+Recreating it on loopback means removing it, and whether the data survives that
+depends on how the container was made. Earlier versions of this step printed a
+recreate, first for every shape and then only for the shapes an allow-list
+confirmed; each round of review on real Docker found another setting the printed
+commands lost or broke — where the data lives (nothing mounted, `--rm`, a tmpfs
+in any spelling, a tmpfs-backed volume, storage split across mounts, a volume
+subpath), an API key or another setting, lowercase setting names, `RUN_MODE`,
+command-line flags, a tag that had moved since the container was made, snapshot
+files kept inside the container. So the note says what it found, that adoption
+changed nothing, and where the written procedure is:
+[Recreating an exposed Qdrant container](#recreating-an-exposed-qdrant-container),
+which goes through Qdrant's own snapshot API and so does not depend on how the
+storage is mounted. The note is the same whatever the storage, and carries no
+line to paste. `docker start qdrant` stays the offered action.
+
+`skip it`, a blank line, or the end of your input all mean skip — this question
+never stops an adoption:
+
+```text
+   Skipped. Nothing was run.
+
+   NOT SET UP — what that means for Claude Code in this project:
+     Qdrant is not registered: sessions here have no memory of earlier sessions. The
+     framework's check for it is off while it is not registered, and ON from the first
+     session after you register it — so have the database running when you do.
+     Context7 is not registered: sessions here cannot read current library documentation.
+     Its check is off until you register it, and ON from the next session after that.
+   To set them up later, run these, then start a new Claude Code session:
+     docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v qdrant_storage:/qdrant/storage --restart unless-stopped qdrant/qdrant:latest
+       (or, if a container named qdrant already exists: docker start qdrant)
+     claude mcp add -s user qdrant -e QDRANT_URL=http://localhost:6333 -e COLLECTION_NAME=claude-memory -- uvx --python 3.13 mcp-server-qdrant
+     claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp
+```
+
+A server that is registered but silent gets the stronger sentence instead —
+`EVERY file edit is BLOCKED until qdrant-find succeeds` — because that is what
+the check then does. When the machine cannot act (no `claude` command, which is
+every CI runner; Docker not running; no `uvx` or `npx`), there is no question:
+the run names what is missing and what to install (Node.js for `npx`, uv for
+`uvx`), and prints the same commands for later. Either way
+the [Adoption Record](#the-adoption-record) carries one row for it:
+
+```text
+    | MCP servers (Qdrant, Context7) | Qdrant: NOT registered (skipped); Context7: NOT registered (skipped) |
+```
+
+**The Qdrant command puts the server name before the `-e` options.** Measured on
+Claude Code 2.1.283: `-e` takes every value after it, so the spelling with
+`qdrant` after `-e COLLECTION_NAME=claude-memory` exits 1 with `Invalid
+environment variable format: qdrant`. Earlier copies of the framework — `init.sh`,
+the phase checks, the tool matrix and the [CLI Setup Addendum](cli-setup-addendum.md)
+— printed and ran that failing order; all of them now use this one.
+
+---
+
+## Recreating an exposed Qdrant container
+
+Adoption points here whenever it finds an existing `qdrant` container whose
+ports are published beyond loopback — a binding on `0.0.0.0`, `::`, no host
+address or any address other than `127.0.0.1` and `::1`, a container created
+with `-P`, or one on the host's network (`--network host`). It says what it
+read and changes nothing, and it prints no commands to recreate the container:
+a recreate printed without knowing everything the container was created with
+can lose its data or drop a setting it relies on (see
+[The memory and documentation servers](#the-memory-and-documentation-servers)
+for the list review found). Recreating the container on loopback is still the
+fix; this is how to do it without losing the data. Adoption does none of it for
+you.
+
+**The route does not depend on how the storage is mounted.** It uses Qdrant's
+own snapshot API: each collection is snapshotted and downloaded through the
+running server, and uploaded into the new container. It follows Qdrant's
+snapshot documentation (<https://qdrant.tech/documentation/snapshots/>:
+`POST /collections/{name}/snapshots`, whose response carries `result.name`;
+`GET /collections/{name}/snapshots/{snapshot}` to download it;
+`POST /collections/{name}/snapshots/upload?priority=snapshot` to restore it,
+which creates the collection) and its alias API (`GET /aliases`;
+`POST /collections/aliases` with `create_alias` actions). It needs `curl`,
+`jq`, and `sha256sum` or `shasum` (Linux has `sha256sum`, macOS `shasum`) —
+steps 1 and 2 stop and say so when `jq` is missing, and step 2 when neither
+checksum tool is there — and the old container **running** — start it if it is
+stopped, unless it was started with `--rm` and is already gone.
+
+**Before you start, list the settings it was created with — the new container
+must be created with the SAME ones.** That is its environment — an API key,
+every `QDRANT__` variable whatever its case, `RUN_MODE` — any command or
+entrypoint flags, and its mounts: **a config file mounted into it** (such as
+`/qdrant/config/production.yaml`) can hold an API key or any other setting, and
+none of that shows in its environment. A recreate that drops one does not
+behave like the old container: a dropped API key leaves the new one open, and a
+dropped setting can move where it stores its data. This lists them and changes
+nothing — **but it prints their values, an API key included**, so run it where
+no one can read your screen, and do not paste its output anywhere:
+
+```sh
+docker inspect -f '{{json .Config.Env}} {{json .Config.Cmd}} {{json .Config.Entrypoint}} {{json .Mounts}}' qdrant
+```
+
+Step 4 says where each one goes; what the image sets itself, such as `PATH`, comes
+back with the same image. **If it has an API key** — in its environment or in a
+mounted config file — change `H=()` at the end of step 1's first line to
+`H=(-H 'api-key: <the key>')`. Every `curl` below passes `"${H[@]}"`, except the
+two that check what a request made WITHOUT the key gets: step 1 records whether
+the old container answers one, and step 6 fails if the new one answers where
+the old one refused. And:
+
+- **Keep the same image.** Step 4 reuses the image the container RUNS (its
+  image ID, `{{.Image}}`), not the tag it was created from: a tag may have
+  moved since (a later pull), and recreating from it would run a different
+  Qdrant version. A version change is a separate upgrade, not part of this.
+- **Aliases are not in a collection snapshot.** Step 1 saves them to
+  `$B/aliases.json`, step 5 re-creates them and step 6 checks them.
+- **Snapshot files you keep inside the container** — at `/qdrant/snapshots`,
+  not on a volume or a host folder — are copied out in step 3, before the old
+  container is stopped.
+
+**Two addresses: `O` for the old container, `Q` for the new one.** Step 1 talks
+to the OLD container at `O`; steps 5 and 6 talk to the NEW one at `Q`, which is
+`http://127.0.0.1:6333` because step 4 publishes it there. Step 1's second line
+reads `O` from `docker port qdrant 6333/tcp`, so a container created with `-P`
+(a random port) or published on a LAN address is found where it is; `0.0.0.0`
+and `[::]` are read as `127.0.0.1` and `[::1]`. **If it prints nothing** — a
+container on the host's network (`--network host`) publishes no port, and a
+stopped one has none — step 1 stops and says so; start the container if it is
+stopped, and otherwise replace step 1's second line with `O=http://` followed
+by the address and port where the old container answers. On Linux, a container
+on the host's network answers at `http://127.0.0.1:6333`. On Docker Desktop it
+answers on this machine only if Docker Desktop's host networking is turned on;
+if nothing answers, this procedure cannot read it from here — stop, nothing has
+changed. **If `docker port` prints an address this machine does not reach,**
+step 1 says the old container did not answer at it: set `O` by hand the same
+way. Never point `Q` at the old container: step 5 waits for the new one at
+`Q`, and would wait forever.
+
+**1. Snapshot and download every collection, and save the aliases,** into a
+new folder in your home directory (never the project). Paste the numbered
+blocks into the SAME shell — they share `$O`, `$Q`, `$S`, `$B` and `$H` — and
+each block whole. This one stops at the first failure and says so: `STEP 1
+FAILED` when `jq` is missing, `docker port` printed no address, or the old
+container did not answer; `SNAPSHOT FAILED` with the collection it stopped at.
+For each snapshot it keeps what Qdrant answered when it made it — the size and
+the SHA-256 checksum of the file — for step 2 to check the download against:
+
+```sh
+Q=http://127.0.0.1:6333; S="$(date +%Y%m%d-%H%M%S)"; B="$HOME/qdrant-snapshots-$S"; H=()
+O="$(docker port qdrant 6333/tcp 2>/dev/null | head -1 | sed -e 's/^0\.0\.0\.0:/127.0.0.1:/' -e 's/^\[::\]:/[::1]:/' -e 's#^#http://#')"
+if ! command -v jq >/dev/null 2>&1; then echo "STEP 1 FAILED: jq is not installed — install it, then paste this block again"
+elif [ -z "$O" ]; then echo "STEP 1 FAILED: docker port printed no address for the old container — start it if it is stopped; if it runs, replace this block's second line with O=http://<address>:<port> where it answers"
+elif mkdir "$B" &&
+  curl -s -o /dev/null -w '%{http_code}' "$O/collections" > "$B/nokey-status.txt" &&
+  curl -sf "${H[@]}" "$O/aliases" > "$B/aliases.json" &&
+  curl -sf "${H[@]}" "$O/collections" > "$B/collections.json" &&
+  jq -r '.result.collections[].name' "$B/collections.json" > "$B/collections.txt"; then
+  while IFS= read -r c; do
+    curl -sf "${H[@]}" -X POST "$O/collections/$c/snapshots" > "$B/$c.created.json" &&
+    n="$(jq -r '.result.name // empty' "$B/$c.created.json")" &&
+    [ -n "$n" ] &&
+    curl -sf "${H[@]}" "$O/collections/$c/snapshots/$n" --output "$B/$c.snapshot" &&
+    [ -s "$B/$c.snapshot" ] || { echo "SNAPSHOT FAILED: $c"; break; }
+  done < "$B/collections.txt"
+else echo "STEP 1 FAILED: the old container did not answer at $O, or it needs its API key (set H in the first line)"
+fi
+```
+
+**2. Check that step 1 finished:** `jq` is installed, and `sha256sum` or
+`shasum`; the number of collections the server listed matches the number of
+names step 1 saved — and is not 0 — and every snapshot file has exactly the
+size and the SHA-256 checksum Qdrant reported when it made it. A file being
+there proves nothing: a download cut short — a full disk, a dropped
+connection, or Ctrl-C, which prints nothing at all — leaves a partial file
+that is not empty. Go on only if this prints `ALL SNAPSHOTS PRESENT`;
+`MISSING OR INCOMPLETE` names a collection whose snapshot is not all there, or
+whose record from step 1 is missing — fix the cause (disk space, above all)
+and paste step 1 again, which starts a new folder:
+
+```sh
+m=0; command -v jq >/dev/null 2>&1 || { echo "STEP 2 FAILED: jq is not installed"; m=1; }
+if command -v sha256sum >/dev/null 2>&1; then K=(sha256sum); elif command -v shasum >/dev/null 2>&1; then K=(shasum -a 256); else K=(); echo "STEP 2 FAILED: neither sha256sum nor shasum is installed, so the snapshots cannot be checked"; m=1; fi
+[ -s "$B/nokey-status.txt" ] && [ -s "$B/aliases.json" ] && [ -s "$B/collections.json" ] && [ -f "$B/collections.txt" ] || { echo "STEP 1 DID NOT FINISH"; m=1; }
+e="$(jq '.result.collections | length' "$B/collections.json" 2>/dev/null)"; g="$(grep -c '' "$B/collections.txt" 2>/dev/null)"
+[ "$e" -gt 0 ] 2>/dev/null && [ "$e" = "$g" ] || { echo "COUNT MISMATCH: the server listed ${e:-?} collections, collections.txt has ${g:-?} (they must match, and not be 0)"; m=1; }
+while IFS= read -r c; do
+  z="$(jq -r '.result.size // empty' "$B/$c.created.json" 2>/dev/null)"; w="$(jq -r '.result.checksum // empty' "$B/$c.created.json" 2>/dev/null)"
+  [ -n "$z" ] && [ -n "$w" ] && [ -f "$B/$c.snapshot" ] && [ "$(wc -c < "$B/$c.snapshot" | tr -d '[:space:]')" = "$z" ] &&
+    [ "${#K[@]}" -gt 0 ] && [ "$("${K[@]}" < "$B/$c.snapshot" | cut -d' ' -f1)" = "$w" ] || { echo "MISSING OR INCOMPLETE: $c"; m=1; }
+done < "$B/collections.txt"; [ "$m" = 0 ] && echo "ALL SNAPSHOTS PRESENT"
+```
+
+**3. Copy out the snapshot files you keep inside the container** — skip this
+if you keep none there, or keep them on a volume or a host folder. The old
+container is stopped in step 4, and one started with `--rm` is deleted when it
+stops. The copy also holds the snapshots step 1 just made. Go on only if this
+prints `SNAPSHOT FILES COPIED`:
+
+```sh
+docker cp qdrant:/qdrant/snapshots "$B/old-snapshots" && echo "SNAPSHOT FILES COPIED"
+```
+
+**4. Recreate it on loopback** with the same image and the same settings. The
+old container is renamed while it still runs, so a name clash stops this before
+anything is stopped. Before you paste it, add the settings you listed before
+you started: each environment variable as `-e NAME=value` before `"$I"`; each
+mount that is not the storage — **a config file above all** — as
+`-v <source>:<destination>` before `"$I"`, at the same destination (a key or
+setting kept in a config file is lost without it); and the command after `"$I"`
+(and `--entrypoint`, before `"$I"`) if you started it with one. Do not mount the
+old storage again: the new container gets a fresh volume, which step 5 fills.
+If a setting moves the storage path away from `/qdrant/storage`, mount the
+volume at that path instead:
+
+```sh
+I="$(docker inspect -f '{{.Image}}' qdrant)" &&
+docker rename qdrant qdrant-old &&
+docker stop qdrant-old &&
+docker run -d --name qdrant -p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v "qdrant_storage_$S:/qdrant/storage" --restart unless-stopped "$I"
+```
+
+**5. Restore every collection, then the aliases,** once the new container
+answers. **It stops at the first upload that fails** and prints
+`RESTORE FAILED` with that collection: the collections after it in the list
+were NOT tried, and no alias was restored. Fix the cause and paste this block
+again for the rest — it uploads every collection again, which replaces the ones
+already restored with the same snapshot; step 6 shows what is still missing:
+
+```sh
+until curl -sf "${H[@]}" "$Q/collections" >/dev/null; do sleep 1; done &&
+f=0 &&
+while IFS= read -r c; do
+  curl -sf "${H[@]}" -X POST "$Q/collections/$c/snapshots/upload?priority=snapshot" -F "snapshot=@$B/$c.snapshot" >/dev/null ||
+    { echo "RESTORE FAILED: $c — the collections after it were NOT tried; fix the cause and paste this block again"; f=1; break; }
+done < "$B/collections.txt" &&
+[ "$f" = 0 ] &&
+jq -c '{actions: [.result.aliases[] | {create_alias: {collection_name, alias_name}}]}' "$B/aliases.json" > "$B/alias-actions.json" &&
+{ [ "$(jq '.actions | length' "$B/alias-actions.json")" = 0 ] ||
+  curl -sf "${H[@]}" -X POST "$Q/collections/aliases" -H 'Content-Type: application/json' --data-binary "@$B/alias-actions.json" >/dev/null ||
+  echo "ALIAS RESTORE FAILED"; }
+```
+
+**6. Check.** Go on only if this prints BOTH `ALL COLLECTIONS RESTORED` and
+`ALL ALIASES RESTORED`, and compare the `points_count` of each collection
+(`curl -s "${H[@]}" "$Q/collections/<name>"`) with the old one's if you noted
+them. If the old container refused a request made without its API key, this
+first makes one such request to the new one; if that is answered it prints
+`API KEY LOST` and neither success line — the key, from its environment or a
+mounted config file, did not reach the new container:
+
+```sh
+k=0; [ "$(cat "$B/nokey-status.txt" 2>/dev/null)" = 200 ] || [ "$(curl -s -o /dev/null -w '%{http_code}' "$Q/collections")" != 200 ] || { echo "API KEY LOST: the new container answers without the API key the old one required"; k=1; }
+[ "$k" = 0 ] && [ -f "$B/collections.txt" ] && curl -sf "${H[@]}" "$Q/collections" | jq -r '.result.collections[].name' | sort > "$B/restored.txt" &&
+sort "$B/collections.txt" | diff - "$B/restored.txt" && echo "ALL COLLECTIONS RESTORED"
+[ "$k" = 0 ] && curl -sf "${H[@]}" "$Q/aliases" | jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' > "$B/aliases-restored.json" &&
+jq -c '[.result.aliases[] | [.alias_name, .collection_name]] | sort' "$B/aliases.json" | diff - "$B/aliases-restored.json" && echo "ALL ALIASES RESTORED"
+```
+
+Only then remove the old container (`docker rm qdrant-old`, if it is still
+there) — until step 6 passes it is your way back — and keep `$B` until you are
+sure. Run the adoption's `claude mcp add` line for Qdrant, if it was skipped.
+
+**If a step fails.** Nothing is lost before step 4: the old container still
+runs with its data. In step 4, if `docker run` fails, the snapshots in `$B`
+are intact: fix what it reports and run that line again, or bring the old one
+back with `docker rename qdrant-old qdrant` and `docker start qdrant` — which
+restores the data only if it lived on a volume or in the container itself, not
+if it was in memory or the container was started with `--rm`. In step 5, a
+failed upload stops the loop: the uploads before it stay in place, the
+collections after it were not tried — fix the cause and paste step 5 again for
+the rest, and step 6 shows what is still missing. In step 6, `API KEY LOST`
+means the new container was created without the key: remove the NEW one
+(`docker rm -f qdrant` — the old one is still `qdrant-old`), paste step 4's
+last line again with the key's `-e` setting or its config file's `-v` added,
+then steps 5 and 6. A collection name with characters that are not safe in a URL needs
+percent-encoding in these URLs.
+
+There is deliberately **no file-copy route for the data**: copying
+`/qdrant/storage` by hand misses whatever is mounted under it (a tmpfs at
+`/qdrant/storage/collections` comes back empty), and `docker cp` reads nothing
+from a tmpfs. The snapshot goes through the server, which sees all of it.
+Step 3's `docker cp` copies only snapshot files you keep yourself, never the
+storage.
 
 ## Where it lands: phase 0, always
 
@@ -409,12 +1407,14 @@ exercised by the test suite rather than assumed:
 
 | Route | What it does |
 |---|---|
-| `bash scripts/resume.sh` | What the run tells you to do next. It prints the initialization prompt from this project's own Section 13, and that prompt names the classification as **not optional**. |
+| `bash scripts/resume.sh` | What the run tells you to do next. Before the assessment it prints the assessment prompt, which asks for the classification; after it, the initialization prompt from this project's own Section 13, which names the classification as **not optional**. |
 | `bash scripts/intake-wizard.sh --resume` | Walks the intake from Section 1, which includes **Section 5 — Data Classification**. |
 | `bash scripts/reconfigure-project.sh --field data_classification --new <value>` | The escape hatch the Phase 1→2 gate names in its own failure message, if you get there first. |
 
-> **Not built yet:** the assessment is Act 3 and it has not shipped, so those
-> cells stay blank until you fill them through one of the routes above. The
+> **The assessment asks for it.** The assessment conversation (Act 3) asks how
+> sensitive the project's data is, and its finisher (Act 4) records the answer
+> where the Phase 1→2 gate reads it ([The assessment](#the-assessment--act-3-and-act-4--ships-wp12a)).
+> Until then the cell stays blank, and the routes above fill it too. The
 > direction is fail-closed: a project with no classification cannot cross its
 > Phase 1→2 gate.
 >
@@ -430,7 +1430,7 @@ coerced:
 
 ```text
 [REFUSED] 'legacy-app' is not one of the answers offered for: who the project is for
-          Adoption did not begin. Nothing was committed and nothing was written.
+          Adoption did not begin. Nothing was committed and nothing was written to this project.
 ```
 
 ---
@@ -443,7 +1443,8 @@ The secrets dispositions come before `manifest.json`, so an acceptance that
 cannot be recorded stops the run before the project reads as adopted. The framework documents follow `manifest.json` so they are written under a
 stamped adoption, and precede the record so the record stays the last thing in
 the log. The last two are ordered by what they read, not by taste. The **Adoption
-Record** names the commit this project was adopted at and takes that value from
+Record** names the commit adoption started from — the tip the project was on
+when adoption ran, the parent of the adoption commit — and takes that value from
 the adoption *stamp*, which the `manifest.json` stage writes — one fact, one
 source, rather than a second `git rev-parse HEAD` that could disagree. The
 **write set** is last because it records what every stage before it wrote.
@@ -519,6 +1520,12 @@ the test-debt ledger WP5b added, by `orchestrator-source.json`, and by
 whoever adds a writer must re-run the count**. An enumeration
 of what a run writes has to be re-run by whoever adds a writer; nothing checks
 it.)*
+
+*(And again: since `## BL-318:` G1 (2026-10-03), `.claude/test-command` joins
+these whenever the operator kept the test command the scan offered and the
+project had no such file — see "Three things to know before you rely on it" below. The 79 above
+predates it and the other writers added since. One measured run on 2026-10-03, a
+four-file uv project with no Guardrails clone, committed 112 files.)*
 
 ### What lands in `scripts/`
 
@@ -838,7 +1845,7 @@ the adoption:
 Run it against a staged commit:
 
 ```text
-bash <framework>/scripts/lib/adopt/adopt-test-debt.sh --check --root .
+bash ~/solo-orchestrator/scripts/lib/adopt/adopt-test-debt.sh --check --root .
 ```
 
 At `strict`, adding a file with no test:
@@ -991,9 +1998,51 @@ Three differences from a new project, on purpose:
 - **No clone.** Adoption never fetches the Guardrails over the network. Without a
   clone it says **NOT INSTALLED** and prints the two commands that install them
   afterwards, and the Adoption Record says so.
-- **No update.** It installs the version on disk, and the Record names it.
+- **No update.** It installs the version on disk, and the Record names it. An
+  install the project already had stays at its own version, and from then on
+  every session start offers the update while the clone is newer
+  ([step 6](#6-afterwards); `## BL-318:` G5).
 - **An existing install is left alone.** A project that already has
-  `.claude/framework/` keeps its own.
+  `.claude/framework/` keeps its own — including the settings the Guardrails
+  keep in `.claude/manifest.json` (profile, rules, hooks, project config,
+  discovery answers). Adoption adds its own keys beside them, changes none of
+  them, and archives the file as it was, `composed` in the archive's MANIFEST
+  like `.claude/settings.json`. Observed (brownfield dogfood run 1's project,
+  Guardrails 4.3.0):
+
+  ```text
+  ══ The Development Guardrails for Claude Code
+     This project already has the Guardrails (.claude/framework/). They were left as they were.
+     Their settings in .claude/manifest.json (profile desktop-app, 13 rules, 14 hooks) are kept:
+     adoption adds this framework's keys beside them and changes none of theirs.
+  ```
+
+  **That archived copy is never put back**, and it is the one entry in the
+  archive with no restore line. Nothing of yours in it was changed, so it
+  gives nothing back — and it is the file from *before* adoption, with no
+  adoption stamp, so restoring it would remove the stamp and every tier key
+  (`host`, `mode`, `deployment`, `poc_mode`, `enforcement_level`,
+  `remote_url`) and the project would no longer be adopted. Its archive row
+  says so in place of the `cp` line, and
+  `adopt-project.sh --re-add .claude/manifest.json` refuses
+  (`# BL-311-MANIFEST-READD-REFUSE`):
+
+  ```text
+  [REFUSED] .claude/manifest.json is not put back: nothing of yours in it was changed
+            The re-add did not begin. Nothing was committed and nothing was written to this project.
+            Adoption added this framework's keys beside your Development Guardrails
+            settings and changed none of them, so there is nothing of yours to restore.
+            The archived copy is the file from before adoption, so putting it back
+            would remove the adoption stamp and the project's tier (host, mode,
+            deployment, poc_mode, enforcement_level, remote_url): the project would no
+            longer be adopted, and the phase gate would report the stamp LOST.
+            This framework documents no way to undo an adoption, and this is not one.
+  ```
+
+  Your `.claude/settings.json` is not refused the same way: putting it back
+  keeps the adoption stamp and the tier, and takes out what the framework
+  added to it — its session hooks, and any permission rule of its that yours
+  did not already carry — which is what a re-add is for.
 - **Your `settings.json` keeps its hooks.** The installer replaces the `hooks`
   in `.claude/settings.json` with its own. Adoption puts yours back, ahead of
   the installer's, and stops if it cannot. If the file is not plain JSON, or is
@@ -1035,18 +2084,22 @@ answers. It is split in two, because half of it is judgement and half is fact:
 
    It **checks the record before it writes anything**, and refuses — naming
    each reason — when the file is not exactly one JSON object, a finding names
-   no requirement, the commit is not the one this project was adopted at,
+   no requirement, `adoptedAtCommit` is not the commit adoption started from
+   (the tip just before the adoption commit, not the adoption commit itself),
    *in production* is not a plain true/false, the data classification is not
    one of the seven, a classification other than `public` has neither a ZDR
    attestation nor a written reason (the Phase 1→2 gate would block it later),
-   an interview answer uses a key outside the ten the prompt lists, or the
+   an interview answer uses a key outside the ten the prompt lists (exposure
+   has none and lives only in `interview.exposure`; the `uptime` key is the
+   intake's own uptime question, not the interview's availability answer, as
+   the prompt says), or the
    verdict lacks its technical account or its `## Plain English` half with a
    `Recommendation:` and a `Reason:`. If it stops after it has written
    something, it says what. Measured:
 
    ```text
    [REFUSED] the assessment record was not accepted, and nothing was written
-             The assessment finisher did not begin. Nothing was committed and nothing was written.
+             The assessment finisher did not begin. Nothing was committed and nothing was written to this project.
              - fitness finding F1 names no interview axis in requirementRef — a finding is relative to a stated requirement (§5.3)
              Fix .claude/adoption/assessment-record.json (or the verdict), then run this again.
    ```
@@ -1056,6 +2109,13 @@ answers. It is split in two, because half of it is judgement and half is fact:
    wizard's own keys, and merges the assessment into `.claude/manifest.json` —
    **once**; a second run is refused. It never moves the phase and never writes
    `PRODUCT_MANIFESTO.md`, and it does not commit: it prints what to commit.
+
+   **If Claude Code's auto mode refuses the finisher** — a permission denial,
+   not the finisher's own `[REFUSED]` line — run it yourself, typed after `!`
+   at the session's prompt or in your own terminal from the project's folder
+   (its `jq` lookup reads `.claude/orchestrator-source.json` from where you
+   are): it asks you nothing, so either works. See
+   [step 2](#2-before-you-start-let-claude-code-run-the-frameworks-scripts).
 
 **If the project is in production, a live incident does not wait for phase 4.**
 The assessment records the answer, and an adopted project recorded as in
@@ -1068,7 +2128,20 @@ in production — or assessed before the question existed — is refused as befo
 **Either verdict continues from phase 0.** After the assessment, `resume.sh`
 opens Phase 0 — measured on a real adoption, the committed assessment passes the
 project's own commit checks and the next `resume.sh` prints the project's
-Phase 0 prompt.
+Phase 0 prompt. That holds whether or not the project kept a
+`PRODUCT_MANIFESTO.md` of its own: a manifesto still byte-identical to the one
+adoption found is not Phase 0's work (`# BL-318-G2-ADOPTEE-PHASE0`). Before
+`## BL-318:` G2, a project built with an older Solo still had its manifesto, and
+`resume.sh` printed the classic resume prompt instead. Once Phase 0 writes the
+manifesto, or changes the one the project brought, `resume.sh` prints the
+ordinary resume prompt, as for any project mid-Phase 0. Work that does not touch
+the manifesto does not count, so until it changes every session opens with the
+Phase 0 prompt. The session start says the same thing (`# BL-318-G2-HOOK-BROUGHT`),
+and before the assessment it points you at the assessment prompt
+(`# BL-318-G2-HOOK-ASSESSMENT`). The Phase 0 prompt is Section 13 as adoption
+wrote it, and the assessment does not update it. So it still calls the
+judgement cells unasked; the answers given in the assessment are in
+`.claude/intake-progress.json`.
 
 ### The certification pass — RETIRED, not deferred
 
@@ -1102,49 +2175,77 @@ command you run.
 Before any framework writer runs, adoption copies the files it would otherwise
 land on into `.claude/adoption-archive/<UTC-timestamp>-<pid>/`, mirroring your
 paths, and writes a `MANIFEST.json` and a `MANIFEST.md` beside them. The
-population is the archive-and-replace bucket: `.claude/settings.json`,
+population is your AI-layer surfaces and git hooks: `.claude/settings.json`,
 `.claude/settings.local.json`, `.mcp.json`, your `.claude/skills/*/SKILL.md`,
 every non-`.sample` file in `.git/hooks/`, and — since WP9b — `APPROVAL_LOG.md`.
 **Only files that exist are archived** — an absent surface produces no file and
 no manifest row.
 
-**`APPROVAL_LOG.md` is the one entry adoption REPLACES**, and its row says so:
-`disposition: "replaced"`, where every other entry reads `kept` (your file is
-still where it was) or `composed` (the framework appended a marked block to your
-commit-msg hook). Adoption writes its own tier-matched approval log at that path
-because the phase gate cannot run without one — so if you keep an approval
-record there already, **your copy is archived with a restore line and the
-framework's template is what sits at the path afterwards**. That is the only
-in-place replacement in the run.
+**Each row says what adoption does to that file.** `disposition: "replaced"`
+means the framework's version is at the path afterwards: `APPROVAL_LOG.md` (the
+phase gate cannot run without its tier-matched approval log), the documents
+(`CLAUDE.md`, `PROJECT_INTAKE.md`, `FEATURES.md` and the rest of
+[The framework documents](#the-framework-documents--ship-wp12b)), your
+pre-commit hook, the four vendored skills, and any framework script you already
+had (`# BL-322-ARCHIVE-DISPO-SCRIPT`; that row said `kept` until `## BL-322:`
+S2). `composed` means yours is still there, with the framework's additions: a
+marked block appended to your commit-msg hook, its rules and hooks added to your
+`.claude/settings.json`, its keys added beside the Development Guardrails' in
+`.claude/manifest.json`. `kept` means adoption only copied it: yours is still at
+the path, unchanged (run 3's `PROJECT_BIBLE.md` and `PRODUCT_MANIFESTO.md`, and
+any hook, skill or document left alone because it is a symlink or read-only).
 
-Nothing is deleted. Every entry carries a `restore` line you can paste, and
-every git-hook entry carries a short **advisory** description of what it
-invoked, assembled from a fixed list of tool names so that no byte of your hook
-can reach the manifest.
+Nothing is deleted. Every entry in `MANIFEST.json` carries a `restore` line you
+can paste — except the Development Guardrails' `.claude/manifest.json`, whose
+`restore` is `null` and whose `doNotRestore` says why (see *The Development Guardrails for Claude
+Code*: its archived copy would un-adopt the project) — and every git-hook entry
+carries a short **advisory** description of what it invoked, assembled from a
+fixed list of tool names so that no byte of your hook can reach the manifest.
 
 The run then discloses it in full — the sentence, **the list** (every path, not
-a count), and the restore instructions:
+a count), what adoption does to each, and the restore instructions. A file
+adoption only copied gets no restore line, on screen or in `MANIFEST.md`
+(`# BL-322-DISCLOSE-KEPT`, `# BL-322-MANIFEST-KEPT`): run 3's said "moved" and
+printed one for two files that were sha256-identical in the tree.
 
 ```text
 ══ Your own configuration has been archived
-   The files below were moved to ensure the framework operates properly.
-   Nothing was deleted. Every one of them is in .claude/adoption-archive/… and can be put back.
+   The files below were moved to ensure the framework operates properly, composed
+   with it, or only copied; the first line under each says which.
+   Nothing was deleted. A copy of every one, as it was, is in .claude/adoption-archive/…;
+   the lines under each say how to put it back, or why not to.
 
    yours: .git/hooks/pre-commit
+      replaced: the framework's version is in its place
       archived as: .claude/adoption-archive/…/git-hooks/pre-commit
       what it did: Ran `lint-staged`, `npx`, and other commands.
       put it back: cp .claude/adoption-archive/…/git-hooks/pre-commit .git/hooks/pre-commit
+   yours: PROJECT_BIBLE.md
+      only copied: yours is still in place, unchanged
+      archived as: .claude/adoption-archive/…/PROJECT_BIBLE.md
+```
+
+For the Development Guardrails' manifest the last line is two others
+(observed, brownfield dogfood run 1's `.claude/`):
+
+```text
+   yours: .claude/manifest.json
+      archived as: .claude/adoption-archive/…/.claude/manifest.json
+      Nothing of yours was changed: adoption only added this framework's keys beside yours.
+      Do not put it back: this copy has no adoption stamp, so restoring it would un-adopt the project.
 ```
 
 #### Your files are yours — `--re-add`
 
 ```bash
-bash /path/to/solo-orchestrator/scripts/adopt-project.sh --re-add .git/hooks/pre-commit
+bash ~/solo-orchestrator/scripts/adopt-project.sh --re-add .git/hooks/pre-commit
 ```
 
 It prints the warning, asks you to confirm (there is no default and no skip),
 restores the file byte-for-byte at its recorded mode, and writes the choice
-into `.claude/bypass-audit.json` as an `adoption_event` row. The framework's
+into `.claude/bypass-audit.json` as an `adoption_event` row. It refuses one
+path, `.claude/manifest.json`, before asking anything: the archived copy would
+un-adopt the project (`# BL-311-MANIFEST-READD-REFUSE`). The framework's
 premise is opinionated enforcement, not confiscation; it asks only that the
 override be findable by whoever reads the ledger next. See
 [audit-log-lifecycle.md](audit-log-lifecycle.md#adoption_event).
@@ -1201,13 +2302,20 @@ hooks, which are the most important thing the archive holds.
 
 #### Still not built by this package
 
-The framework documents, which this section used to list here, ship now — see
-[The framework documents](#the-framework-documents--ship-wp12b). The remaining gap is the **replacement** half for framework-script collisions: a
-file of yours sitting where a framework *script* would go is still left alone
-and still not replaced, so the framework's version of it is not installed. That
-class is deliberately outside the archive — swapping out a `scripts/validate.sh`
-your own build may call is a decision nobody has made yet — and the run names
-it with its own `NOT DONE` block.
+Nothing, now, though one defect in it is open. The framework documents ship
+([The framework documents](#the-framework-documents--ship-wp12b)), and so does
+the replacement half for framework-script collisions: a file of yours sitting
+where a framework *script* goes is archived, then replaced (D1 framework-wins),
+the run names each one under "Installing the framework's own scripts", and its
+archive row says `replaced`. This paragraph used to say such a file was left
+alone, and the run printed a `NOT DONE` block saying the same ("LEFT ALONE …
+yours, kept: scripts/validate.sh") directly under the lines naming it as
+replaced. Both were left over from before WP11; `## BL-322:` S4 removed the
+block (measured on a real adoption: the framework's file at the path, theirs in
+the archive, and both sentences in one run). Open: on a case-insensitive disk a
+file of yours whose name differs only in case (`scripts/Validate.sh`) is
+replaced and archived, but the run and the archive row name it by the
+framework's spelling (`## BL-293:`).
 
 ### The audit rows and the dispositions record — SHIP (WP7)
 
@@ -1229,7 +2337,7 @@ Record:
 - **A ledger you already have is appended to, never replaced**; every row in it
   survives.
 - **`.claude/bypass-audit.json`** gains `adoption_event` rows: one
-  `adoption` row naming the tier, the commit it was adopted at and what the
+  `adoption` row naming the tier, the commit adoption started from and what the
   scan said, and one `secrets_disposition` row per **accepted risk** and per
   **acknowledgement**. `rotated` and `false-alarm` accept no risk and write no
   row.
@@ -1270,9 +2378,16 @@ from the same sources:
 
 | Written | From |
 |---|---|
-| `CLAUDE.md` | rendered by the renderer `init.sh` uses, with your project's name, the tier you chose (an organizational adoption gets the branch-protection section), the track the intake recorded (`full` today), `undecided` for platform and language, and a placeholder description — the assessment asks for both |
+| `CLAUDE.md` | rendered by the renderer `init.sh` uses, with your project's name, the tier you chose (an organizational adoption gets the branch-protection section), the track you chose, `undecided` for platform and language, and a placeholder description — the assessment asks for both |
 | `FEATURES.md`, `BUGS.md`, `RELEASE_NOTES.md`, `docs/INDEX.md`, `docs/IDENTIFIERS.md`, `docs/archive/README.md` | the framework's templates, copied |
 | `docs/reference/*.md` — the eight guides | copied **only where absent**; a guide you already have there is left alone |
+
+`RELEASE_NOTES.md` starts as the framework's blank template: your release
+history (your `git tag` releases, your `CHANGELOG.md`) is not carried into it.
+The assessment prompt says so and asks the session to add the releases you
+want recorded (`## BL-322:` S4; dogfood run 3's k-pdf had `v0.2.0` and
+`v0.3.0`). Seeding the file from the tags was not built: a tag names a release
+and says nothing a user reads, so it would add headings with no notes.
 
 Measured on a project that owned a `CLAUDE.md` and a `BUGS.md`, and had
 `FEATURES.md` as a symlink:
@@ -1292,11 +2407,90 @@ Measured on a project that owned a `CLAUDE.md` and a `BUGS.md`, and had
      FEATURES.md — a symlink; writing through it could overwrite a file elsewhere
 ```
 
-**Nothing of yours is merged in.** Adapting your prose into the framework's
-documents is judgement, and judgement belongs to the assessment (Act 3), which
-is not built. What adoption does is archive every original, name each one it
-replaced, and tell you where it is. Until you copy content across, the agent
-reads the framework's `CLAUDE.md`, not your notes.
+That transcript predates `## BL-322:` S2. A run that replaces your `CLAUDE.md`
+now also prints the warning shown below, and when it carried any `@` line the
+merge sentence reads "Apart from the @ lines carried over from your CLAUDE.md
+(below), nothing in them was merged into the new files" (`# BL-322-CARRY-MERGED`).
+
+**Nothing of yours is merged in, but your `CLAUDE.md`'s imports keep loading.**
+Adapting your prose into the framework's documents is judgement, and judgement
+belongs to the assessment (Act 3). What adoption does is archive every original,
+name each one it replaced, and tell you where it is. Before `## BL-322:` S2 that
+also stopped every file your `CLAUDE.md` imported from loading: dogfood run 3's
+k-pdf imported `PROJECT_BIBLE.md`, `PRODUCT_MANIFESTO.md`, `CONTRIBUTING.md` and
+its intake, all still in the tree and untouched, and the next session lost the
+colour-alone hard constraint, the architecture rules and the never-do list the
+Bible holds, with nothing said. Now:
+
+- **Your `@` imports are carried.** Each `@path` in your `CLAUDE.md` that names a
+  regular file inside the project which adoption does not write goes into a
+  marked section near the end of the new `CLAUDE.md`, *Carried over from your
+  CLAUDE.md*, before the TL;DR Mode section when there is one
+  (`# BL-322-CARRY-APPEND`). It is written normalised — `./` and `..` resolved,
+  a `#section` suffix dropped, a space written `\ ` — so the line is exactly the
+  file Claude Code will load, and two spellings of one file are carried once.
+- **What counts as an import is Claude Code's reading of the file**, approximated
+  in shell (`_adopt_claude_md_import_tokens`) and checked against a replica of
+  Claude Code 2.1.292's own extractor: nothing in a fenced or indented code
+  block, a code span, an HTML comment (on one line or across several) or any
+  other HTML block is an import; a CRLF file reads like an LF one; an `@` counts
+  at a line start, after whitespace (a no-break space included), or opening
+  emphasis or a link's text (`*@x.md*`, `[@x.md](…)`). Where the Markdown is
+  ambiguous (emphasis or link text whose close the line does not show for
+  certain, a non-ASCII character beside a `*`), the import is **carried and named
+  apart as unsure**: in the run, under its own sentence in the carried section,
+  and in the assessment prompt, which asks you about each. Such link text ends
+  at a `]` the path did not open, so `[@app/[locale]/README.md](…)` carries
+  `app/[locale]/README.md` (`# BL-322-CARRY-LINKGUESS-DEPTH`). A path after a space
+  ends at a closer of emphasis or link text opened earlier on the line, but
+  only at a `*` or `_` the Markdown lets close — the `_` in
+  `@docs/coding_standards.md` never does (`# BL-322-CARRY-TOKCUT-CLOSES`) — and
+  a path cut there is read whole as well (`# BL-322-CARRY-KEEPWHOLE`) and, when
+  that whole path is a file, carried as unsure, so a closer read wrongly cannot
+  lose the import; when it names a file missing from the project it is not
+  mentioned (`# BL-322-CARRY-WHOLE-MISSING`), but a whole path in your home
+  folder (`~/`), absolute, or outside the project is still named among the @
+  mentions not carried.
+  A missed import would silently stop a rule loading; an unsure one loads a
+  file that is in your project, and you can delete its line.
+- **Every import not carried is named, with the reason**: an import of a file in
+  your home folder or an absolute path (named only, never carried: it may not
+  exist on another machine), outside the project, a symlink, missing, not a file,
+  a name carrying a control character, a file adoption replaces, composes or
+  writes (`FEATURES.md`, `PROJECT_INTAKE.md`, `.claude/settings.json`, … — also
+  under another case of the same name, `@features.md`, on a case-insensitive
+  disk), whose content is no longer what you imported, or any file at all when
+  the archive's record cannot be read. An `@` read as unsure that is not carried
+  is named in a list of its own, as a mention whose Markdown does not show for
+  certain that it is an import at all (`# BL-322-CARRY-SKIP-UNSURE-SAY`).
+- **The rules written in the file itself are not carried**, and the run says so
+  in capitals. Telling a lasting rule from a stale claim ("Phase: 2", "Next: merge
+  the branch") is the assessment's judgement. Until it folds them in, tell the
+  agent any rule it must keep. *Next: the assessment* says it again at the end of
+  the run.
+
+Replayed on run 3's k-pdf (its git bundle at the rollback point `0bb0465`, the
+`/lib/` anchor uncommitted as in the run): the new `CLAUDE.md` had 0 `@` lines
+before this change and 4 after, and the four files are unchanged by the adoption
+commit:
+
+```text
+   YOUR OWN CLAUDE.md IS NO LONGER WHAT CLAUDE CODE LOADS.
+   The rules written in it load again only once the assessment folds them into the
+   new CLAUDE.md. Until then, tell the agent any rule it must keep. Yours is
+   .claude/adoption-archive/2026-10-07T17-03-29Z-56448/CLAUDE.md.
+   Its imports of files still in this project were carried into the new CLAUDE.md,
+   under "Carried over from your CLAUDE.md", so those files keep loading:
+     @K-PDF_PROJECT_INTAKE.md
+     @PROJECT_BIBLE.md
+     @PRODUCT_MANIFESTO.md
+     @CONTRIBUTING.md
+```
+
+The assessment prompt's step 8 tells the session to fold the old file's rules in,
+keep the imports it still wants outside that section, and delete the section.
+`reconfigure-project.sh --tldr-mode off` and `on` leave it in place (measured on
+the replay).
 
 **What it will not write over:**
 
@@ -1310,7 +2504,9 @@ reads the framework's `CLAUDE.md`, not your notes.
 Anything left alone is named in the run, under *LEFT ALONE*, so the framework's
 version is missing there by your file system's choice, not silently. Not
 written: `PROJECT_BIBLE.md` and `PRODUCT_MANIFESTO.md` (phase outputs — `init.sh`
-does not write them either) and the `.gitignore` lines `init.sh` adds.
+does not write them either) and the `.gitignore` lines `init.sh` adds; two of
+them, for the runtime files of the session hooks adoption registers, go into
+`.claude/.gitignore` instead (the session layer, below).
 
 ### The Adoption Record, the audit rows and the provenance header — WP7
 
@@ -1406,14 +2602,42 @@ adopted one now gets the same one, from the same code
 - **One difference from a new project, on purpose:** the bypass detector's
   per-tool hook is not registered on an adopted project while `## BL-277:` is
   open; its end-of-session hook is.
+- **`.claude/.gitignore`**, so git ignores the two files those hooks rewrite in
+  every session: `.claude/last-checked-commit.txt` (where the out-of-band
+  commit check left off) and `.claude/tool-usage.json` (the MCP tool record).
+  Before this they sat untracked in an adopted project (`## BL-322:`). A new
+  project's `.gitignore` from `init.sh` has four `.claude/` runtime lines;
+  adoption covers these two because the other two are for files an adopted
+  project does not get: `.claude/cache/` (the freshness check's cache, written
+  only for a manifest with a `currency` block, which only `init.sh` writes) and
+  `.claude/last-gate-pass.txt` (the receipt of the strict terminal-commit check,
+  `.git/hooks/framework-gate.sh`, which adoption does not install). A
+  `.claude/.gitignore` you already have is left alone, and the run names the
+  two lines to add to it.
+- **Adoption does not change your own `.gitignore`. The first
+  `upgrade-project.sh --sync-framework` does:** it appends three commented
+  blocks (`.claude/last-checked-commit.txt`, `.claude/last-gate-pass.txt`,
+  `.claude/tool-usage.json`), even where `.claude/.gitignore` already covers two
+  of them. That is also how a project adopted before `.claude/.gitignore`
+  existed gets them.
+- **Not ignored:** `.claude/approvals.jsonl` (the Development Guardrails' record
+  of your approvals; whether a project commits it is theirs to decide) and
+  `.claude/tdd-warn-ledger.jsonl` (the commit check's audit trail, meant to be
+  committed). While either is untracked, the Guardrails' stop hook says
+  "Uncommitted source changes": their test for a source file counts these
+  logs as source. That is theirs to fix and has been handed to them.
 - **The four vendored skills** — `session-handoff`, `sweep-triage`, `zoom-out`,
   `grill-with-docs` — in `.claude/skills/`. A copy of yours at one of those
   names is archived and replaced; any other skill of yours is untouched.
-- **The Qdrant MCP declaration**, only where `init.sh` would write one (a
-  registered Qdrant server, or a running container with `uvx`):
+- **The Qdrant MCP declaration**, only when Qdrant is registered for the
+  Claude Code session (read where `CLAUDE_CONFIG_DIR` puts it —
+  [The memory and documentation servers](#the-memory-and-documentation-servers)):
   `.claude/settings.local.json` with this project's collection — machine-local
   and not committed, as in a new project — and the requirement recorded in
-  `.claude/manifest.json`, which is.
+  `.claude/manifest.json`, which is. `init.sh` also writes it for a running
+  container with `uvx`, because it registers the server first; adoption offers
+  that registration in its own step, so a running container alone no longer
+  declares a server the session does not have (`## BL-311:`).
 
 ### The CI carve-out — SHIPS (WP7)
 
@@ -1431,7 +2655,11 @@ for four ways a pipeline can let code around the framework's checks:
 
 It is a search for known spellings, not a parser, and the run says so. It
 misses what it has no spelling for (`|| true`, a `--mirror` push, a deploy in a
-file that also has a manual trigger), and a file it **cannot read** is reported
+file that also has a manual trigger, a deploy named only inside a longer
+command-line flag such as `-p:DeployOnBuild=true` or `--deploy-to=prod`), and a
+word inside a flag does not count as a deploy: Nuitka's `--no-deployment-flag`
+is not one, while `--deploy` on its own, `--tags=deploy` and a `deploy` command
+after the flags are. A file it **cannot read** is reported
 as unread and recorded that way — never as clean. It
 reports a **line number**, never the line — a workflow can carry a credential.
 For each file with a finding it asks once, **before anything is written**:
@@ -1457,10 +2685,16 @@ take your deploy offline:
 
 | Host | Framework CI | Runs? |
 |---|---|---|
-| GitHub | `.github/workflows/solo-gates.yml` | Yes, from your next push — GitHub runs every workflow. It may fail on code that predates adoption; that is a finding, not a breakage. |
+| GitHub | `.github/workflows/solo-gates.yml` | Yes, on a push to `main` and on pull requests to `main` — a push to any other branch runs nothing. It shows in the Actions tab and in a pull request's checks as **Solo Orchestrator checks**, so it cannot be mistaken for a workflow of yours named `CI`. If your main branch has another name, change `main` in its two `branches:` lines. It may fail on code that predates adoption; that is a finding, not a breakage. |
 | GitLab | `.gitlab-ci-solo.yml` | **Not until you add** `include: - local: '.gitlab-ci-solo.yml'` to your `.gitlab-ci.yml`. The run prints the lines — and a warning: GitLab **merges** an included file into yours, and this one sets `image`, `variables`, `cache` and `stages` pipeline-wide and defines jobs named `test` and `lint`. Check those against your file first. |
 | Bitbucket | `bitbucket-pipelines.solo.yml` | **No.** Bitbucket runs only `bitbucket-pipelines.yml`. Sharing a configuration file needs Bitbucket Premium and an exported file whose name ends in `pipelines.yml`, which this is not; copy the steps you want into yours. |
 | none found | nothing | `init.sh` lays no CI down for host `other` either; supply your own. |
+
+For a Python project, the GitHub file installs a uv project (one with `uv.lock`
+and `pyproject.toml`) with `uv sync --frozen`, which never rewrites the lockfile,
+and runs its tools through `uv run --frozen`. Any other Python project installs
+from `requirements.txt`. With neither, its "Find the dependency file" step fails and
+names the missing files (`# BL-318-G3-INSTALLER`).
 
 A file already at the framework's name is yours: left alone, and the run says
 so. The Adoption Record's **Your CI** section names the framework's file (or why
@@ -1487,11 +2721,12 @@ So from your next commit onward, an adopted project runs the same commit-time
 checks a scaffolded one does: secret detection, the static-analysis pass and the
 schema-migration checks, on top of the two message gates that were already on.
 
-**Your own pre-commit hook is REPLACED, not left alone.** That is §7.1's rule —
-its archive-and-replace population is your AI-layer settings and every
-non-`.sample` file in `.git/hooks/` — and the framework's hook is written whole,
-so it cannot compose the way the commit-msg gate does. Your copy is in the
-archive with a restore line, and the run says so:
+**Your own pre-commit hook is REPLACED, not left alone.** Adoption copies
+every non-`.sample` file in `.git/hooks/` into its archive; it composes with
+your commit-msg hook, leaves your other hooks in place, and replaces only
+pre-commit, because the framework's hook is written whole and cannot compose
+the way the commit-msg check does (`## BL-322:` S4 made Scout say the same).
+Your copy is in the archive with a restore line, and the run says so:
 
 ```text
    Your own pre-commit hook was REPLACED by the framework's. Your copy is in the
@@ -1554,9 +2789,32 @@ project that is already adopted. Or run the scanners by hand on each commit:
 
 - **A test suite that already fails will block source commits.** The hook runs
   your project's own test command whenever a source file is staged, and refuses
-  the commit if it fails. Adoption does not run your tests, so it cannot warn you
-  in advance. If your suite is red today, fix it — or point the hook at a command
-  that passes by writing it to `.claude/test-command` — before your first
+  the commit if it fails. **When you keep the test command the scan offers** under
+  *Testing & Bug Tracking* in the interview, **adoption writes it to
+  `.claude/test-command`**, one line, exactly as offered. Scout's flag stays in it
+  (`--frozen` for uv, `--config.verify-deps-before-run=false` for pnpm), so the
+  check never rewrites your lockfile in the middle of a commit. **If you change
+  that answer, nothing is written**: the question is about testing in general,
+  and a sentence in that file would run on every commit. A `.claude/test-command`
+  you already have is left exactly as it is, and the run says what it will run.
+  Nothing is written either when the scan found no test command (the interview
+  shows "(none detected)"), or when the script it found is npm's placeholder
+  (`echo "Error: no test specified" && exit 1`), which would block every source
+  commit. The run's "The test command your commits run" section says which of
+  these happened. When you changed the answer, it also gives the one line that
+  writes a command yourself. With no file, the hook finds a
+  command itself: pytest runs through uv, poetry, pdm or pipenv when that tool's
+  file is there, once importing pytest through that tool works — if it cannot,
+  the commit lands with a loud PROJECT TESTS NOT ENFORCED. A suite that is there
+  but broken still blocks. A project adopted before
+  2026-10-03 has no file, and for a Python project its older hook runs a bare
+  `pytest`. Write the file, or refresh the hook from the project's folder with
+  `bash ~/solo-orchestrator/scripts/upgrade-project.sh --sync-framework`. It asks
+  before it refreshes the hook (add `--install-hooks` where nothing can answer),
+  and it also refreshes the framework's scripts and documents, so run it with
+  `--dry-run` first. Adoption does not run your tests, so it cannot
+  warn you in advance. If your suite is red today, fix it — or point the hook at
+  a command that passes by editing `.claude/test-command` — before your first
   source commit.
 - **Your test command has no time limit.** A suite that hangs, or waits for
   input in watch mode, will hang the commit. The same `.claude/test-command`
@@ -1596,7 +2854,7 @@ not among them. Read them here, in the framework clone you run the driver from.
 | Being asked what the project is for, and told whether the stack fits | ✅ [The assessment](#the-assessment--act-3-and-act-4--ships-wp12a) — a Claude Code conversation, then the finisher |
 | A fitness verdict, a plan, and the reasoning behind both | ✅ Written by the assessment conversation; checked (two halves, a reason) and recorded by the finisher |
 | The required secrets scanner resolved before anything reads the scan — installed where the host has a recipe, named for you where it does not — and the scan re-run after an install | ✅ Tool resolution — ships (WP10a). When the scanner still cannot be resolved, the tier-scoped stop below decides |
-| Adoption that can *fail* on a serious finding | ✅ The secrets stop — ships (WP10b): an organizational adoption stops on a finding, an unscanned tree or a partial scan; a personal one continues only on a recorded acknowledgement. [If it stops](#4-if-it-stops) |
+| Adoption that can *fail* on a serious finding | ✅ The secrets stop — ships (WP10b): an organizational adoption stops on a finding, an unscanned tree or a partial scan; a personal one continues only on a recorded acknowledgement. [If it stops](#5-if-it-stops) |
 | A recorded, non-growing set of untested files | ✅ [Test-debt ledger + ratchet](#the-test-debt-ledger-and-its-ratchet) — ships and works; the commit-time hook that would invoke the ratchet automatically now exists, and wiring the ratchet INTO it is still unbuilt |
 | Your colliding hooks/settings archived with a restore path | ✅ Collision archive — ships |
 | Plain disclosure of what was archived, path by path | ✅ Ships |
@@ -1607,8 +2865,8 @@ not among them. Read them here, in the framework clone you run the driver from.
 | An audit trail of the adoption and of every risk accepted during it | ✅ [The audit rows and the dispositions record](#the-audit-rows-and-the-dispositions-record--ship-wp7) — ships |
 | A readable record of how this project entered the framework | ✅ [The Adoption Record](#the-adoption-record) — ships, at the end of `APPROVAL_LOG.md`, with its eight-clause contract checked before it is written |
 | Secret scanning, SAST and migration checks on every commit | ✅ [The commit-time scanners](#the-commit-time-scanners--ship-wp73) — ships; measured admitting a compliant commit and blocking a non-compliant one by exit code |
-| The framework's version of a colliding `scripts/*.sh` installed | ❌ Replacement half — **not built**, and unassigned |
-| A `CLAUDE.md` in the adopted project | ✅ [The framework documents](#the-framework-documents--ship-wp12b) — ships; yours is archived and named, not merged in |
+| The framework's version of a colliding `scripts/*.sh` installed | ✅ Ships — framework-wins: yours is archived, then replaced, and its archive row says `replaced` (`# BL-322-ARCHIVE-DISPO-SCRIPT`; it said `kept` before) |
+| A `CLAUDE.md` in the adopted project | ✅ [The framework documents](#the-framework-documents--ship-wp12b) — ships; yours is archived and named, not merged in; its `@` imports of files still in the project are carried (`## BL-322:` S2) |
 | The manifest's tier keys, so enforcement cannot be downgraded | ✅ Ships — `## BL-221:` closed; the tier question is their only source |
 
 ---

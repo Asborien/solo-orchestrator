@@ -27,6 +27,18 @@
 # the real framework tree (a few file copies + a graceful CDF skip) and does NOT
 # invoke init.sh — so it honours the no-init fast-lane invariant.
 set -o pipefail
+# #435 — `printf … | grep -q` under pipefail is a RACE: grep -q exits at the
+# first match, the writer can take SIGPIPE (141) before it finishes, and
+# pipefail reports the pipeline as failed although the pattern matched —
+# every time on a large output with an early match, under load on a small
+# one. `_gq` reads to EOF (no -q), so the writer always finishes; the exit
+# codes are grep's own (0 match, 1 none, 2 error).
+_gq() { grep "$@" >/dev/null; }
+# #422 — pin git's STOCK template, which is what CI runs with. Without this,
+# `git init` copies the operator's `init.templateDir`, which may carry no
+# hooks/, and this suite's fixtures write into .git/hooks/ without creating it.
+_stock_tpl="$(git --exec-path 2>/dev/null)/../../share/git-core/templates"
+if [ -d "$_stock_tpl/hooks" ]; then export GIT_TEMPLATE_DIR="$_stock_tpl"; fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # REPO_ROOT is normally this checkout. The guard-coverage harness
@@ -342,7 +354,7 @@ t_sync_self_copy_refused() {
   if [ "$rc" = "0" ]; then
     fail_ "T-sync-self-copy-refused" "expected non-zero exit when run from the project's own scripts/ copy; rc=$rc"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qiF "must run from the FRAMEWORK checkout"; then
+  if ! echo "$out" | _gq -iF "must run from the FRAMEWORK checkout"; then
     fail_ "T-sync-self-copy-refused" "missing framework-copy refusal message; tail:\n$(echo "$out" | tail -8)"; rm -rf "$T"; return
   fi
   if [ "$pre" != "$post" ]; then
@@ -366,7 +378,7 @@ t_sentinel_freezes_sync() {
   if [ "$rc" = "0" ]; then
     fail_ "T-sentinel-freezes-sync" "expected non-zero exit with a pending-approval sentinel; rc=$rc"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "upgrade blocked — pending user decision"; then
+  if ! echo "$out" | _gq -F "upgrade blocked — pending user decision"; then
     fail_ "T-sentinel-freezes-sync" "missing BL-015 sentinel deny message; tail:\n$(echo "$out" | tail -8)"; rm -rf "$T"; return
   fi
   if [ "$pre" != "$post" ]; then
@@ -397,7 +409,7 @@ t_dry_run_mutates_nothing() {
   if [ "$pre" != "$post" ]; then
     fail_ "T-dry-run-mutates-nothing" "dry-run mutated the surface (must write NOTHING, incl. no backfill on the old-vintage fixture)"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "would sync"; then
+  if ! echo "$out" | _gq -F "would sync"; then
     fail_ "T-dry-run-mutates-nothing" "dry-run did not report the drift it would apply (expected '[would sync]' lines)"; rm -rf "$T"; return
   fi
   # No stray tmp files left behind anywhere in the project.
@@ -421,7 +433,7 @@ t_prepush_notice() {
   local P="$T/proj"; mk_project "$P" python
   local out
   out="$(run_sync "$P")"
-  if ! printf '%s' "$out" | grep -q 'NOT installed — pushes from this project are not gated'; then
+  if ! printf '%s' "$out" | _gq 'NOT installed — pushes from this project are not gated'; then
     fail_ "T-prepush-notice" "a project with no pre-push hook got no warning that the review gate is absent"; rm -rf "$T"; return
   fi
   # THE REMEDY TEXT IS A DELIVERABLE, NOT DECORATION. An earlier version was
@@ -432,19 +444,19 @@ t_prepush_notice() {
   # invariants that matter changed with it. The old "append ABOVE any exit line"
   # caveat is gone because the block goes at the TOP — the hazard is designed out
   # rather than warned about.
-  if ! printf '%s' "$out" | grep -q 'scripts/print-prepush-recipe.sh'; then
+  if ! printf '%s' "$out" | _gq 'scripts/print-prepush-recipe.sh'; then
     fail_ "T-prepush-notice" "the remedy does not name the recipe script, so an operator has nothing to run"; rm -rf "$T"; return
   fi
-  if ! printf '%s' "$out" | grep -q 'TOP of'; then
+  if ! printf '%s' "$out" | _gq 'TOP of'; then
     fail_ "T-prepush-notice" "the remedy does not say the block goes at the TOP — position is the whole reason it is correct"; rm -rf "$T"; return
   fi
-  if ! printf '%s' "$out" | grep -q 'NO edits'; then
+  if ! printf '%s' "$out" | _gq 'NO edits'; then
     fail_ "T-prepush-notice" "the remedy no longer says the operator's body needs no edits — hand-rewiring a hook body is what authored every new consumer spelling"; rm -rf "$T"; return
   fi
-  if ! printf '%s' "$out" | grep -q 'SYNC SIBLINGS'; then
+  if ! printf '%s' "$out" | _gq 'SYNC SIBLINGS'; then
     fail_ "T-prepush-notice" "the remedy lost its SYNC SIBLINGS marker — this text has three homes and drifted once already"; rm -rf "$T"; return
   fi
-  if printf '%s' "$out" | grep -q 'exit \$?\|check-pr-review.sh || exit'; then
+  if printf '%s' "$out" | _gq 'exit \$?\|check-pr-review.sh || exit'; then
     fail_ "T-prepush-notice" "the remedy teaches the swallow-the-verdict shape (|| exit), which disables the gate for whoever pastes it"; rm -rf "$T"; return
   fi
 
@@ -454,7 +466,7 @@ t_prepush_notice() {
   printf '#!/usr/bin/env bash\n# disabled: bash scripts/check-pr-review.sh --from-hook\nexit 0\n' > "$P/.git/hooks/pre-push"
   chmod +x "$P/.git/hooks/pre-push"
   out="$(run_sync "$P")"
-  if printf '%s' "$out" | grep -q 'pre-push review gate hook present'; then
+  if printf '%s' "$out" | _gq 'pre-push review gate hook present'; then
     fail_ "T-prepush-notice" "a commented-out delegation was reported as present"; rm -rf "$T"; return
   fi
 
@@ -464,7 +476,7 @@ t_prepush_notice() {
   printf '#!/usr/bin/env bash\nexit 0  # TODO: wire up check-pr-review.sh here\n' > "$P/.git/hooks/pre-push"
   chmod +x "$P/.git/hooks/pre-push"
   out="$(run_sync "$P")"
-  if printf '%s' "$out" | grep -q 'pre-push review gate hook present'; then
+  if printf '%s' "$out" | _gq 'pre-push review gate hook present'; then
     fail_ "T-prepush-notice" "a hook that only MENTIONS the gate in a trailing comment was reported as present"; rm -rf "$T"; return
   fi
 
@@ -476,10 +488,10 @@ t_prepush_notice() {
   # not reassure. This is the exact state the round-one mutation harness created.
   chmod -x "$P/.git/hooks/pre-push"
   out="$(run_sync "$P")"
-  if printf '%s' "$out" | grep -q 'pre-push review gate hook present\.'; then
+  if printf '%s' "$out" | _gq 'pre-push review gate hook present\.'; then
     fail_ "T-prepush-notice" "a NON-EXECUTABLE hook was reported as present; git ignores it and pushes go ungated"; rm -rf "$T"; return
   fi
-  if ! printf '%s' "$out" | grep -q 'NOT executable'; then
+  if ! printf '%s' "$out" | _gq 'NOT executable'; then
     fail_ "T-prepush-notice" "a non-executable hook produced neither the present-OK nor the not-executable warning"; rm -rf "$T"; return
   fi
   pass "T-prepush-notice: the sync announces an absent review gate, recognises a live one, and refuses to call a NON-EXECUTABLE hook present"
@@ -526,7 +538,7 @@ t_rust_hook_installed() {
   if [ ! -f "$P/.git/hooks/commit-msg" ] || ! grep -qF "SOIF BL-072 TDD gate" "$P/.git/hooks/commit-msg"; then
     fail_ "T-rust-hook-installed" "commit-msg hook NOT installed for rust — the BL-107 universal install regressed to the empty-pattern skip; tail:\n$(echo "$out" | tail -8)"; rm -rf "$T"; return
   fi
-  if echo "$out" | grep -qiF "not applicable"; then
+  if echo "$out" | _gq -iF "not applicable"; then
     fail_ "T-rust-hook-installed" "sync still prints the pre-BL-107 'not applicable' skip notice for rust"; rm -rf "$T"; return
   fi
   pass "T-rust-hook-installed: rust gets the commit-msg TDD gate (BL-107 universal install)"
@@ -620,7 +632,7 @@ t_domsinks_ruleset_dry_run_no_write() {
   local out; out=$(run_sync "$P" --install-hooks --dry-run)
   if [ -f "$P/.semgrep/soif-dom-sinks.yml" ]; then
     fail_ "T-domsinks-ruleset-dry-run-no-write" "--dry-run WROTE .semgrep/soif-dom-sinks.yml (dry-run must be pure)"
-  elif ! printf '%s' "$out" | grep -qF 'soif-dom-sinks.yml'; then
+  elif ! printf '%s' "$out" | _gq -F 'soif-dom-sinks.yml'; then
     fail_ "T-domsinks-ruleset-dry-run-no-write" "--dry-run did not announce the planned ruleset delivery"
   else
     pass "T-domsinks-ruleset-dry-run-no-write: --dry-run announces the ruleset delivery and writes nothing"
@@ -637,7 +649,7 @@ t_domsinks_ruleset_current_no_op() {
   local after; after=$(_md5file "$P/.semgrep/soif-dom-sinks.yml")
   if [ "$before" != "$after" ]; then
     fail_ "T-domsinks-ruleset-current-no-op" "an already-current ruleset was rewritten (not a byte-no-op)"
-  elif printf '%s' "$out" | grep -qF 'delivered (the pre-commit hook'; then
+  elif printf '%s' "$out" | _gq -F 'delivered (the pre-commit hook'; then
     fail_ "T-domsinks-ruleset-current-no-op" "the ensure claimed a delivery when the ruleset was already current (should no-op)"
   else
     pass "T-domsinks-ruleset-current-no-op: an already-current ruleset is a byte-no-op (never re-delivered/duplicated)"
@@ -658,7 +670,7 @@ t_domsinks_ruleset_restored_when_hook_current() {
   fi
   rm -f "$P/.semgrep/soif-dom-sinks.yml"
   local out; out=$(run_sync "$P" --install-hooks)
-  if ! printf '%s' "$out" | grep -qF 'already current'; then
+  if ! printf '%s' "$out" | _gq -F 'already current'; then
     fail_ "T-domsinks-ruleset-restored-when-hook-current" "fixture drift: second sync did not take the already-current arm"; rm -rf "$T"; return
   fi
   if [ ! -f "$P/.semgrep/soif-dom-sinks.yml" ]; then
@@ -705,7 +717,7 @@ t_doc_noninteractive_no_flag_applies_nothing() {
   if ls "$P/docs/reference/"user-guide.md.new "$P/docs/reference/"user-guide.md.bak.* >/dev/null 2>&1; then
     fail_ "T-doc-noninteractive-no-flag-applies-nothing" "bare non-interactive sync wrote a .new/.bak artifact (must apply nothing)"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "notice only — not applied"; then
+  if ! echo "$out" | _gq -F "notice only — not applied"; then
     fail_ "T-doc-noninteractive-no-flag-applies-nothing" "expected the notice-only line naming --apply-doc-updates; tail:\n$(echo "$out" | tail -8)"; rm -rf "$T"; return
   fi
   pass "T-doc-noninteractive-no-flag-applies-nothing: bare non-interactive sync notices drift and applies nothing (no flag, no env var)"
@@ -733,7 +745,7 @@ t_doc_overwrite_confirm_declined() {
   if ls "$P/docs/reference/"user-guide.md.bak.* >/dev/null 2>&1; then
     fail_ "T-doc-overwrite-confirm-declined" "a .bak was written for a declined overwrite (nothing may be touched)"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "skipped user-guide.md — in-place overwrite NOT confirmed"; then
+  if ! echo "$out" | _gq -F "skipped user-guide.md — in-place overwrite NOT confirmed"; then
     fail_ "T-doc-overwrite-confirm-declined" "expected an explicit 'skipped … overwrite NOT confirmed' line; tail:\n$(echo "$out" | tail -8)"; rm -rf "$T"; return
   fi
   pass "T-doc-overwrite-confirm-declined: consent withheld → doc byte-identical, no .bak, explicit 'skipped … NOT confirmed' line"
@@ -787,7 +799,7 @@ t_doc_overwrite_backup_refusal() {
   if ls "$P/docs/reference/"user-guide.md.bak.* >/dev/null 2>&1; then
     fail_ "T-doc-overwrite-backup-refusal" "a .bak exists — the fixture did not actually block backup creation"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "REFUSING to overwrite"; then
+  if ! echo "$out" | _gq -F "REFUSING to overwrite"; then
     fail_ "T-doc-overwrite-backup-refusal" "expected a loud 'REFUSING to overwrite' line; tail:\n$(echo "$out" | tail -8)"; rm -rf "$T"; return
   fi
   if [ "$rc" = "0" ]; then
@@ -821,10 +833,10 @@ t_doc_overwrite_write_failure_is_loud() {
   if [ "$pre_md5" != "$post_md5" ]; then
     fail_ "T-doc-overwrite-write-failure-is-loud" "the original was modified by a FAILED overwrite (it must be left byte-intact)"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "FAILED to overwrite user-guide.md"; then
+  if ! echo "$out" | _gq -F "FAILED to overwrite user-guide.md"; then
     fail_ "T-doc-overwrite-write-failure-is-loud" "no loud [FAIL] line naming the doc + the operation; tail:\n$(echo "$out" | tail -10)"; rm -rf "$T"; return
   fi
-  if echo "$out" | grep -qF "overwrote user-guide.md"; then
+  if echo "$out" | _gq -F "overwrote user-guide.md"; then
     fail_ "T-doc-overwrite-write-failure-is-loud" "printed an [OK] 'overwrote' line for a write that never landed (silent success)"; rm -rf "$T"; return
   fi
   if [ -z "$bak" ] || [ "$(_md5file "$bak")" != "$pre_md5" ]; then
@@ -859,10 +871,10 @@ t_doc_sidecar_write_failure_is_loud() {
   if [ -f "$doc.new" ]; then
     fail_ "T-doc-sidecar-write-failure-is-loud" "a .new sidecar exists — the fixture did not actually block sidecar creation"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "FAILED to write the sidecar"; then
+  if ! echo "$out" | _gq -F "FAILED to write the sidecar"; then
     fail_ "T-doc-sidecar-write-failure-is-loud" "no loud [FAIL] line for the failed sidecar write; tail:\n$(echo "$out" | tail -10)"; rm -rf "$T"; return
   fi
-  if echo "$out" | grep -qF "wrote sidecar"; then
+  if echo "$out" | _gq -F "wrote sidecar"; then
     fail_ "T-doc-sidecar-write-failure-is-loud" "printed an [OK] 'wrote sidecar' line for a sidecar that does not exist (silent success)"; rm -rf "$T"; return
   fi
   if [ "$rc" = "0" ]; then
@@ -910,10 +922,10 @@ t_doc_overwrite_write_silently_fails_is_caught() {
   if [ "$(_md5file "$sdoc")" != "$spre" ]; then
     fail_ "T-doc-overwrite-write-silently-fails-is-caught" "(sidecar) the operator's original doc was modified by a failed sidecar write"; rm -rf "$T"; return
   fi
-  if ! echo "$sout" | grep -qF "FAILED to write the sidecar"; then
+  if ! echo "$sout" | _gq -F "FAILED to write the sidecar"; then
     fail_ "T-doc-overwrite-write-silently-fails-is-caught" "(sidecar) cp exited 0 with nothing on disk and the run did NOT complain — the byte re-read in _bl099_write_ok is not catching a lying cp; tail:\n$(echo "$sout" | tail -10)"; rm -rf "$T"; return
   fi
-  if echo "$sout" | grep -qF "wrote sidecar"; then
+  if echo "$sout" | _gq -F "wrote sidecar"; then
     fail_ "T-doc-overwrite-write-silently-fails-is-caught" "(sidecar) printed an [OK] 'wrote sidecar' line for a sidecar that does not exist (silent success)"; rm -rf "$T"; return
   fi
   if [ "$src" = "0" ]; then
@@ -940,10 +952,10 @@ t_doc_overwrite_write_silently_fails_is_caught() {
   if [ -z "$obak" ] || [ "$(_md5file "$obak")" != "$opre" ]; then
     fail_ "T-doc-overwrite-write-silently-fails-is-caught" "(overwrite) the dated backup must exist and hold the original bytes (the backup cp is NOT stubbed — it must have really landed); got '$obak'"; rm -rf "$T"; return
   fi
-  if ! echo "$oout" | grep -qF "FAILED to overwrite user-guide.md"; then
+  if ! echo "$oout" | _gq -F "FAILED to overwrite user-guide.md"; then
     fail_ "T-doc-overwrite-write-silently-fails-is-caught" "(overwrite) cp exited 0 with nothing on disk and the run did NOT complain — the byte re-read in _bl099_write_ok is not catching a lying cp; tail:\n$(echo "$oout" | tail -10)"; rm -rf "$T"; return
   fi
-  if echo "$oout" | grep -qF "overwrote user-guide.md"; then
+  if echo "$oout" | _gq -F "overwrote user-guide.md"; then
     fail_ "T-doc-overwrite-write-silently-fails-is-caught" "(overwrite) printed an [OK] 'overwrote' line for a write that never landed (silent success)"; rm -rf "$T"; return
   fi
   if [ "$orc" = "0" ]; then
@@ -960,21 +972,21 @@ t_doc_apply_flag_usage_errors() {
   local bad_val=n bare_flag=n no_sync_apply=n no_sync_confirm=n rc
 
   rc=0; local o1; o1=$(run_sync "$P" --apply-doc-updates clobber) || rc=$?
-  [ "$rc" != "0" ] && echo "$o1" | grep -qiF "invalid --apply-doc-updates value" && bad_val=y
+  [ "$rc" != "0" ] && echo "$o1" | _gq -iF "invalid --apply-doc-updates value" && bad_val=y
 
   rc=0; local o2; o2=$(run_sync "$P" --apply-doc-updates) || rc=$?
-  [ "$rc" != "0" ] && echo "$o2" | grep -qiF "invalid --apply-doc-updates value" && bare_flag=y
+  [ "$rc" != "0" ] && echo "$o2" | _gq -iF "invalid --apply-doc-updates value" && bare_flag=y
 
   # sync-only: both flags must be rejected on the tier-change path.
   rc=0; local o3
   o3=$( cd "$P" && unset GITHUB_BASE_REF; CDF_HOME="$P/.no" SOIF_NONINTERACTIVE=1 \
         "$SCRIPT" --track standard --apply-doc-updates overwrite </dev/null 2>&1 ) || rc=$?
-  [ "$rc" != "0" ] && echo "$o3" | grep -qiF "only valid with --sync-framework" && no_sync_apply=y
+  [ "$rc" != "0" ] && echo "$o3" | _gq -iF "only valid with --sync-framework" && no_sync_apply=y
 
   rc=0; local o4
   o4=$( cd "$P" && unset GITHUB_BASE_REF; CDF_HOME="$P/.no" SOIF_NONINTERACTIVE=1 \
         "$SCRIPT" --track standard --confirm-doc-overwrite </dev/null 2>&1 ) || rc=$?
-  [ "$rc" != "0" ] && echo "$o4" | grep -qiF "only valid with --sync-framework" && no_sync_confirm=y
+  [ "$rc" != "0" ] && echo "$o4" | _gq -iF "only valid with --sync-framework" && no_sync_confirm=y
 
   if [ "$bad_val" = y ] && [ "$bare_flag" = y ] && [ "$no_sync_apply" = y ] && [ "$no_sync_confirm" = y ]; then
     pass "T-doc-apply-flag-usage-errors: unknown/missing --apply-doc-updates value is a hard usage error; both doc flags are refused without --sync-framework"
@@ -1011,7 +1023,7 @@ t_rendered_doc_never_applied() {
       ok=n; detail="a RENDERED doc was MUTATED under '--apply-doc-updates $combo'"
     elif [ "$pre_ls" != "$post_ls" ]; then
       ok=n; detail="'--apply-doc-updates $combo' created a new CLAUDE.md*/PROJECT_INTAKE.md* artifact — rendered docs are notice-only, nothing may be written beside them. before:[$(echo "$pre_ls" | tr '\n' ' ')] after:[$(echo "$post_ls" | tr '\n' ' ')]"
-    elif ! echo "$out" | grep -qF "RENDERED from a template"; then
+    elif ! echo "$out" | _gq -F "RENDERED from a template"; then
       ok=n; detail="'--apply-doc-updates $combo': missing the rendered-doc template notice; tail:\n$(echo "$out" | tail -10)"
     fi
     rm -rf "$T"
@@ -1227,7 +1239,7 @@ t_mutation_apply_status() {
       "$FW/scripts/upgrade-project.sh" --sync-framework --apply-doc-updates sidecar </dev/null 2>&1 ) || crc=$?
   chmod 755 "$Pc/docs/reference"
   local control_loud=n
-  [ "$crc" != "0" ] && echo "$cout" | grep -qF "FAILED to write the sidecar" && control_loud=y
+  [ "$crc" != "0" ] && echo "$cout" | _gq -F "FAILED to write the sidecar" && control_loud=y
 
   # Mutant: gut the status checker. The marker string stays in the file.
   _neuter_fn "$FW/scripts/upgrade-project.sh" _bl099_write_ok 'return 0'
@@ -1243,7 +1255,7 @@ t_mutation_apply_status() {
       "$FW/scripts/upgrade-project.sh" --sync-framework --apply-doc-updates sidecar </dev/null 2>&1 ) || src=$?
   chmod 755 "$Ps/docs/reference"
   local mutant_sidecar_silent=n
-  [ "$src" = "0" ] && echo "$sout" | grep -qF "wrote sidecar" && [ ! -f "$Ps/docs/reference/user-guide.md.new" ] \
+  [ "$src" = "0" ] && echo "$sout" | _gq -F "wrote sidecar" && [ ! -f "$Ps/docs/reference/user-guide.md.new" ] \
     && mutant_sidecar_silent=y
 
   # (b) overwrite failure → mutant claims success and exits 0.
@@ -1257,7 +1269,7 @@ t_mutation_apply_status() {
       "$FW/scripts/upgrade-project.sh" --sync-framework --apply-doc-updates overwrite --confirm-doc-overwrite </dev/null 2>&1 ) || orc=$?
   chmod 644 "$odoc" 2>/dev/null || true
   local mutant_overwrite_silent=n
-  [ "$orc" = "0" ] && echo "$oout" | grep -qF "overwrote user-guide.md" \
+  [ "$orc" = "0" ] && echo "$oout" | _gq -F "overwrote user-guide.md" \
     && [ "$(_md5file "$odoc")" = "$opre" ] && mutant_overwrite_silent=y
 
   if [ "$control_loud" = y ] && [ "$syntax_ok" = y ] && [ "$marker_kept" = y ] \
@@ -1305,7 +1317,7 @@ t_mutation_write_ok_byteread() {
   local cout crc=0
   cout=$(_run_sync_stubcp "$Pc" "$FWS" "$cbin" --apply-doc-updates sidecar) || crc=$?
   local control_loud=n
-  _silent_cp_fired "$cbin" && [ "$crc" != "0" ] && echo "$cout" | grep -qF "FAILED to write the sidecar" && control_loud=y
+  _silent_cp_fired "$cbin" && [ "$crc" != "0" ] && echo "$cout" | _gq -F "FAILED to write the sidecar" && control_loud=y
 
   # ── MUTANT: drop ONLY the `cmp -s` half. Marker text stays in the file. ──
   _neuter_fn "$FWS" _bl099_write_ok '[ "$1" -eq 0 ]'
@@ -1321,7 +1333,7 @@ t_mutation_write_ok_byteread() {
   local sout src=0
   sout=$(_run_sync_stubcp "$Ps" "$FWS" "$sbin" --apply-doc-updates sidecar) || src=$?
   local mutant_sidecar_silent=n
-  [ "$src" = "0" ] && echo "$sout" | grep -qF "wrote sidecar" && [ ! -f "$Ps/docs/reference/user-guide.md.new" ] \
+  [ "$src" = "0" ] && echo "$sout" | _gq -F "wrote sidecar" && [ ! -f "$Ps/docs/reference/user-guide.md.new" ] \
     && mutant_sidecar_silent=y
 
   # (b) overwrite: same lie, in place. Mutant reports "overwrote" for a doc whose
@@ -1334,7 +1346,7 @@ t_mutation_write_ok_byteread() {
   local oout orc=0
   oout=$(_run_sync_stubcp "$Po" "$FWS" "$obin" --apply-doc-updates overwrite --confirm-doc-overwrite) || orc=$?
   local mutant_overwrite_silent=n
-  [ "$orc" = "0" ] && echo "$oout" | grep -qF "overwrote user-guide.md" \
+  [ "$orc" = "0" ] && echo "$oout" | _gq -F "overwrote user-guide.md" \
     && [ "$(_md5file "$odoc")" = "$opre" ] && mutant_overwrite_silent=y
 
   if [ "$control_loud" = y ] && [ "$syntax_ok" = y ] && [ "$marker_kept" = y ] \
@@ -1363,7 +1375,7 @@ t_mutation_doc_guard() {
   local cout; cout=$( cd "$Pc" && unset GITHUB_BASE_REF; CDF_HOME="$Pc/.no" SOIF_NONINTERACTIVE=1 \
       "$FW/scripts/upgrade-project.sh" --sync-framework </dev/null 2>&1 )
   local cpost; cpost=$(_md5file "$Pc/CLAUDE.md")
-  local control_notice=n; echo "$cout" | grep -qF "RENDERED from a template" && control_notice=y
+  local control_notice=n; echo "$cout" | _gq -F "RENDERED from a template" && control_notice=y
   local control_untouched=n; [ "$cpre" = "$cpost" ] && control_untouched=y
 
   # Mutant: excise the guard so rendered docs fall through to verbatim handling
@@ -1375,7 +1387,7 @@ t_mutation_doc_guard() {
   printf '%s\n' '# custom CLAUDE.md' > "$Pm/CLAUDE.md"
   local mout; mout=$( cd "$Pm" && unset GITHUB_BASE_REF; CDF_HOME="$Pm/.no" SOIF_NONINTERACTIVE=1 \
       "$FW/scripts/upgrade-project.sh" --sync-framework </dev/null 2>&1 ) || true
-  local mutant_notice_gone=n; echo "$mout" | grep -qF "RENDERED from a template" || mutant_notice_gone=y
+  local mutant_notice_gone=n; echo "$mout" | _gq -F "RENDERED from a template" || mutant_notice_gone=y
 
   if [ "$control_notice" = y ] && [ "$control_untouched" = y ] && [ "$mutant_notice_gone" = y ]; then
     pass "T-mutation-doc-guard: guard routes CLAUDE.md to a template notice (untouched); excising '# BL-099-DOC-GUARD' drops the rendered-doc notice (guard is load-bearing)"
@@ -1509,14 +1521,14 @@ t_non_interactive_flag_honored() {
   forced=$(_consent_probe true)
   local i_hook=n i_ovw=n i_doc=n f_quiet=n f_hook=n f_ovw=n f_doc=n
 
-  echo "$inter" | grep -qF 'PROMPTED[hook?][default=Y]' && i_hook=y
-  echo "$inter" | grep -qF 'PROMPTED[ovw?][default=N]' && i_ovw=y
-  echo "$inter" | grep -qF 'Apply upstream user-guide.md' && i_doc=y
+  echo "$inter" | _gq -F 'PROMPTED[hook?][default=Y]' && i_hook=y
+  echo "$inter" | _gq -F 'PROMPTED[ovw?][default=N]' && i_ovw=y
+  echo "$inter" | _gq -F 'Apply upstream user-guide.md' && i_doc=y
 
-  echo "$forced" | grep -qF 'PROMPTED' || f_quiet=y
-  echo "$forced" | grep -qF 'Apply upstream' || f_doc=y
-  echo "$forced" | grep -qxF 'HOOK=no' && f_hook=y
-  echo "$forced" | grep -qxF 'OVW=no' && f_ovw=y
+  echo "$forced" | _gq -F 'PROMPTED' || f_quiet=y
+  echo "$forced" | _gq -F 'Apply upstream' || f_doc=y
+  echo "$forced" | _gq -xF 'HOOK=no' && f_hook=y
+  echo "$forced" | _gq -xF 'OVW=no' && f_ovw=y
 
   # Review round 3 (MINOR): the doc prompt must go through the SHARED prompt_choice
   # helper, not a raw `read`. Without this assertion, reverting the call site to
@@ -1529,8 +1541,8 @@ t_non_interactive_flag_honored() {
   # o|overwrite, skip → the safe `*` default), so renaming one silently turns a real
   # choice into a no-op skip.
   local i_choice=n i_opts=n
-  echo "$inter" | grep -qF 'PROMPTED-CHOICE[' && i_choice=y
-  echo "$inter" | grep -qF '[options: skip sidecar overwrite]' && i_opts=y
+  echo "$inter" | _gq -F 'PROMPTED-CHOICE[' && i_choice=y
+  echo "$inter" | _gq -F '[options: skip sidecar overwrite]' && i_opts=y
 
   if [ "$i_hook" = y ] && [ "$i_ovw" = y ] && [ "$i_doc" = y ] \
      && [ "$i_choice" = y ] && [ "$i_opts" = y ] \
@@ -1567,10 +1579,10 @@ t_doc_prompt_default_is_skip() {
   local skipped_exact=n via_confirm=n wrote=n
   # The pure `*)` default-skip line: "    skipped user-guide.md." — trailing period,
   # end of line. The probe's print_info echoes "INFO <arg>", so anchor on md.$.
-  echo "$out" | grep -qE 'skipped user-guide\.md\.$' && skipped_exact=y
+  echo "$out" | _gq -E 'skipped user-guide\.md\.$' && skipped_exact=y
   # The overwrite arm's consent-denial (proves the fallback wrongly chose overwrite).
-  echo "$out" | grep -qF 'in-place overwrite NOT confirmed' && via_confirm=y
-  echo "$out" | grep -qE 'wrote sidecar|overwrote' && wrote=y
+  echo "$out" | _gq -F 'in-place overwrite NOT confirmed' && via_confirm=y
+  echo "$out" | _gq -E 'wrote sidecar|overwrote' && wrote=y
   if [ "$skipped_exact" = y ] && [ "$via_confirm" = n ] && [ "$wrote" = n ]; then
     pass "T-doc-prompt-default-is-skip: a no-answer apply prompt falls to the EXACT '*) skipped <label>.' arm (not the overwrite consent-denial that shares the 'skipped <label>' prefix) — the # BL-099-PROMPT-FALLBACK default is skip, never a write"
   else
@@ -1722,13 +1734,13 @@ t_doc_overwrite_write_failure_restores_original() {
   if [ -z "$bak" ] || [ "$(_md5file "$bak")" != "$pre" ]; then
     fail_ "T-doc-overwrite-write-failure-restores-original" "the dated backup must exist and hold the original bytes; got '$bak'"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "your original bytes are intact"; then
+  if ! echo "$out" | _gq -F "your original bytes are intact"; then
     fail_ "T-doc-overwrite-write-failure-restores-original" "expected the 'your original bytes are intact (verified against the backup…)' message after a successful restore; tail:\n$(echo "$out" | tail -10)"; rm -rf "$T"; return
   fi
-  if echo "$out" | grep -qF "Restore it by hand"; then
+  if echo "$out" | _gq -F "Restore it by hand"; then
     fail_ "T-doc-overwrite-write-failure-restores-original" "printed the 'Restore it by hand' message even though the file WAS restored to the original (message arms inverted)"; rm -rf "$T"; return
   fi
-  if echo "$out" | grep -qF "overwrote user-guide.md"; then
+  if echo "$out" | _gq -F "overwrote user-guide.md"; then
     fail_ "T-doc-overwrite-write-failure-restores-original" "printed an [OK] 'overwrote' line for a write that failed"; rm -rf "$T"; return
   fi
   pass "T-doc-overwrite-write-failure-restores-original: a partial-write-then-fail overwrite is repaired from the dated backup — file byte-restored to the original, backup kept, 'original bytes are intact' message (not 'restore by hand'), no [OK], non-zero exit"
@@ -1755,10 +1767,10 @@ t_doc_cp_reports_failure_is_caught() {
   if [ "$rc" = "0" ]; then
     fail_ "T-doc-cp-reports-failure-is-caught" "sync exited 0 after cp reported failure (exit 1) — the status half of _bl099_write_ok did not catch it"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "FAILED to write the sidecar"; then
+  if ! echo "$out" | _gq -F "FAILED to write the sidecar"; then
     fail_ "T-doc-cp-reports-failure-is-caught" "no loud [FAIL] for a cp that reported failure though the bytes happened to land; tail:\n$(echo "$out" | tail -10)"; rm -rf "$T"; return
   fi
-  if echo "$out" | grep -qF "wrote sidecar"; then
+  if echo "$out" | _gq -F "wrote sidecar"; then
     fail_ "T-doc-cp-reports-failure-is-caught" "printed [OK] 'wrote sidecar' for a cp that reported failure (status half dropped → the exit code is ignored)"; rm -rf "$T"; return
   fi
   if [ "$(_md5file "$doc")" != "$pre" ]; then
@@ -1789,10 +1801,10 @@ t_scriptsync_cp_failure_is_loud() {
   if [ "$rc" = "0" ]; then
     fail_ "T-scriptsync-cp-failure-is-loud" "sync exited 0 after a vendored-script cp reported success without landing bytes — the unchecked cp / unconditional [OK] regressed"; rm -rf "$T"; return
   fi
-  if ! echo "$out" | grep -qF "FAILED to sync scripts/check-phase-gate.sh"; then
+  if ! echo "$out" | _gq -F "FAILED to sync scripts/check-phase-gate.sh"; then
     fail_ "T-scriptsync-cp-failure-is-loud" "no loud [FAIL] naming the vendored script whose cp silently wrote nothing; tail:\n$(echo "$out" | tail -12)"; rm -rf "$T"; return
   fi
-  if echo "$out" | grep -qE '\[OK\].*synced scripts/check-phase-gate\.sh'; then
+  if echo "$out" | _gq -E '\[OK\].*synced scripts/check-phase-gate\.sh'; then
     fail_ "T-scriptsync-cp-failure-is-loud" "printed [OK] 'synced scripts/check-phase-gate.sh' for a script that was never written (silent success)"; rm -rf "$T"; return
   fi
   if [ "$(_md5file "$P/scripts/check-phase-gate.sh")" != "$pre" ]; then

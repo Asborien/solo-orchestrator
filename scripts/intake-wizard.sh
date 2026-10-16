@@ -103,6 +103,19 @@ COMPLETED_SECTIONS=""
 # with the sentinel-check in save_answer, this prevents the empty-
 # string overwrites that the audit cited (one save_answer per
 # remaining prompt corrupting another previously-saved key).
+# BUG-010-EOF — `read` returning non-zero with NOTHING read is the end of
+# input, not a wrong answer. The two loops below that re-ask on a wrong
+# answer used to re-ask forever there (BUG-010 measured ~20 MB of "Invalid
+# choice" in two minutes). They now refuse, once, and return non-zero; every
+# caller is a plain `var=$(prompt_…)` under `set -e`, so the wizard stops.
+# A final line with no trailing newline also makes `read` return non-zero —
+# but it reads something, and that is still an answer.
+_prompt_eof_refuse() {
+  print_fail "Input ended at \"$1\" before it was answered — the intake stopped here and is NOT complete." >&2
+  echo "  Answers given so far are saved. Continue with: bash scripts/intake-wizard.sh --resume" >&2
+  return 3
+}
+
 prompt_input() {
   if [ -f "${_PAUSE_FILE:-/dev/null/sentinel-cannot-exist}" ]; then
     echo ""
@@ -156,13 +169,19 @@ prompt_choice() {
   for i in "${!options[@]}"; do
     echo "    $((i+1)). ${options[$i]}" >&2
   done
-  local choice
+  local choice=""
   while true; do
-    read -rp "$(echo -e "  ${BOLD}Select [1-${#options[@]}]${NC}: ")" choice # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_choice with pause-file semantics; this IS the wizard's centralized numbered-choice helper
+    if ! read -rp "$(echo -e "  ${BOLD}Select [1-${#options[@]}]${NC}: ")" choice && [ -z "$choice" ]; then # lint-raw-read-prompt: allow intake-wizard.sh defines its own prompt_choice with pause-file semantics; this IS the wizard's centralized numbered-choice helper
+      _prompt_eof_refuse "$prompt"; return $?   # BUG-010-EOF
+    fi
     if [ "$choice" = "pause" ] || [ "$choice" = "PAUSE" ] || [ "$choice" = "Pause" ]; then
       _request_pause
       echo ""
       return
+    fi
+    if [ "$choice" = "?" ]; then   # BL-267-CHOICE-HELP
+      echo "  No suggestions for a numbered choice — enter a number between 1 and ${#options[@]}." >&2
+      continue
     fi
     if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#options[@]}" ]; then
       echo "${options[$((choice-1))]}"
@@ -183,13 +202,15 @@ prompt_with_suggestions() {
   local prompt="$1"
   local suggestion_key="$2"
   local default="${3:-}"
-  local result
+  local result=""
 
   while true; do
     if [ -n "$default" ]; then
       read -rp "$(echo -e "  ${BOLD}$prompt${NC} [? for suggestions, default: $default]: ")" result # lint-raw-read-prompt: allow intake-wizard.sh prompt_with_suggestions — wizard-specific helper with `?`-trigger semantics that don't fit lib/helpers.sh shape
     else
-      read -rp "$(echo -e "  ${BOLD}$prompt${NC} [? for suggestions]: ")" result # lint-raw-read-prompt: allow intake-wizard.sh prompt_with_suggestions — wizard-specific helper with `?`-trigger semantics that don't fit lib/helpers.sh shape
+      if ! read -rp "$(echo -e "  ${BOLD}$prompt${NC} [? for suggestions]: ")" result && [ -z "$result" ]; then # lint-raw-read-prompt: allow intake-wizard.sh prompt_with_suggestions — wizard-specific helper with `?`-trigger semantics that don't fit lib/helpers.sh shape
+        _prompt_eof_refuse "$prompt"; return $?   # BUG-010-EOF
+      fi
     fi
 
     if [ "$result" = "pause" ] || [ "$result" = "PAUSE" ] || [ "$result" = "Pause" ]; then
@@ -386,7 +407,7 @@ save_section() {
   # to it; a third was this branch's own addition and it is gone.
   if [ -f "${_PAUSE_FILE:-/dev/null/sentinel-cannot-exist}" ]; then
     print_info "Section $section_num paused before it was finished — it will be asked again on resume."
-    render_intake_file || true
+    _render_or_warn || true
     return 0
   fi
   if command -v python3 &>/dev/null; then
@@ -407,7 +428,7 @@ with open(path, 'w') as f:
   # Audit code-intake-wizard-1: re-render the human-readable appendix in
   # PROJECT_INTAKE.md so the file stays in sync with the JSON progress
   # after every section. Failure to render must not block the wizard.
-  render_intake_file || true
+  _render_or_warn || true
 }
 
 # ================================================================
@@ -427,19 +448,25 @@ render_intake_file() {
     if [ -f "$template" ]; then
       local today
       today=$(date -u +%Y-%m-%d)
-      sed "s/__DATE__/$today/g" "$template" > "$INTAKE_FILE"
+      sed "s/__DATE__/$today/g" "$template" > "$INTAKE_FILE" || return 1
     else
-      printf '# Project Intake\n\n_Auto-created by intake-wizard.sh._\n' > "$INTAKE_FILE"
+      printf '# Project Intake\n\n_Auto-created by intake-wizard.sh._\n' > "$INTAKE_FILE" || return 1
     fi
   fi
 
   local begin_marker="<!-- INTAKE_ANSWERS_BEGIN -->"
   local end_marker="<!-- INTAKE_ANSWERS_END -->"
-  local appendix tmp
-  appendix=$(mktemp)
-  tmp=$(mktemp)
+  # BL-265-RENDER-STATUS — every call site is `render_intake_file || …`,
+  # which suspends `set -e` INSIDE this function, so a failing jq here used
+  # to be invisible: the block below kept going and appended a truncated
+  # appendix. Each step is now checked, the new file is built to one side,
+  # and PROJECT_INTAKE.md is replaced only by a complete one.
+  local appendix tmp out
+  appendix=$(mktemp) || return 1
+  tmp=$(mktemp) || { rm -f "$appendix"; return 1; }
+  out="$INTAKE_FILE.render.$$"
 
-  {
+  if ! (
     printf '%s\n' "$begin_marker"
     printf '\n## Intake Answers (Auto-Populated)\n\n'
     printf '_Generated by `scripts/intake-wizard.sh` from `.claude/intake-progress.json`._\n'
@@ -461,12 +488,13 @@ render_intake_file() {
       row("POC mode"; (.poc_mode // "N/A")),
       row("Last section saved"; (.last_section | tostring)),
       row("Completed sections"; ((.completed_sections // []) | map(tostring) | join(", ")))
-    ' "$PROGRESS_FILE"
+    ' "$PROGRESS_FILE" || exit 1
     printf '\n### Answers\n\n'
 
     local count
-    count=$(jq -r '(.answers // {}) | length' "$PROGRESS_FILE")
-    if [ "${count:-0}" -gt 0 ]; then
+    count=$(jq -r '(.answers // {}) | length' "$PROGRESS_FILE") || exit 1
+    case "$count" in ''|*[!0-9]*) exit 1 ;; esac
+    if [ "$count" -gt 0 ]; then
       printf '| Key | Value |\n|---|---|\n'
       jq -r '
         (.answers // {})
@@ -474,25 +502,37 @@ render_intake_file() {
         | sort_by(.key)
         | .[]
         | "| `" + .key + "` | " + ((.value // "") | tostring | gsub("\\|"; "\\|") | gsub("\n"; " ")) + " |"
-      ' "$PROGRESS_FILE"
+      ' "$PROGRESS_FILE" || exit 1
     else
       printf '_No answers recorded yet._\n'
     fi
     printf '\n%s\n' "$end_marker"
-  } > "$appendix"
+  ) > "$appendix"; then
+    rm -f "$tmp" "$appendix"; return 1
+  fi
 
-  # Strip any previous fenced block, then append the fresh one.
-  awk -v b="$begin_marker" -v e="$end_marker" '
+  # Strip any previous fenced block, trim trailing blank lines, append the
+  # fresh one — all into $out, which replaces PROJECT_INTAKE.md only whole.
+  if ! awk -v b="$begin_marker" -v e="$end_marker" '
     $0 == b { skip = 1; next }
     $0 == e { skip = 0; next }
     skip != 1 { print }
-  ' "$INTAKE_FILE" > "$tmp"
-
-  # Trim trailing blank lines, then append.
-  awk 'BEGIN{blank=0} /^$/{blank++; next} {while(blank-->0) print ""; blank=0; print} END{print ""}' "$tmp" > "$INTAKE_FILE"
-  cat "$appendix" >> "$INTAKE_FILE"
+  ' "$INTAKE_FILE" > "$tmp" \
+    || ! awk 'BEGIN{blank=0} /^$/{blank++; next} {while(blank-->0) print ""; blank=0; print} END{print ""}' "$tmp" > "$out" \
+    || ! cat "$appendix" >> "$out" \
+    || ! mv "$out" "$INTAKE_FILE"; then
+    rm -f "$tmp" "$appendix" "$out"; return 1
+  fi
 
   rm -f "$tmp" "$appendix"
+}
+
+# _render_or_warn — the per-section render: a failure must not block the
+# wizard (the answers are safe in the progress file), but it is SAID.
+_render_or_warn() {                                    # BL-265-RENDER-STATUS
+  render_intake_file && return 0
+  print_warn "PROJECT_INTAKE.md was NOT updated — rendering the answers into it failed. Your answers are safe in $PROGRESS_FILE; the next section, or --resume, renders again."
+  return 1
 }
 
 # ================================================================
@@ -537,23 +577,49 @@ load_progress() {
     # Write to a temp file to avoid eval injection from user-provided values
     local tmpfile
     tmpfile=$(mktemp)
-    python3 -c "
+    # BUG-010-LOAD-REFUSE — this used to subscript seven keys and ignore the
+    # exit status: a file missing one raised a KeyError on stderr, the
+    # partial output was sourced, and --resume carried on with the variables
+    # unset — to a skipped section and "Intake Complete!" at rc 0. Defaulting
+    # the keys to '' would keep that silence, so a file this cannot read is
+    # REFUSED, naming what is wrong, and the status decides.
+    local perr
+    perr=$(python3 -c "
 import json, sys, shlex
-with open(sys.argv[1]) as f:
-    data = json.load(f)
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+except Exception as e:
+    sys.stderr.write('it is not readable JSON (%s)' % e)
+    sys.exit(2)
+if not isinstance(data, dict):
+    sys.stderr.write('it is not a JSON object'); sys.exit(2)
+need = ['last_section', 'project_name', 'platform', 'track', 'deployment', 'language', 'description']
+missing = [k for k in need if k not in data]
+if missing:
+    sys.stderr.write('it has no ' + ', '.join(missing)); sys.exit(2)
+if isinstance(data['last_section'], bool) or not isinstance(data['last_section'], int):
+    sys.stderr.write('its last_section is %r, not a whole number' % (data['last_section'],)); sys.exit(2)
+def q(v):
+    return shlex.quote('' if v is None else str(v))
 # Use shlex.quote to safely escape all values for shell assignment
 print(f\"LAST_SECTION={data['last_section']}\")
-print(f\"PROJECT_NAME={shlex.quote(data['project_name'])}\")
-print(f\"PLATFORM={shlex.quote(data['platform'])}\")
-print(f\"TRACK={shlex.quote(data['track'])}\")
-print(f\"DEPLOYMENT={shlex.quote(data['deployment'])}\")
-print(f\"LANGUAGE={shlex.quote(data['language'])}\")
-print(f\"PROJECT_DESCRIPTION={shlex.quote(data['description'])}\")
+print(f\"PROJECT_NAME={q(data['project_name'])}\")
+print(f\"PLATFORM={q(data['platform'])}\")
+print(f\"TRACK={q(data['track'])}\")
+print(f\"DEPLOYMENT={q(data['deployment'])}\")
+print(f\"LANGUAGE={q(data['language'])}\")
+print(f\"PROJECT_DESCRIPTION={q(data['description'])}\")
 poc = data.get('poc_mode') or ''
 print(f\"POC_MODE={shlex.quote(poc)}\")
 completed = ' '.join(str(s) for s in data.get('completed_sections', []))
 print(f\"COMPLETED_SECTIONS={shlex.quote(completed)}\")
-" "$PROGRESS_FILE" > "$tmpfile"
+" "$PROGRESS_FILE" 2>&1 > "$tmpfile") || {
+      rm -f "$tmpfile"
+      print_fail "Cannot resume: the intake progress file ($PROGRESS_FILE) cannot be used — ${perr:-python3 failed reading it}."
+      echo "  Nothing was resumed. Fix or remove that file, then run: bash scripts/intake-wizard.sh --resume" >&2
+      return 1
+    }
     # shellcheck disable=SC1090
     source "$tmpfile"
     rm -f "$tmpfile"
@@ -1927,8 +1993,14 @@ run_script_mode() {
   done
 
   # Final render — ensures the appendix reflects every saved answer
-  # even if save_section's per-section render was skipped.
-  render_intake_file || true
+  # even if save_section's per-section render was skipped. PROJECT_INTAKE.md
+  # is what the next session reads, so completion is NOT claimed over a
+  # render that failed.                                 # BL-265-RENDER-STATUS
+  if ! render_intake_file; then
+    print_fail "PROJECT_INTAKE.md was NOT updated — rendering the answers into it failed, so the intake is not reported complete."
+    echo "  Your answers are safe in $PROGRESS_FILE. Fix the cause, then run: bash scripts/intake-wizard.sh --resume" >&2
+    exit 1
+  fi
 
   echo ""
   echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════════════════╗${NC}"

@@ -187,10 +187,13 @@ else
       render "$PD1" "$tgt"
       got="$(ctx_row "$PD1/PROJECT_INTAKE.md" "Project name")"
       ctl="$(grep -c "$ANS_VALUE" "$PD1/PROJECT_INTAKE.md" 2>/dev/null)"
-      if [ "$got" != "$CTX_NAME" ] && [ "$ctl" -ge 1 ]; then
-        pass "MP1 (MUTATION) — with \`label\` restored the Project Context table is EMPTY (name row [$got]) while the Answers table still renders: R2 is what stops it"
+      # Since `# BL-265-RENDER-STATUS` a failed render writes NOTHING and
+      # returns non-zero, so the mutant no longer leaves a half-table with the
+      # Answers rows below it (this case used to require exactly that).
+      if [ "$got" != "$CTX_NAME" ] && [ "$RENDER_RC" -ne 0 ] && [ "${ctl:-0}" -eq 0 ]; then
+        pass "MP1 (MUTATION) — with \`label\` restored the render FAILS (rc=$RENDER_RC) and writes no table at all (name row [$got], answers $ctl): R2 is what stops it"
       else
-        fail_ "MP1 (MUTATION)" "the reserved word changed nothing (name=[$got] answers=$ctl) — R2 may be passing for another reason"
+        fail_ "MP1 (MUTATION)" "the reserved word changed nothing (name=[$got] rc=$RENDER_RC answers=$ctl) — R2 may be passing for another reason"
       fi
     fi
   fi

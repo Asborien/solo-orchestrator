@@ -916,13 +916,45 @@ fi
 # approval preempts workflow concerns without hiding security violations.
 # See docs/builders-guide.md "Structured Decision Points" for the contract.
 
+# `## BL-320:` the question may be schema 2 (Development Guardrails 4.4.0's
+# approval design B: options {id, text, approves}) or schema 1 ("A1: text"
+# strings). Each option is shown with what picking it does, and the route the
+# agent is given depends on the project's Guardrails version (_pa_route): with
+# 4.4.0 and later the USER answers by replying with the option id, twice, and
+# the Guardrails record the pick and remove the question — so the agent is NOT
+# told to run --resolve (an early --resolve withdraws the user's question).
+# Older versions keep the old route. The lib is loaded guardedly, in this
+# file's idiom: without it the route is "unknown" and the old text is shown.
+if [ -f "$SCRIPT_DIR/lib/guardrails.sh" ]; then
+  # shellcheck source=scripts/lib/guardrails.sh
+  . "$SCRIPT_DIR/lib/guardrails.sh"
+fi
+_pa_route() {   # SENTINEL — pick | legacy | unknown, from the sentinel's project
+  local root
+  root="$(dirname "$(dirname "$1")")"
+  if command -v soif_gr_route >/dev/null 2>&1; then soif_gr_route "$root"; else echo unknown; fi
+}
+
 build_pa_rich_reason() {
   local sentinel="$1" action_label="$2"
-  local question options recommendation offered_at
+  local question options recommendation offered_at route schema hint
   question=$(jq -er '.question' "$sentinel") || return 1
-  options=$(jq -er '.options | map("  " + .) | join("\n")' "$sentinel") || return 1
+  options=$(jq -er 'if .schema == 2 then (.options | map("  \(.id) — \(.text) [\(if .approves == "commit" then "approves committing the staged change" else "approves nothing" end)]")) else (.options | map("  " + .)) end | join("\n")' "$sentinel") || return 1   # BL-320-GATE-RENDER
   recommendation=$(jq -er '.recommendation' "$sentinel") || return 1
   offered_at=$(jq -er '.offered_at' "$sentinel") || return 1
+  schema=$(jq -r 'if .schema == 2 then 2 else 1 end' "$sentinel")
+  route="$(_pa_route "$sentinel")"   # BL-320-GATE-ROUTE
+  if [ "$route" = pick ] && [ "$schema" != 2 ]; then
+    hint="This question is in the older format (schema 1), which the Development Guardrails 4.4.0 and later cannot take an answer to. Withdraw it (scripts/pending-approval.sh --clear), then ask again with scripts/pending-approval.sh --offer, after staging the change."
+  elif [ "$route" = pick ]; then
+    # `## BL-322:` S4: the commit's whole shape, and the -F route for a message
+    # the Guardrails refuse (a protected path, or from 4.4.1 a hook script that
+    # writes approvals, named in it).
+    hint="Stop and wait. The user answers by replying with the option id (for example: $recommendation), then again once the Development Guardrails have shown them the question and the staged change; the Guardrails then record the pick and remove this question. Do not remove it yourself. After a pick that approves the commit, commit with a lone git commit -m \"subject\" -m \"body\" (nothing before it, not even cd <folder> &&; nothing after it; no -a, no paths). If the message names a Guardrails hook script such as mark-evaluated.sh or record-approval.sh, or a path they protect, such as .claude/settings.json, .claude/framework or .git/hooks, they refuse the command: write the message to a file outside the project with the Write tool and commit with git commit -F <that file>. To withdraw the question instead: scripts/pending-approval.sh --clear"   # BL-322-S4-GATE-HINT
+  else
+    hint="Wait for the user to pick one, then:
+  scripts/pending-approval.sh --resolve"
+  fi
   cat <<EOF
 pre-commit gate: $action_label blocked — pending user decision.
 
@@ -932,8 +964,7 @@ $options
 Recommendation: $recommendation
 Offered at: $offered_at
 
-Wait for the user to pick one, then:
-  scripts/pending-approval.sh --resolve
+$hint
 EOF
 }
 
@@ -1058,6 +1089,75 @@ fi
 # counts as implementation and will WARN. WARN-only makes that safe; the
 # dogfood surfaces it as a false positive.
 
+# _commit_msg_file — the file `git commit` reads its message from, as the shell
+# would hand it over: `-F <f>`, `-F<f>`, a short-option cluster ending in F
+# (`-sF <f>`), `--file <f>` or `--file=<f>`, with one layer of single or double
+# quotes (and a backslash escape) removed and an unquoted leading `~/` expanded.
+# Only words after the `commit` word count, up to a shell operator or `--`, and
+# the value of an option that takes one (-m, -c, -C, --message, --author, …) is
+# skipped, so a message that is the word "-F" is never read as the option.
+# Prints nothing when there is no message file; `$VAR` is not expanded.
+#
+# In a short-option cluster, the first option that takes a value ends it: the
+# rest of the word is that value (`## BL-322:` S5, review R2-1: in
+# `-Sabc -F f` the `c` of the key id was read as -c, whose value would then be
+# the -F). `git commit -h` (2.54) lists the short options with a value: -F, -m,
+# -c, -C and -t take one, attached or as the next word; -S[<key-id>] and
+# -u[<mode>] take an optional one, attached only, so they never take the next
+# word. -U <n> is left out: its value is a number, which spells no option, and
+# git refuses one that is not. A leading `:(optional)` (gitcli, "Magic filename
+# options": a missing file means no -F at all) is not part of the path (R-S5-5).
+#
+# `## BL-322:` S4, review round 1 (R-S4-1). The four readers below matched
+# "-F, whitespace, then non-spaces" with sed: a QUOTED path kept its quotes and
+# was never read, and `--file` was not seen at all, so the message checks here
+# saw no message — measured: a feat: commit with no Build Loop, refused with an
+# unquoted path, was allowed with the same path in quotes (the commit-msg hook
+# refused it later). S4 tells the agent to commit with `git commit -F <file>`.
+_commit_msg_file() {   # BL-322-S4-MSGFILE
+  printf '%s' "$COMMAND" | awk '
+    function fp(p) { if (substr(p, 1, 11) == ":(optional)") p = substr(p, 12); return p }   # BL-322-S5-MSGFILE-OPTIONAL
+    { src = src (NR > 1 ? "\n" : "") $0 }
+    END {
+      n = 0; tok = ""; have = 0; q = ""; L = length(src)
+      for (i = 1; i <= L; i++) {
+        c = substr(src, i, 1)
+        if (q == "\047") { if (c == "\047") q = ""; else tok = tok c; continue }
+        if (q == "\"") {
+          if (c == "\\" && i < L && index("\"\\$`", substr(src, i + 1, 1)) > 0) { tok = tok substr(src, i + 1, 1); i++; continue }
+          if (c == "\"") q = ""; else tok = tok c
+          continue
+        }
+        if (c == "\047" || c == "\"") { q = c; have = 1; continue }   # BL-322-S4-MSGFILE-QUOTE
+        if (c == "\\" && i < L) { tok = tok substr(src, i + 1, 1); have = 1; i++; continue }
+        if (c == " " || c == "\t" || c == "\n") { if (have) { t[++n] = tok; tok = ""; have = 0 }; continue }
+        if (!have && c == "~" && (i == L || substr(src, i + 1, 1) == "/")) { tok = ENVIRON["HOME"]; have = 1; continue }
+        tok = tok c; have = 1
+      }
+      if (have) t[++n] = tok
+      for (k = 1; k <= n; k++) if (t[k] == "commit") break   # BL-322-S4-MSGFILE-COMMIT
+      for (k = k + 1; k <= n; k++) {
+        w = t[k]
+        if (w == "&&" || w == "||" || w == ";" || w == "|" || w == "&" || w == "--") exit
+        if (w == "-F" || w == "--file") { if (k < n) print fp(t[k + 1]); exit }   # BL-322-S4-MSGFILE-LONG
+        if (substr(w, 1, 7) == "--file=") { print fp(substr(w, 8)); exit }   # BL-322-S4-MSGFILE-LONGEQ
+        if (w == "--message" || w == "--author" || w == "--date" || w == "--cleanup" || w == "--trailer" \
+            || w == "--reuse-message" || w == "--reedit-message" || w == "--fixup" || w == "--squash") { k++; continue }
+        if (substr(w, 1, 1) == "-" && substr(w, 2, 1) != "-") {
+          for (j = 2; j <= length(w); j++) {
+            l = substr(w, j, 1)
+            if (l == "F") { r = substr(w, j + 1); if (r != "") print fp(r); else if (k < n) print fp(t[k + 1]); exit }   # BL-322-S4-MSGFILE-CLUSTER
+            if (l == "m" || l == "c" || l == "C" || l == "t") {   # BL-322-S5-MSGFILE-REQVAL
+              if (j == length(w)) k++   # BL-322-S4-MSGFILE-SKIPVAL
+              break
+            }
+            if (l == "S" || l == "u") break   # BL-322-S5-MSGFILE-OPTVAL
+          }
+        }
+      }
+    }'
+}
+
 # Extract the first line (subject) of the prospective commit message from the
 # Bash command. Self-contained so the detector can run early, before the
 # BL-006 block, and fire even for commits a later gate would deny.
@@ -1077,9 +1177,9 @@ _tdd_extract_subject() {
     fi
     s=$(printf '%s\n' "$s" | head -n 1)
   fi
-  if [ -z "$s" ] && echo "$COMMAND" | grep -qE '\-F[[:space:]]+[^ ]+'; then
-    local f
-    f=$(echo "$COMMAND" | sed -nE 's/.*-F[[:space:]]+([^ ]+).*/\1/p' | head -n 1)
+  if [ -z "$s" ]; then
+    local f=""
+    f="$(_commit_msg_file)"   # BL-322-S4-MSGFILE-TDD
     if [ -n "$f" ] && [ -r "$f" ]; then
       s=$(head -n 1 "$f")
     fi
@@ -1215,9 +1315,9 @@ bl006_check() {
   fi
 
   # 3. -F <file>. Only if no -m at all was seen.
-  if [ -z "$msg" ] && echo "$COMMAND" | grep -qE '\-F[[:space:]]+[^ ]+'; then
-    local f
-    f=$(echo "$COMMAND" | sed -nE 's/.*-F[[:space:]]+([^ ]+).*/\1/p' | head -n 1)
+  if [ -z "$msg" ]; then
+    local f=""
+    f="$(_commit_msg_file)"   # BL-322-S4-MSGFILE-BL006
     if [ -n "$f" ] && [ -r "$f" ]; then
       msg=$(head -n 1 "$f")
     fi
@@ -1285,9 +1385,9 @@ extract_commit_message() {
     fi
   fi
   # 3. -F <file>
-  if [ -z "$msg" ] && echo "$COMMAND" | grep -qE '\-F[[:space:]]+[^ ]+'; then
-    local f
-    f=$(echo "$COMMAND" | sed -nE 's/.*-F[[:space:]]+([^ ]+).*/\1/p' | head -n 1)
+  if [ -z "$msg" ]; then
+    local f=""
+    f="$(_commit_msg_file)"   # BL-322-S4-MSGFILE-LINT
     if [ -n "$f" ] && [ -r "$f" ]; then
       msg=$(cat "$f")
     fi
@@ -1483,8 +1583,8 @@ if [ "$IS_COMMIT" = true ]; then
     fi
     RAW_MSG=$(printf '%s\n' "$RAW_MSG" | head -n 1)
   fi
-  if [ -z "$RAW_MSG" ] && echo "$COMMAND" | grep -qE '\-F[[:space:]]+[^ ]+'; then
-    F=$(echo "$COMMAND" | sed -nE 's/.*-F[[:space:]]+([^ ]+).*/\1/p' | head -n 1)
+  if [ -z "$RAW_MSG" ]; then
+    F="$(_commit_msg_file)"   # BL-322-S4-MSGFILE-SUBJECT
     if [ -n "$F" ] && [ -r "$F" ]; then
       RAW_MSG=$(head -n 1 "$F")
     fi

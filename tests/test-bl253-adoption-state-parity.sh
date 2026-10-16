@@ -38,6 +38,12 @@
 # silently hit a second site; every mutant must parse (`bash -n`) and must
 # have changed the file (>=2 diff lines) or the case fails as a setup error.
 set -o pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -110,7 +116,9 @@ fi
 
 # Five answers: the tier question (1 personal / 2 organizational) plus this
 # report's four scan-derived confirmations.
-_ans() { local tier="${1:-1}"; printf '%s\n1\n1\n1\n1\n' "$tier"; }
+# The tier, then the track (`## BL-311:` row 8 — asked since then; this suite
+# answers `standard`, and the oracle below is built with the same value).
+_ans() { local tier="${1:-1}"; printf '%s\nstandard\n1\n1\n1\n1\n' "$tier"; }
 
 RUN_RC=0; RUN_OUT=""; RUN_ERR=""
 # run_adopt <dir> <answers> <report> [fw] — the scanner probe is pinned to a
@@ -171,11 +179,11 @@ echo "=== O — the oracle: init.sh's phase-state emitter, read as source ==="
 
 # O0 — lift the heredoc out of create_project by its PHEOF fence and parse it
 # with adoption's values in place of the shell interpolations. A production,
-# personal, full-track project named like the fixture — exactly what adoption
-# writes for tier 1.
+# personal, standard-track project named like the fixture — exactly what
+# adoption writes for tier 1 when `_ans` answers the track `standard`.
 ORACLE_PS=""
 ORACLE_PS="$(awk '/cat > \.claude\/phase-state\.json << PHEOF/{f=1;next} /^PHEOF$/{f=0} f{print}' "$REPO_ROOT/init.sh" \
-  | sed -e 's/"\$PROJECT_NAME"/"acme-api"/' -e 's/"\$TRACK"/"full"/' -e 's/"\$DEPLOYMENT"/"personal"/' -e 's/\$poc_json/null/' \
+  | sed -e 's/"\$PROJECT_NAME"/"acme-api"/' -e 's/"\$TRACK"/"standard"/' -e 's/"\$DEPLOYMENT"/"personal"/' -e 's/\$poc_json/null/' \
   | jq -c . 2>/dev/null)"
 if [ -n "$ORACLE_PS" ]; then
   pass "O0 — init.sh's phase-state heredoc was lifted and parses (the oracle exists)"

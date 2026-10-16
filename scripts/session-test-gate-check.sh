@@ -43,9 +43,18 @@ CONTEXT7_CONFIGURED=false
 UNKNOWN_SERVERS=""
 
 if command -v jq &>/dev/null; then
+  # `## BL-311:` THE USER FILES ARE THE ONES THIS SESSION READS. With
+  # CLAUDE_CONFIG_DIR set, Claude Code keeps `.claude.json` and `settings.json`
+  # inside that directory and does NOT read `~/.claude.json` — so a server
+  # registered only there is not in the session, and treating it as configured
+  # made it REQUIRED: every Write/Edit blocked on a tool that could not be
+  # called. This hook sources nothing by design, so the rule is inline; its one
+  # owner is helpers-core.sh's soif_claude_config_dir / soif_claude_json_path,
+  # and this line is their sync sibling.
+  if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then _cc_set="$CLAUDE_CONFIG_DIR/settings.json"; _cc_json="$CLAUDE_CONFIG_DIR/.claude.json"; else _cc_set="$HOME/.claude/settings.json"; _cc_json="$HOME/.claude.json"; fi   # BL-311-GATE-CONFIG
   # Collect all configured MCP server names from all settings scopes
   ALL_MCP_SERVERS=""
-  for settings_file in "$HOME/.claude/settings.json" "$HOME/.claude.json" ".claude/settings.json" ".claude/settings.local.json"; do
+  for settings_file in "$_cc_set" "$_cc_json" ".claude/settings.json" ".claude/settings.local.json"; do
     if [ -f "$settings_file" ]; then
       SERVERS=$(jq -r '.mcpServers // {} | keys[]' "$settings_file" 2>/dev/null || true)
       if [ -n "$SERVERS" ]; then
@@ -168,17 +177,23 @@ EOF
 fi
 
 # ── Report MCP Gate Requirements ──────────────────────────────────
-GATE_TOOLS=""
-if [ "$QDRANT_CONFIGURED" = true ]; then
-  GATE_TOOLS="${GATE_TOOLS}qdrant-find, "
-fi
-if [ "$CONTEXT7_CONFIGURED" = true ]; then
-  GATE_TOOLS="${GATE_TOOLS}context7, "
-fi
-if [ -n "$GATE_TOOLS" ]; then
-  GATE_TOOLS="${GATE_TOOLS%, }"
+# `## BL-322:` S4 (dogfood run 3, finding 11): say exactly what satisfies the
+# MCP check. scripts/session-mcp-gate.sh counts OUTCOMES: a qdrant-find that
+# returned (an empty result included) and a Context7 query-docs that returned.
+# This line used to say "blocked until you call: qdrant-find, context7"; the
+# technician called resolve-library-id, which reads no documentation, and the
+# first edit was refused.
+if [ "$QDRANT_CONFIGURED" = true ] || [ "$CONTEXT7_CONFIGURED" = true ]; then
   echo ""
-  echo "MCP GATE ACTIVE: Write/Edit operations are blocked until you call: $GATE_TOOLS"
+  # "check", not "gate": the messaging standard keeps gate for the check
+  # between one phase and the next (S4 review round 1).
+  echo "MCP CHECK ACTIVE: Write/Edit operations are blocked until each call below has returned successfully in this session:"   # BL-322-S4-GATE-HEAD
+  if [ "$QDRANT_CONFIGURED" = true ]; then   # BL-322-S4-GATE-QDRANT-IF
+    echo "  - qdrant-find. An empty result counts; a call that errors does not."   # BL-322-S4-GATE-QDRANT
+  fi
+  if [ "$CONTEXT7_CONFIGURED" = true ]; then   # BL-322-S4-GATE-C7-IF
+    echo "  - Context7's query-docs (mcp__context7__query-docs), which reads the documentation. resolve-library-id alone does not count: it only finds the library ID to pass to query-docs."   # BL-322-S4-GATE-C7
+  fi
   echo "Call these tools now before beginning any file modifications."
 fi
 

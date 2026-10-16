@@ -52,6 +52,12 @@
 # executes outside the fixture is scripts/scout.sh, which is read-only by
 # construction (its own suite hashes a whole tree before and after).
 set -o pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -169,6 +175,10 @@ report_with_phase() {
 # asked here and are asked here no longer — the first two are deleted (D4,
 # D10) and the rest belong to Act 3's interview (§5.2).
 #
+# `## BL-311:` row 8 MADE IT SIX: the track is asked straight after the tier,
+# answered here by its words, `standard` — one line, because Standard is the
+# one answer neither of the track's two rules re-asks.
+#
 # THE LENGTH IS LOAD-BEARING, not incidental: it is exactly long enough, so
 # any mutant that puts a question back runs the run out of answers and it
 # refuses. tests/test-brownfield-wp9-act-boundaries.sh N4 is built on that.
@@ -181,7 +191,7 @@ report_with_phase() {
 # accident into a warn and the block they exist to prove never fires.
 _ans() {
   local tier="${1:-2}"
-  printf '%s\n1\n1\n1\n1\n' "$tier"
+  printf '%s\nstandard\n1\n1\n1\n1\n' "$tier"
 }
 
 # run_adopt DIR ANSWERFILE REPORT [HALT] [FRAMEWORK]
@@ -297,6 +307,7 @@ else
   # real answer — one extra line, at exactly that point.
   {
     printf '2\n'                    # the tier question
+    printf 'standard\n'             # the track (`## BL-311:` row 8)
     printf '2\nledger-service\n'    # section 1: change it, then the answer
     printf '1\n1\n1\n'              # the three remaining confirmations
   } > "$I2D/answers"
@@ -366,7 +377,7 @@ s1_first_sites=$(_sites "$L_STATE" 'BL-242-APPROVAL-LOG-FIRST')
 # `--finish` able to re-stage an adoption whose commit was refused
 # (`## BL-291:`). WP7/1 then inserts `adoption_record` (`# BL-242-RECORD-STAGE`)
 # between `manifest` and `write_set` — AFTER `manifest` because the record takes
-# the commit it was adopted at from the STAMP that stage writes, rather than
+# the commit adoption started from, from the STAMP that stage writes, rather than
 # from a second `git rev-parse HEAD`. WP12b inserts `framework_docs`
 # (`# BL-242-DOCS-STAGE-ORDER`) between `manifest` and `adoption_record`, so
 # the record stays the last word in the log. WP7/4 then puts `dispositions`

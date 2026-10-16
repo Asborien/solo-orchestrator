@@ -463,7 +463,7 @@ run_child_suite "scripts/lint-no-live-remote-in-tests.sh" \
   "No test executes init.sh in a live-remote-reachable shape" \
   "Non-hermetic init run found (see scripts/lint-no-live-remote-in-tests.sh --list)"
 run_child_suite "tests/test-lint-no-live-remote.sh" \
-  "scripts/lint-no-live-remote-in-tests.sh behavior tests (14/14)" \
+  "scripts/lint-no-live-remote-in-tests.sh behavior tests (80/80)" \
   "scripts/lint-no-live-remote-in-tests.sh behavior tests FAILED (run tests/test-lint-no-live-remote.sh for details)"
 
 # BL-051: tests/test-resolve-tools-memoization.sh — proves init.sh's
@@ -836,6 +836,35 @@ run_child_suite "tests/test-brownfield-wp10a-tool-resolution.sh" \
 run_child_suite "tests/test-bl253-adoption-state-parity.sh" \
   "BL-253 adoption state parity (poc_mode null like init.sh; --start-phase4 and the org Pre-Phase-0 guard)" \
   "BL-253 adoption state-parity tests FAILED (run tests/test-bl253-adoption-state-parity.sh for details)"
+# BL-311 rows 2 and 8: a Guardrails-only .claude/ adopts and keeps every
+# setting (a manifest with any Solo key still refuses); the track is asked,
+# with init.sh's descriptions and rules, and never defaulted.
+run_child_suite "tests/test-bl311-b-adopt-guardrails-track.sh" \
+  "BL-311 rows 2 and 8: a Guardrails-only .claude/ adopts; the track is asked" \
+  "BL-311 Guardrails-only/track tests FAILED (run tests/test-bl311-b-adopt-guardrails-track.sh for details)"
+# BL-311 rows 4 and 5: Scout runs the test command through the detected
+# package manager (uv run --frozen pytest, npm test, ...), and the ignore-rule block
+# names the rule, its file and line, grouped by rule, with the one-line fix.
+run_child_suite "tests/test-bl311-c-scout-runner-ignore-rule.sh" \
+  "BL-311 rows 4 and 5: the test runner is prefixed; the ignoring rule is named" \
+  "BL-311 runner/ignore-rule tests FAILED (run tests/test-bl311-c-scout-runner-ignore-rule.sh for details)"
+# BL-311 rows 6 and 7: README, adoption.md and user-guide.md clone the framework
+# to one place and run its scripts from there; adoption.md step 2's settings
+# snippet is exactly one user-settings autoMode.environment line, scoped to code
+# to run and never a destination for data, with no allow list beside it, plus
+# the fallback for when Claude is still refused; and the assessment prompt sends
+# an auto-mode refusal of the finisher to the human in words the bypass
+# detector does not flag.
+run_child_suite "tests/test-bl311-e-clone-path.sh" \
+  "BL-311 rows 6 and 7: one clone path; one scoped autoMode.environment line; the fallback" \
+  "BL-311 clone-path/auto-mode settings tests FAILED (run tests/test-bl311-e-clone-path.sh for details)"
+# BL-311 row 3: the bypass detector's Stop arm records an agent relaying a
+# check's own documented escape (an attested variable with its reason, or the
+# `!` hand-to-human step) as relayed_framework_escape and raises no sentinel
+# for it; a real proposal beside it still raises.
+run_child_suite "tests/test-bl311-d-relayed-escape.sh" \
+  "BL-311 row 3: a relayed framework escape is recorded, not raised as a bypass proposal" \
+  "BL-311 relayed-escape tests FAILED (run tests/test-bl311-d-relayed-escape.sh for details)"
 
 # BL-254: a generated CI pipeline may only call scripts the scaffold ships,
 # and a governance check may not swallow its own failure; plus the lint that
@@ -924,12 +953,117 @@ run_child_suite "tests/test-brownfield-wp9c-session-layer.sh" \
 run_child_suite "tests/test-bl296-adopt-guardrails.sh" \
   "BL-296 row 33: the Development Guardrails on the adoption path" \
   "BL-296 adoption-Guardrails tests FAILED (run tests/test-bl296-adopt-guardrails.sh for details)"
+# BL-311 fixes 1 and 9: adoption offers the Qdrant and Context7 MCP servers the
+# session is checked for; every MCP reader honours CLAUDE_CONFIG_DIR. The cases
+# and their mutation proofs are two files, one CI leg each (`# BL-311-MCP-SPLIT`).
+run_child_suite "tests/test-bl311-adopt-mcp.sh" \
+  "BL-311: the MCP servers on the adoption path, and CLAUDE_CONFIG_DIR" \
+  "BL-311 adoption-MCP tests FAILED (run tests/test-bl311-adopt-mcp.sh for details)"
+run_child_suite "tests/test-bl311-adopt-mcp-mutants.sh" \
+  "BL-311: the mutation proofs over the adoption MCP step, killed by those cases" \
+  "BL-311 adoption-MCP mutation proofs FAILED (run tests/test-bl311-adopt-mcp-mutants.sh for details)"
+run_child_suite "tests/test-bl311-mcp-add-order.sh" \
+  "BL-311: every tracked claude mcp add puts the server name before -e" \
+  "BL-311 mcp-add order tests FAILED (run tests/test-bl311-mcp-add-order.sh for details)"
 # BL-284: two verify-install.sh auto-fixers that could never run — has_context()
 # was unsatisfiable on an adopted project, and fix_superpowers ran a CLI verb
 # that does not exist.
 run_child_suite "tests/test-bl284-verify-install-context.sh" \
   "BL-284: an adopted project's recorded context reaches has_context(); fix_superpowers uses a real CLI verb" \
   "BL-284 verify-install context/plugin-verb tests FAILED (run tests/test-bl284-verify-install-context.sh for details)"
+# BL-316: the tool matrix's Superpowers command used a CLI verb that does not
+# exist, and its Linux gitleaks install was a pipeline verify-install.sh refuses;
+# now one BL-284 command, and a pinned, checksum-verified installer.
+run_child_suite "tests/test-bl316-installers.sh" \
+  "BL-316: Superpowers installs with the BL-284 command everywhere; gitleaks on Linux is pinned and checksum-verified" \
+  "BL-316 installer tests FAILED (run tests/test-bl316-installers.sh for details)"
+# BL-312: opt-in TL;DR mode — the Stop hook, its wiring beside the bypass
+# detector, the CLAUDE.md section, adoption's last question, reconfigure's
+# --tldr-mode, an upgrade keeping the key. The -init file runs init.sh itself.
+run_child_suite "tests/test-bl312-tldr-mode.sh" \
+  "BL-312: TL;DR mode — hook, wiring, CLAUDE.md section, adoption question, reconfigure, upgrade" \
+  "BL-312 TL;DR mode tests FAILED (run tests/test-bl312-tldr-mode.sh for details)"
+run_child_suite "tests/test-bl312-tldr-mode-init.sh" \
+  "BL-312: TL;DR mode through init.sh — --config key, real scaffolds on and off" \
+  "BL-312 TL;DR mode init tests FAILED (run tests/test-bl312-tldr-mode-init.sh for details)"
+# BL-318 G1: adoption never wrote .claude/test-command, so the commit-time
+# project-test check ran a bare pytest in a uv project and let the commit
+# through; adoption now writes the scan's command when the operator kept it,
+# and the hook's fallback runs pytest through uv/poetry/pdm/pipenv after an
+# import probe.
+run_child_suite "tests/test-bl318-g1-test-command.sh" \
+  "BL-318 G1: adoption writes .claude/test-command; the hook's pytest fallback goes through the project's manager" \
+  "BL-318 G1 test-command tests FAILED (run tests/test-bl318-g1-test-command.sh for details)"
+# BL-318 G5: nothing compared a project's Development Guardrails with the clone,
+# so an adoptee kept 4.3.0 beside a newer clone in silence; check-versions.sh
+# now reports it, the session start offers scripts/refresh-guardrails.sh, and
+# the human runs it after `!`.
+run_child_suite "tests/test-bl318-g5-guardrails-refresh.sh" \
+  "BL-318 G5: the session start offers an older project's Guardrails update; scripts/refresh-guardrails.sh applies only that" \
+  "BL-318 G5 Guardrails-refresh tests FAILED (run tests/test-bl318-g5-guardrails-refresh.sh for details)"
+# BL-320: Development Guardrails 4.4.0 approve a commit only on the user's
+# option-id answer to a schema-2 question; Solo wrote schema 1, never registered
+# record-approval.sh on a refreshed project, and pulled the shared clone unasked.
+run_child_suite "tests/test-bl320-approval-schema2.sh" \
+  "BL-320: schema-2 approval questions, the answer by option id, missing Guardrails hooks registered, init asks before it pulls" \
+  "BL-320 approval-schema2 tests FAILED (run tests/test-bl320-approval-schema2.sh for details)"
+# BL-318 G2: after an adoptee's assessment resume.sh printed the classic prompt,
+# not Phase 0's, because branch 2 required no PRODUCT_MANIFESTO.md; and that
+# prompt filled three fields with CLAUDE.md's Context Health Check paragraph.
+run_child_suite "tests/test-bl318-g2-resume-adoptee.sh" \
+  "BL-318 G2: an adoptee gets its Phase 0 prompt until Phase 0 writes its manifesto; the session-start hook agrees; the classic prompt prints no filler" \
+  "BL-318 G2 resume-adoptee tests FAILED (run tests/test-bl318-g2-resume-adoptee.sh for details)"
+# BL-318 G3: the framework's CI was said to run "from your next push" (it runs on
+# a push to main and on pull requests to main), was named CI beside the
+# adoptee's own CI, and installed from requirements.txt in a uv project.
+run_child_suite "tests/test-bl318-g3-ci-template.sh" \
+  "BL-318 G3: the framework's CI says when it runs, is named Solo Orchestrator checks, and installs a uv project with uv sync --frozen" \
+  "BL-318 G3 CI-template tests FAILED (run tests/test-bl318-g3-ci-template.sh for details)"
+# BL-318 G6 (and G4's checkable doc claims): the deploy detectors counted the
+# word inside Nuitka's --no-deployment-flag; a refusal said "nothing was
+# written" after the run had registered MCP servers in the user's Claude Code
+# configuration; the finisher called adoptedAtCommit "the commit this project
+# was adopted at" when it is the commit adoption started from.
+run_child_suite "tests/test-bl318-g4g6.sh" \
+  "BL-318 G4/G6: a flag is not a deploy; a refusal names what the run registered outside the project; adoptedAtCommit's words; the doc claims hold" \
+  "BL-318 G4/G6 tests FAILED (run tests/test-bl318-g4g6.sh for details)"
+# BL-322 S1: the out-of-band detector recorded every commit the user approved
+# through the Guardrails as a user-terminal commit, in the tracked audit log,
+# which kept the stop hook asking for a commit; adoption wrote no ignore rule
+# for Solo's runtime files.
+run_child_suite "tests/test-bl322-s1-audit-loop.sh" \
+  "BL-322 S1: an approved, matched commit is not out of band (forgeries still are); adoption and init ignore Solo's runtime files" \
+  "BL-322 S1 audit-loop tests FAILED (run tests/test-bl322-s1-audit-loop.sh for details)"
+# BL-322 S2: adoption replaced the project's CLAUDE.md and its @ imports of
+# files still in the tree stopped loading, with no warning; Scout said "yours
+# stays"; the archive said "moved" for files it only copied.
+run_child_suite "tests/test-bl322-s2-project-rules.sh" \
+  "BL-322 S2: a replaced CLAUDE.md's imports keep loading, the rest is named and warned about; the archive and Scout say what adoption does" \
+  "BL-322 S2 project-rules tests FAILED (run tests/test-bl322-s2-project-rules.sh for details)"
+# BL-322 S3: adoption stopped on the project's own `lib/` ignore rule after
+# every question had been answered, and Scout had not predicted it; the stopped
+# run had already registered two MCP servers in the operator's user config.
+run_child_suite "tests/test-bl322-s3-ignore-preflight.sh" \
+  "BL-322 S3: Scout reports the ignore-rule block adoption would meet, from adoption's own check; a stopped adoption runs no claude mcp add and writes nothing outside the project" \
+  "BL-322 S3 ignore-preflight tests FAILED (run tests/test-bl322-s3-ignore-preflight.sh for details)"
+# BL-322 S4: dogfood run 3's wording — the MCP check's real requirement, the
+# lone-commit rule and its -F route, the assessment record's anchor and missing
+# keys, the release history — the Guardrails 4.4.1 override, a stale "left
+# alone" notice for replaced scripts, and Scout's rows for files adoption only
+# copies or composes.
+run_child_suite "tests/test-bl322-s4-wording.sh" \
+  "BL-322 S4: the session start, the approval guidance, the assessment prompt and the docs say what the checks need; Scout's rows match what adoption does" \
+  "BL-322 S4 wording tests FAILED (run tests/test-bl322-s4-wording.sh for details)"
+# BL-322 S2 (Karl, 2026-10-07): zsh is installed only on the unit-shard legs
+# that run a suite marked NEEDS-ZSH, and the shard script refuses one elsewhere.
+run_child_suite "tests/test-bl322-zsh-legs.sh" \
+  "BL-322 S2: zsh only on the legs that need it; a NEEDS-ZSH suite cannot land on a leg without it" \
+  "BL-322 zsh-legs tests FAILED (run tests/test-bl322-zsh-legs.sh for details)"
+# BL-322 S5: the suites that ran verify-install --auto-fix with the runner's
+# HOME fetch nothing, and the real-Guardrails cases read one pinned fixture.
+run_child_suite "tests/test-bl322-s5-hardening.sh" \
+  "BL-322 S5: no network or HOME writes from the verify-install suites; one pinned Guardrails fixture, failing under CI when absent" \
+  "BL-322 S5 hardening tests FAILED (run tests/test-bl322-s5-hardening.sh for details)"
 # BL-265: `label` is a jq keyword, so `def row(label; val)` refused to compile
 # and render_intake_file() wrote a Project Context table with no rows.
 run_child_suite "tests/test-bl265-jq-reserved-label.sh" \
@@ -961,6 +1095,12 @@ run_child_suite "tests/test-bl268-mode-vocabulary.sh" \
 run_child_suite "tests/test-bl281-resume-after-115.sh" \
   "BL-281: --resume after a clean Section 11.5 must run Sections 12 and 13" \
   "BL-281 resume-after-115 tests FAILED (run tests/test-bl281-resume-after-115.sh for details)"
+run_child_suite "tests/test-upgrade-help-and-projectless.sh" \
+  "#419/#426/BL-177: upgrade-project.sh --help wins over every mode and a projectless run writes nothing" \
+  "upgrade help/projectless tests FAILED (run tests/test-upgrade-help-and-projectless.sh for details)"
+run_child_suite "tests/test-bug010-intake-silent-paths.sh" \
+  "BUG-010: the intake wizard refuses an unreadable progress file, stops at end of input, and never completes over a failed render" \
+  "BUG-010 intake silent-path tests FAILED (run tests/test-bug010-intake-silent-paths.sh for details)"
 # BL-286: the TDD gate's branch axis resolves its base from the project's
 # recorded integration branch, so it stops exempting every commit on a
 # non-`main` trunk — and an absent key still behaves byte-identically.
@@ -978,6 +1118,9 @@ run_child_suite "tests/test-bl209-hooksdir-resolution.sh" \
 run_child_suite "tests/test-bl275-selfapproval-remedy.sh" \
   "BL-275: the self-approval remedy names no non-existent flag and does not advise the failing action" \
   "BL-275 self-approval remedy tests FAILED (run tests/test-bl275-selfapproval-remedy.sh for details)"
+run_child_suite "tests/test-bl274-single-authority-attestation.sh" \
+  "BL-274: the single-authority attestation is recorded per gate, blocks when refused, and says every time that §XIV item 5 REMAINS UNMET" \
+  "BL-274 single-authority attestation tests FAILED (run tests/test-bl274-single-authority-attestation.sh for details)"
 # BL-287: reconfigure-project.sh's CI regeneration had no host awareness — a
 # template path missing the per-host directory (so it never resolved, and the
 # warn arm ran under an [OK] banner at rc 0) and a hardcoded GitHub
@@ -988,6 +1131,12 @@ run_child_suite "tests/test-bl287-reconfigure-ci-host.sh" \
 run_child_suite "tests/test-bl288-scout-shallow-history-claim.sh" \
   "BL-288: a shallow clone must not be reported as a full-history secrets scan" \
   "BL-288 shallow-history-claim tests FAILED (run tests/test-bl288-scout-shallow-history-claim.sh for details)"
+run_child_suite "tests/test-bl308-gitleaks-vendored-clean.sh" \
+  "BL-308: the shipped surface scans clean under the rules a generated project's CI runs, and the scanner is live over it" \
+  "BL-308 vendored-clean tests FAILED (run tests/test-bl308-gitleaks-vendored-clean.sh for details)"
+run_child_suite "tests/test-bl308-gitleaks-generated-project.sh" \
+  "BL-308: a project born from init.sh passes the gitleaks git scan its own ci.yml runs" \
+  "BL-308 generated-project tests FAILED (run tests/test-bl308-gitleaks-generated-project.sh for details)"
 # BL-278: the pending-approval sentinel is read from the repo the commit
 # targets, not only from the session's project directory.
 run_child_suite "tests/test-bl278-sentinel-root.sh" \

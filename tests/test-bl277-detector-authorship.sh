@@ -100,10 +100,13 @@ fixture_for() {
 }
 FLAG_NV="--no-""verify"
 
+# frameworkVersion 4.3.0 is a Development Guardrails version older than
+# `## BL-320:`'s minimum, so scripts/pending-approval.sh takes --decision here
+# (the "legacy" route): with 4.4.0 and later it refuses --decision outright.
 mk_proj() {
   local d="$1"
   mkdir -p "$d/.claude" || return 1
-  printf '%s\n' '{"frameworkVersion":"test","host":"other","mode":"personal","deployment":"personal","enforcement_level":"strict"}' \
+  printf '%s\n' '{"frameworkVersion":"4.3.0","host":"other","mode":"personal","deployment":"personal","enforcement_level":"strict"}' \
     > "$d/.claude/manifest.json" || return 1
   echo "[]" > "$d/.claude/bypass-audit.json" || return 1
   return 0
@@ -796,7 +799,7 @@ else fail_ "M2 setup" "$why"; fi
 
 # M3 — the sentinel raised regardless of authorship (the shipped behaviour). Killed by A2 and G2.
 MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
-if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'if [ "$ACTOR" = "claude" ] && [ ! -f "$SENTINEL" ]; then' 'if [ ! -f "$SENTINEL" ]; then' 6)"; then
+if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" '[ "$ACTOR" = "claude" ] || RAISE_PATTERN=""' '[ "$ACTOR" = "claude" ] || true' 8)"; then
   if chk_post_no_sentinel "$MH" >/dev/null 2>&1 || chk_gate_after_tool_output "$MH" >/dev/null 2>&1; then
     fail_ "M3 (MUTATION)" "raising the sentinel from tool output survived A2 or G2"
   elif ! chk_post_not_claude "$MH" >/dev/null 2>&1; then fail_ "M3 (MUTATION)" "the mutant broke attribution too, so the kill proves nothing about the sentinel"
@@ -805,7 +808,7 @@ else fail_ "M3 setup" "$why"; fi
 
 # M3b — the sentinel never raised. Killed by S2 and G3, which is what makes them controls rather than decoration.
 MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
-if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'if [ "$ACTOR" = "claude" ] && [ ! -f "$SENTINEL" ]; then' 'if false; then' 6)"; then
+if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'elif [ -n "$RAISE_PATTERN" ]; then' 'elif false; then' 30)"; then
   if chk_stop_sentinel "$MH" >/dev/null 2>&1 || chk_gate_after_authored "$MH" >/dev/null 2>&1; then
     fail_ "M3b (MUTATION)" "never raising the sentinel survived S2 or G3"
   elif ! chk_stop_claude_row "$MH" >/dev/null 2>&1; then fail_ "M3b (MUTATION)" "the mutant broke the Stop row too, so the kill proves nothing about the sentinel"
@@ -873,7 +876,7 @@ else fail_ "M11 setup" "$why"; fi
 
 # M13 — the false-positive pointer put back into the relayed question. Killed by S3; S2 survives.
 MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
-if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" "To decline, say 'decline' or describe what you want instead.\"" "To decline, say 'decline' or describe what you want instead. Or close it: scripts/pending-approval.sh --resolve --decision false-positive --reason WHY.\"" 8)"; then
+if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'A2 to decline it." \' 'A2 to decline it. Or close it: scripts/pending-approval.sh --resolve --decision false-positive --reason WHY." \' 50)"; then
   if chk_gate_no_fp_pointer "$MH" >/dev/null 2>&1; then fail_ "M13 (MUTATION)" "the pointer in the relayed question survived S3"
   elif ! chk_stop_sentinel "$MH" >/dev/null 2>&1; then fail_ "M13 (MUTATION)" "the mutant broke the sentinel too, so the kill proves nothing about S3"
   else pass "M13 (MUTATION) — the false-positive pointer back in the question: S3 kills it, S2 survives"; fi
@@ -959,7 +962,7 @@ if why="$(mutate "$ML" "# BL-277-FP-RECORD" '.user_response == "PENDING" then' '
   else pass "M21 (MUTATION) — the close widened to user_response n/a: D9 kills it, D1 survives"; fi
 else fail_ "M21 setup" "$why"; fi
 MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
-if why="$(mutate "$ML" "# BL-277-FP-RECORD" '.type == "claude_bypass_proposal" and' '(.type == "claude_bypass_proposal" or .type == "escalation") and' 2)"; then
+if why="$(mutate "$ML" "# BL-277-FP-RECORD" 'if .type == "claude_bypass_proposal" and .user_response == "PENDING" then .user_response = $ur' 'if (.type == "claude_bypass_proposal" or .type == "escalation") and .user_response == "PENDING" then .user_response = $ur' 2)"; then
   if chk_close_scope "$ML" >/dev/null 2>&1; then fail_ "M22 (MUTATION)" "closing escalation rows survived D9"
   elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M22 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D9"
   else pass "M22 (MUTATION) — the close widened to escalation rows: D9 kills it, D1 survives"; fi

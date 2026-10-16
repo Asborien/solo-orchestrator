@@ -69,6 +69,12 @@
 #
 # Hermetic: temp dirs only, no network, no remote creation, no `--no-verify`.
 set -o pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -768,9 +774,11 @@ else
     # WP9: five answers — the tier question (2 = organizational, the tier this
     # suite's ratchet arms are written against) and the four scan-derived
     # confirmations. The chooser, the ladder, the nine judgment sections and
-    # the classification are no longer asked here (D4, D10, A7).
+    # the classification are no longer asked here (D4, D10, A7). `## BL-311:`
+    # row 8 made it six: the track, answered `standard`, after the tier.
     cat > "$GD/answers" <<'ANS'
 2
+standard
 1
 1
 1
