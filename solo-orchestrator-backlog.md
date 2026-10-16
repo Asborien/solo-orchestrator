@@ -18629,15 +18629,17 @@ with the key passed as `argv` and never interpolated into a program.
   `.claude/test-command`, which the commit-time test check runs instead of this answer, so amending
   `test_command` prints a `[WARN]` naming that file and leaves it byte-identical, or absent if it was
   (W1, W2; `# BL-301-TESTCMD-WARN`). MA20, the twentieth mutant, deletes the warning, the only thing
-  it changes, and W1 kills it on that line. Named, never written: the hook runs the file's first line
-  with `sh -c`, and BL-318 writes it only from a command the scan offered.
+  it changes, and W1 kills it on that line. Named, never written: the hook runs, with `sh -c`, the
+  first line in the file that is neither blank nor a comment (W1 pins that wording), and BL-318
+  writes the file only from a command the scan offered. When the file is absent the hook runs its own
+  detection, and the warning says to create the file rather than edit it (W2 pins that).
 
 **Suite:** `tests/test-bl301-adoption-recorded-keys.sh`, 70 cases, driving the real wizard from
 an adopted-shape fixture with stdin closed, under the suite's own interpreter. Registered in
 `tests/full-project-test-suite.sh` and the `tests.yml` unit lane, beside `## BL-282:`'s.
 
 At `main` (`80b3f8d`) 7 passed / 59 failed; with this fix 66 / 0, under `/bin/bash` 3.2.57 and
-Homebrew bash 5.3.15 alike. With W1, W2 and MA20, on the merge with `main` at `789d8cb`: 70 / 0 under
+Homebrew bash 5.3.15 alike. With W1, W2 and MA20, on the merge with `main` at `b9ce2bf`: 70 / 0 under
 `/bin/bash` 3.2.57 and bash 5.2.21 (`ubuntu:24.04`).
 
 Twenty mutants run on a mirror, each located by its distance from `# BL-301-ADOPTION-RECORDED-BEGIN`
@@ -18657,9 +18659,14 @@ and checked write refuse the same shapes downstream.
 2. **The note means "outside the wizard's set and already recorded", not "written by adoption".**
    The wizard cannot tell who wrote a key, and the file's top-level `source` is deliberately not used
    to guess.
-3. **`project_name` has a second home**, the progress file's top-level `project_name`, which
-   `load_progress` reads. Amending `answers.project_name` does not reach it, and unlike the
-   `## BL-203:` keys no `[WARN]` names it.
+3. **`project_name` has other homes, and an amend reaches only one of them.** The progress file's
+   top-level `project_name` (which `load_progress` reads), `.claude/phase-state.json`'s `project` and
+   the adoptee's `CLAUDE.md` keep the old name. `scripts/check-gate.sh --repair` (`cmd_repair`) names
+   the remote it creates from `.answers.project_name`, the amended copy. Measured on a real adoptee
+   (`kp`) after `--set-answer project_name Renamed`: `PROJECT_INTAKE.md` renders both
+   `| Project name | kp |` and ``| `project_name` | Renamed (amended 2026-10-16) |``, phase-state
+   reads `"project":"kp"`, and `CLAUDE.md` opens `# CLAUDE.md — kp`. Unlike the `## BL-203:` keys and
+   `test_command`, no `[WARN]` names any of this.
 4. **The refusal's "Did you mean" hint draws only on the wizard's keys**, so a typo of an
    adoption-recorded key (`test_commandd`) is refused correctly (N1) and offered three unrelated keys.
 5. **`print_ok` interprets backslash escapes** (`echo -e`), so a recorded key containing `\c`
