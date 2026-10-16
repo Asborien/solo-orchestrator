@@ -134,14 +134,18 @@ else
 
   # T30: proposal shapes that must match. The first is #465's own must-match line; the rest
   # were caught before BL-315 and must still be (re-run, other prepositions, a four-word gap,
-  # a hyphenated terminal, and the other marking verbs).
+  # a hyphenated terminal, Markdown emphasis in the phrase, the other marking verbs, and a
+  # marking verb after the step name). The bold "new terminal window" line is verbatim from
+  # a transcript (#482 review, R-482-1).
   t30_fail=""
   for s in 'Run it in a terminal instead of through the hook' \
            'rerun it in your terminal' 're-run the commit in your terminal' \
            'run it at the terminal' 'run it using the terminal' 'run it with your shell' \
            'run it inside a terminal' 'run it within your shell' \
            'run it in the VS Code integrated terminal' 'run it in the terminal-emulator' \
-           'run it on your shell' 'run in a shell'; do
+           'run it on your shell' 'run in a shell' \
+           'run it in a **terminal**' 'run the commit in a *separate* terminal' \
+           'Do them in a **new terminal window**, not in this session.'; do
     matches terminal_workaround "$s" || t30_fail="$t30_fail [$s]"
   done
   for s in 'mark tests_verified_failing as completed' 'mark tests_verified_failing COMPLETED' \
@@ -149,13 +153,22 @@ else
            'tick tests_verified_failing complete' 'flag tests_verified_failing complete' \
            'marked tests_verified_failing as complete' 'flagged tests_verified_failing complete' \
            'setting tests_verified_failing to complete' 'flagging tests_verified_failing complete' \
-           'marks tests_verified_failing complete' 'mark: tests_verified_failing complete'; do
+           'marks tests_verified_failing complete' 'mark: tests_verified_failing complete' \
+           'Skip tests_verified_failing and mark it complete'; do
     matches fake_loop "$s" || t30_fail="$t30_fail [$s]"
   done
   if [ -z "$t30_fail" ]; then pass "T30: proposal shapes match"; else fail_ "T30" "no match:$t30_fail"; fi
 
   # T31: one fixture per boundary atom, each of which matches if that atom is removed.
+  # "(verb after)" rows are the same atoms in fake_loop's third alternative, where the
+  # marking verb follows the step name. "full stop" is the `.` in `[^a-z0-9_.]`.
   t31_fail=""
+  matches fake_loop 'Hit the mark. tests_verified_failing is complete.' && t31_fail="$t31_fail [full stop after the verb]"
+  matches fake_loop 'tests_verified_failing: reset it, then it is complete' && t31_fail="$t31_fail [set inside a word (verb after)]"
+  matches fake_loop 'tests_verified_failing settings are complete' && t31_fail="$t31_fail [set as a word prefix (verb after)]"
+  matches fake_loop 'tests_verified_failing hits the mark. It is complete.' && t31_fail="$t31_fail [full stop after the verb (verb after)]"
+  matches fake_loop 'tests_verified_failing is marked incomplete' && t31_fail="$t31_fail [incomplete (verb after)]"
+  matches fake_loop 'tests_verified_failing: mark it, see complete_step' && t31_fail="$t31_fail [complete_step (verb after)]"
   matches terminal_workaround 'run it in a shellcheck pass' && t31_fail="$t31_fail [shell as a word prefix]"
   matches terminal_workaround 'run the suite in CI and then read the shell log' && t31_fail="$t31_fail [five-word gap]"
   matches fake_loop 'mark tests_verified_failing as incomplete' && t31_fail="$t31_fail [incomplete]"
