@@ -80,6 +80,12 @@ if [ -f "$SCRIPT_DIR/lib/ledger-write.sh" ]; then
   # shellcheck source=scripts/lib/ledger-write.sh
   . "$SCRIPT_DIR/lib/ledger-write.sh" && _lw_traps   # BL-314-GATE-TRAP
 fi
+# Without the lib the tracker records no call, so no call can satisfy this
+# check. Every deny says so (appended below, never to an allow), or the
+# operator reads "requirements not met" after each call that worked.
+# `command -v` is a builtin, so this holds under the empty-PATH arm too.
+LW_NOTE=""
+command -v _lw_update >/dev/null 2>&1 || LW_NOTE=" ALSO: $SCRIPT_DIR/lib/ledger-write.sh is missing, so the MCP tracker cannot record any call and no call can satisfy this check. Run bash scripts/verify-install.sh --auto-fix to restore it."
 
 # THE ESCAPE IS LAUNCH-TIME, and the hint must say so rather than implying a
 # retry. A PreToolUse hook inherits the environment Claude Code started with,
@@ -305,6 +311,7 @@ if [ -z "$BLOCK_REASON" ]; then
 fi
 
 BLOCK_REASON="${BLOCK_REASON% }"
+BLOCK_REASON="${BLOCK_REASON}${LW_NOTE}"   # BL-314-GATE-NOLIB
 
 # Re-derive the recorded flag DOWNWARD too, so a stale `true` left by an
 # earlier derivation (or written by hand) never survives a run that blocked.

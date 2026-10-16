@@ -58,13 +58,30 @@ set +e
 TOOL_USAGE=".claude/tool-usage.json"
 
 # BL-314: every ledger write goes through the locked, unique-temp writer that
-# session-mcp-gate.sh shares. Without it this hook cannot write the ledger at
-# all, and verify-install reports the lib missing.
+# session-mcp-gate.sh shares. Without it (hooks newer than the lib, or the lib
+# deleted) this hook cannot write the ledger at all, and that must not pass in
+# silence: the call goes unrecorded and the MCP check then refuses every Write
+# and Edit with no hint why. So each write entry point stands in as one loud
+# failure: a stderr line and exit 1, a non-blocking hook error Claude Code
+# shows the user (the tool call has already run). A call that writes nothing
+# (not MCP, not a commit) still exits 0 in silence, since this fires after
+# every tool call. verify-install reports the lib missing.
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
-[ -f "$SCRIPT_DIR/lib/ledger-write.sh" ] || exit 0
-# shellcheck source=scripts/lib/ledger-write.sh
-. "$SCRIPT_DIR/lib/ledger-write.sh"
-_lw_traps
+if [ -f "$SCRIPT_DIR/lib/ledger-write.sh" ]; then
+  # shellcheck source=scripts/lib/ledger-write.sh
+  . "$SCRIPT_DIR/lib/ledger-write.sh"
+  _lw_traps
+else
+  _lw_absent() {
+    echo "track-tool-usage.sh: $SCRIPT_DIR/lib/ledger-write.sh is missing, so this call was NOT recorded in $TOOL_USAGE, and the MCP check will keep refusing Write and Edit. Restore it: bash scripts/verify-install.sh --auto-fix" >&2
+    exit 1   # BL-314-NOLIB-LOUD
+  }
+  _lw_lock() { _lw_absent; }
+  _lw_land() { _lw_absent; }
+  _lw_write() { _lw_absent; }
+  _lw_update() { _lw_absent; }
+  _lw_unlock() { :; }
+fi
 
 # ── argv: --event <name> ────────────────────────────────────────────────────
 # Unknown arguments are ignored rather than fatal — an argv this hook does not

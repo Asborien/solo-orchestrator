@@ -25465,7 +25465,10 @@ checks deny the next Write (C8).
 
 **The fix.** All three writers source `scripts/lib/ledger-write.sh` from their own directory.
 `init.sh` ships it beside them, and `scripts/verify-install.sh` checks and restores it
-(`fix_lib_copy_ledger-write`). `_lw_update` applies a jq filter to the ledger, and `_lw_put` lands
+(`fix_lib_copy_ledger-write`). `upgrade-project.sh --sync-framework` and adoption ship it too, since both
+copy the set `soif_parse_shipped_scripts` derives from init.sh's `cp` lines;
+`tests/test-scaffold-source-closure.sh` fails, naming all three hooks, if init.sh stops shipping it.
+`_lw_update` applies a jq filter to the ledger, and `_lw_put` lands
 stdin as the whole ledger. Both take a mkdir lock beside the ledger, write through a unique
 `mktemp "$TOOL_USAGE.lw.XXXXXX"` in the same directory (`# BL-314-UNIQUE-TMP`), and `mv` only a
 non-empty result into place (`# BL-314-NONEMPTY`). Each behaviour, with the case that pins it:
@@ -25527,9 +25530,16 @@ non-empty result into place (`# BL-314-NONEMPTY`). Each behaviour, with the case
   (`# BL-314-NOLIB-RESET`, the literal path `.claude/tool-usage.json`). An inherited ledger's `true`
   flags cannot reach the first Write, and the gate reports the ledger absent (T5d). This is new
   behaviour, not a restoration: before this change the startup reset ran only when jq was present,
-  so without jq an inherited ledger kept its flags. Without the lib, the tracker writes nothing and
-  exits 0, and a SessionStart write that cannot land ends that hook non-zero, on startup and on
-  resume (C19).
+  so without jq an inherited ledger kept its flags. A SessionStart write that cannot land ends that
+  hook non-zero, on startup and on resume (C19).
+- Without the lib, nothing passes in silence. The tracker's write entry points become one loud
+  failure: a stderr line naming the lib and `bash scripts/verify-install.sh --auto-fix`, exit 1 (a
+  non-blocking hook error, shown to the user), nothing written (`# BL-314-NOLIB-LOUD`), for an MCP
+  call with or without a ledger and for a commit; a call that writes nothing still exits 0 with no
+  output, since the hook fires after every tool call (C19). SessionStart prints the same on every
+  source (`# BL-314-NOLIB-NOTE`; T5d on startup, T5e on resume, where the ledger is left
+  byte-identical). The gate appends it to every deny, never to an allow, so a satisfied ledger is
+  still allowed (`# BL-314-GATE-NOLIB`, C23).
 - verify-install reports the lib missing as auto-fixable, and `fix_lib_copy_ledger-write` restores it
   byte for byte (C21). `.gitignore` and the generated-project template ignore the lib's temps,
   `.claude/tool-usage.json.lw.*`, and not a user's `.backup` (C22). Adoption's `.claude/.gitignore`
@@ -25554,6 +25564,9 @@ after proving its location: one end-of-line site of the marker, and a diff of ex
 | `BL-314-SWEEP-AGE` | MX2, the sweep's age check removed | a fresh temp deleted, as C11 sees |
 | `BL-314-SESSION-PUT` | MT, the startup write back to `cat >` | C17 |
 | `BL-314-PUT-LOCK` | MX5, `_lw_put` without the lock | C17c |
+| `BL-314-NOLIB-LOUD` | MT02, the lib-less tracker exits 0 again (MT03 silences its message) | C19 |
+| `BL-314-GATE-NOLIB` | MGN, the gate's missing-lib note dropped | C23 |
+| `BL-314-NOLIB-NOTE` | T5f in `tests/test-session-test-gate-check-merge.sh`, SessionStart's line silenced | T5d's check |
 
 **Residuals.**
 - Two waiters that both read a stale lock's age can both break it, and the second can remove a lock a
@@ -25567,8 +25580,10 @@ after proving its location: one end-of-line site of the marker, and a diff of ex
   `.claude/tool-usage.json`. Nor do projects adopted before this change, or an adoptee whose own
   `.claude/.gitignore` adoption leaves alone (its note names only the two older lines). Until the next
   locked write sweeps it, a temp a SIGKILL left there is visible to `git add -A`.
-- Without the lib, the gate's two record writes fail with "command not found" on the hook's stderr.
-  No decision changes, and verify-install reports the lib missing.
+- Without the lib, the gate's two record writes still fail with "command not found" on the hook's
+  stderr. No decision changes (nothing reads `mcp_gate_satisfied`), its deny names the lib (C23), and
+  verify-install reports the lib missing. The tracker's exit 1 reaches the user, not the agent; the
+  agent learns it from SessionStart's line and the gate's deny.
 - A live hold longer than 3 s is taken for stale and can lose a row. jq appends take about 0.23 s at
   50,000 rows, so only a suspended writer reaches it (a lid close, SIGSTOP, heavy swapping). The age
   is `date +%s` minus the lockdir's mtime, so a filesystem whose clock is skewed by more than 3 s

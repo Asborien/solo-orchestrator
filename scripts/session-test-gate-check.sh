@@ -170,6 +170,12 @@ TUEOF
 elif [ "$SESSION_SOURCE" = "startup" ]; then
   rm -f .claude/tool-usage.json   # BL-314-NOLIB-RESET
 fi
+# Without the lib, this session's MCP calls cannot be recorded either, and the
+# write above was skipped: say so, on every source, rather than pass in silence.
+if [ "$LW_READY" != "1" ]; then
+  echo ""
+  echo "MCP LEDGER WRITER MISSING: $SCRIPT_DIR/lib/ledger-write.sh is absent, so no MCP call this session can be recorded in $TOOL_USAGE, and the MCP check will refuse every Write and Edit. Restore it: bash scripts/verify-install.sh --auto-fix"   # BL-314-NOLIB-NOTE
+fi
 
 # ── Report Unknown MCP Servers ────────────────────────────────────
 if [ -n "$UNKNOWN_SERVERS" ]; then

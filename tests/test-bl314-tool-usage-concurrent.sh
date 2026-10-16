@@ -56,11 +56,15 @@
 #   C7a/f/u the lock wait is bounded: a lock aged past the 3 s budget, one
 #       dated an hour ahead, and one whose time cannot be read.
 #   C18 each of the fifteen locked write sites holds the lock mid-write.
-#   C19 return codes: an unlandable SessionStart ends non-zero, the lib-less
-#       tracker exits 0 and writes nothing, a failed mv returns 1.
+#   C19 return codes: an unlandable SessionStart ends non-zero, a failed mv
+#       returns 1, and the lib-less tracker fails loud on every write (stderr
+#       naming the lib and verify-install.sh --auto-fix, exit 1, nothing
+#       written) while a call that writes nothing still exits 0 in silence.
 #   C20 the BSD `stat -f %m` branch, under a stat that refuses `-c`.
 #   C21 verify-install's row and fixer for the lib.
 #   C22 .gitignore and the project template ignore the lib's temps.
+#   C23 the lib-less gate's deny names the missing lib and the fix; its
+#       decision is unchanged (a satisfied ledger is still allowed).
 #
 # Mutants, run against a mirror of the three hooks and their lib. Each proves
 # its location: one marker site, and a diff of exactly that line.
@@ -81,10 +85,12 @@
 #   MSL the seed without the lock (C5b); MBUD a 60 s budget (C7a); MFUT and
 #   MUNR the future and unreadable give-ups removed (C7f, C7u); MBSD the BSD
 #   stat branch dropped (C20); MW-* each of the fifteen write sites without
-#   the lock (C18, its own arm); ML38, ML25, ML28, MT02 the return codes
-#   (C19); MV01, MV02 verify-install's row and fixer (C21); MGI each ignore
-#   file without its temp line (C22). A mutant with no marker is anchored on
-#   its own find text, which must occur on exactly one line.
+#   the lock (C18, its own arm); ML38, ML25, ML28 the return codes (C19);
+#   MT02, MT03 the lib-less tracker exiting 0, and silent (C19); MV01, MV02
+#   verify-install's row and fixer (C21); MGI each ignore file without its
+#   temp line (C22); MGN the gate's missing-lib note dropped (C23). A mutant
+#   with no marker is anchored on its own find text, which must occur on
+#   exactly one line.
 # Not a mutant here: skipping the seed lock (# BL-314-SEED-LOCK) survived six
 # C5 rounds. Every process in a burst passes the seed check before any of them
 # appends, so a second seed cannot land over a first writer's row without
@@ -941,9 +947,12 @@ fi
 
 # ── C19: the return codes the entry states ──────────────────────────────────
 # C19a/b: a SessionStart whose ledger write cannot land (.claude at 0555) ends
-# non-zero, on startup and on resume. C19c: the tracker without the lib exits 0
-# and writes nothing. C19d: a failed mv is a failed write: rc 1, the ledger
-# unchanged, no temp.
+# non-zero, on startup and on resume. C19c: the tracker without the lib fails
+# loud on every write: an MCP call with no ledger, an MCP call on a ledger,
+# and a commit on a ledger each exit 1 with a stderr line naming the lib and
+# `verify-install.sh --auto-fix`, and write nothing. A call that writes nothing
+# (Read) still exits 0 with no output: the hook fires after every tool call.
+# C19d: a failed mv is a failed write: rc 1, the ledger unchanged, no temp.
 # _unlandable_round SESSION_HOOK — sets R_UNL_FAIL and R_UNL_SKIP.
 _unlandable_round() {
   local src d rc
@@ -966,14 +975,43 @@ _unlandable_round() {
 }
 _unlandable_round "$SESSION"
 c19_fail="$R_UNL_FAIL"; c19_skip="$R_UNL_SKIP"
-_nolib_round() {  # TRACKER — sets R_RC R_LEDGER
-  local d m; d=$(newtmp); m="$(newtmp)/scripts"; mkdir -p "$m"
-  cp "$1" "$m/track-tool-usage.sh"
-  _run_ev "$d" "$m/track-tool-usage.sh" "$FIND_PAYLOAD" PostToolUse
-  if [ -e "$d/.claude/tool-usage.json" ]; then R_LEDGER=written; else R_LEDGER=none; fi
+READ_PAYLOAD='{"tool_name":"Read","hook_event_name":"PostToolUse","tool_input":{"file_path":"x"}}'
+# _nolib_ev DIR TRACKER PAYLOAD — one event; sets R_RC and R_ERR (its stderr).
+_nolib_ev() {
+  ( cd "$1" && printf '%s' "$3" | "$BASH" "$2" --event PostToolUse > /dev/null 2> "$1/.err" )
+  R_RC=$?
+  R_ERR=$(cat "$1/.err" 2>/dev/null); rm -f "$1/.err"
+}
+_says_nolib() {  # TEXT
+  case "$1" in *"lib/ledger-write.sh is missing"*) ;; *) return 1 ;; esac
+  case "$1" in *"verify-install.sh --auto-fix"*) return 0 ;; esac
+  return 1
+}
+_nolib_round() {  # TRACKER — sets R_NOLIB to every arm that did not hold
+  local d m before
+  R_NOLIB=""
+  m="$(newtmp)/scripts"; mkdir -p "$m"; cp "$1" "$m/track-tool-usage.sh"
+  d=$(newtmp)
+  _nolib_ev "$d" "$m/track-tool-usage.sh" "$FIND_PAYLOAD"
+  if [ "$R_RC" = "0" ] || [ -e "$d/.claude/tool-usage.json" ] || ! _says_nolib "$R_ERR"; then
+    R_NOLIB="$R_NOLIB find/no-ledger: rc=$R_RC ledger=$([ -e "$d/.claude/tool-usage.json" ] && echo written || echo none) stderr=[$R_ERR];"
+  fi
+  for arm in find commit; do
+    d=$(newtmp); _seed "$d"; before=$(cat "$d/.claude/tool-usage.json")
+    if [ "$arm" = "find" ]; then _nolib_ev "$d" "$m/track-tool-usage.sh" "$FIND_PAYLOAD"
+    else _nolib_ev "$d" "$m/track-tool-usage.sh" "$COMMIT_PAYLOAD"; fi
+    if [ "$R_RC" = "0" ] || [ "$(cat "$d/.claude/tool-usage.json")" != "$before" ] || ! _says_nolib "$R_ERR"; then
+      R_NOLIB="$R_NOLIB $arm/ledger: rc=$R_RC stderr=[$R_ERR];"
+    fi
+  done
+  d=$(newtmp); _seed "$d"; before=$(cat "$d/.claude/tool-usage.json")
+  _nolib_ev "$d" "$m/track-tool-usage.sh" "$READ_PAYLOAD"
+  if [ "$R_RC" != "0" ] || [ -n "$R_ERR" ] || [ "$(cat "$d/.claude/tool-usage.json")" != "$before" ]; then
+    R_NOLIB="$R_NOLIB read/ledger: rc=$R_RC stderr=[$R_ERR] (want 0, none);"
+  fi
 }
 _nolib_round "$TRACKER"
-[ "$R_RC" = "0" ] && [ "$R_LEDGER" = "none" ] || c19_fail="$c19_fail no-lib tracker: rc=$R_RC ledger=$R_LEDGER (want 0, none);"
+[ -z "$R_NOLIB" ] || c19_fail="$c19_fail no-lib tracker:$R_NOLIB"
 _mv_fail_round() {  # LIB — sets R_RC R_SAME R_DEBRIS
   local d sh before; d=$(newtmp); _seed "$d"
   sh="$d/.shim"; mkdir -p "$sh"; printf '#!/bin/sh\nexit 1\n' > "$sh/mv"; chmod +x "$sh/mv"
@@ -987,7 +1025,7 @@ _mv_fail_round "$LIB"
 [ "$R_RC" = "1" ] && [ "$R_SAME" = "1" ] && [ -z "$R_DEBRIS" ] || c19_fail="$c19_fail mv fails: rc=$R_RC unchanged=$R_SAME debris=[$R_DEBRIS] (want 1, 1, none);"
 [ -n "$c19_skip" ] && skip_ "C19a/b" "a 0555 directory stays writable here (root?):$c19_skip"
 if [ -z "$c19_fail" ]; then
-  pass "C19: an unlandable SessionStart write ends non-zero (startup, resume); the lib-less tracker exits 0 and writes nothing; a failed mv returns 1 and leaves no temp"
+  pass "C19: an unlandable SessionStart write ends non-zero (startup, resume); the lib-less tracker exits 1 naming the lib and verify-install.sh --auto-fix on every write and writes nothing, and exits 0 in silence on a call that writes nothing; a failed mv returns 1 and leaves no temp"
 else
   fail_ "C19" "$c19_fail"
 fi
@@ -1052,6 +1090,26 @@ if [ -z "$c22_fail" ]; then
   pass "C22: .gitignore and the generated-project template ignore the lib's .lw. temps and the ledger, and not a user's .backup"
 else
   fail_ "C22" "$c22_fail"
+fi
+
+# ── C23: the gate without the lib says so ───────────────────────────────────
+# Without the lib the tracker records no call, so no call can satisfy the
+# check. The deny must name the lib and the command that restores it, or the
+# operator sees "requirements not met" after every successful call. The lib's
+# absence must not change a decision: a satisfied ledger is still allowed.
+_gate_nolib() {  # GATE — sets R_NOTE R_CTL R_SAT_OUT
+  local d m; m="$(newtmp)/scripts"; mkdir -p "$m"; cp "$1" "$m/session-mcp-gate.sh"
+  d=$(newtmp); _seed "$d"
+  if _says_nolib "$(_gate_one "$d" "$m/session-mcp-gate.sh")"; then R_NOTE=1; else R_NOTE=0; fi
+  if _says_nolib "$(_gate_one "$d" "$GATE")"; then R_CTL=1; else R_CTL=0; fi
+  d=$(newtmp); _seed_satisfied "$d"
+  R_SAT_OUT=$(_gate_one "$d" "$m/session-mcp-gate.sh")
+}
+_gate_nolib "$GATE"
+if [ "$R_NOTE" = "1" ] && [ "$R_CTL" = "0" ] && [ -z "$R_SAT_OUT" ]; then
+  pass "C23: the lib-less gate's deny names lib/ledger-write.sh and verify-install.sh --auto-fix (the gate with its lib does not), and a satisfied ledger is still allowed"
+else
+  fail_ "C23" "lib-less deny names it=$R_NOTE (want 1) with-lib deny names it=$R_CTL (want 0) lib-less satisfied stdout bytes=${#R_SAT_OUT} (want 0, an allow)"
 fi
 
 # ── Mutants ─────────────────────────────────────────────────────────────────
@@ -1434,13 +1492,35 @@ if _mk_mutant_line "ML28" lib/ledger-write.sh 'mv "$tmp" "$TOOL_USAGE" 2>/dev/nu
   fi
 fi
 
-# MT02: the tracker without its lib exits 1.
-if _mk_mutant_line "MT02" track-tool-usage.sh '[ -f "$SCRIPT_DIR/lib/ledger-write.sh" ] || exit 0' '[ -f "$SCRIPT_DIR/lib/ledger-write.sh" ] || exit 1'; then
+# MT02: the lib-less tracker exits 0 again, a silent skip.
+if _mk_mutant "MT02" track-tool-usage.sh "# BL-314-NOLIB-LOUD" \
+     'exit 1   # BL-314-NOLIB-LOUD' 'exit 0   # BL-314-NOLIB-LOUD'; then
   _nolib_round "$MUT_DIR/track-tool-usage.sh"
-  if [ "$R_RC" != "0" ]; then
-    pass "MT02: a lib-less tracker exiting 1 is seen (rc=$R_RC)"
+  if [ -n "$R_NOLIB" ]; then
+    pass "MT02: a lib-less tracker exiting 0 is seen ($R_NOLIB)"
   else
-    fail_ "MT02" "rc=0 with the exit changed; C19 does not discriminate"
+    fail_ "MT02" "every arm held with the exit changed to 0; C19 does not discriminate"
+  fi
+fi
+
+# MT03: the lib-less tracker's message silenced.
+if _mk_mutant_line "MT03" track-tool-usage.sh '    echo "track-tool-usage.sh: ' '    : "track-tool-usage.sh: '; then
+  _nolib_round "$MUT_DIR/track-tool-usage.sh"
+  if [ -n "$R_NOLIB" ]; then
+    pass "MT03: a lib-less tracker that says nothing is seen ($R_NOLIB)"
+  else
+    fail_ "MT03" "every arm held with the message silenced; C19 does not discriminate"
+  fi
+fi
+
+# MGN: the gate's missing-lib note never reaches the deny.
+if _mk_mutant "MGN" session-mcp-gate.sh "# BL-314-GATE-NOLIB" \
+     'BLOCK_REASON="${BLOCK_REASON}${LW_NOTE}"   # BL-314-GATE-NOLIB' ':   # BL-314-GATE-NOLIB'; then
+  _gate_nolib "$MUT_DIR/session-mcp-gate.sh"
+  if [ "$R_NOTE" = "0" ]; then
+    pass "MGN: without the note, the lib-less gate's deny no longer names the lib (C23)"
+  else
+    fail_ "MGN" "the deny still named the lib with the note dropped; C23 does not discriminate"
   fi
 fi
 
