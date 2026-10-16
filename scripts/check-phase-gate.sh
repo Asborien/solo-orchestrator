@@ -1529,7 +1529,7 @@ _cpg_record_single_authority_attestation() {
     fi
   ) || rc=$?
   rmdir "$lock_dir" 2>/dev/null || true
-  # jq's first stderr line for arm 5, with the `# BL-233-WPB-ONELINE` strip (C0 and `\`).
+  # jq's first stderr line for arm 5, with the `# BL-233-WPB-ONELINE` strip (C0 and `\`), into _cpg_single_authority_gate's local _sa_jq_err.
   _sa_jq_err=$(head -n 1 "$_sa_errf" 2>/dev/null | LC_ALL=C tr -d '\000-\037\\')
   [ "$_sa_errf" = /dev/null ] || rm -f "$_sa_errf"
   if [ "$rc" -ne 0 ]; then
@@ -1543,7 +1543,7 @@ _cpg_record_single_authority_attestation() {
 #   1 — attestation REFUSED (no reason, no key, or unrecordable); caller counts it
 #   2 — no attestation offered; caller proceeds to its normal refusal
 _cpg_single_authority_gate() {
-  local _sa_gate="$1" _sa_label="$2" _sa_reason _sa_wrc
+  local _sa_gate="$1" _sa_label="$2" _sa_reason _sa_wrc _sa_jq_err=""
 
   [ "${SOLO_SINGLE_AUTHORITY_ATTESTED:-}" = "1" ] || return 2   # BL-274-SINGLE-AUTHORITY
 
