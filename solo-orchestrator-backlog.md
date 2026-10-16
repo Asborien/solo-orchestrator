@@ -22901,19 +22901,28 @@ when the phase is 2 or more — a check that cannot run must not pass — or pri
 naming what was skipped, why, and that secret detection and governance still run. The manifest
 lists are the ones the framework itself recognises (`process-checklist.sh`'s lockfile list under
 `project_scaffolded`, and the platform modules' lockfile notes): `package.json`;
-`requirements.txt, pyproject.toml, Pipfile` (a Poetry or Pipenv tree, which is what
-`docs/platform-modules/web.md`'s Python lockfile note prescribes, has no `requirements.txt`);
+`requirements.txt, pyproject.toml, Pipfile, uv.lock` (a Poetry or Pipenv tree, which is what
+`docs/platform-modules/web.md`'s Python lockfile note prescribes, has no `requirements.txt`; `uv.lock`
+because `## BL-318:` G3's decision step installs a uv project from it);
 `**/*.gradle*, **/pom.xml` (java, kotlin); `go.mod`; `Cargo.toml`; `**/*.sln, **/*.csproj`;
 `pubspec.yaml`; `Package.swift`. Guarded: the toolchain setup action, install/restore, build, test,
-lint, format, the dependency audits, the licence check and the lockfile-integrity step — 62 steps
-across 9 templates, nothing deleted or reordered. NOT guarded, deliberately: checkout,
+lint, format, the dependency audits, the licence check and the lockfile-integrity step — 57 steps
+across 9 templates carry the guard directly on the tree merged with main, nothing deleted or
+reordered. python.yml differs in shape: since `## BL-318:` G3 (PR #499) it installs through one
+decision step, "Find the dependency file", and gates its 13 install, tool and security steps on that
+step's answer. Per Karl's 2026-10-16 decision, setup-python, the decision step and the lockfile step
+carry the guard, and the fail-closed step ("Stop if no installer was chosen") carries it in front of
+#499's condition, so a tree with none of the four files reaches none of them, and a tree with one runs
+exactly what #499 built. NOT guarded, deliberately: checkout,
 `Security - Secret detection (gitleaks)` (a Phase-0 tree with a leaked credential must still be
 scanned — `## BL-151:`), and every `Governance -` step (their own `hashFiles('APPROVAL_LOG.md')` /
 `phase-state.json` guards are untouched). Once a recognised manifest exists every guard is true and
 the job behaves exactly as before: a `package.json` committed without its lockfile still fails
-setup-node loudly, and a Poetry or Maven tree still fails the `pip install -r requirements.txt` or
-`./gradlew` step loudly until the operator adapts it — both are the right verdict, a red the
-operator must act on rather than a green nobody reads. `other.yml` is out: its toolchain steps are
+setup-node loudly, a Maven tree still fails the `./gradlew` step loudly, and a Poetry or Pipenv tree
+(`pyproject.toml` or `Pipfile` with neither `uv.lock` beside `pyproject.toml` nor `requirements.txt`)
+fails python's decision step with its `::error::`, each until the operator adapts it — the right
+verdict every time, a red the operator must act on rather than a green nobody reads. `other.yml` is
+out: its toolchain steps are
 TODO comments and its dependency-audit step exits 1 by design until a scanner is configured.
 
 Why the phase rule: the first cut skipped green on a Phase 3 Poetry tree (review finding R-306-1),
@@ -22930,22 +22939,35 @@ installing on a tree with nothing to build.
 **Suite:** `tests/test-bl313-ci-before-manifest.sh`. T0 — the template list is derived once
 (`template_list`) and must be in bijection with a nine-row census, so a new language template
 without a census row fails and nothing can be added unguarded. T1 — exactly one `::notice::` skip
-step per template. T2 — every toolchain step guarded on the census manifest (62). T3 — checkout,
-gitleaks and governance NOT guarded on it. T4 — a shell evaluation of the two condition shapes the
-templates carry, `hashFiles(...) != ''` and `== ''`, over an empty fixture (all 62 skip, notice
-runs) and over one holding the first census sample file (all 62 run, notice skips). `act` is not
-installed on this host, so the workflow itself is not executed; T4 evaluates only those two shapes
-and the header says so. T5 — the notice step's `run:` script is extracted and EXECUTED under
+step per template. T2 — every toolchain step guarded on the census manifest (57 directly, plus 14
+python steps gated on a decision step that carries exactly the census guard). T3 — checkout,
+gitleaks and governance NOT guarded on it. T4 — a shell evaluation of the condition shapes the
+templates carry, `hashFiles(...) != ''`, `== ''` and python's installer gates, over an empty fixture
+(every toolchain step skips, no decision step is reached, notice runs) and over one holding the
+first census sample (63 steps run, notice skips, and 8 python steps do not run because the decision
+chose pip: the 7 on the uv path and the fail-closed step). For python the decision step's own
+script is EXECUTED over the fixture, so the
+installer it picks is measured, not re-implemented. `act` is not installed on this host, so the
+workflow itself is not executed, and the header says so. T5 — the notice step's `run:` script is
+extracted and EXECUTED under
 `bash -e -o pipefail` against four fixtures per template: `current_phase` 3 and 2 (rc 1,
 `::error::`), 1 (rc 0, `::notice::`), and no `phase-state.json` (rc 0, `::notice::`). T6 — one
 case per language: each manifest name in the census, alone in a fixture, enables every toolchain
-step and skips the notice. Six mutants on a mirror of `templates/`, each proving it landed by
-changed-line count: drop the setup-node guard (T2 names the step), invert one go.yml guard (T1
-counts two skip steps and names Build), guard the gitleaks step (T3 refuses), delete rust.yml's
-notice step (T1 counts zero), delete the `exit 1` from python.yml's phase check (T5 executes it at
-phase 3 and sees rc 0), drop `pyproject.toml` from every python.yml guard (T2 and T1 name the drift
-and a pyproject-only tree skips all eight toolchain steps again). Registered in
-`tests/full-project-test-suite.sh` and the `tests.yml` unit list.
+step and skips the notice; for python, `pyproject.toml`, `Pipfile` or `uv.lock` alone stops the job
+at the decision step (it exits non-zero, never a skip), and the samples must reach both the pip path
+(`requirements.txt`) and the uv path (`pyproject.toml` with `uv.lock`). Eight mutants on a mirror of
+`templates/`, each proving it landed by changed-line count: drop the setup-node guard (T2 names the
+step), invert one go.yml guard (T1 counts two skip steps and names Build), guard the gitleaks step
+(T3 refuses), delete rust.yml's notice step (T1 counts zero), delete the `exit 1` from python.yml's
+phase check (T5 executes it at phase 3 and sees rc 0), drop `pyproject.toml` from every python.yml
+guard (T2 and T1 name the drift and a pyproject-only tree skips 17 steps, the decision step among
+them), drop the guard from python's fail-closed condition (T2 names the step; over an empty tree it
+runs, red at Phase 0), delete the decision step's guard (T2 names it; over an empty tree it runs and
+fails). The `## BL-318:` G3 suite carries the matching pins on its side: T7 requires exactly the
+guard on the decision step, B8 exactly the guarded fail-closed condition, and B4b executes the notice
+step on a tree with no dependency file (rc 1 `::error::` at `current_phase` 2 and 3, rc 0
+`::notice::` at 0, 1 and with no phase-state). Registered in `tests/full-project-test-suite.sh` and
+the `tests.yml` unit list.
 
 **Evidence.**
 - RED at `f8841de`, before the first cut, identical under `/bin/bash` 3.2.57 and Homebrew bash
@@ -22963,6 +22985,11 @@ and a pyproject-only tree skips all eight toolchain steps again). Registered in
   typescript.yml (cksum 4007748106 → 1560107544, guard count 9 → 8); suite `7 passed, 3 failed`,
   T2 naming `typescript.yml: guard-missing: actions/setup-node@…` and T4 reporting
   `typescript(empty:run=1,skip=8,…)`.
+- After merging main (#499's python.yml) with Karl's 2026-10-16 decision applied, this suite is
+  `Results: 24 passed, 0 failed` and the `## BL-318:` G3 suite `68 passed, 0 failed`. Against main's
+  python.yml without that guard, this suite is `15 passed, 9 failed` (T1, T2, T4, T5, T6-python and
+  the four python mutants that cannot land; T4's empty tree runs the decision script and it fails)
+  and the G3 suite `58 passed, 10 failed` (T7, B4b, B8 and the seven new mutants that cannot land).
 
 **Residual — same class, other hosts, deliberately not in this change.** `ci/gitlab/*.yml` runs
 `npm ci` (and each language's install) in `before_script` / `script`; the documented guard there is
@@ -23295,6 +23322,11 @@ preference, which made every reply carry one anyway.
     bl147's `Cw6-strict-no-coe` puts on the phase-gate step). The template also fails closed: the step
     right after the decision, "Stop if no installer was chosen" (`# BL-318-G3-FAIL-CLOSED`), runs only
     when the installer is neither `uv` nor `pip`, and fails the job with an `::error::`.
+    **Amended by Karl's 2026-10-16 decision on `## BL-313:` (PR #480):** the decision step and the
+    fail-closed condition now both carry `hashFiles('requirements.txt', 'pyproject.toml', 'Pipfile',
+    'uv.lock') != ''`, so a tree with none of those files reaches neither and BL-313's notice step decides
+    (it passes before Phase 2 and fails from Phase 2), and T7 pins exactly that guard where it pinned "no
+    `if:`".
   - **R-2: a packaged uv project failed on its own license.** `uv sync` installs a project that has a
     `[build-system]` into its environment, so pip-licenses listed it. Measured offline with uv 0.11.3
     and pip-licenses 5.5.5: a fixture classified GPLv3 failed with "fail-on license GNU General Public
