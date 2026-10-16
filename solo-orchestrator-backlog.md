@@ -18625,15 +18625,22 @@ with the key passed as `argv` and never interpolated into a program.
   delimiter one longer than its longest run, space-padded (D5, D7; `# BL-301-KEY-ESCAPE-TICK`). Each
   D-case asserts the exact row and one table line per answer, read with carriage returns as line
   ends.
+- *Second home:* since `## BL-318:` G1 (`63049c7`) adoption writes a kept test command to
+  `.claude/test-command`, which the commit-time test check runs instead of this answer, so amending
+  `test_command` prints a `[WARN]` naming that file and leaves it byte-identical, or absent if it was
+  (W1, W2; `# BL-301-TESTCMD-WARN`). MA20, the twentieth mutant, deletes the warning, the only thing
+  it changes, and W1 kills it on that line. Named, never written: the hook runs the file's first line
+  with `sh -c`, and BL-318 writes it only from a command the scan offered.
 
-**Suite:** `tests/test-bl301-adoption-recorded-keys.sh`, 66 cases, driving the real wizard from
+**Suite:** `tests/test-bl301-adoption-recorded-keys.sh`, 70 cases, driving the real wizard from
 an adopted-shape fixture with stdin closed, under the suite's own interpreter. Registered in
 `tests/full-project-test-suite.sh` and the `tests.yml` unit lane, beside `## BL-282:`'s.
 
 At `main` (`80b3f8d`) 7 passed / 59 failed; with this fix 66 / 0, under `/bin/bash` 3.2.57 and
-Homebrew bash 5.3.15 alike.
+Homebrew bash 5.3.15 alike. With W1, W2 and MA20, on the merge with `main` at `789d8cb`: 70 / 0 under
+`/bin/bash` 3.2.57 and bash 5.2.21 (`ubuntu:24.04`).
 
-Nineteen mutants run on a mirror, each located by its distance from `# BL-301-ADOPTION-RECORDED-BEGIN`
+Twenty mutants run on a mirror, each located by its distance from `# BL-301-ADOPTION-RECORDED-BEGIN`
 and required to amend a wizard-owned and an adoption-recorded key as controls before it is scored; one
 that cannot be applied is reported as a SETUP failure, never as a kill. MA1, MA2, MA4–MA6 and MA8–MA11
 are killed on exit code or written state (by A1, N1, A3/A4, R1, N2 and N3), MA13–MA18 on the exact
