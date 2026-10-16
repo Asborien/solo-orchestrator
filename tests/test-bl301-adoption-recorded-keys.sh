@@ -21,7 +21,7 @@
 # (`$BASH`), so a run under /bin/bash 3.2 exercises the wizard under 3.2.
 #
 # RED/GREEN shape. At the parent commit the route does not exist, so the A,
-# D, F, I2 and M cases are red there. C1, G1, R1, R2, N1, N2 and I1 are green
+# D, F, I2, W and M cases are red there. C1, G1, R1, R2, N1, N2 and I1 are green
 # at the parent BY DESIGN and are what prove the fixture works: C1/R1/R2 are
 # the no-regression pins for wizard-owned keys, G1 is the vacuous-pass guard
 # (it proves the keys under test are NOT wizard-owned, so an A-case pass can
@@ -528,12 +528,55 @@ d_case D6 "a CARRIAGE RETURN in the key" "$CR_KEY" "c-new" '`cr key`'
 d_case D7 "TWO backtick runs in the key (2 and 1): the delimiter clears the longest" "$TICK2_KEY" "t2-new" '``` a``b`c ```'
 d_case D8 "a CRLF in the key folds to ONE space" "$CRLF_KEY" "cl-new" '`crlf key`'
 
+echo "=== W — test_command's second home is named, never written ==="
+
+# W1 — since `## BL-318:` G1, adoption writes the command the operator kept to
+# `.claude/test-command`, and the commit-time test check runs THAT file, never
+# this answer. So amending test_command must say so in a [WARN] naming the
+# file (`# BL-301-TESTCMD-WARN`), and must leave the file byte-identical: the
+# hook runs its first line with `sh -c` on every source commit, and BL-318
+# writes it only from a command the scan offered, never from free text.
+TESTCMD_FILE_BODY='uv run --frozen pytest'
+W1="$(newtmp)/proj"
+if ! mk_adopted "$W1" || ! printf '%s\n' "$TESTCMD_FILE_BODY" > "$W1/.claude/test-command"; then
+  fail_ "W1 setup" "could not build the fixture"
+else
+  before_t="$(_cksum "$W1/.claude/test-command")"
+  wiz "$W1" --set-answer test_command "uv run pytest -q"
+  if [ "$WIZ_RC" -eq 0 ] && [ "$(jq_answer test_command "$W1")" = "uv run pytest -q" ] \
+     && grep -F '[WARN]' "$W1/run.out" | grep -F '.claude/test-command' >/dev/null \
+     && [ "$before_t" = "$(_cksum "$W1/.claude/test-command")" ]; then
+    pass "W1 — test_command is amended (rc=$WIZ_RC), the [WARN] names .claude/test-command, and that file is byte-identical"
+  else
+    fail_ "W1" "rc=$WIZ_RC test_command=[$(jq_answer test_command "$W1")]; warn $(grep -F '[WARN]' "$W1/run.out" | grep -F '.claude/test-command' >/dev/null && echo present || echo MISSING); .claude/test-command $([ "$before_t" = "$(_cksum "$W1/.claude/test-command")" ] && echo unchanged || echo CHANGED)"
+  fi
+fi
+
+# W2 — no file (adoption writes none when the answer was changed or the scan
+# offered nothing): the warning still names it, the amend does not create it,
+# and an adoption-recorded key with no second home (timeline) names nothing.
+W2="$(newtmp)/proj"
+if ! mk_adopted "$W2"; then
+  fail_ "W2 setup" "could not build the fixture"
+else
+  wiz "$W2" --set-answer test_command "uv run pytest -q"; rc_t=$WIZ_RC
+  warn_t="$(grep -F '[WARN]' "$W2/run.out" | grep -c -F '.claude/test-command')"
+  wiz "$W2" --set-answer timeline "Q1"; rc_l=$WIZ_RC
+  warn_l="$(grep -c -F '.claude/test-command' "$W2/run.out")"
+  if [ "$rc_t" -eq 0 ] && [ "$warn_t" = "1" ] && [ ! -e "$W2/.claude/test-command" ] && [ ! -L "$W2/.claude/test-command" ] \
+     && [ "$rc_l" -eq 0 ] && [ "$warn_l" = "0" ]; then
+    pass "W2 — with no .claude/test-command the [WARN] still names it and the file is not created; amending timeline names it nowhere"
+  else
+    fail_ "W2" "test_command rc=$rc_t warn lines=$warn_t (want 1); file $([ -e "$W2/.claude/test-command" ] && echo CREATED || echo absent); timeline rc=$rc_l mentions=$warn_l (want 0)"
+  fi
+fi
+
 echo "=== M — mutation proofs on a mirror, each located by distance from the BL-301 anchor ==="
 
 ANCHOR='BL-301-ADOPTION-RECORDED-BEGIN'
 for mark in "$ANCHOR" BL-301-ADOPTION-RECORDED-END BL-301-ANSWERS-READ BL-301-ANSWERS-IS-OBJECT BL-301-IN-ANSWERS \
             BL-301-NOTE-DEFAULT BL-301-RECORDED-CHECK BL-301-NOTE BL-301-UNUSABLE-REFUSE BL-301-UNREADABLE-REFUSE \
-            BL-301-KEY-ESCAPE-PIPE BL-301-KEY-ESCAPE-NEWLINE BL-301-KEY-ESCAPE-TICK; do
+            BL-301-KEY-ESCAPE-PIPE BL-301-KEY-ESCAPE-NEWLINE BL-301-KEY-ESCAPE-TICK BL-301-TESTCMD-WARN; do
   n="$(grep -c "# $mark\$" "$WIZARD" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) n=0 ;; esac
   [ "$n" = "1" ] \
     && pass "M0 — '# $mark' ends exactly one line of intake-wizard.sh" \
@@ -618,6 +661,7 @@ D_NOTE_DEFAULT=49
 D_RECORDED_CHECK=51
 D_NOTE=53
 D_UNUSABLE=63
+D_TESTCMD_WARN=115
 
 # MA1 — THE OLD VERDICT REINSTATED: the recorded-key check always says
 # "absent". A1's scenario must then be REFUSED; a wizard-owned key still works.
@@ -850,6 +894,24 @@ if mutate MA19 BL-301-ANSWERS-READ "$D_ANSWERS_READ" 's/ if isinstance(data, dic
       pass "MA19 (MUTATION, anchor+$MUT_D, DIAGNOSIS-ONLY) — with the top-level object check removed a top-level ARRAY is refused as an unknown key instead of as an unusable file (rc=$WIZ_RC, nothing written): F6's reason assertion is what sees it; the verdict is held by the absent arm"
     else
       fail_ "MA19 (MUTATION)" "rc=$WIZ_RC, progress $([ "$before_p" = "$after_p" ] && echo unchanged || echo CHANGED), reason=[$(grep -m1 -E 'FAIL|OK' "$PD/run.out" | cut -c1-80 || echo '<none>')] — not the diagnosis-only outcome this proof records"
+    fi
+  fi
+fi
+
+# MA20 — THE SECOND HOME UNNAMED: test_command's [WARN] becomes `:`, which is
+# the PR's state before main's BL-318 G1 gave the key a file the commit-time
+# check runs. The amend still lands at rc=0 and the file is still untouched,
+# so only the warning moves. W1 is what stops it.
+if mutate MA20 BL-301-TESTCMD-WARN "$D_TESTCMD_WARN" 's/^\([[:space:]]*\)print_warn .*\(  # BL-301-TESTCMD-WARN\)$/\1:\2/' ':  # BL-301-TESTCMD-WARN'; then
+  PD="$(newtmp)/proj"
+  if ! mk_adopted "$PD" "$MUT_TGT" || ! printf '%s\n' "$TESTCMD_FILE_BODY" > "$PD/.claude/test-command"; then fail_setup "MA20" "could not build the mutant's fixture"; else
+    before_t="$(_cksum "$PD/.claude/test-command")"
+    wiz "$PD" --set-answer test_command "uv run pytest -q"
+    if [ "$WIZ_RC" -eq 0 ] && [ "$(jq_answer test_command "$PD")" = "uv run pytest -q" ] \
+       && ! grep -q -F '.claude/test-command' "$PD/run.out" && [ "$before_t" = "$(_cksum "$PD/.claude/test-command")" ]; then
+      pass "MA20 (MUTATION, anchor+$MUT_D) — with the warning removed test_command is amended (rc=$WIZ_RC) and nothing names .claude/test-command, which still holds the old command: W1 is what stops it"
+    else
+      fail_ "MA20 (MUTATION)" "rc=$WIZ_RC test_command=[$(jq_answer test_command "$PD")]; .claude/test-command $(grep -q -F '.claude/test-command' "$PD/run.out" && echo 'STILL NAMED' || echo 'not named') — removing the warning changed nothing W1 can see"
     fi
   fi
 fi

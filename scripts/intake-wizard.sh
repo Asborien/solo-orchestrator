@@ -767,6 +767,14 @@ with open(path, "w") as f:
       print_warn "$key also lives in .claude/process-state.json (the Phase 1 gate reads that copy) — update it with --data-classification / --zdr-attested / --zdr-attestation-reason." ;;
     testing_interval)
       print_warn "testing_interval's enforced copy is .claude/build-progress.json::test_interval — update it with scripts/reconfigure-project.sh --field test_interval." ;;
+    # `## BL-301:` — adoption records test_command AND, when the operator kept
+    # the scan's command, writes it to .claude/test-command (`## BL-318:` G1),
+    # which the commit-time test check runs first. Named, never written: the
+    # hook runs that line with `sh -c` on every source commit, and BL-318
+    # writes it only from a command the scan offered — never from free text.
+    test_command)
+      print_warn "test_command's enforced copy is .claude/test-command (the commit-time test check runs its first line, or its own detection when the file is absent) — this does not write that file; edit it yourself to change what your commits run."  # BL-301-TESTCMD-WARN
+      ;;
   esac
   command -v jq >/dev/null 2>&1 || print_warn "jq not found — PROJECT_INTAKE.md was not re-rendered; it refreshes on the next section save."
   render_intake_file || { print_fail "answer recorded but PROJECT_INTAKE.md could not be re-rendered."; return 1; }  # BL-282-RERENDER
