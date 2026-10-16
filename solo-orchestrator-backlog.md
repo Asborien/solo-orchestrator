@@ -624,6 +624,7 @@ PostToolUse + Stop bypass-shaped-language detector writes structured rows to `.c
 **Plan:** `docs/superpowers/plans/2026-04-28-bl029-bypass-audit-plan.md`
 **Spec:** Agent-5 calibration deliverable at `Reports/uat-2026-04-27-calibration/results/agent-5.json`
 **Audit follow-up:** PR #46 corrected hook envelope schema (`tool_result` → `tool_response`, `transcript` → `last_assistant_message`) and updated plan docs to match canonical Claude Code schema.
+**Later change (2026-10-06, `## BL-320:`):** the confirmation-phrase sentinel is retired. The bypass detector's question is schema 2 and is answered by option id (A1 accepts, A2 declines, neither approves a commit) through the Development Guardrails 4.4.0's `record-approval.sh`, which counts only a reply that starts with an option id, asks for it twice and shows what each option does — the job the typed phrase did. The decision is read from the Guardrails' `.claude/approvals.jsonl`, not from the agent's `--resolve --decision`. The history above is kept as it was.
 
 ---
 
@@ -4380,7 +4381,16 @@ this repo's own agent-worktree flow until PR #304. 'Never a bypass' was wrong.
 **Logged:** 2026-07-24 (BL-174 WP-D adversarial verifier)
 **Category:** Upgrade-path safety / framework-repo hygiene
 **Severity:** Medium
-**Status:** Open
+**Status:** Closed — 2026-09-27, commit `bde8b9d`: the prescribed structural guard is at the top of
+`_run_idempotent_backfill` (`# BL-177-BACKFILL-GUARD` — no project root, or a root with neither
+`.claude/phase-state.json` nor `.claude/manifest.json`, writes nothing), and the project-root check now
+runs right after argument parsing (`# BL-177-HELP-FIRST`), so `--backfill-only` outside a project is
+refused before any write. The empty-root `cd` was a version split: a silent no-op in bash 3.2 (the leak
+below) and "null directory" rc 1 in bash 5 (issue #419). `tests/test-upgrade-help-and-projectless.sh`
+P1–P5. Not done: `guard_not_in_framework` on the `--backfill-only` entry — the project check now stops a
+framework checkout first, because it carries no `.claude/phase-state.json`.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 `scripts/upgrade-project.sh`'s `_run_idempotent_backfill` runs its whole body inside a subshell that opens with `( cd "$PROJECT_ROOT" …`. `find_project_root` keys on `.claude/phase-state.json`; when that marker is absent — the framework repo itself, or any non-project cwd — `PROJECT_ROOT` is the empty string and **`cd ""` is a SILENT rc-0 no-op under `set -euo pipefail` on bash 3.2** (empty operand → success, cwd unchanged), so the subshell proceeds in the INVOCATION directory rather than a project root. Nothing downstream re-checks that we are in a real project.
 
@@ -5231,6 +5241,20 @@ phantom, but executing it is not catching the defect, which is silent non-execut
 lane.) The prose rule in `tests.yml`
 ("NOTHING BELOW THIS LINE MAY CONTAIN THE LITERAL ARRAY-OPENING TOKEN") is enforced by nothing.
 Fix both halves in one change, since one awk line carries both.
+
+**Residual R-478-2 (2026-10-09, found reviewing PR #478; recorded with `## BL-346:`) — the split that keeps a
+suite in the unit lane also hides it from the live-remote lint.** The house convention for a fast suite that
+reads the scaffolder is to spell its name split, so `# BL-181-UNIT-LANE-PREDICATE` does not see `init.sh` on an
+executed line and exempt the suite: `INIT_FILE="init"".sh"` in `tests/test-delta-wp8-intake.sh` and
+`tests/test-delta-severability.sh`, and `INSTALLER="$REPO_ROOT/init"".sh"` in PR #478's
+`tests/test-bl308-gitleaks-vendored-clean.sh`. `scripts/lint-no-live-remote-in-tests.sh` finds init.sh only by the
+literal text `init.sh` or by a variable assigned a `…/init.sh` path, and the split defeats both. Measured: a fixture
+with `INSTALLER="$REPO_ROOT/init"".sh"` followed by `bash "$INSTALLER" --non-interactive --git-host github` and no
+`--no-remote-creation` gives rc 0 and no row, on main and with BL-346's fix. All three users only read the file
+(`cp`, `awk`, `grep`, the shipped-set parsers, `bash -n`) — established by reading the suites, not by an execution
+trace — so nothing is exposed today; a suite that ran the split path would get no hermeticity check at all. Not
+fixed, deliberately: teaching the lint to see through the split would undo what the split is for. It stays the
+house convention; this line is here so the cost is known.
 
 ---
 
@@ -13594,7 +13618,12 @@ read stdin and does not exit before it.
 
 ## BL-242: Brownfield adoption is HALF BUILT and has never had a backlog entry — seven capabilities unbuilt, and the feature's shape is now decided (D1-D8)
 
-**Status:** Open
+**Status:** Closed — 2026-09-27: every designed work package shipped, the last of them in PRs #441–#451,
+and the Development Guardrails install (BL-296 row 33) in PR #455 (merge `f7ff2f5`); `docs/adoption.md`'s
+"What is not built yet" now lists every package as shipped. **The residuals this entry recorded are NOT
+closed with it** — they move to `## BL-310:`, which lists each one and points back to its section here.
+
+**Original status (pre-close, kept for audit trail):** Open
 
 **Filed 2026-08-23 at Karl's direction.** The feature has been able to adopt an
 existing codebase since **PR #337 merged on 2026-08-09**; the last of the
@@ -18018,7 +18047,16 @@ a hoist is not taken).
 
 **Status:** Open — **DECIDED 2026-09-17 (Karl): option 3 below, the entry's own recommendation.** The
 contributor who filed this (also issue #385, which proposed scanning `tool_input`) is invited to build it;
-adversarial review before merge, as every PR. Not built yet. *(Before 2026-09-17: ENTRY-ONLY BY DECISION
+adversarial review before merge, as every PR. Not built yet; the build is PR #454, changes requested.
+**RULED 2026-09-27 (Karl), on PR #454's review: files the agent WRITES must still be scanned.** The PR's
+Bash-only PostToolUse matcher was justified as removing the Read half, but Read output was never
+scanned (Read's text sits at `toolUseResult.file.content`); a top-level `content` is a Write, both
+`type: create` and `type: update` (measured over local transcripts 2026-09-27: Read `text` 35 rows,
+keys `file` only; Write `create` 47, `update` 5, each with `content`), so Bash-only dropped model-authored files. The matcher must be `Bash|Write`, with
+Write rows recorded as authored (`actor: "claude"`, sentinel raised). Requested alongside it: the
+false-positive close becomes operator-only, and its pointer comes out of the deny text relayed to the
+model — after option 3 every sentinel comes from model-authored text, so a model-run false-positive
+close could only relabel a real proposal. *(Before 2026-09-17: ENTRY-ONLY BY DECISION
 (2026-09-13); three options set out below with a recommendation, none built.)* Consequence for adoption:
 ADOPT-002-ARCH v2.2 makes shipping `.claude/settings.json` to adoptees depend on this landing, so no
 adoptee imports the day-one sentinel. Choosing among them is a judgement about this
@@ -18964,7 +19002,9 @@ one entry by a shared defect class — the precedent for this entry's shape), `#
 
 ## BL-265: `intake-wizard.sh` names a jq KEYWORD as a function parameter, so the intake appendix's Project Context table renders with zero rows on every jq since 1.5
 
-**Status:** Open — 2026-09-26 reconciliation: **the rename half landed on `main` via PR #412** (`141eef5`); `tests/test-bl265-jq-reserved-label.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — `render_intake_file || true` is unchanged at all three call sites on `main`, so jq's exit status is still not checked (the second half of `## BUG-010:` defect (3)'s prescribed fix).
+**Status:** Closed — 2026-09-27: the `render_intake_file || true` residual is closed in `eed252b` (`# BL-265-RENDER-STATUS`: every step checked, file replaced only whole, a failed final render stops the run); `tests/test-bug010-intake-silent-paths.sh` R1–R5.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the rename half landed on `main` via PR #412** (`141eef5`); `tests/test-bl265-jq-reserved-label.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — `render_intake_file || true` is unchanged at all three call sites on `main`, so jq's exit status is still not checked (the second half of `## BUG-010:` defect (3)'s prescribed fix).
 
 **Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl265` at `8f2eecb`. Not pushed, no PR.
 
@@ -19138,7 +19178,9 @@ branch, so on a branch carrying only this entry those citations would resolve to
 
 ## BL-266: typing `pause` files the UNFINISHED intake section under `completed_sections`, and `--resume` then skips it permanently — with no message either way
 
-**Status:** Open — 2026-09-26 reconciliation: **the pause fix landed on `main` via PR #412** (`41c7bc2`, then `2fa9887` dropping the resume-point block); `tests/test-bl266-paused-section-marked-complete.sh` 10 passed / 0 failed, rc 0, on `c3f3d9e`. The first residual below (the `115` arithmetic without a pause) is fixed by `## BL-281:` (`eb15bc0`, same PR). **Still open: the second residual** — `load_progress()` still subscripts `data['project_name']` etc. with no `.get` on `main` (`## BUG-010:` defect (1)).
+**Status:** Closed — 2026-09-27: its last residual, BUG-010 defect (1), is fixed in `eed252b` (`# BUG-010-LOAD-REFUSE`: `load_progress` refuses an unusable progress file by name); the `115` residual was closed by BL-281. `tests/test-bug010-intake-silent-paths.sh` L cases.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the pause fix landed on `main` via PR #412** (`41c7bc2`, then `2fa9887` dropping the resume-point block); `tests/test-bl266-paused-section-marked-complete.sh` 10 passed / 0 failed, rc 0, on `c3f3d9e`. The first residual below (the `115` arithmetic without a pause) is fixed by `## BL-281:` (`eb15bc0`, same PR). **Still open: the second residual** — `load_progress()` still subscripts `data['project_name']` etc. with no `.get` on `main` (`## BUG-010:` defect (1)).
 
 **Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl266` at `b3b781f`. Not pushed, no PR.
 
@@ -19308,7 +19350,9 @@ on a branch carrying only this entry those citations would resolve to nothing.)*
 
 ## BL-267: the wizard's own `?` help key is recorded as the answer at 81 of its prompts, because only one of the two prompt helpers handles it
 
-**Status:** Open — 2026-09-26 reconciliation: **the `prompt_input` fix landed on `main` via PR #412** (`78f20b9`, suite hardened by `ee7a9f4` and `51ee606`); `tests/test-bl267-bare-question-mark.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — on `main`, `prompt_choice` still answers `?` with "Invalid choice", and neither `prompt_choice` nor `prompt_with_suggestions` checks `read`'s exit status (the EOF hang, `## BUG-010:` defect (2)).
+**Status:** Closed — 2026-09-27: the `prompt_choice` `?` message (`# BL-267-CHOICE-HELP`) and the end-of-input loop in `prompt_choice` and `prompt_with_suggestions` (BUG-010 defect (2), `# BUG-010-EOF`) are fixed in `eed252b`; `tests/test-bug010-intake-silent-paths.sh` E1–E6.
+
+**Status before 2026-09-27 (kept for audit trail):** Open — 2026-09-26 reconciliation: **the `prompt_input` fix landed on `main` via PR #412** (`78f20b9`, suite hardened by `ee7a9f4` and `51ee606`); `tests/test-bl267-bare-question-mark.sh` 9 passed / 0 failed, rc 0, on `c3f3d9e`. **Still open: the residual below** — on `main`, `prompt_choice` still answers `?` with "Invalid choice", and neither `prompt_choice` nor `prompt_with_suggestions` checks `read`'s exit status (the EOF hang, `## BUG-010:` defect (2)).
 
 **Original status (pre-2026-09-26 reconciliation, kept for audit trail):** Open — fix + suite committed on branch `fix/bl267` at `1989933`. Not pushed, no PR.
 
@@ -21697,6 +21741,10 @@ project's, so rehearsal and real run can disagree too.
 
 **Related:** `## BL-242:` (D1 framework-wins), `## BL-292:`.
 
+**Since `## BL-322:` S4 (2026-10-08):** the "yours, kept" notice quoted above is gone (it was stale for every
+colliding script, R-S2-6). The defect is not: the install step's "replaced by the framework's version" line and
+the archive row still name the framework's spelling.
+
 ---
 
 ## BL-294: the pre-write rehearsal copies the whole tree, `.git/objects` included, with no bound and no cost statement
@@ -22154,3 +22202,2618 @@ for the 4.0 trap: **assign at the declaration**, applied to code you are already
 
 **Related:** `## BL-242:` (the package that surfaced it).
 
+---
+
+## BL-309: twenty-four absence assertions in eight suites grep for `integer expression`, which bash 5.3 reworded, so where the script under test runs under 5.3 they cannot fail
+
+**Status:** Open — entry only, the sweep asked for on #419 ("the 'assertion that cannot fail'
+shape is worth the wider sweep you suggested; file it as a follow-up entry rather than folding it
+in"). No fix is on this branch. A pending fix for #420 covering the three sites in
+`tests/test-bl233-wpb-accumulation.sh` touches no other site.
+
+**The three counts, at `19d27e3`:** 27 assertion sites in 9 files in total; 24 absence sites in
+8 suites cannot fail today where the script under test runs under 5.3 (the title's figure);
+22 in 7 suites will still be unable to fail once the pending three-site fix for #420 lands.
+
+**Found:** 2026-09-17 in #420, in one suite. Swept 2026-09-22 over `tests/` at `d95520f`; the
+same sweep on 2026-09-23 at `32832a3` and on 2026-09-26 at `19d27e3` returns identical results.
+
+**The shape.** A test captures the output of the script under test and asserts that a shell
+diagnostic is ABSENT by grepping for one wording of it. `[: X: integer expression expected` is
+the wording of bash 3.2 through 5.2; bash 5.3 prints `[: X: integer expected`. Wherever the bash
+that runs the script under test is 5.3, the diagnostic the script emits never matches the string
+the test looks for, and the absence assertion passes whether or not the leak happened. Most suites
+run their script under whatever `bash` is first on `PATH` (`#!/usr/bin/env bash`, or a bare `bash`
+invocation). One does not: `tests/test-test-gate-counter-sanitizer.sh` runs its subject as
+`PATH="/usr/bin:/bin" bash "$SCRIPT"` in `run_gate()`, so its three sites follow the system bash, which
+on macOS is `/bin/bash` 3.2.57 even when the caller's `PATH` bash is Homebrew 5.3.
+#420 demonstrated it on one site: with the sanitiser removed from `scripts/validate.sh`,
+`tests/test-validate-counter-sanitizer.sh` T2 reported "stderr clean" over a stderr that read
+`[: 0: integer expected`. Measured on 2026-09-22, `[ "$a" -le 20260922 ]` with `a=ZZZZZZZZZZ`:
+
+| bash | wording |
+|---|---|
+| 3.2.57, macOS `/bin/bash` | `integer expression expected` |
+| 5.2.21, `ubuntu:24.04` (the bash of `ubuntu-latest`, currently 24.04) | `integer expression expected` |
+| 5.3.15, Homebrew | `integer expected` |
+
+**Method.** Two scans, each line read at its site. First, the derived command from #420,
+`grep -rn "integer expression expected" tests/ | grep -E 'grep|if \['`: 41 lines in 8 files.
+Each line was sorted into an assertion site (a grep whose result decides pass or fail) or a
+`fail_` message that merely repeats the string (15 lines, not sites). The plain grep finds one
+more file, `tests/test-brownfield-wp2-scout-sections.sh`, whose hit is the comment on `_num()`. The derived
+command keys on the full phrase, so it misses a grep for part of it. Second, the broader scan,
+`grep -rn -i integer tests/` filtered to lines holding `grep`, `[[`, `case` or `=~`: one further
+assertion site, `tests/test-intake-wizard-fixes.sh` (T-bl203-session-check-null-safe), whose
+conjunct `! printf '%s' "$OUT" | grep -q 'integer expression'` targets the same diagnostic from a
+script run under bare `bash`. The other lines it returns are `fail_` and `pass` messages, an
+`echo` and a comment. Both scans give the same lines at `d95520f`, `32832a3` and `19d27e3`. Sites were then split by
+direction, absence (the test wants the diagnostic gone) or presence (the test wants a mutant to
+leak it), and checked for a wording-independent arm in their alternation. Whether any site already
+matches both wordings: `grep -rF 'integer( expression)? expected' tests/` and a search for the
+bare `integer expected` return nothing. With the pending fix for #420 merged onto `19d27e3`
+(a `git merge-tree` of the two, which merges cleanly and changes only
+`tests/test-bl233-wpb-accumulation.sh` under `tests/`), the derived command returns 39 lines: the
+fix moves that suite's three sites to a pattern matching both wordings, and adds one line,
+`_sid_old`, a self-check of its own pattern against the old wording, which is not an assertion
+site. After the three-site fix, that leaves 24 sites in 8 files, 22 of which cannot fail where the
+script under test runs under 5.3 (19 on a Mac whose `PATH` bash is 5.3).
+
+**Count: 27 assertion sites in 9 files.**
+
+| Suite | Sites | Direction | Where the script under test runs under bash 5.3 |
+|---|---|---|---|
+| `tests/test-init-schema-phase-gate.sh` | 8 (T1, T2, T3a to T3e, T4) | absence | cannot fail |
+| `tests/test-validate-counter-sanitizer.sh` | 4 (T2 to T5) | absence | cannot fail (T2 is the #420 demonstration) |
+| `tests/test-test-gate-null-handling.sh` | 4 (T1 to T4) | absence; T1 and T4 also match `unbound variable` | the integer arm cannot fail |
+| `tests/test-test-gate-counter-sanitizer.sh` | 3 (T1, T4, T5) | absence | cannot fail; the suite pins `PATH="/usr/bin:/bin"`, so only where the system bash is 5.3 |
+| `tests/test-check-phase-gate-counter-sanitizer.sh` | 1 (T7) | absence | cannot fail |
+| `tests/test-bl281-resume-after-115.sh` | 1 (C3 control, one conjunct of the pass condition) | absence | that conjunct cannot fail |
+| `tests/test-intake-wizard-fixes.sh` | 1 (T-bl203-session-check-null-safe, one conjunct; greps `integer expression`) | absence | that conjunct cannot fail |
+| `tests/test-bl233-wpb-accumulation.sh` | 3 (N6 and the M23 control arm; the M23 mutant arm) | 2 absence, 1 presence | the two absence arms cannot fail; the presence arm is the red in #420 |
+| `tests/known-bugs-test-suite.sh` | 2 (bug7, bug7b) | absence | immune: the alternation's `line [0-9]+: \[: ` arm matches both wordings |
+
+So 26 absence sites, of which 2 are immune and 24, in 8 suites, cannot fail where the script
+under test runs under 5.3, plus 1 presence site that goes red there. On a Mac whose `PATH` bash is
+5.3, that is 21 sites in 7 suites, because the three in `tests/test-test-gate-counter-sanitizer.sh`
+still run under `/bin/bash` 3.2.57. Zero sites match the 5.3 wording. Once the pending
+three-site fix for #420 lands, 22 vacuous sites in 7 files remain (19 on such a Mac). Not measured here: a per-site kill on a 5.3
+host beyond the one #420 ran; the count is by reading, the wording table is by execution.
+
+**Why CI does not see it.** The unit lane runs on `ubuntu-latest`, currently 24.04, whose bash is
+5.2.21. 16 of the 24 sites run in that PR-blocking lane and still discriminate there. The other 8
+are in `tests/test-init-schema-phase-gate.sh`, which has no unit-lane row and runs only in the
+full lane (manual `workflow_dispatch`), so they run on no pull request, on any bash. A Mac with
+Homebrew bash 5.3 first on `PATH` sees M23 red and 21 sites in 7 suites green regardless of what
+the scripts print; the three in `tests/test-test-gate-counter-sanitizer.sh` still go red on a leak.
+The day `ubuntu-latest` is repointed at an image that ships 5.3, the 16 stop discriminating on CI
+too, silently; only M23 will announce it.
+
+**Proposed follow-up (not built; the shape is yours to decide).** One change over the eight
+suites (seven once the pending fix for #420 lands): match both wordings with `integer( expression)? expected`
+(under `grep -E`), a superset of the current pattern, so every absence assertion strengthens and
+the M23 presence arm goes green on 5.3. A `grep -q` site in BRE needs `-E`, and where its
+alternation is written `\|` (null-handling T1 and T4, `expected\|unbound variable`) adding `-E`
+means rewriting `\|` as `|`, or the `unbound variable` arm silently stops matching; staying in
+BRE, the pattern is `integer\( expression\)\{0,1\} expected`. The proof per site is #420's: with the
+script under test running under 5.3, remove the sanitiser the site guards and see the site go RED, with the same run on
+3.2.57 as the control. A lint refusing the bare wording under `tests/` would keep the shape from
+returning, if you want one; until then the broader scan above is the check, since the derived
+command misses partial-phrase greps. A wider class is not covered by this sweep: any other
+absence assertion that quotes a shell diagnostic verbatim (`unbound variable`, `cd: null
+directory` from #419's table, `command not found`) has the same exposure to a rewording, and a
+second pass over quoted `line [0-9]+:` diagnostics would find them.
+
+**Related:** `## BL-233:` (owner of N6 and M23), #420 (the one-suite instance and the
+demonstration), #419 (where the follow-up was asked for), the pending fix for #420 (the three sites in
+`tests/test-bl233-wpb-accumulation.sh`, not yet opened).
+
+---
+
+## BL-310: brownfield adoption's residuals, carried from `## BL-242:` when that entry closed
+
+**Status:** Open — a tracking entry. Each line below was recorded inside `## BL-242:` as found and not
+fixed; closing that entry would otherwise have dropped all of them off the what's-open list. **Verify
+each against `main` before working it** — they were recorded at different commits, and a later package
+may have closed one without saying so here.
+
+**Filed:** 2026-09-27, when BL-242 closed (all designed packages shipped, PR #455 the last).
+
+| # | Residual | Where in `## BL-242:` |
+|---|---|---|
+| 1 | `resolve-tools.sh` files a documentation URL in the `auto_install` bucket, and `init.sh` executes that bucket (the shared resolver's defect) | "BL-242 residual — `resolve-tools.sh` files a documentation URL…" |
+| 2 | the Linux gitleaks recipe adoption offers is an unpinned, unverified root install; CI pins the same artefact by version and checksum | "A SECOND RESIDUAL, FOUND AT THE SAME REVIEW…" |
+| 3 | `# BL-242-RESOLVER-NO-EXEC` tells the operator to "run adoption again", which `# BL-242-PREFLIGHT-ARM1` refuses | its own residual heading |
+| 4 | adoption follows a symlink out of the project and overwrites its target — partly guarded since (22 `-L` / `adopt_path_under_link` sites in `scripts/lib/adopt/` on 2026-09-27), but `adopt_write_file` itself is still `cat >` | "BL-242 residual — adoption follows a SYMLINK…" |
+| 5 | init parity: thirteen `init.sh` effects adoption does not perform and nothing designs (the §8.7a table) | "THE INIT-PARITY RESIDUAL" |
+| 6 | a file of the operator's where a framework *script* goes is left alone, so that script is not installed (named by the run) | `docs/adoption.md`, "What is not built yet" |
+| 7 | the `# BL-242-SECRETS-RESCAN` guard is still correct but no longer observable in the persisted artefact | "Residual carried here from WP10b/2 (PR #437)" |
+| 8 | the no-fingerprint guard refuses ALL-missing fingerprints, not SOME-missing | "Residual — the no-fingerprint guard covers ALL-missing…" |
+| 9 | WP11: the `@sh`-quoted restore line is unpinned; I20's planned-path matching is spelling-dependent | "Residuals from WP11's pre-PR review" |
+| 10 | eight suites still carry the `"test":"npm test"` fixture that hangs a shard once one commits a source file after adoption | "RESIDUAL — the other eight still carry it" |
+| 11 | the `--finish` / commit-hook review list: MANIFEST still says `replaced` after an edited hook is refused; three guard lines unkilled; root `-w` on a `chmod 444` hook; no time bound on the adoptee's test command; a red suite blocks every source commit from day one; `soif_write_precommit_hook` returns `chmod`'s status; hook order against §10 | "RESIDUALS from these reviews, recorded not fixed" |
+| 12 | the real Guardrails installer runs only where a host has the clone; the PR lane exercises it through a stub | `## BL-296:` (closed), its review-round block |
+
+Hook managers (item 11's pre-commit/lefthook line) are **not** a residual: Karl ruled 2026-09-25 that
+adoption replaces them (`## BL-242:`, "Karl's ruling on hook managers").
+
+---
+
+## BL-311: brownfield dogfood run 1 (k-pdf, 2026-09-27) — nine things a regular user should never hit
+
+**Status:** Open — Karl approved fixing every row (2026-09-28), then a FULL CLEAN RERUN. Each row closes
+by its own PR; the entry closes when the rerun passes.
+
+**Progress.** Group A (rows 1 and 9) merged as PR #477 (`891d10d`, 2026-09-30). Group B (rows 2 and 8)
+merged as PR #490 (merge commit `3e737f6`, 2026-09-30). Group C (rows 4 and 5) merged as PR #491
+(merge commit `a8f64f4`, 2026-09-30). Group E (rows 6 and 7) merged as PR #492 (merge commit
+`34dae11`). Group D (row 3) merged as PR #493 (merge commit `646bb0b`, 2026-10-01). All nine rows are
+now merged; the entry stays Open until the clean rerun passes.
+
+**What ran.** A fresh Claude Code session (Sonnet, a clean `CLAUDE_CONFIG_DIR`) played a systems
+technician with one to two years of experience — not a developer — installing Solo Orchestrator from
+the public README and adopting a private copy of k-pdf (Python/uv, 240 commits, scaffolded by an OLDER
+Solo and carrying the Guardrails 4.3.0, no `phase-state.json`). It reached the end of Stage 2 (adopted,
+commit `ec5c7b5`) with 14 findings. **Evidence** (outside the repo, untracked):
+`~/dogfood-evidence-2026-09-27/` — the findings file, the full transcript, a git bundle holding the
+adoption commit, the worktree diff, and the `.claude` tree including Scout's report.
+
+| # | What the user hit | Root cause | Fix | Run findings |
+|---|---|---|---|---|
+| 1 | After adopting, EVERY file write in the session was blocked until a Qdrant call succeeded — impossible, no Qdrant tool in the session | Adoption never checks for, or offers to set up, the Qdrant and Context7 MCP servers the session gate requires (`init.sh` provisions Qdrant); the MCP helpers read `$HOME/.claude.json` by fixed path, so adoption saw a registration the session did not have and wrote `mcp.qdrant_required`; a mid-session adoption leaves `.claude/tool-usage.json` absent until a restart | Adoption checks Docker, the Qdrant container, and the Qdrant and Context7 MCP registrations, offers to set up what is missing, honours `CLAUDE_CONFIG_DIR`, lists them in `docs/adoption.md`, and ends by telling the operator to start a new Claude Code session | 8, 12 |
+| 2 | Adoption refused: "this project already looks framework-managed" | Preflight reads any `.claude/manifest.json` as a possible earlier adoption; a Guardrails-only `.claude/` (a `frameworkVersion` manifest, no Solo keys, no `phase-state.json`) is a known, adoptable shape | Recognise it and adopt; the Guardrails stage already has its "already installed" arm | 5, 6 |
+| 3 | The agent relaying a gate's own documented escape was flagged as a bypass proposal (a pending approval, default "decline") | The bypass detector cannot tell a relayed framework escape from an invented workaround | Exempt text quoting a framework gate's own escape hint; same class as `## BL-277:` | 13 |
+| 4 | Scout reported the tests failing (exit 127) on a suite that passes 1071/0 | The test command ignores the detected package manager: bare `pytest` in a uv project | Prefix the runner (`uv run`, and the poetry/pipenv equivalents) | 4 |
+| 5 | "your ignore rules refuse 24 of the files" — the cause took reading `.gitignore` to find | The refusal is right but does not name the rule (`lib/` matching `scripts/lib/`) | Name the ignoring rule, file and line (`git check-ignore -v`), and the one-line fix | 7 |
+| 6 | Claude Code's auto mode refused the framework's first script ("Code from External"), then refused the agent's attempt to change permissions | Undocumented | An "allow the framework's scripts" step, with the settings snippet, before the first command | 1, 2 |
+| 7 | README and the adoption guide give different clone locations | Two instructions | One path, stated the same way in both | Stage 0 log |
+| 8 | Adoption set `track: full` (enterprise) for a free offline hobby app | The track defaults silently | Derive it from the answers, or ask | 9 |
+| 9 | `check-versions.sh` said Qdrant and Context7 were OK while neither was in the session | It checks installation, not registration | Check the registration the session reads | 14 |
+
+**For the Development Guardrails (CDF), not fixed here:** `enforce-superpowers` blocks source-extension
+writes outside the project (run findings 3, 10); `enforce-evaluate` blocks a read-only `&&`-chained git
+inspection as "a commit" (11); the settings carry `Write(...)` deny rules current Claude Code ignores
+beside their `Edit(...)` twins (startup warnings).
+
+**Test-design lesson, for the rerun:** a clean `CLAUDE_CONFIG_DIR` also drops the user's MCP servers,
+so Stage 0 must register them the way the CLI Setup Addendum says.
+
+**Group A residuals (rounds 15–16, not fixed).** R-BL311-10 to -12 measured by the round-15 review
+(real Docker 29.8.1, Qdrant 1.17.1), R-BL311-13 to -15 by round 16 on the versions each names;
+recorded, not fixed:
+- **R-BL311-10** — a container on `--network container:<id>` reads as loopback, and adoption prints
+  nothing about it. An improbable shape for a Qdrant container.
+- **R-BL311-11** — `-P` together with an explicit `127.0.0.1` binding on every exposed port is
+  reported as open. It errs on the cautious side; the defect is the wording.
+- **R-BL311-12** — Qdrant 1.17.1 enforces an EMPTY `QDRANT__SERVICE__API_KEY=` (a request with no
+  key gets 401, one with an empty `api-key` header 200), and a container with only a read-only key
+  reads as "no key". The warning points the right way; its wording is inaccurate.
+- **R-BL311-13** — Qdrant 1.7 and older return no `checksum` in the create-snapshot response
+  (measured on `qdrant/qdrant:v1.7.4`; `v1.8.4` has it), so step 2 of "Recreating an exposed Qdrant
+  container" never passes and its advice to paste step 1 again loops. It stops safely; nothing is lost.
+- **R-BL311-14** — a full disk during step 1 is reported as "the old container did not answer … or it
+  needs its API key" (measured with HOME on a full 64k tmpfs, under bash and zsh).
+- **R-BL311-15** — the `[::]` → `[::1]` rewrite of `docker port` output does not answer on Docker
+  Desktop for an IPv6-only publish (measured on Docker Desktop 29.2.1: `[::1]` → 000, `127.0.0.1` →
+  200). It stops safely.
+
+**Group C residuals (review round 3, not fixed).** One line each:
+- **R-BL311C3-1** — Scout's markdown report line for `--run-tests` (`# BL-311-SCOUT-REPORT-RAN-CMD`)
+  calls the command Scout ran (`uv run --frozen pytest`) "the project's own test command", while the
+  same report says the flag in it is Scout's.
+- **R-BL311C3-2** — with two lockfiles (e.g. `uv.lock` + `poetry.lock`, or `pnpm-lock.yaml` +
+  `yarn.lock`), the flag note (`# BL-311-SCOUT-FLAG-WHY-UV` / `# BL-311-SCOUT-FLAG-WHY-PNPM`) states a
+  definite everyday command right after "confirm which one this project uses".
+
+**Group E residuals (review round 1, not fixed).** One line each:
+- **R-BL311E-6** — `docs/cli-setup-addendum.md` § 2 still calls Auto Mode "a research preview available
+  to Claude Teams users"; since Claude Code 2.1.283 it is the built-in starting mode of an interactive
+  terminal session. Group E adds only a one-line pointer from § 2 to `docs/adoption.md` step 2; the
+  rewrite of § 2 is open.
+- **Runtime hints still print placeholders.** `/path/to/solo-orchestrator` in `scripts/check-updates.sh`,
+  the `--sync-framework` and `--plan` hints of `scripts/upgrade-project.sh`, the re-add lines of
+  `scripts/lib/adopt/adopt-record.sh` and `scripts/lib/adopt/adopt-archive.sh`, and
+  `scripts/adopt-project.sh --help` (quoted in `docs/adoption.md`, which
+  `tests/test-bl311-e-clone-path.sh` C6 holds to the script's text); `<framework>` in
+  `scripts/lib/adopt/adopt-test-debt.sh`'s "Write one:" line and `scripts/upgrade-project.sh --help`.
+- **Unmeasured:** whether the `autoMode.environment` line in `docs/adoption.md` step 2 clears the
+  `[Code from External]` refusal. The clean dogfood rerun measures it.
+
+**Group E residuals (review round 4, not fixed).** One line each:
+- **R-BL311E4-1** — an agent relaying the assessment prompt's step-10 `!` route
+  (`# BL-311-ASSESSMENT-AUTO-MODE`) by its documented name ("shell mode", "run shell commands directly
+  with the ! prefix") matches `terminal_workaround` and raises the pending-approval sentinel (3 of 4
+  relays the review measured), which blocks commits mid-adoption. Handed to group D (row 3), which
+  must exempt a relay of the framework's own documented hand-to-human instruction.
+- **R-BL311E4-5** — commit `b2c9ed5` is red on its own (`tests/test-bl311-e-clone-path.sh`: 33 passed,
+  1 failed — M19's mutation does not land; its literal arrives in `ee89a1d`). Harmless in a repo that
+  merges by merge commit.
+
+**Group D (row 3, and R-BL311E4-1), built on branch `fix/bl311-d-relayed-escape`.** The dogfood row
+was raised by this framework's own detector — the Stop arm of `scripts/hooks/bypass-detector.sh`, as
+registered in k-pdf's `.claude/settings.json`; the Guardrails' `stop-checklist.sh` only reads the
+sentinel. The Stop arm now writes a `terminal_workaround` match as a `relayed_framework_escape` row
+(no decision awaited, no sentinel) when every line it matched relays either a registered attested
+escape with its reason variable and only the arguments its check prints, or the assessment's `!`
+hand-to-human step (with no inline code but `!` and the finisher, pinned in the detector by its
+SHA-256, `# BL-311-HANDOFF-FINISHER-PIN`);
+the table, the rule and the threat (an escape quoted as cover) are in the detector's comment block
+(`# BL-311-RELAY-ESCAPES-BEGIN`, `# BL-311-RELAYED-ESCAPE-ROW`), and `docs/audit-log-lifecycle.md`
+documents the row type and its limits. `tests/test-bl311-d-relayed-escape.sh` drives the real
+detector: the dogfood message verbatim, the three relays round 4 measured, the cover cases that must
+still raise, the registry cross-check against every `SOLO_*_ATTESTED` reader, and 54 mutation proofs.
+PR #482's narrower `terminal_workaround` alone already clears the three measured shell-mode relays
+(none matches it), but not the dogfood relay, an attested-escape relay, or "Run it yourself in shell
+mode: …". Residuals, not fixed:
+- **R-BL311D-1** — a proposal in plain words (no inline code, flag or variable) that shares the relay
+  phrase's own terminal word ("run the cleanup and run `<escape>` in a new terminal"), or that sits on
+  a shell-mode line ("type ! then <command in prose> at the Claude Code prompt"), is not separated.
+- **R-BL311D-2** — an escape relayed inside a fenced block still raises: fences are stripped before
+  the scan, so the lead-in line ("run this in a new terminal:") carries no escape.
+- **R-BL311D-3** — adoption's own closing advice ("close it and start a new one",
+  `# BL-311-ACT2-RESTART`) matches nothing, but a relay of it as "run `claude` again in your terminal"
+  matches `terminal_workaround`, on `main` and under PR #482, and is not a relay under this rule.
+- **R-BL311D-4** — the rule is per line: a shell-mode relay whose line also carries other inline code
+  (a file name, say) raises.
+- **R-BL311D-5** — resolved in review round 1 (below): the prompt file is no longer read. What is
+  left is narrower: the finisher, when the person types it, resolves the script it runs through
+  `.claude/orchestrator-source.json`, a file the session can write; the pin covers the command's text,
+  not that file.
+
+**Group D review round 1 (adversarial review of `a7c0e01`), fixed on the same branch.**
+- **R1-1 (block)** — the command slot after an attested escape admitted any argument but a shell
+  control operator, so `… git push origin main --force`, `… git push origin +main`,
+  `… git push --delete origin release`, `… git commit --amend --no-edit` and `… git commit -m wip -n`
+  were each recorded as a relay with no sentinel, where `main` raised one. Each row now carries the
+  argument grammar its check prints (`_soif_relay_args_ere`): none for `claude` and the three
+  `bash scripts/…` checks; `git commit` with at most one `-m`/`--message` and one quoted message;
+  `git push` with at most a plain remote and branch (no `-`, `+` or `:`). A backstop behind the
+  grammars (`_soif_relay_destructive`) refuses any line carrying `--force`, `--amend`, `--no-verify`,
+  `--dangerously-skip-permissions`, `--delete`, `--mirror`, `--prune`, a `-f`/`-d` or `+`/`:` refspec
+  after `git push`, or `-n` after `git commit`. Found while fixing it, same class: the reason slot
+  admitted `"$(…)"`, `$(…)` and a bare `x;cmd;` — now refused (single-quoted, double-quoted with no
+  `$` `` ` `` `\` `!`, or one plain word).
+- **R1-2 (major)** — the shell-mode exemption trusted the agent-writable assessment prompt; a prompt
+  carrying `bash -c "git push origin +main"` made that command relay silently. The finisher is now
+  pinned by its SHA-256, the literal sits in a comment beside it, and the suite generates the prompt
+  with `adopt_write_assessment_prompt` and fails when the two drift (R7, proved RED by R8). The pin is
+  a hash, not the literal string, because `lint-module-dependencies.sh` T1 fails a core file that names
+  `adopt-project.sh` on any executed line, a string literal included, and no allowlist row can waive
+  T1 (measured: the literal planted in the detector fails the lint, rc 1).
+- **R1-3 (major)** — six guard atoms the reviewer's mutants left alive now each have a case and an
+  in-suite mutant that dies (M3b, M3c, M7b, M11b, M12b, M10b).
+- **R1-4 (minor)** — an empty escape table now returns before the loop
+  (`# BL-311-RELAY-TABLE-NONEMPTY`); before, bash 3.2 printed an unbound-variable error (it already
+  failed closed). Pinned by case C25, not by a mutant: with the guard removed only bash 3.2 differs.
+
+**Group D review round 2 (adversarial review of `b3496cf`), fixed on the same branch.**
+- **R2-1 (block)** — a second command in inline code rode along on a relay line: ``Run `<escape>` in
+  a new terminal, but first do `rm .claude/pending-approval.json` in it.``, `` … then `git config
+  core.hooksPath /dev/null` there``, `` … and `git update-ref refs/heads/main HEAD` too``, and six
+  more (X01–X09) were recorded as relays where `main` raised the sentinel. Other inline code was
+  refused only when `run`/`do`/`execute` introduced it and a terminal word survived the remainder
+  check, so a pronoun ("in it", "there", "too") defeated it. Now structural
+  (`_soif_relay_spans`, `# BL-311-RELAY-SPANS-CALL`): a line is a relay only if EVERY inline code
+  span on it is the escape, the pinned finisher, `!` alone, or a Claude Code slash command
+  (`^/[a-z][a-z0-9-]*$`; the dogfood relay names `/session-resume`), with at most one escape or
+  finisher. Any other span — `` `reboot` `` included — and the line raises. The old run/do/execute
+  prefix check is gone, subsumed; the remainder check stays (a second route
+  in plain words, C8). A slash command keeps its text in the scanned line rather than becoming a
+  token: a token hid a "terminal" in the command's name from the remainder check (measured).
+- **R2-2 (major)** — surviving mutants: the commit message's own quote excluded from inside it
+  (single, OM3, and double, OM4 — git takes `-m 'wip' --no-veri 'x'` as `--no-verify`), the reason's
+  double-quote exclusion (OM2: `SOLO_MCP_REASON="offline" claude --permission-mode
+  "bypassPermissions"`), and a short flag inside a cluster (`git push -uf`, OM5; `git commit -an`,
+  OM6). Each has a behavioural case and an in-suite mutant that dies (M59, M60, M57, M64, M65; M58
+  for the single-quoted reason twin).
+- **R2-3 (minor)** — git takes any unambiguous prefix of a long option (measured on git 2.54.0:
+  `git commit --no-veri` skips the pre-commit hook and commits, `--amen --no-edi` amends,
+  `git push --delet` deletes the remote branch, `--force-w` is `--force-with-lease`; `--forc` is
+  ambiguous there, rc 129). The backstop now refuses every long option after `git commit` or
+  `git push` except `--message` (`# BL-311-RELAY-BACKSTOP-LONGOPT`, `# BL-311-RELAY-BACKSTOP-MESSAGE`).
+- **R2-4 (minor)** — "Let me just run `<escape>` in the terminal to get past the review check" was
+  recorded as a relay. An attestation is the person's decision: a line where the agent announces it
+  will run the escape, or type the finisher, itself ("let me", "I'll", "I will", "I'm (going to)",
+  "I am (going to)", "I can", "I could", "I'd", "I would", "I shall", then up to three words and the
+  verb right before the span) is refused (`# BL-311-RELAY-FIRST-PERSON`,
+  `# BL-311-HANDOFF-FIRST-PERSON`), unless the match names the person ("I'll wait while you run …").
+  Anchored on the span, not the line: the dogfood relay itself says "(I'll pick up from the findings
+  file …)" after its escape.
+- **Residuals.** R-BL311D-4 now covers both kinds: any relay line that also carries other inline code
+  (a folder to run it from included) raises. A slash command is allowed whatever its name
+  (`/hooks`, `/permissions` as much as `/session-resume`) — no closer reading than plain words get
+  (R-BL311D-1). The first-person rule reads words, not intent: "I'm unable to run `<escape>` …"
+  raises, and "I'll, as you asked, run `<escape>` …" (commas between) is not caught. The backstop's
+  long-option arm is for `git commit`/`git push` only; `claude --permission-mode bypassPermissions`
+  is refused by the MCP row's no-argument grammar, not by the backstop.
+
+**Group D review round 3 (adversarial review of `1feb65d`), fixed on the same branch.**
+- **R3-1 (major)** — first-person atoms that could each be removed with the suite green: the subjects
+  "I could", "I'd" (and "I’d"), "I would", "I shall", the typographic "I’m", and every relay verb but
+  `run` and `type`. Each now has a case (C31) and an in-suite mutant that dies; the reviewer's SM2,
+  SM5, SM6 and SM7, applied to a full copy of the tree, each turn the suite red. The subjects, verbs
+  and filler cap sit on their own marked lines (`# BL-311-RELAY-FP-SUBJECT`,
+  `# BL-311-RELAY-FP-VERB`, `# BL-311-RELAY-FP-FILLER`).
+- **R3-5** — relays `main` raised and the branch let through: "We'll run", "Going to run", "I'll go
+  ahead and just run", "I'm going to go ahead and run", "Let me just go ahead and run", "I need to
+  run", "Let's run", "I should run", "Once I run". The filler cap is six words (was three) and the
+  subjects add "let's", "we'll", "we will", "i need", "i should", "i have", "i must", "i want",
+  "going to", "once i" (C32, one mutant per subject and for the cap). The dogfood message, SH1–SH4
+  and "I'll wait while you run …" stay quiet.
+- **R3-7** — the person-runs-it exception's " your " and " yourself " now each have a case that
+  names only that word (C33) and a mutant that dies.
+- **R3-6** — an empty ERE is skipped on every platform (`# BL-311-RELAY-ERE-NONEMPTY`); before, it
+  rested on this Mac's regcomp refusing one. Each of the two guards holds C24 alone, and each one's
+  mutant (replaced by glibc's reading of an empty ERE, `.`) dies here (L4, L5, M111, M112). That
+  glibc matches every string with an empty ERE is expected, not measured.
+- **R3-2 (minor)** — a slash command rode on a shell-mode line ("…, or open `/permissions` and allow
+  it so I can run it." was quiet). Slash commands are now allowed on an escape line only
+  (`# BL-311-HANDOFF-NO-SLASH`; C35).
+- **R-BL311D-R3-3** — the span rule is per line, and "per line" means only that every line the
+  pattern matched must qualify: a line no pattern matches is never read. A proposal on the next line,
+  in a fenced block, or written as anything but backtick inline code (`&#96;`, lookalike quote marks,
+  bold, plain words) beside a qualifying relay is not caught. The detector before #493 raised such
+  messages only because it raised every relay line; no pattern names hook-disabling, so the proposal
+  on its own line raises on neither. `docs/audit-log-lifecycle.md` no longer says "never per message".
+  (Reworded by R-BL311D-R4-1, below.)
+- **R-BL311D-R3-4** — accepted false positives, failing closed: "My recommendation: I'd run `…` in a
+  new terminal" raises (the first-person test reads words, not intent), and a commit relay followed
+  by "-- it records the attestation." raises (the backstop's long-option arm reads every `--` after
+  `git commit`/`git push` on the line, prose included).
+- **Also measured, not fixed** — the exception reads words too: "I'll notify you and run `<escape>` in
+  my terminal" is quiet, because the match names "you". On `main` it raised.
+- **R-BL311D-R4-1 (fixed on `fix/bl316-broken-installers`, the BL-316 PR)** — R-BL311D-R3-3 and
+  `docs/audit-log-lifecycle.md` said `main` "shares the gap" / "does not catch it either". True only
+  for a proposal standing alone. Measured in group D's final check: beside a relay line, the pre-#493
+  detector raised every such shape (next line, fenced, `&#96;`, lookalike backticks, bold, plain words)
+  — only because it raised every relay line — and the merged detector is quiet. Both now say so.
+
+**Found during groups A–B, not fixed here.** One line each, with what was measured:
+- **No documented undo.** The repo documents no way to undo an adoption; `--re-add
+  .claude/manifest.json` now refuses (`# BL-311-MANIFEST-READD-REFUSE`) and says so.
+- **`run_with_deadline` never fires without `date` on PATH.** `# BL-235-DEADLINE`
+  (`scripts/lib/helpers-core.sh`) reads its clock with `date +%s`: `run_with_deadline 2 sleep 5` with
+  no `date` on PATH ran the full 5s, rc 0 (re-measured 2026-09-30). The fix would be bash's `$SECONDS`.
+- **wp9b's AM1 compares empty with empty.** `tests/test-brownfield-wp9b-preflight-approval.sh` AM1
+  calls `_files_written` about 320 lines before that function is defined, so its "adoptee untouched"
+  leg compares `""` with `""`.
+- **`workflow.html` still says "the one question".** Step B's heading, its "The one question the scan
+  cannot answer" `<h4>`, the paragraph under it, and the glossary entry for adoption — adoption now
+  asks two (the tier, then the track).
+- **A one-off 36-minute stall** of case S17 in `tests/test-bl311-adopt-mcp.sh`, the shell blocked in
+  `run_with_deadline`'s `sleep 0.1`; not reproduced in 282 stress runs. Cause not isolated.
+
+## BL-312: an opt-in "TL;DR mode" for the person the agent works for — greenfield and brownfield
+
+**Status:** Open — **DECIDED 2026-09-28 (Karl).** Build after `## BL-311:`'s nine fixes and BEFORE the
+clean dogfood rerun, so the technician persona tests it.
+
+**What it is.** The reply format Karl works with, offered to every project's user as a choice, because
+it is most useful to a non-developer: every reply the agent gives ends with exactly one plain-English
+TL;DR, self-contained (restated in full every time, never "as above"), carrying eight parts —
+
+1. what happened; 2. what it means for them; 3. next steps; 4. what is waiting on them; 5. the options;
+6. pros and cons for each option; 7. a recommendation with its reasoning; 8. what happens if they do
+nothing — plus every command they must run, in a fenced block, never named in prose.
+
+**Decided shape.**
+- **Enforced, not advised:** a Stop hook checks each reply for the TL;DR and its parts and asks the agent
+  to add what is missing — instruction-only formats drift over a long session.
+- **Chosen once, changeable:** one plain question in the greenfield intake and in adoption;
+  `reconfigure-project.sh` switches it afterwards.
+- **Layered on `docs/messaging-standard.md`**, which already requires a five-part plain-English half for
+  every *summary*. TL;DR mode extends that to every reply and adds parts 3, 4 and 6 and the command rule.
+
+**Open for the design:** where the choice is recorded (a manifest or phase-state key the hook and
+`CLAUDE.md` both read); the hook's check (which parts it can verify mechanically, and how it avoids
+re-prompting forever on a reply it cannot parse); and how it coexists with the Guardrails' own Stop hooks.
+
+**Rulings (Karl, 2026-10-01) — the three open questions are decided.**
+1. **Where it is recorded:** `tldr_mode: true|false` in `.claude/manifest.json`, beside `host`, `mode`,
+   `deployment`, `enforcement_level`. It is on the Solo key list (`# BL-311-SOLO-KEYS`) so a
+   Guardrails-only manifest stays distinguishable. init.sh, adoption, `upgrade-project.sh` and
+   `reconfigure-project.sh` all keep it; an absent key reads as off.
+2. **The hook:** a Stop hook mirroring the TL;DR arm of Karl's own workflow check (`stop-checks.sh` +
+   `_stopcheck.awk`) and nothing else of it: reads only `last_assistant_message`; exits at once on
+   `stop_hook_active` (blocks at most once a turn, cannot loop); exits when `tldr_mode` is not true
+   (absent, false or an unreadable manifest = off — failing open is right for a reply-format
+   preference, and says why); otherwise blocks when no TL;DR line exists outside code fences, with a
+   reason listing all eight parts and the fenced-command rule. No per-part parsing. Wired the way the
+   framework's other Stop hooks are; fails open on a missing jq with one stderr line.
+3. **Default:** opt-in. End of input, non-interactive runs and `init.sh --config` without the key are
+   off. Asked interactively in init.sh's setup and in adoption, where — unlike the track — end of input
+   means no.
+
+**Progress (2026-10-02) — built on `feat/bl312-tldr-mode`, not yet merged.**
+- `scripts/hooks/tldr-check.sh` (markers `# BL-312-TLDR-ONCE`, `# BL-312-TLDR-OFF`,
+  `# BL-312-TLDR-FENCE`, `# BL-312-TLDR-TOKEN`, `# BL-312-TLDR-BLOCK`, `# BL-312-TLDR-NOJQ`,
+  `# BL-312-TLDR-ROOT`) and `scripts/lib/tldr-mode.sh` — the question, the [y/N] reader, the CLAUDE.md
+  section (between `<!-- tldr-mode:begin -->` / `<!-- tldr-mode:end -->`, so `off` restores the bytes),
+  and the Stop-hook registration, spelled once and used by the shared roster
+  (`# BL-312-TLDR-ROSTER`, in `scripts/lib/claude-settings.sh`) and by reconfigure. Both ship
+  (`# BL-312-SHIP-HOOK`, `# BL-312-SHIP-LIB`), so adoption and `--sync-framework` carry them too.
+- **Wiring, measured on a real scaffold:** one Stop group holding, in order, the Guardrails'
+  `stop-checklist.sh`, `session-end-qdrant-reminder.sh`, `bypass-detector.sh`, `tldr-check.sh`.
+  Registered unconditionally (it reads the key), so switching the mode never edits `settings.json`.
+- **init.sh:** the interactive question after the language (`[y/N]`, read by `soif_tldr_yes`), asked
+  only at a terminal (`# BL-312-INIT-TTY-ONLY` — a piped run is off, as `prompt_yes_no` is); a
+  `tldr_mode` --config key that must be a JSON boolean (`# BL-312-INIT-CONFIG`; anything else is
+  refused in the uniform `[FAIL]` shape) and is in `--help-non-interactive`; all four manifest seed
+  writes carry it; the CLAUDE.md section is appended AFTER the render base is captured
+  (`# BL-312-INIT-CLAUDE-MD`), and the Currency System's plan-time render adds it to both merge legs
+  when the mode is on (`# BL-312-PLAN-TLDR-LEGS`) so a change to the template's last lines merges clean.
+- **Adoption asks it LAST** — after the intake confirmations, before the pre-write preflight
+  (`# BL-312-ADOPT-TLDR-CALL`) — because that is the only position where the fixed answer sequences
+  the adoption suites pipe cannot shift: an exact sequence reaches it at end of input (off), and a
+  padding `1` is the number offered for "no", listed first (`# BL-312-ADOPT-TLDR-OFFER-ORDER`,
+  `# BL-312-ADOPT-TLDR-RESOLVE-ORDER`). No existing suite's answer sequence was changed. Empty or end
+  of input is no (`# BL-312-ADOPT-TLDR-EOF`); an unoffered answer refuses. The manifest gets
+  `tldr_mode` true or false by one edit after either arm (`# BL-312-ADOPT-TLDR-MANIFEST`), so the
+  arms the BL-221 and BL-268 suites pin are unchanged; the section goes into the rendered CLAUDE.md
+  before it is put (`# BL-312-ADOPT-TLDR-DOCS`).
+- **`reconfigure-project.sh --tldr-mode on|off`** sets the key, adds or removes the section, and
+  registers the hook (on); checks all three files first, puts all three back if a write fails, refuses
+  `on` without the hook script, and commits nothing (`# BL-312-RECONF-*`).
+- **Tests:** `tests/test-bl312-tldr-mode.sh` (unit lane, pinned to `mcp-mutants`) and
+  `tests/test-bl312-tldr-mode-init.sh` (runs init.sh, full lane), each with mutation proofs of every
+  marked line above.
+- **Review round 1 (2026-10-02).** The CLAUDE.md section's command rule is replaced (residual below).
+  init.sh's default carries `# BL-312-INIT-DEFAULT`: a `--non-interactive` run with flags and no
+  `--config` reaches neither the question nor the config key, so that line alone keeps it off (init
+  suite I9, unit S3). Reconfigure's rollback puts a file back only when it differs and checks every
+  step (`# BL-312-RECONF-PUT-BACK`, `# BL-312-RECONF-ROLLBACK`): with CLAUDE.md read-only, the old
+  rollback's own `cp` ended the script under `set -e` before its `[FAIL]` line and before removing its
+  backup; now the failure is always said, and the backup is removed unless a file could not be put
+  back, when it is kept and named (R5). `--tldr-mode on` over a section already there rewrites it with
+  the current wording and says so (`# BL-312-RECONF-REWRITTEN`, R6) — the way a project picks up a
+  wording change like this one. `--tldr-mode` beside another option refuses (`# BL-312-RECONF-ALONE`,
+  R7); it used to do the TL;DR change and drop the other one with rc 0. The hook's fence rule is
+  pinned for a fence indented under a list item (H3).
+
+**Residuals (measured, not fixed here).**
+- **The reply that answers a TL;DR block is never scanned by the bypass detector.** The detector
+  skips every `stop_hook_active` pass (measured: a `git commit --no-verify` reply raises `no_verify`
+  with the flag false and nothing with it true). The Guardrails' `stop-checklist.sh` already blocks, so
+  the gap predates this entry; TL;DR mode makes the second pass more frequent. Changing the
+  detector's re-entrancy guard (reworked in PR #493) is its own decision.
+- **The detector's `terminal_workaround` pattern can flag a compliant TL;DR.** "If you do nothing: the
+  shell script stays as it is." raised a row and the pending-approval sentinel (measured), because
+  part 8 says "do" and the line says "shell". The first rule — keep "terminal" and "shell" out of any
+  sentence with "run", "do" or "execute" — was refuted in review round 1: the pattern,
+  `(run|do|execute) [^.]*(terminal|shell)`, is a case-insensitive substring match per line that stops
+  only at a full stop, so sample TL;DR lines that obeyed it still raised the sentinel — six, by the
+  review's count ("do (a) — in a nutshell", "now run shellcheck", "do nothing: every payment
+  terminal"). **The rule is
+  now** (the generated CLAUDE.md section and `docs/messaging-standard.md` Part 6): never write
+  "terminal" or "shell", or any word containing either (PowerShell, shellcheck, nutshell), anywhere in
+  the TL;DR outside its code blocks — "the command line" instead — and open every code block with
+  three backticks, because the detector strips those fences and not `~~~`. Measured through the real
+  detector (Stop envelope, a scratch project): the fifteen samples raised 12 of 15 as written and 0 of
+  15 reworded; three of the pairs are case B3 of `tests/test-bl312-tldr-mode.sh`, and C4 reads the
+  words from the detector's own pattern, so a word added there fails it. **Not changed here:** a
+  word-bounded `terminal_workaround` would stop flagging "nutshell" and "shellcheck", but the
+  pattern is the detector's own decision — it was reworked in PR #493 — and this entry does not
+  change it. The rule above holds whichever way that goes.
+- **The TL;DR hook sends a reply back as a hook ERROR.** Claude Code's hooks reference (context7
+  `/websites/code_claude`, "Stop decision control") gives a Stop hook a second way to continue the
+  conversation: `hookSpecificOutput.additionalContext` is "non-error feedback for Claude … unlike
+  `decision: "block"` it is shown in the transcript as hook feedback rather than a hook error", under
+  the same `stop_hook_active` loop protection. `# BL-312-TLDR-BLOCK` uses `decision: "block"`, which
+  Karl ruled on 2026-10-01 (block once), so every reply missing its TL;DR shows the person a hook
+  error. Worth reconsidering once the oldest Claude Code version the framework supports is checked
+  for `additionalContext` on Stop; the hook is unchanged here.
+- **Presence, not content, by ruling:** a TL;DR that skips parts passes the hook.
+- **A project scaffolded before this entry** gets the hook script from `--sync-framework` but not its
+  registration (`upgrade-project.sh` never edits `settings.json`); `reconfigure-project.sh --tldr-mode
+  on` registers it. `verify-install.sh` does not check the registration.
+- **init.sh's interactive question runs over a real terminal only in the full lane**
+  (`tests/test-bl312-tldr-mode-init.sh` I8, with `expect`, `--dry-run`); the unit lane pins it by
+  structure (S1) and the [y/N] reader (C3).
+
+## BL-316: two installers that could never run — the tool matrix's Superpowers command uses a verb Claude Code does not have, and its Linux gitleaks install is a pipeline verify-install.sh refuses
+
+**Status:** Closed — shipped 2026-10-01 on `fix/bl316-broken-installers` (PR pending), fix commit
+`1ae8332`. Karl's ruling (2026-10-01, from an external review): fix both before `## BL-311:`'s clean
+dogfood rerun, as a new entry citing `## BL-284:` and `## BL-069:` rather than reopening them.
+
+**What `## BL-284:` fixed, and what it left.** `# BL-284-PLUGIN-VERB` corrected verify-install.sh's own
+fixer, `fix_superpowers`, to `claude plugin install --scope user superpowers@claude-plugins-official`.
+It left the tool matrix (`templates/tool-matrix/common.json`, keys `darwin_brew`, `linux_apt`,
+`linux_pacman`) and README's tools table at `claude plugins add superpowers`. The matrix row is what
+`init.sh` (`resolve_and_install_tools`, an `eval`), `upgrade-project.sh`
+(`upgrade_auto_install_from_resolver`) and verify-install's `fix_tool_install` run — the last as a
+second Superpowers row from `check_tools`, through the deprecated `bash -c` path, because `claude` is
+an allowed legacy head. Measured on Claude Code 2.1.285: `claude plugins add` exits 1 with
+`error: unknown command 'add'`; `claude plugin --help` lists `install|i` and no `add`.
+
+**What `## BL-069:` fixed, and what it left.** PR #140 made the three readers iterate `install_cmds`
+and turned gitleaks' Linux string into a two-stage array (`GITLEAKS_VERSION=$(curl … | jq …)`, then
+`curl … | sudo tar …`). Its tests pinned the array's join and dispatched only `brew install` shapes
+through verify-install. There each stage is a separate call and stage 1 carries `$(` and `|`:
+measured at `646bb0b`, `fix_tool_install` on the `linux_apt` row prints `REFUSED — post-allowlist
+payload contains shell-chaining metacharacters` at stage 1/2 and runs nothing — and unrefused, stage 2
+would run in a fresh `bash -c` without `GITLEAKS_VERSION`. The eval readers (init.sh, upgrade,
+adoption) did run it: `latest`, unverified, and always the x64 asset, so an arm64 Linux host got a
+binary it cannot execute.
+
+**Fix.**
+- **Superpowers.** All three matrix values and the README row carry the BL-284 command (from
+  `claude plugin install --help`: `plugin@marketplace`, `-s, --scope`, default `user`; the Claude Code
+  docs via Context7 give the same shape). verify-install's structured layer sends that exact string to
+  `fix_superpowers` (`# BL-316-SUPERPOWERS-ROUTE`): one owner of the argv, no deprecation warning, and
+  it still works under `VERIFY_INSTALL_NO_LEGACY_DISPATCH=1`.
+- **gitleaks on Linux.** New `scripts/install-gitleaks.sh`: pinned 8.30.1, a SHA-256 per arch — x64
+  `551f6fc8…` (the `tests.yml` pin) and arm64 `e4a487ee…`, both as published in the release's
+  `gitleaks_8.30.1_checksums.txt` and GitHub's asset `digest` field, read with `gh api` (the two agree;
+  no binary was downloaded). Before any download it refuses a non-Linux host, an unpinned machine type
+  (`# BL-316-ARCH-OTHER`) and a missing verifier (`# BL-316-VERIFIER-PRESENT`); it checks the tarball
+  with `scripts/ci-verify-sha256.sh` before extracting (`# BL-316-CHECKSUM`), then `sudo install`s to
+  `/usr/local/bin`. The matrix's three Linux rows are `bash "${SOLO_SCRIPTS_DIR:-scripts}/install-gitleaks.sh"`
+  (the `# BL-235-SCRIPTS-DIR` convention). verify-install matches that string exactly and runs the
+  installer from beside itself, never from a path the matrix supplies (`# BL-316-VETTED-INSTALLER`); a
+  lookalike falls to Layer 2, where `bash` is not an allowed head. The metacharacter refusal is
+  unchanged. init.sh, upgrade-project.sh and adoption export `SOLO_SCRIPTS_DIR` before their `eval`
+  (`# BL-316-SCRIPTS-DIR`), and init.sh ships the installer and its verifier
+  (`# BL-316-SHIP-INSTALLER`, `# BL-316-SHIP-VERIFIER`), so the derived shipped set carries them to
+  `--sync-framework` and adoption too.
+- **A failed vetted install is a failure, not a miss** (review round 1). Both arms first ended in
+  `return $?`, and `_tool_install_dispatch_one` reads 1 as "no shape matched" and hands the string to
+  Layer 2: a failed Superpowers install ran `claude` a second time through the deprecated path, and a
+  failed gitleaks install added `REFUSED — disallowed leading token 'bash'`. Once an arm has run, a
+  failure now returns 2, which that function already treats as final (`# BL-316-SUPERPOWERS-RC`,
+  `# BL-316-VETTED-RC`).
+- **init.sh shows why an install failed.** `resolve_and_install_tools` ran `eval "$tool_cmd" 2>/dev/null`,
+  so the installer's own reason (`did not match its pinned SHA-256`) never reached the operator, and its
+  hint printed `${SOLO_SCRIPTS_DIR:-scripts}` unexpanded, which resolves only from the framework root.
+  stderr is now captured and printed, indented, on failure (`# BL-316-INSTALL-STDERR`), and the hint
+  carries the absolute path (`# BL-316-INSTALL-HINT`).
+
+**Tests.** `tests/test-bl316-installers.sh` drives the real matrix through the real resolver into each
+real reader, with `claude`, `curl`, `sudo`, `tar`, `uname`, `brew` and `apt` stubbed: 25 cases and 18
+mutation proofs, 43 passed / 0 failed, rc 0; against `646bb0b` 1 passed / 42 failed (the pass is S0,
+`fix_superpowers` itself). Review round 1 added S6 and V4 (a failing installer: one run, no Layer 2),
+G7's "`tar` never sees a mismatched tarball" (the line-move mutant MX1 passed every case before it),
+G9 (the shipped set names both scripts — the `# BL-088-CLOSURE` check reads only literal
+`"$SCRIPT_DIR/<name>.sh"` references, so deleting either `cp` line passed every suite) and C4
+(init.sh's stderr and hint). Pinned to the `mcp` shard. `tests/test-bl069-install-cmds-consumers.sh`
+Group E and `tests/test-brownfield-wp10a-tool-resolution.sh` X5 now name the new row.
+
+**Residuals, not fixed.**
+- `check-phase-gate.sh`'s phase-transition auto-install reads `.install_command`, a field the resolver
+  never writes (it writes `install_cmd`), so its "Install now?" runs nothing. Same family, own defect.
+- Existing scaffolded projects keep their own copy of the matrix: `--sync-framework` copies the shipped
+  scripts, not `templates/tool-matrix/`, and `fix_tool_matrix` replaces only a missing or invalid one.
+- Superpowers has no `linux_dnf` key, so a dnf-only host gets the manual text. Neither the row nor the
+  fixer adds the official marketplace first, which the docs say a machine that has never opened an
+  interactive session needs.
+- With Superpowers missing, verify-install registers it twice (`check_tools`, `check_plugins_mcp`), so
+  `--auto-fix` installs twice. Not measured here; the Claude Code docs (`plugin install` in the CLI
+  reference, read via Context7) document that a plugin already installed at that scope prints
+  `Plugin "<name>@<marketplace>" is already installed (scope: user)` and exits 0, so the second call
+  should be a no-op.
+- verify-install's pre-existing structured arms (`brew`, `npm`, `pip`/`pip3`/`pipx`/`cargo`/`gem`,
+  `sudo apt|apt-get|dnf|pacman`) still end in `return $?`: an install that exits 1 is read as "no shape
+  matched", so it is re-run through the deprecated `bash -c` path (or refused under
+  `VERIFY_INSTALL_NO_LEGACY_DISPATCH=1`), and one that exits 2 reads as a refusal. Read from
+  `_tool_install_dispatch_one`, not measured; the same fix as `# BL-316-VETTED-RC` would close it.
+- The installer always uses `sudo` (a root shell without it fails loudly), and machine types other than
+  x86_64 and aarch64 are refused rather than pinned.
+
+## BL-317: a Phase 3 check of test strength, not only test order
+
+**Status:** Open — DEFERRED (design to be done; decided 2026-10-01 by Karl).
+
+**The gap.** The `## BL-072:` TDD check (`pre-commit-gate.sh`) enforces that tests come first — a
+`feat`/`fix`/`refactor` commit carrying implementation must carry a test (a block or a warning, by
+tier) — not that the tests would catch a defect. Nothing downstream measures that either: `scripts/run-phase3-validation.sh` runs
+semgrep-full-tree, license, snyk, zap-dast and threat-model, where "coverage" means every `TM-NNN` row
+in PROJECT_BIBLE.md Section 4 has a validation row; `scripts/check-phase-gate.sh` requires a Phase 3
+summary and a non-empty `docs/test-results/`; `scripts/test-gate.sh` counts features between test
+sessions. No check enforces coverage or runs mutation testing on a project's code: the Go CI template
+writes a coverage profile with no floor, and the PROJECT_BIBLE template's test table states ">80%
+coverage" as a criterion nothing measures.
+
+**Candidate mechanisms.**
+- **A coverage floor** on changed files. Cheap and per-stack tooling is common, but gameable — tests
+  that execute lines without asserting anything pass it.
+- **Mutation testing on changed files** (mutmut, Stryker, PIT and their kin). Measures whether a test
+  fails when the code is wrong, which is the property wanted; but it needs a tool per language, runtime
+  grows with code size, and some stacks have no mature tool.
+
+**Open design questions.** Per-stack tool selection, presumably through the tool matrix (a category
+like `sast`); which phase transition checks it (Phase 2→3 or 3→4); blocking or advisory, and by tier;
+how POC tiers relax it; a runtime budget, and whether to scope to files changed since the last check.
+
+**Source.** An external review Karl shared on 2026-10-01. Its claims, recorded as the review's and not
+verified here: Kiro uses property-based tests, and ECC sets an 80% coverage target.
+
+## BL-318: brownfield dogfood run 2 (k-pdf, 2026-10-03) — what still stops a regular user
+
+**Status:** Closed — 2026-10-07, confirmed by the third dogfood run. G1 merged as PR #496 (`d827596`), G5
+as PR #497 (`f5b1671`), G2 as PR #498 (`73ce079`), G3 as PR #499 (`b93b006`), and G4 with G6 as PR #500
+(`9305b59`). The text below, and every residual in it, is kept as the audit trail. Filed 2026-10-03 from the
+second dogfood run.
+
+**Closed by run 3 (2026-10-07, k-pdf-dogfood-3, Solo `5f13470`, Guardrails 4.4.0 `aba947b`).** A fresh
+copy of k-pdf was adopted the way run 2's was, and every group behaved as built in a real adoption.
+Stages 0–4 passed (stage 2 after one block by the project's own `lib/` ignore rule, filed under
+`## BL-322:`). G1: at commit time the check printed `BL-125: running project tests: uv run --frozen pytest`
+and the suite ran, `1074 passed, 15 deselected`. G5: the session start offered the Guardrails update from
+4.3.0, and `bash scripts/refresh-guardrails.sh` printed `CDF assets refreshed: 4.3.0 -> 4.4.0`. G2: after
+the assessment, `scripts/resume.sh` printed the Phase 0 prompt. G3: adoption installed the framework's CI as its
+own `solo-gates.yml`, named "Solo Orchestrator checks", and said a push to any branch but main runs nothing.
+G6: the evidence named only `release.yml` ("a deploy or release lane"), nothing about a deploy on a branch
+push; and the blocked first run said "Nothing was committed and nothing was written to this project.
+Outside this project, this run DID register context7 and qdrant". Evidence (outside the repo):
+`~/dogfood-2026-10/k-pdf-dogfood-3-FINDINGS.md` and `~/dogfood-2026-10/turns-3/` (`adopt-attempt1.out`, `adopt-full.out`, `refresh-guardrails.out`).
+
+**What ran.** The `## BL-311:` rerun. A headless Claude Code session played the same systems
+technician (not a developer). It installed Solo from the public README at `a07d707`, which carries the
+merged `## BL-311:`, `## BL-312:` and `## BL-316:` fixes. It then adopted a private copy of k-pdf
+(Python/uv, built with an older Solo, Guardrails 4.3.0, no `phase-state.json`). The run took 11 turns,
+cost $6.19 and produced 33 findings. Stages 0–3 passed (install, Scout, adopt, assessment). Stage 4
+(one small change, committed through the project's checks, pushed) **failed its criterion**: the change
+was made test-first, committed as `8d0b2be` and pushed, but the project-test check did not run, and
+hooks blocked the agent falsely or with no way through. **Evidence** (outside the repo, untracked):
+`~/dogfood-2026-10/k-pdf-dogfood-2-FINDINGS.md` (the 33 rows, the step log and the stage verdicts),
+`~/dogfood-2026-10/turns/` (every turn; `adopt-full.out` is adoption's full output and
+`stage4-commit.out` is the commit hook's output), `~/dogfood-2026-10/claude-dir.tgz` (the adoptee's
+`.claude/`), the transcript and a git bundle beside them. The live project is
+`~/Documents/Claude Projects/k-pdf-dogfood-2`.
+
+**How the earlier fixes behaved.** `## BL-311:` rows 1, 2, 3, 4, 5, 7, 8 and 9 behaved as built. Some
+examples: Scout ran `uv run --frozen pytest` and got exit 0 in 268 s. The ignore-rule refusal named
+`.gitignore` line 20 (`lib/`) and suggested `/lib/`. The track was asked, not defaulted. Adoption
+registered Context7 and Qdrant. Row 6 is **inconclusive**: the auto-mode refusal it documents did not
+happen, even though the settings line was never loaded (run findings 1, 3). `## BL-316:` behaved as
+built: Karl installed Superpowers with the README's `claude plugin install` command at the first try.
+`## BL-312:`'s nudge **never fired**. This is likely confounded by the test account's own TL;DR
+preference, which made every reply carry one anyway.
+
+| Group | What the user hit | Root cause | Run findings |
+|---|---|---|---|
+| **G1** | The commit-time project-test check (`## BL-125:`) ran bare `pytest` in a uv project: `sh: pytest: command not found` → "PROJECT TESTS NOT ENFORCED", and the commit went through. The interview had confirmed `uv run --frozen pytest`. | Adoption never writes `.claude/test-command`. The hook's own detection falls back to bare `pytest`, which cannot see uv's `.venv`. | 31, 32 |
+| **G2** | After the assessment, `scripts/resume.sh` printed the classic resume prompt, not Phase 0's. Its fields held garbage (the Context Health Check paragraph three times, "Last session: (not found in CLAUDE.md)"). | `## BL-202:` branch 2 requires `[ ! -f PRODUCT_MANIFESTO.md ]`, so any adoptee built with an older Solo falls through to the classic prompt. That prompt reads CLAUDE.md sections the framework's CLAUDE.md no longer has. `docs/adoption.md` promises the Phase 0 prompt. | 24 |
+| **G3** | The guide says the framework's CI "runs from your next push". A branch push ran nothing. | `ci.yml` and the framework's `solo-gates.yml` trigger only on a push to `main` and on PRs to `main`. `solo-gates.yml` (from `templates/pipelines/ci/github/python.yml`) also reuses the adoptee's workflow name `CI` and installs from `requirements.txt`, which a uv project does not have. | 33 |
+| **G4** | Docs: Superpowers is never listed as an adoption prerequisite, yet the Guardrails' `enforce-superpowers` blocks every source edit without it. The adoption guide does not explain the approval step agent-run commits need, or how the stop hook and the commit hook interact. No doc says how an adopted project at phase 0 makes its first change. README and the adoption guide carry two different prerequisite lists. The session-start version warnings give a non-developer no guidance. | Missing or split documentation. | 27 (Solo half), 20, 21, 26, 2, 14 |
+| **G5** | The run used Guardrails 4.3.0 (`0396a1a`) while the CDF clone is `2f7ef3a`, so no Guardrails fix since then reached this adoptee. | Adoption's "already installed" arm (`adopt_guardrails_resolve`) keeps an adoptee's older Guardrails install and never refreshes it. **Design question for Karl:** refresh on adoption (and how to archive what it replaces), or point the operator at the CDF upgrade. | Stage 1 log |
+| **G6** | Three small ones. (a) Scout and adoption report "deploys on a branch push" for a `ci.yml` with no deploy step: line 149 is Nuitka's `--no-deployment-flag`. (b) Adoption runs `claude mcp add` mid-interview, yet a later refusal says "Nothing was committed and nothing was written". That is true of the project, not of Claude Code's user configuration. (c) The assessment records `adoptedAtCommit` as the pre-adoption HEAD. **That is by design** (`adoption-stamp.sh`: "the PRE-ADOPTION TIP, i.e. the parent the adoption commit will land on"). Only the finisher's wording "the commit this project was adopted at" invites the misreading. | (a) the deploy detector matches the word inside a flag. (b) the refusal's sentence does not count writes outside the project. (c) wording only. | 5, 12, 19 |
+
+**G1, as built (branch `fix/bl318-g1-test-command`, after the final check).**
+- Adoption writes `.claude/test-command` only when the operator **kept** the scan's offer. The recorded
+  answer must equal Scout's `stack.testCommand.value` (`# BL-318-TESTCMD-OFFER`), which is one of Scout's
+  fixed command strings or null. It is written verbatim with its no-rewrite flag (`# BL-318-TESTCMD-KEPT`,
+  `adopt_write_test_command`).
+- Nothing is written when Scout found no command. The interview shows "(none detected)" there, which
+  round 2 compared against and wrote (`# BL-318-TESTCMD-ASKED`).
+- Nothing is written when the offer is npm's placeholder script, which would block every source commit
+  (`# BL-318-TESTCMD-PLACEHOLDER`, the hook's own `no test specified` needle).
+- A **changed** answer is never written (the coordinator's decision on review round 1's R-1). Round 1
+  wrote `pytest; bugs in GitHub Issues`, and a commit with a failing pytest then landed. The run says
+  what runs instead and gives the one `echo` line that writes a command.
+- A file the project already has is kept, and the run says what the check will run from it.
+- The hook's own pytest fallback goes through uv, poetry, pdm or pipenv. It first probes
+  `<runner> python -c 'import pytest'` (`# BL-318-PYTEST-PROBE-CMD`); round 2's `pytest --version`
+  loaded plugins on pytest 8.x, so a broken suite read as missing. Pytest absent from that
+  environment is not enforced, loudly, instead of every source commit being blocked as a failed
+  suite. A suite that is there but broken still blocks.
+
+**Residuals (not fixed):**
+- **A written file gets no probe.** A kept `uv run --frozen pytest` whose pytest is not in the
+  environment uv syncs (an optional extra, a group it does not install, a dependency added but not
+  locked) makes uv exit 2, and the check blocks every source commit as a failed suite. The file is
+  operator-owned and holds any command, so `--version` cannot be appended safely. The remedy today is
+  to edit the file (e.g. `uv run --frozen --extra test pytest`).
+- **Pre-existing `# BL-242-PARENT-LINK` gap** (review round 1). With an untracked `.claude` that is a
+  symlink to a folder outside the project, the pre-write rehearsal writes through the link (9 entries
+  outside on round 1's tip, 8 on `a07d707`). It still prints "Nothing was committed and nothing was
+  written."
+- **A renamed project folder breaks the `.venv` pytest launcher (PR #496; fails closed).** A
+  virtualenv's `pytest` script names its interpreter by absolute path. After the project folder is
+  renamed it exits 126, and the commit-time check reads that as a FAILED suite and blocks every source
+  commit. The output names the missing interpreter, so the cause is visible. Candidate fix: treat 126
+  like 127 (not enforced, loudly).
+- **A root-level module named like a standard-library one breaks the probe (PR #496; improbable; fails
+  open, loudly).** `python -c` puts the project folder first on `sys.path`, so a `token.py` or
+  `logging.py` there shadows the module the `# BL-318-PYTEST-PROBE-CMD` import probe needs. The probe
+  fails and the check says NOT ENFORCED, blaming a missing pytest. Candidate fix:
+  `python -c 'import sys; del sys.path[0]; import pytest'`.
+- **One adoption note is wrong (PR #496; wording).** The `# BL-318-TESTCMD-PLACEHOLDER` note says the
+  check finds nothing to run while `package.json` carries npm's placeholder. In a Python project whose
+  `package.json` came from `npm init`, the hook's own fallback still runs pytest.
+
+**G2, as built (PR #498, merged as `73ce079`).**
+- **The route.** In `## BL-202:` branch 2 of `scripts/resume.sh`, an adopted project at phase 0 with its
+  intake done gets its own Section 13 while its `PRODUCT_MANIFESTO.md` is still byte-identical to the one
+  in the commit adoption was anchored on (`# BL-318-G2-ADOPTEE-PHASE0`). The anchor is the stamp's
+  `adoptedAtCommit`, the pre-adoption tip (`git rev-parse <anchor>:PRODUCT_MANIFESTO.md` against
+  `git hash-object PRODUCT_MANIFESTO.md`); measured on k-pdf, `3635951` holds the brought manifesto,
+  blob `9723450`. Adoption archives a copy of an adoptee's manifesto and leaves the file in place, so the
+  old "no manifesto" test sent every adoptee built with an older Solo to the classic prompt. Once Phase 0
+  rewrites that file, or writes one where none was brought, the classic prompt resumes the work, as for a
+  greenfield project. An empty anchor is never used, since `<empty>:path` reads the index
+  (`# BL-318-G2-ANCHOR`). An adoptee whose assessment is not recorded never reaches the route, because
+  `# BL-242-RESUME-ASSESSMENT` exits first. Greenfield routing is unchanged.
+- **Review round 1, R-G2-1.** The first cut keyed on the stamp alone. `current_phase` stays 0 for the
+  whole of Phase 0 (only `process-checklist.sh --start-phase1` raises it, after the 0→1 gate), so every
+  adoptee got "run Phase 0 … from the beginning" at every Phase 0 session. Measured on an adoptee that
+  brought no manifesto and drafted one in session 1: `f5b1671` gave session 2 the classic prompt, `fd03921`
+  gave it Section 13, and the fix gives it the classic prompt.
+- **The session-start hook agrees with `resume.sh`.** `scripts/session-intake-check.sh` used the same
+  "no manifesto" test. For an adoptee that had not been assessed and had no manifesto, it said "READY FOR
+  PHASE 0" and seeded "show me the Phase 0 first prompt", while `resume.sh` printed the assessment
+  prompt; on the k-pdf shape it said nothing. It now points an adoptee whose assessment is pending at the
+  assessment prompt (`# BL-318-G2-HOOK-ASSESSMENT`), and says Phase 0 is ready while a brought manifesto
+  is untouched (`# BL-318-G2-HOOK-BROUGHT`). Its greenfield output is unchanged, and the suite pins it to
+  the pre-change hook's output.
+- **Why the paragraph came out three times.** Each field took the first CLAUDE.md line that contained its
+  words (`grep -i "features built"`). The template's Context Health Check bullet says "Summarize features
+  built, features remaining, current data model, and known issues". So one line matched three fields, and
+  the sed that strips "Label:" found no colon and stripped nothing. A field is now read only from a
+  "Label:" line, with markdown bold allowed on either side of the colon (`# BL-318-G2-FIELD-LABEL`). That
+  also drops the stray `**` the addendum's own `- **Features built:** …` format used to leave in the value.
+- **No filler.** A field CLAUDE.md does not record is left out (`# BL-318-G2-FIELD-OMIT`). When none is
+  recorded, one plain line says so (`# BL-318-G2-FIELDS-NONE`). If CLAUDE.md has a "Current State"
+  heading but no "Label:" lines under it (a table, or labels with their values on nested bullets), the
+  prompt points at that section instead (`# BL-318-G2-FIELDS-IN-SECTION`, R-G2-3). A real `init.sh`
+  scaffold has no Current State section at all (measured), so that shape comes from a section an operator
+  or agent wrote. With no CLAUDE.md at all, one line says that, and the closing no longer tells the agent
+  to read it (`# BL-318-G2-NO-CLAUDE-FIELDS`, `# BL-318-G2-NO-CLAUDE-CLOSING`). The "Current State section
+  is stale" sentence is printed only when CLAUDE.md has that heading (`# BL-318-G2-CURRENT-STATE`).
+- **Measured on the k-pdf shape** (the run's git bundle). At `62946e1` (adopted, assessed, its own
+  manifesto): before, the classic prompt, with the paragraph three times and "Last session: (not found in
+  CLAUDE.md)"; after, the project's Section 13, verbatim. At `8d0b2be` the manifesto is still the brought
+  one, so it is still Section 13 (the residual below). The session-start hook said nothing at `62946e1`;
+  now it says Phase 0 has not started.
+- **Tests.** `tests/test-bl318-g2-resume-adoptee.sh`: 28 cases and 30 mutants, on two real adoptions (one
+  that brought a manifesto, one that brought none) and the real Act 4 finisher. The mutants include review
+  round 1's four survivors (R-G2-4), which now die on behaviour. `tests/edge-cases-scripts.sh` E12a and
+  E12b pinned the removed filler and now pin the plain lines.
+
+**G2 residuals (not fixed):**
+- **An adoptee that brought a manifesto gets Section 13 until that file changes.** Phase 0 work that does
+  not touch the manifesto does not move it on. Measured: k-pdf at `8d0b2be`, a code commit made after the
+  assessment, still gets Section 13. The file is the only Phase 0 output the route can see.
+- **The assessment does not update Section 13.** The Phase 0 prompt is Section 13 as adoption wrote it. It
+  still says the judgement cells are blank and "nobody has been asked them yet", and that adoption "did
+  not ask for" the data classification. By then Act 4 has written the answers into
+  `.claude/intake-progress.json` and the classification where the phase gate reads it. So an agent may ask
+  again what was already answered, at each session until Phase 0 writes or changes the manifesto. The
+  guide promises this prompt, so G2 prints it as written.
+- **A manifesto that was never committed before adoption counts as Phase 0's.** The anchor commit does not
+  hold it, so the route reads it as Phase 0's output and gives the classic prompt, as before G2.
+- **R-G2-5 (PR #498): the session-start hook ignores an open delta.** `# BL-318-G2-HOOK-BROUGHT` ignores
+  `# DELTA-RESUME-EXEMPTION`. An inProduction adoptee with an open hotfix delta at phase 0 is told "READY
+  FOR PHASE 0" by the session-start hook while `resume.sh` prints the delta. The greenfield arm had the
+  same gap before.
+
+**G3, as built (PR #499, merged as `b93b006`).**
+- **When it runs.** The triggers are unchanged: a push to `main` and pull requests to `main`. The words
+  now say so, and that a push to any other branch runs nothing: adoption's own note
+  (`# BL-318-G3-RUNS-WHEN`, which reads the workflow's name from the file it installs), the GitHub row
+  of the "Runs?" table in `docs/adoption.md`, the Tier 1 sentence in `docs/user-guide.md` (on GitLab and
+  Bitbucket a greenfield pipeline does run on every push, and it says so), and
+  `docs/audit-log-lifecycle.md`. Adoption's note and the table also say what a repository whose main
+  branch has another name must change.
+- **The name.** All ten GitHub CI templates are `name: Solo Orchestrator checks` (`# BL-318-G3-NAME`),
+  because adoption installs whichever one matches the project's language. Nothing depended on `CI`:
+  branch protection sets `"contexts":[]` (`scripts/host-drivers/github.sh`), and no script, lint or test
+  reads the workflow's name. A greenfield `ci.yml` gets the same name, since `generate_ci` copies the
+  same template. "checks", not "gates": the messaging standard keeps "gate" for the phase gate.
+- **The install.** One step, "Find the dependency file" (`# BL-318-G3-INSTALLER`), decides once: a
+  `uv.lock` with a `pyproject.toml` means uv; otherwise `requirements.txt` means pip; with neither the step
+  fails with an `::error::` that names the missing files, so nothing runs against an empty install. Every
+  install and tool step is gated on that one output with a YAML `if:`. Adoption and `init.sh` both copy
+  the template verbatim, so nothing is chosen at render time. The uv path is `astral-sh/setup-uv` at
+  `c18668ad3cf93ea998bef934396af7bb5c839dc7` (v10.2.0, the latest release, published 2026-09-21; a
+  lightweight tag on that commit, an immutable release, a verified commit — read with `gh api`), then
+  `uv sync --frozen`, then the dev tools with `uv pip install` into the same environment, then
+  `uv run --frozen` for ruff, pytest, pip-audit and pip-licenses (`# BL-318-G3-UV-SYNC`). The lockfile
+  step runs `uv lock --check` for a uv project and warns when it fails (`# BL-318-G3-LOCK-CHECK`); it used
+  to say "No hash-pinned lockfile found" to every uv project. The license deny list is unchanged and both
+  license steps carry it (`# BL-318-G3-LICENSES`). A job-level `env:` holding it was tried first:
+  `tests/test-bl147-ci-template-integrity.sh` `Cw6-strict-job` refused it, because that pin allows only
+  `runs-on` and `steps` on the job that runs the phase gate.
+- **Measured on the k-pdf shape** (the run's git bundle, `8d0b2be`): its `solo-gates.yml` is byte-identical
+  to the template before G3 — `name: CI` beside k-pdf's own `name: CI`, and `pip install -r
+  requirements.txt` in a project that has no such file. k-pdf's own CI shows `uv run pip-audit` working in
+  a uv environment (run 37053715877: it ran, and failed on 29 known vulnerabilities, a finding).
+- **Review round 1.**
+  - **R-1: the decision could be bypassed silently.** One added line on the decision step —
+    `continue-on-error: true`, or an `if:` such as `github.event_name == 'push'` — left the installer
+    empty. Every gated step then skipped, and the job could go green having run no install, lint, test
+    or security check. Both mutants passed every suite that read the file. Now the suite asserts the
+    decision step has no `if:` and that no step in the job carries `continue-on-error` (the same pin
+    bl147's `Cw6-strict-no-coe` puts on the phase-gate step). The template also fails closed: the step
+    right after the decision, "Stop if no installer was chosen" (`# BL-318-G3-FAIL-CLOSED`), runs only
+    when the installer is neither `uv` nor `pip`, and fails the job with an `::error::`.
+  - **R-2: a packaged uv project failed on its own license.** `uv sync` installs a project that has a
+    `[build-system]` into its environment, so pip-licenses listed it. Measured offline with uv 0.11.3
+    and pip-licenses 5.5.5: a fixture classified GPLv3 failed with "fail-on license GNU General Public
+    License v3 (GPLv3) was found for package kp2:0.1.0", rc 1. The uv license step now leaves the
+    project out under the name `uv version --frozen` prints (`# BL-318-G3-SELF-LICENSE`). That output
+    is "<name> <version>", with the name PEP 503-normalised (`Kp2_Pkg` prints as `kp2-pkg`), and
+    pip-licenses normalises both sides before it compares. With no `[project]` table, uv exits 2 and
+    nothing is left out. The same fixtures now pass (rc 0), with the step's own script run by the real
+    uv. The pip path never installs the project, so the two paths now judge the same packages.
+  - **R-3:** `docs/governance-framework.md`'s CI/CD row said "license checking on every push"; it now
+    uses the Tier 1 wording.
+  - **R-4:** the steps the suite executes (the decision, the fail-closed step, the uv license check and
+    the lockfile check) declare `shell: bash`. With no `shell:`, GitHub runs `bash -e {0}`, which has no
+    pipefail, so the suite's `bash -eo pipefail` was not how the runner would run them. The suite now
+    refuses to execute a step that does not declare it.
+- **Tests.** `tests/test-bl318-g3-ci-template.sh`: 24 cases and 36 mutants. Two real adoptions (a uv
+  project and a requirements.txt project, each with its own workflow named `CI`) write the file every
+  other case reads. The decision step runs over six trees, and the fail-closed, lockfile and uv license
+  steps run with stub tools, all as a `shell: bash` step runs on Actions. On `73ce079` 19 of the first 20
+  cases fail (T1, the triggers are unchanged, passes there by design). On review round 1's base,
+  `9830322`, 12 of the 24 fail; T7 passes there, and its mutants (`continue-on-error` or an `if:` on the
+  decision step) are what prove it.
+
+**G3 residuals (not fixed):**
+- **The phase-gate token setup makes the same promise.** `scripts/check-gate.sh --setup-ci-token` prints
+  "The next push enforces the check.", `docs/builders-guide.md` quotes it, and the ten templates' phase-gate
+  comment says the backstop "enforces on the very next push". On GitHub only a push to `main` or a pull
+  request to `main` runs it. The output is pinned by `tests/test-walk006-ci-protection-scope.sh` and the
+  comment block by bl147's `Cw6` cases, so G3 leaves both.
+- **The GitLab and Bitbucket Python templates still skip a uv install in silence.** They run
+  `pip install -r requirements.txt 2>/dev/null || true`. Adoption installs them as files that do not run
+  until the operator wires them in; a greenfield project on those hosts runs them.
+- **A repository whose main branch is not `main` gets a workflow that never runs.** The words now say so;
+  nothing detects it.
+- **`uv sync --frozen` installs the default groups only.** A project that keeps pytest or its plugins in an
+  optional extra or another group gets a bare pytest from the dev-tools step, without them — the same
+  class as G1's first residual.
+- **Projects adopted before G3 keep their old file.** Adoption never overwrites an existing
+  `solo-gates.yml` (`# BL-242-CI-DEST`), and nothing offers the new one.
+- **Two check runs named `test`.** The framework's jobs are still `test` and `sast`, so an adoptee whose
+  own workflow has a job named `test`, and requires it as a status check, gets two check runs named
+  `test`. That predates G3, which renamed only the workflow.
+- **Not run on a runner.** No workflow run of the new template has happened. It was checked by a YAML parse
+  (PyYAML 6.0.3) and by the suite; `actionlint` is not installed here.
+- **N-1 (PR #499's final check; narrow, fails closed).** On a uv project whose version is dynamic
+  (setuptools-scm, hatch-vcs), `uv version --frozen` exits 2, so `# BL-318-G3-SELF-LICENSE` leaves nothing
+  out and a GPL-family project fails its own license check: a loud red, never a false pass. Candidate fix:
+  read `[project].name` with `tomllib`.
+- **N-2 (PR #499's final check; a comment).** The template's comment "the pip path never installs the
+  project" is false when `requirements.txt` has `-e .`. R-2 above repeats it.
+
+**G4, as built (branch `fix/bl318-g4-g6-docs-small`).** Documentation. The claims a script can check are
+pinned by `tests/test-bl318-g4g6.sh` P1–P6.
+- **Superpowers is a prerequisite (finding 27, Solo half).** `docs/adoption.md` "What you need" now lists
+  Claude Code and Superpowers, with `claude plugin install --scope user superpowers@claude-plugins-official`
+  (the tool matrix's own command, P1) in a fenced block, `claude plugin list` to check it, and the block a
+  session prints without it: the 4.3.7 and later text, and 4.3.0's (P4 checks both against the Guardrails
+  hooks). README lists Superpowers under Prerequisites instead of "Optional enhancements" (P3), and its
+  "Methodology vs. Tooling" paragraph says that in a Claude Code project with the Guardrails it is required.
+  The Guardrails arm `enforce-superpowers` in every profile (`profiles/_base.yml`), so a new project needs
+  it too.
+- **One prerequisites list (finding 2).** `docs/adoption.md` "What you need" is the one list for adoption.
+  README's adoption section no longer carries its own partial list (`git`, `jq`, `gitleaks`, optionally
+  `semgrep`) and links there; README's Prerequisites table says it is for `init.sh` and links there too
+  (P2). A link was chosen over two identical lists pinned equal: the two tables answer different questions
+  (a new project, an existing one), and a link cannot drift.
+- **The approval step (findings 20, 21).** New `docs/adoption.md` section "7. Your first change": what the
+  agent asks (it stages, records `.claude/pending-approval.json`, gives options with ids, stops); why an
+  agent commit is blocked before approval (`BLOCKED — Commit requires`); how the stop check's
+  `Uncommitted source changes. Commit before finishing.` and the approval interact; and how to answer, by
+  Guardrails version. It was written from the hooks. The clone is at 4.4.0 (`aba947b`, CDF PR #26, merged
+  2026-10-05), which changed approval after this group was briefed against 4.3.7 (`e1e2fa1`), so the section
+  covers 4.4.0 and later (reply with the option id, then again to confirm; then a lone `git commit -m`),
+  4.3.7 (the agent runs `mark-evaluated.sh` as a lone command), older versions, and the user's override in
+  a separate terminal. Section 6 says the assessment's commit is the first one through it, and that a
+  refresh across 4.4.0 changes how a commit is approved.
+- **The first change at phase 0 (finding 26).** The same section states the rules as written. The Builder's
+  Guide builds in Phase 2, and the adopted `CLAUDE.md` says to follow the phases in order. No check blocks a
+  commit at phase 0: `check_commit_ready` and the `feat:` message check pass everything below phase 2 (P6).
+  Nothing in the guide or the scripts addresses a small fix before Phase 0 ends, and the section says so.
+  The options it gives: do Phase 0 first; open a delta if the assessment recorded the project as in
+  production; or go ahead through the checks.
+- **Review round 1 (R-3, R-5, R-8).** The override now says to clear the recorded question
+  (`bash scripts/pending-approval.sh --resolve`) before telling the agent to commit. Solo's own check blocks
+  every commit while `.claude/pending-approval.json` exists, and 4.4.0's `mark-evaluated.sh` does not remove
+  it (measured on a fixture: blocked "pending user decision" with a schema-2 question; not blocked once
+  resolved; P7). `docs/user-guide.md` no longer calls Superpowers optional anywhere: a "Required:
+  Superpowers" section replaces its "Optional Enhancements" row. `init.sh` says it is required, with the
+  install command, instead of "recommended". README's adoption sentence says it blocks when the Guardrails
+  are installed (P8). Each place that gives the install also gives
+  `claude plugin marketplace add anthropics/claude-plugins-official` for a computer where Claude Code has
+  never run an interactive session, which Claude Code's documentation says lacks the official marketplace
+  (P9).
+- **Session-start messages (finding 14).** `docs/user-guide.md` "What to do with each message", linked
+  from adoption.md section 6, covers each kind in plain words: the update commands, `Superpowers: not
+  installed`, `NOT registered with Claude Code`, `BELOW MINIMUM`, the Guardrails update offer and both
+  Guardrails notices. Every command is fenced. P5 checks that each is text the scripts print.
+
+**G4 residuals (not fixed):**
+- **A project refreshed to Guardrails 4.4.0 cannot approve a commit by reply (measured).**
+  `scripts/refresh-guardrails.sh` does not change `.claude/settings.json`, and 4.4.0's `record-approval.sh`
+  only runs when it is registered there (UserPromptSubmit). Measured on fixtures under a temp HOME with a
+  local clone of the CDF: one adopted against `e1e2fa1` (4.3.7) and refreshed to `aba947b` (4.4.0) had the
+  4.4.0 `enforce-evaluate.sh` and `record-approval.sh` on disk and a byte-identical `settings.json` with no
+  `record-approval`; one adopted against `aba947b` has it registered. In the refreshed project every agent
+  commit needs the user's `mark-evaluated.sh`, run in a separate terminal. Section 7 says how to check
+  (`grep -c record-approval .claude/settings.json`) and what to do. The fix is `## BL-319:`'s.
+- **Solo still writes the approval question in schema 1.** `scripts/pending-approval.sh --offer` and
+  `scripts/escalate-to-user.sh`, which the CLAUDE.md template tells the agent to use, write a question that
+  Guardrails 4.4.0 cannot take an answer to, so the agent must rewrite it as schema 2. That is the Solo side
+  of CDF's approval design B (`~/dogfood-2026-10/SOLO-HANDOFF-approval-B.md`, outside the repo), not G4.
+  When it lands, the two caveats under section 7's 4.4.0 bullet need revisiting.
+- **Not re-run.** The approval round trip has not been run against 4.4.0 with this text; the third dogfood
+  run will.
+
+**G6, as built (branch `fix/bl318-g4-g6-docs-small`).**
+- **(a) A flag is not a deploy (findings 5, 12).** Both detectors now read each line with its command-line
+  flags removed, then match their own words as before: adoption's `deploy` anywhere
+  (`# BL-318-G6-DEPLOY-FLAG`), Scout's after a non-letter (`_scout_deploy_word`,
+  `# BL-318-G6-DEPLOY-FLAG-SCOUT`). A flag is a token that starts `-` or `--` and then a letter or digit,
+  after whitespace, a quote, `(`, `,` or `=`, up to the next whitespace, quote, `,`, `)`, `=` or shell
+  operator (`;`, `&`, `|`, `<`, `>`). A flag whose whole name is `deploy` counts
+  (`# BL-318-G6-DEPLOY-WHOLE`, `# BL-318-G6-DEPLOY-WHOLE-SCOUT`). On k-pdf's real
+  ci.yml at `0bb0465`: before, adoption reported `deploy-on-push` at line 149 and Scout its rule at line 4;
+  after, neither. The real deploys are still caught: a `deploy:` job, `./deploy.sh`,
+  `actions/deploy-pages`, `github-pages-deploy-action`, `firebase deploy --only hosting`, a "Deploy to
+  production" step name, and `wrangler deploy` beside a flag. Adoption now reports the deploy step's line,
+  not an earlier flag's.
+- **(a), review round 1 (R-1, R-2, R-7).** The first cut ran a flag to the next whitespace, quote, `,` or
+  `)`. So it took the flag's `=value` and a command glued on by `&&` or `;`, and five real deploys the base
+  caught were missed by both detectors. Measured at `b93b006` / `d607464` / now, adoption's finding and
+  Scout's line: `ansible-playbook … --tags=deploy` caught / missed / caught; `npx nx affected
+  --target=deploy` the same; `npm ci --silent&&./deploy.sh production` the same; `./scripts/ci.sh --deploy`
+  the same (the whole-name rule); `dotnet publish … -p:DeployOnBuild=true` caught / missed / missed (the
+  residual below). k-pdf's ci.yml stays clean in both. No fixture had put a flag before the deploy word on
+  the same line, so a mutant that dropped whitespace from the flag's end survived; D3 now carries
+  `npx -y netlify-cli deploy --prod`, `kubectl apply -f k8s/deployment.yaml`, `make --quiet;make deploy`,
+  `rsync -az --delete dist/ deploy@host:/srv/app/` and the four above, and D5 holds the two copies of both
+  patterns byte-identical. The comment above Scout's rules now names the one false negative it accepts.
+- **(b) The refusal is true (finding 12).** The "did not begin" sentence now ends "…nothing was written to
+  this project." (`_adopt_refuse_nothing_written`, `# BL-318-G6-NOTHING-LINE`). Adoption's MCP step records
+  in `ADOPT_MCP_REGISTERED` each server whose `claude mcp add` it ran and whose receipt then shows it
+  registered (`# BL-318-G6-MCP-ATTEMPT`, `# BL-318-G6-MCP-REG-C7`, `# BL-318-G6-MCP-REG-Q`). A server
+  registered before the run is never attempted, so it is never named. With a name recorded, the refusal
+  says the run stopped before it changed the project (`# BL-318-G6-NOTHING-BEGIN`). Every arm that can
+  follow a registration also names each server, says the registration is in the user configuration and stays,
+  and prints
+  `claude mcp list` and `claude mcp remove -s user <name>` (`_adopt_refuse_outside`,
+  `# BL-318-G6-OUTSIDE`). On the dogfood shape, "Adoption did not begin. Nothing was committed and nothing
+  was written." became "Adoption stopped before it changed this project. Nothing was committed and nothing
+  was written to this project.", followed by the note. `docs/adoption.md` section 5 says the same, and its
+  four quoted refusals carry the new sentence.
+- **(b), review round 1 (R-4, R-6).** A stop after a registration is now labelled `[BLOCKED]`, not
+  `[REFUSED]` (`# BL-318-G6-BLOCK-LABEL`): the messaging standard's "refuse" means the tool declined to start
+  and changed nothing, and this run had changed the user configuration. It takes the arm that says nothing
+  was written to the project, which no longer requires a forced block (`# BL-318-G6-NOTHING-ARM`); before,
+  only `adopt_block` reached it. Each call that prints the note carries its own marker
+  (`# BL-318-G6-OUTSIDE-NOTHING`, `# BL-318-G6-OUTSIDE-BLOCKED`), and B6 pins the forced-block arm, whose
+  call a mutant could delete unnoticed (R-4). The `[REFUSED]` arm no longer prints the note: no
+  registration reaches it.
+- **(c) Wording (finding 19).** "The commit this project was adopted at" and its variants now read "the
+  commit adoption started from". The change covers the finisher's refusal (`# BL-242-ACT4-REFUSE-COMMIT`),
+  the prompt writer's refusal, the intake provenance check, three code comments, two test comments and three
+  places in `docs/adoption.md`. The Adoption Record's row label "Adopted at commit" is unchanged: it is a
+  record format, and the sentence under it already says the commit is the tip the project sat on when
+  adoption ran.
+- **Tests.** `tests/test-bl318-g4g6.sh` has 22 cases and 29 mutants (after the final check). D1 and its two
+  mutants need the k-pdf bundle and P4 the Guardrails clone, so on CI 20 cases and 27 mutants run. Red on
+  base (`b93b006`), as first built: 2 passed, 31 failed. D3 passed there by design, since it guards the
+  real deploys. MC1 passed there because the base already carries the wording it restores. On review round
+  1's base (`d607464`): 31 passed, 19 failed. The suite is pinned to `commit-hooks`.
+
+**G6 residuals (not fixed):**
+- Scout's deploy rule still reads comment lines; adoption's skips them, as before.
+- **A deploy named only inside a longer flag is not counted.** MSBuild's `-p:DeployOnBuild=true` and a
+  `--deploy-to=prod` are missed by both detectors (the base caught them). That is the trade for not reading
+  Nuitka's `--no-deployment-flag` as a deploy. `docs/adoption.md` lists it, and the comment above Scout's
+  rules says it is the one false negative they accept. A flag named `deploy` alone, a flag's `=deploy` value,
+  and a `deploy` command after the flags are counted.
+- **Narrowing `# BL-318-G6-MCP-REG-Q` survives (review round 1, R-7).** Requiring Qdrant to be
+  `reachable` rather than registered passes the suite. It matters only if the database stops between the
+  step's wait and its receipt; the registration is then not named.
+- **The final check's mB is now pinned, mC is not (improbable).** Dropping `;` from both strip classes
+  survived every suite, because D3's `;` fixture (`make --quiet;make deploy`) had its deploy word after a
+  space; `npm ci --silent;./deploy.sh` read clean in both detectors under that mutant and is caught at the
+  head. The fixture is now `make --quiet;./deploy.sh`, and mutant MAS1 (both copies at once) dies by D3.
+  Dropping `|<>` (mC) still survives: a deploy glued onto a pipe or a redirect with no space.
+- **`dotnet msbuild -t:Deploy` is missed** by both detectors: `:` does not end a flag, so `-t:Deploy` is
+  one flag — the MSBuild-colon class of the documented compound-flag miss above.
+- **`fix_superpowers` in `scripts/verify-install.sh` has no marketplace fallback.** On a computer where the
+  official marketplace is not registered, its install fails, loudly; it does not run
+  `claude plugin marketplace add anthropics/claude-plugins-official` first, as the docs now tell a person
+  to.
+- A `docker run` by the MCP step creates the `qdrant` container, which is outside the project too. The
+  refusal does not name it: only `claude mcp add` registrations are tracked.
+- If the MCP step's receipt cannot be read after an add ran, nothing is claimed either way.
+
+**G5, decided (Karl, 2026-10-05) and built. G5 resolved by PR #497 (merged as `f5b1671`); its residuals
+are below.**
+- **The ruling.** Option (b), ask first — but at **every** Claude Code session start, not once, so a
+  user blocked by a Guardrails defect can restart the session and accept the fix. The update does not
+  touch `.claude/settings.json`; refreshing settings is its own entry, `## BL-319:` (deferred).
+- **The check.** `check-versions.sh` compares the project's `.claude/manifest.json` `frameworkVersion`
+  with the clone's `FRAMEWORK_VERSION`, numerically, part by part (`# BL-318-G5-CMP`), accepting only
+  `MAJOR.MINOR.PATCH` (`# BL-318-G5-VALID`), and only in a project with `.claude/framework/`
+  (`# BL-318-G5-FRAMEWORK-DIR`). Behind within one MAJOR version: a `[WARN]` and
+  `bash scripts/refresh-guardrails.sh` under "Update commands" (`# BL-318-G5-OFFER`). A newer MAJOR
+  version: a `[WARN]` that names `migrations/` and no command (`# BL-318-G5-MAJOR`, review round 1
+  R-3). No manifest, no key, no clone, or a value that is not a version: "cannot tell whether an update
+  is available" with the reason, never silence and never "up to date". A value read from the manifest
+  is shown as `[0-9A-Za-z._+-]` only, at most 40 characters (`# BL-318-G5-SAFE`, R-7): before that,
+  `"frameworkVersion": "BELOW MINIMUM"` made the session start print "URGENT — … Do NOT proceed".
+- **The offer.** `session-version-check.sh` takes the row out of the generic text, whose question is
+  "Would you like me to run these updates now", and makes it on its own (`# BL-318-G5-SESSION-OFFER`):
+  both versions, what the update changes, that settings are untouched, and that the agent must not run
+  it, because it replaces the Guardrails that check the agent's own work — the human types it after `!`
+  (`# BL-318-G5-SESSION-ROUTE`). It also says the command first pulls the shared clone and can
+  install a newer version than offered (R-4). Its words name no terminal or shell and carry no flag,
+  and the suite checks each line, the whole offer and a relay of it against
+  `scripts/lib/bypass-patterns.sh`. A Guardrails row with no command (a new MAJOR version, or
+  "cannot tell") leaves the generic block too and is told as a notice the agent must not act on
+  (`# BL-318-G5-SESSION-NOTICE-SPLIT`, final check N1): under the generic "Would you like me to run
+  these updates now" it invited the agent to offer a migration, and after a refused update has pulled
+  the shared clone, every other project on the machine shows that row.
+- **The relay (review round 1, R-2).** Claude Code's documentation calls `!` "shell mode", so the
+  natural relay ("Type `!` at the Claude Code prompt, then `bash scripts/refresh-guardrails.sh`, to run
+  it in shell mode.") matched `terminal_workaround` and the real `scripts/hooks/bypass-detector.sh`
+  raised the sentinel, which then blocks commits. The detector now pins this exact command beside the
+  assessment finisher (`SOIF_RELAY_GUARDRAILS_SHA256`, `# BL-318-G5-HANDOFF-MATCH`), under every
+  condition of the hand-to-human line: the same sentence with another command, an argument, a chained
+  command, or the agent saying it will type it, still raises.
+- **The command.** `scripts/refresh-guardrails.sh`, shipped to every project (`# BL-318-G5-SHIP`),
+  refuses before writing anything in the project: a symlink on the write path (`# BL-318-G5-REFRESH-LINK-DIR`,
+  `# BL-318-G5-REFRESH-LINK-FILE`, R-8b); an uncommitted change in what the clone copies
+  (`# BL-318-G5-REFRESH-DIRTY`, R-8a — the manifest would record a commit that lacks it, and every
+  later check would call the project current; untracked files count); a different MAJOR version,
+  upgrade or downgrade, checked after its own pull of the clone so the version checked is the one that
+  would be installed (`# BL-318-G5-REFRESH-PULL`, `# BL-318-G5-REFRESH-MAJOR`, R-3). That pull may
+  already have moved the shared clone when it refuses. Then it runs only the clone's own `refresh_cdf_assets` and checks
+  the result: every copied file of every kind byte-identical (`# BL-318-G5-RECEIPT-KINDS`,
+  `# BL-318-G5-RECEIPT-FILES`), hook scripts executable (`# BL-318-G5-RECEIPT-EXEC`), the manifest
+  naming the clone's version (`# BL-318-G5-RECEIPT-VERSION`). Anything short of that is `[FAIL]` and a
+  non-zero exit. `scripts/check-updates.sh` now points at it too and no longer reads a project ahead of
+  the clone as needing an update (`# BL-318-G5-CU-REMEDY`, `# BL-318-G5-CU-AHEAD`, R-6).
+- **Why not `upgrade-project.sh --sync-framework`.** Measured with stdin not a TTY (how a command typed
+  after `!` runs) against a Guardrails 4.3.0 project and a 4.3.7 clone: it does apply the refresh, and
+  in the same run it re-synced 70 of 74 vendored scripts, backfilled `scripts/lib/` files, the skills
+  and `.gitignore`, and stamped `soloFrameworkCommit` — 85 paths. On real Guardrails files the new
+  command changed 16 paths and left `.claude/settings.json` byte-identical: 12 hooks changed or added,
+  2 rules, the manifest, and a mode-only change (`+x`) on `hooks/_preflight.sh`. That fixture took its
+  4.3.0 files from CDF `0396a1a` with `git archive`, which keeps git's 644 mode for that file; a project
+  the Guardrails installer set up already has it executable, so there the count is 15 (the reviewer's,
+  on `ea2025a`, the same 4.3.0 file set) against 4.3.7 at `e1e2fa1`. `--backfill-only` runs the same
+  backfills before the same refresh.
+- **No restart.** Claude Code starts each hook as a new process from its path in
+  `.claude/settings.json`. Measured: the registered hook command printed the 4.3.0 text before the
+  update and the 4.3.7 text on the next call after it. The Guardrails' own session-start message was
+  printed once, at the session's start, and changes at the next session.
+- **Tests.** `tests/test-bl318-g5-guardrails-refresh.sh`: 48 cases and 48 mutants. E1, the end to end
+  against the real `cdf-refresh.sh`, SKIPS where no clone supplies it (CI has none); E0 runs the same
+  end to end against a faithful stub upstream everywhere (review round 1, R-1: before it, nothing in the
+  PR lane proved the command could succeed or leave `settings.json` alone), and so do the command's own
+  guards and the real-detector relay cases.
+
+**G5 residuals (not fixed):**
+- **Nothing stops the agent running the update itself.** The offer tells it not to, and that is the only
+  line. Measured against Guardrails 4.3.7's config-guard: it blocks `cp x
+  .claude/framework/hooks/config-guard.sh` and a rewrite of `.claude/manifest.json` (exit 2), but allows
+  `bash scripts/refresh-guardrails.sh` (exit 0), because it reads the command's text and this text names
+  no protected path. Enforcing ask-first needs a check that refuses this command from the agent's Bash
+  tool while a command typed after `!` still runs; this branch builds none, and no way to tell the two
+  apart was measured.
+- **The clone pulls have no bound.** The command's own pull (`GIT_TERMINAL_PROMPT=0`, so it never
+  waits on a credential prompt) and `refresh_cdf_assets`'s (upstream CDF) run `git pull --ff-only`
+  with no timeout, so a network that hangs holds the `!` command until the user interrupts it.
+- **The relay exemption is as narrow as the finisher's.** A relay line is exempt only when it names
+  `!` and the Claude Code prompt; "run it in shell mode with `bash scripts/refresh-guardrails.sh`" on
+  its own still raises the sentinel (fails closed, as for the finisher). The offer's own wording names
+  both, so a relay that follows it is clean.
+- **It compares with the clone on disk.** A clone behind its remote at the project's own version makes
+  no offer; the clone row asks for `git pull` first and the next session offers the update. The
+  refresh pulls first, so it can install a newer version than the offer named; its `[OK]` line reports
+  the version it installed.
+- **An empty tool matrix ends `check-versions.sh` before the row** (its existing "No tools to check"
+  exit). Not reachable with the shipped matrix.
+- **The freshness check overlaps.** In a project with a `.currency` block, `session-freshness-check.sh`'s
+  informational `cdf-behind` item (the manifest's `frameworkCommit` against the clone's HEAD) can show
+  beside the offer. It goes quiet once the update records the clone's commit.
+- **Hooks are copied, not registered; removed hooks stay.** A release that adds a hook needs a
+  settings change to run it, and the refresh never deletes a hook the clone dropped — one still
+  registered keeps running its old code. Both are `## BL-319:`.
+- **The dirty-clone refusal follows the user's git setting (PR #497, review round 3).**
+  `# BL-318-G5-REFRESH-PORCELAIN` runs `git status --porcelain`, which honours
+  `status.showUntrackedFiles=no`. Under that setting an untracked file in the clone's hooks or rules is not
+  listed, so the refusal misses it (measured: `?? hooks/new.sh` by default, nothing with the setting).
+  Fix: `--untracked-files=all`.
+- **A home folder whose name contains "shell" or "terminal" can raise a false bypass alarm (PR #497,
+  review round 3).** The
+  GUARDRAILS NOTICE puts the clone path right after "Do NOT run anything about it yourself:". Pasted as
+  one paragraph with a home folder such as `/Users/shelley`, the text matches `terminal_workaround` and
+  the sentinel is raised (measured against `scripts/lib/bypass-patterns.sh`; the same text with
+  `/Users/karl` does not match). It is a false alarm: nothing is let through. The suite's S3 does not
+  scan the notice.
+
+**Handed to the Development Guardrails (CDF), not fixed here:**
+- G5 review round 1, R-5: CDF's own session-start hook says "Framework N commits behind. Run: cd
+  ~/.claude-dev-framework && git pull && cd - && bash ~/.claude-dev-framework/scripts/sync.sh", and
+  `sync.sh` regenerates the hook registrations in `.claude/settings.json`. In the same session the G5
+  offer says the agent must not run the update itself and that the update does not change settings.
+  The two messages contradict each other; CDF's should point at the project's own update route.
+- The agent cannot commit. After approval, `enforce-evaluate` requires `mark-evaluated.sh`, and
+  `config-guard` forbids running it. `config-guard` also forbids `git add` of the `.claude/` state
+  files the finisher tells the operator to stage (findings 23, 30).
+- `config-guard` blocks read-only Bash reads of `.claude/` (7, 13).
+- `enforce-evaluate` matches the bare word "commit" in any command text (15).
+- `stop-checklist`'s "commit before finishing" conflicts with the approval rule (21).
+- `enforce-superpowers` is armed when the plugin is not installed, and its marker is not honoured
+  across turns (27, 28, 29).
+
+## BL-319: refreshing a project's Development Guardrails settings (`.claude/settings.json`)
+
+**Status:** Open — DEFERRED (decided 2026-10-05 by Karl, with `## BL-318:` G5).
+
+**The gap.** `## BL-318:` G5's update (`scripts/refresh-guardrails.sh`, which runs the clone's
+`refresh_cdf_assets`) re-copies `.claude/framework/` and the manifest's `frameworkVersion` and
+`frameworkCommit`. It never touches `.claude/settings.json`, where the Guardrails installer wrote its
+hook registrations and its `permissions.deny` rules. A Guardrails release that changes settings
+therefore reaches new projects only.
+
+**The motivating case.** Guardrails 4.3.7 (CDF `970f799`) stopped generating `Write(path)` deny rules:
+Claude Code consults only `Edit(path)` and `Read(path)` rules and warns about each `Write(...)` rule at
+startup. CDF's own sync drops the six legacy ones (`FRAMEWORK_LEGACY_DENY_RULES`). A project installed
+before 4.3.7 keeps all six after the G5 update, and keeps the warnings. The same holds for hooks: a
+release that adds one ships the file but leaves it unregistered, and one that drops a hook leaves its
+registration and its old file in place.
+
+**The open design question: composition.** `.claude/settings.json` is not the Guardrails' alone.
+Solo's own hooks (`session-version-check.sh` and the other session scripts, registered through
+`scripts/lib/claude-settings.sh`), the project hooks adoption puts back ahead of the installer's
+(`docs/adoption.md`, "Your `settings.json` keeps its hooks"), and the operator's own rules live in the
+same file, and CDF's installer replaces `hooks` wholesale. A refresh must change only the Guardrails'
+entries. Undecided: how those entries are identified (the installer does not mark them); what happens
+to one the user edited; whether the refresh calls CDF's own settings merge or a Solo-side one; and
+whether the replaced file is archived the way adoption archives it. The agent cannot edit the file
+directly (config-guard and the deny rules forbid it), and a script it ran would not be stopped either
+(G5's first residual), so the route is G5's: offered, and typed by the human after `!`.
+
+**Partly delivered by `## BL-320:` (2026-10-06, Karl's c2).** Approval design B (Guardrails 4.4.0) needs
+`record-approval.sh` registered, so the ADD half is built: `soif_cdf_register_hooks`
+(`scripts/lib/guardrails.sh`, `# BL-320-REG-APPEND`) runs the clone's own `generate_settings_json` on the
+manifest's `activeHooks` and appends every entry whose hook file the project has and which no entry of the same
+event already runs — never removing, reordering or rewriting an entry, Solo's or the user's, and putting back
+one a user removed (accepted). `scripts/refresh-guardrails.sh` and `upgrade-project.sh` run it and name each
+addition, and the session start offers the refresh to a current project that lacks a registration. That answers
+"how the entries are identified" for additions (by hook file, per event) and "CDF's merge or Solo's" (Solo's;
+CDF's replaces the whole `hooks` key). Still open here: removing entries for hooks a release dropped, updating an
+entry whose matcher a release changed, the deny rules (4.4.0's four new ones, and removing the legacy
+`Write(...)` rules), archiving the replaced file, and adoption's "already installed" arm, which registers nothing.
+
+## BL-320: Solo's side of the Development Guardrails 4.4.0 approval design B — a schema-2 question, its answer by option id, the hook that reads it registered, and an init that asks before it pulls
+
+**Logged:** 2026-10-06 (Karl's go, before the third dogfood run)
+**Category:** Bug (correctness) + Feature
+**Severity:** High — with Guardrails 4.4.0 on CDF `main`, a project whose Solo scripts predate this entry cannot get a commit approved by the user's reply
+**Status:** Open — built on branch `feat/bl320-approval-schema2`, awaiting review and a PR
+
+**What changed upstream.** Development Guardrails (CDF) 4.4.0 (`aba947b`, CDF PR #26) approves an agent's
+commit only when the USER answers a question recorded in `.claude/pending-approval.json` with an option id,
+twice: their `record-approval.sh` (a UserPromptSubmit hook) shows the question, each option's effect, the staged
+change and the git hooks that will run, then takes the pick, binds an approval marker to HEAD, the index tree and
+digests of the git hooks and config, and appends the pick to `.claude/approvals.jsonl`. `mark-evaluated.sh` is the
+user's override only (it refuses under `CLAUDECODE`). The spec is CDF's
+`docs/superpowers/specs/2026-10-05-approval-via-pending-question-design.md` rev. 5; the hand-off was
+`~/dogfood-2026-10/SOLO-HANDOFF-approval-B.md` (outside the repo). Dogfood run 2 rows 20, 21, 23, 29 and 30 are
+the failures it answers.
+
+**What Solo had, measured before the change.** `scripts/pending-approval.sh --offer` and
+`scripts/escalate-to-user.sh` wrote schema 1 (`"A1: text"` strings), which 4.4.0's reader rejects ("it is not
+schema 2"); so did `scripts/hooks/bypass-detector.sh` — a third writer the hand-off did not list. Solo's own
+`scripts/pre-commit-gate.sh` rendered a schema-2 question as malformed and told the agent to `rm` it (`jq` exits 5
+on object options), and `upgrade-project.sh`'s hold printed a `jq` error. A project brought to 4.4.0 by
+`scripts/refresh-guardrails.sh` or `upgrade-project.sh` got `record-approval.sh` as a file but never registered
+it (`refresh_cdf_assets` copies files only), so no reply could approve anything. `init.sh` pulled the shared clone
+unasked on every run.
+
+**Compatibility, by the project's own scripts and its Guardrails.** New scripts with 4.4.0+ and the hook
+registered: approved by the user's two replies, then a lone `git commit -m`. New scripts with 4.4.0+ and the hook
+unregistered: the user's override only, until the refresh registers it. New scripts with an older Guardrails: the
+agent approves its own commits the older way (the texts say so by version). Old scripts with 4.4.0+: only a
+schema-2 question the agent writes by hand (CDF's block text gives the shape), or the override.
+
+**Decided (Karl, 2026-10-06):** (c2) register EVERY missing Guardrails hook entry, accepting that this can put
+back one a user removed; (d) at a terminal `init.sh` asks, and Enter means yes; bypass questions are answered by
+option id and audited from `.claude/approvals.jsonl`, retiring `## BL-029:`'s typed phrase; `--offer` refuses an
+approving question when nothing is staged (implemented for a question with `--approves`; a decision that approves
+nothing needs nothing staged). The minimum Guardrails version is one constant; all five hook installers become
+human steps by documentation only.
+
+**As built.**
+- **One lib, shipped** (`scripts/lib/guardrails.sh`, `# BL-320-SHIP`): `SOIF_GUARDRAILS_MIN="4.4.0"`, the
+  version compare, the route a question takes (`soif_gr_route`: pick / legacy / unknown, `# BL-320-ROUTE`),
+  CDF's schema-2 rules (`soif_pa_v2_problems`: ids `# BL-320-V2-ID`, uniqueness ignoring case
+  `# BL-320-V2-UNIQUE`, an option that approves nothing `# BL-320-V2-NONE`), each option with its effect
+  (`# BL-320-PA-LINES`), the registration and the clone update below. `adopt-project.sh` sources it.
+- **The writer.** `--offer` writes schema 2 (`# BL-320-OFFER-SCHEMA`), validates with CDF's rules before the
+  file lands, takes a repeatable `--approves ID` (`# BL-320-OFFER-APPROVES-ID`) and refuses it with nothing
+  staged (`# BL-320-OFFER-STAGED`). `--status` and `--validate` read both schemas; schema 1 fails `--validate`
+  under 4.4.0+ (`# BL-320-VALIDATE-V1`). `--resolve` and `--clear` only clean up: under 4.4.0+ `--resolve
+  --decision` is refused (`# BL-320-RESOLVE-DECISION`), and `--resolve` closes bypass rows from the user's pick
+  (`# BL-320-RESOLVE-RECONCILE`). `escalate-to-user.sh` passes `--approves` through (`# BL-320-ESC-APPROVES`)
+  and records the schema-2 options and the question's sha256 in its row.
+- **The bypass question.** The detector writes schema 2 (`# BL-320-DETECT-SCHEMA2`): A1 accepts, A2 declines,
+  neither approves a commit, marked `"source": "bypass-detector"`. Its rows are written after the question and
+  carry its sha256 (`# BL-320-DETECT-BIND`); a second proposal while a question labelled as the detector's is
+  open binds to that question (`# BL-320-DETECT-COVER`). The label is a field the agent can write, so it binds
+  rows and decides nothing (review round 1, R-2: an agent's commit question carrying the label bound the rows,
+  and the user's commit approval then closed them as "accepted"). `bypass_audit_close_from_approvals`
+  (`scripts/lib/bypass-audit.sh`) finds the pick by that sha256 and decides from what the user was shown and
+  picked, as the Guardrails recorded it: the question starts with the detector's prefix (`# BL-320-AUDIT-Q`),
+  the option approves nothing (`# BL-320-AUDIT-NONE`), and its text is the detector's A1 text — accepted,
+  bypassed (`# BL-320-AUDIT-MAP`) — or A2 text — declined, abandoned (`# BL-320-AUDIT-DEC`). Any other pick
+  leaves the row PENDING. The wording lives once, in `scripts/lib/bypass-audit.sh`, and the detector asks with
+  it. BL-029's typed phrase is retired: the Guardrails' id-first, asked-twice reply is the defence it was.
+- **The holds.** `pre-commit-gate.sh` renders both schemas with each option's effect (`# BL-320-GATE-RENDER`)
+  and gives the route by version (`# BL-320-GATE-ROUTE`): under 4.4.0+ the user answers by option id, the
+  agent does not remove the question and commits with a lone `git commit -m "subject" -m "body"`; a schema-1
+  question there is withdrawn and asked again; older versions keep `--resolve`. `upgrade-project.sh`'s hold
+  renders schema 2 (`# BL-320-UP-SENTINEL-RENDER`).
+- **Registration (c2, the part of `## BL-319:` this needs).** `soif_cdf_register_hooks` runs the clone's own
+  `generate_settings_json` on the manifest's `activeHooks` and appends, one group per missing event and matcher,
+  each entry whose hook file the project has (`# BL-320-REG-FILE`) and whose file no entry of that event already
+  runs (`# BL-320-REG-HAVE`, any spelling, any matcher). Nothing existing is removed, reordered or rewritten
+  (`# BL-320-REG-APPEND`); a symlinked settings file (`# BL-320-REG-LINK`) or one that is not a JSON object of
+  lists (`# BL-320-REG-JSON`) is refused, writing nothing; the write is a temp file renamed over it; each
+  addition is printed. `refresh-guardrails.sh` runs it after its receipt (`# BL-320-RG-REGISTER`) and refuses up
+  front without the lib (`# BL-320-RG-LIB`); `upgrade-project.sh` runs it after its refresh, non-fatally
+  (`# BL-320-UP-REGISTER`).
+- **The mixed install is refused.** `scripts/pending-approval.sh` now says which schema it writes
+  (`SOIF_APPROVAL_SCHEMA=2`, `# BL-320-PA-SCHEMA-MARK`), and `soif_gr_writer_schema` reads that line from the
+  project's own copy. Where Guardrails at or above the minimum would land beside a writer without it,
+  `refresh-guardrails.sh` refuses before writing anything (`# BL-320-RG-MIXED`) and the session start offers no
+  Guardrails-only update but a notice naming the framework sync, which moves both halves
+  (`bash ~/solo-orchestrator/scripts/upgrade-project.sh --sync-framework`, `# BL-320-CV-MIXED`).
+- **The session start.** `check-versions.sh` names a project below 4.4.0 (`# BL-320-CV-MIN`, worded "below",
+  never the URGENT "BELOW MINIMUM") and offers the refresh to a current project that lacks a registration,
+  naming it (`# BL-320-CV-REG`); `session-version-check.sh` carries every Guardrails row into the offer, says
+  the settings file only gains missing registrations, and tells a below-minimum notice to update the clone.
+- **Governance.** `detect-out-of-band-commits.sh` (SessionStart) closes bypass rows from picks
+  (`# BL-320-OOB-RECONCILE`) and records each `matched: false` commit in `.claude/approvals.jsonl` once
+  (`# BL-320-OOB-DEDUP`) as a new `approval_mismatch` row (`# BL-320-OOB-MISMATCH`).
+- **init.sh asks first** (`# BL-320-INIT-PULL`): `soif_guardrails_clone_update` shows the clone's version and,
+  after a fetch that cannot prompt, the available one, then asks `[Y/n]` (`# BL-320-PULL-ASK`); with no
+  terminal, CI, `SOIF_NONINTERACTIVE` or `--non-interactive` it neither fetches nor pulls and prints the command
+  (`# BL-320-PULL-TTY`). A clone below the minimum is named either way (`# BL-320-PULL-MIN`); so is an adopted
+  install (`# BL-320-ADOPT-MIN`, also in the Adoption Record).
+- **Review round 1 (the same branch, new commits).** R-3: `upgrade-project.sh` ships the writers' closure on
+  every path — `lib/guardrails.sh` (`# BL-320-UP-CLOSURE-GR`), `lib/bypass-audit.sh` and `lib/bypass-patterns.sh`
+  (`# BL-320-UP-CLOSURE-BA`) join the BL-088 list — and a tier change refreshes the bypass detector with
+  `pending-approval.sh` (`# BL-320-UP-DETECTOR`); `--resolve --decision` fails closed unless the Guardrails are
+  known to be older than the minimum (`# BL-320-RESOLVE-DECISION`), and `--resolve` beside a `bypass-audit.sh`
+  that predates the reader says so (`# BL-320-RESOLVE-READER`). R-4: the upgrade's Guardrails refresh pulls the
+  clone, then refuses a mixed install and names the framework sync (`# BL-320-UP-MIXED`), and `--sync-framework`
+  syncs the scripts before it refreshes (`# BL-320-SYNC-ORDER`). R-5: the registration is tested by running
+  `--backfill-only`, not by reading the function. R-1: both question writers' temp files end in their Xs
+  (`# BL-320-OFFER-TMP`, `# BL-320-DETECT-TMP`; BSD mktemp randomises only trailing Xs, so a stale
+  `pending-approval.XXXXXX.tmp` stopped every later question) and a question the detector cannot write is a
+  `detector_error` row (`# BL-320-DETECT-ERR`). R-7: the registration re-reads `settings.json` before it reports
+  (`# BL-320-REG-RECEIPT`); a mismatch row is reported as recorded only when it is in the file
+  (`# BL-320-OOB-LANDED`); the writers' schema line is read anchored and as a number, from `pending-approval.sh`
+  and the detector (`# BL-320-WRITER-ANCHOR`, `# BL-320-WRITER-NUM`, `# BL-320-WRITER-DETECTOR`); the clone's
+  fetch and pull run ssh in BatchMode unless the user set their own ssh command (`# BL-320-SSH-BATCH`).
+- **Docs.** Builder's Guide "Structured Decision Points" (stage, ask with `--approves`, id twice, lone commit,
+  headless `--resume`, git hooks are the Orchestrator's), Phase 2 step 5 no longer suggests a hook manager that
+  sets `core.hooksPath`, and its Superpowers line carries the marketplace fallback; the CLAUDE.md template;
+  `docs/adoption.md` section 7; the user guide; `docs/audit-log-lifecycle.md`; README's Guardrails row.
+
+- **Final check (N-1 to N-3).** The upgrade's pull before the mixed check is pinned (`# BL-320-UP-PULL`):
+  without it a clone behind a new release reads its old version and the refresh's own pull installs 4.4.0 beside
+  the old writer. When that pull fails (offline, or an ssh remote that needs a passphrase) and the project's
+  writer is old, the refresh is skipped too, naming the sync (`# BL-320-UP-UNREACHABLE`). A bypass row is closed
+  only by a pick made after the row was raised (`# BL-320-AUDIT-AFTER`): the agent could write an answered
+  question's bytes back so that a later proposal bound to its sha256 and took the old acceptance.
+
+**Tests.** `tests/test-bl320-approval-schema2.sh` (unit lane): 61 cases and 63 mutants, each mutant killed by a
+named case. The dogfood round trip E1 runs against the real Guardrails hooks copied from the clone and SKIPS where
+none is at 4.4.0 or later (CI has none); R10 checks the registration against the clone's real generator the same
+way. Updated: `test-pending-approval.sh` (P10), `test-bypass-sentinel.sh` (T2b), `test-bl029-integration.sh` (T3,
+T6), `test-bl311-d-relayed-escape.sh` (M16 follows the moved line), `test-bl318-g5-guardrails-refresh.sh`
+(fixtures at or above the minimum where a case means "current", the offer's settings sentence, the lib shipped
+beside the refresh), `test-bl318-g4g6.sh` (P9 also checks the Builder's Guide).
+
+**Residuals (not fixed):**
+- **Scripts the agent runs are not checked by the Guardrails' text guards** (the spec's R-23). The installers are
+  human steps by documentation only; a refusal inside an agent-editable `scripts/` file would not be a control,
+  and the Guardrails' hook and config digests cancel any open approval an installer would disturb.
+- **The PreToolUse subject read takes the last `-m`.** `bl006_check`, `lints_check` and `_tdd_extract_subject`
+  in `pre-commit-gate.sh` read `-m "a" -m "b"` as subject `b` (measured). The commit-msg hook reads the real
+  message and backstops the TDD and Build Loop message checks; the docs now recommend that form, so the
+  PreToolUse read should take the first `-m`.
+- **Registration leaves `## BL-319:`'s other halves:** an entry for a hook a release dropped stays; an entry whose
+  matcher a release changed is not updated; 4.4.0's four new deny rules are not added and the legacy `Write(...)`
+  rules are not removed; adoption's "already" arm registers nothing.
+- **A bypass row recorded while a commit question was open** is bound to nothing and stays PENDING under 4.4.0+
+  (the agent's `--decision` is refused there).
+- **A project whose own scripts predate this entry cannot be protected from this side** (review round 1, R-6).
+  Its own copies install Guardrails 4.4.0 beside the schema-1 writer, with `record-approval.sh` unregistered,
+  by two routes once the shared clone reaches 4.4.0: the G5 session-start offer (`refresh-guardrails.sh`, in a
+  project synced since PR #497), and its own `upgrade-project.sh` — on `--backfill-only`, which the pre-G5
+  `check-updates.sh` tells users to run, and on any tier change run from the project's copy. Every agent commit
+  is then blocked and no reply can approve it; the user's override (`mark-evaluated.sh` in a terminal of their
+  own, then `scripts/pending-approval.sh --resolve`) still works. The way out is the framework sync, run from
+  the NEW framework copy, which brings the schema-2 writers, the guarded scripts and the registration together:
+  `bash ~/solo-orchestrator/scripts/upgrade-project.sh --sync-framework`. The new framework's own
+  `upgrade-project.sh` no longer does this (R-3, R-4). `docs/adoption.md` section 7 and the user guide say so.
+- **The headless driver** that answers approval questions lives outside the repo (the dogfood runbook): it must
+  send both replies into the asking session (`claude -p --resume <id>`), id first.
+- **Owner decision 2b** (a Solo git `pre-commit` hook comparing `git write-tree` with the approval marker, so `-a`
+  and pathspecs could pass when they produce the approved tree) is a follow-up, not built.
+- **init.sh's fetch** for the available version has no time bound on a network that hangs (no `timeout` here);
+  `GIT_TERMINAL_PROMPT=0` only stops it waiting on credentials.
+- **A relay of an installer command** ("type `!` and then …") is not pinned in the bypass detector the way the
+  Guardrails refresh is, so an agent's relay of one can raise a false bypass question (fails closed).
+- **A forged label still binds rows.** An agent can label its own question as the detector's; the rows of a
+  proposal raised while it is open are bound to it and, since no pick on it is a bypass decision, stay PENDING
+  (review round 1, R-2 — they can no longer be closed as accepted).
+- **`.claude/bypass-audit.json` is not write-protected.** config-guard protects `.claude/approvals.jsonl`, not
+  the audit log, so an agent can edit a row (its time, its binding, its outcome) directly. The ordering rule
+  (`# BL-320-AUDIT-AFTER`) and the wording rule hold against a replayed question, not against an edited log.
+- **`refresh-guardrails.sh` has the unreachable-clone gap the upgrade closes.** Its own pre-pull failing (offline,
+  or an ssh remote that needs a passphrase) leaves its mixed check reading the clone's current version, and the
+  pull inside CDF's `refresh_cdf_assets` may then install a newer one. The deletion of that pre-pull is pinned
+  (`# BL-318-G5-REFRESH-PULL`, killed by the G5 suite's E15); its failure is not handled as the upgrade's is
+  (`# BL-320-UP-UNREACHABLE`).
+- **A user's own ssh command can still prompt.** BatchMode is added only when the user set no ssh command of
+  their own (`GIT_SSH_COMMAND`, `GIT_SSH`, `core.sshCommand`), which are left as they are.
+
+**Confirmed by the third dogfood run (2026-10-07; PR #501, merged as `5f13470`).** Three of the adoptee's
+commits (its `d0d3d73`, `d77fc1b` and `2c333be`) were approved by the user's option id sent twice, and
+`.claude/approvals.jsonl` logged each one as `{"event":"commit", …, "matched":true}`. `refresh-guardrails.sh`
+registered the hook: `+ UserPromptSubmit: "$CLAUDE_PROJECT_DIR"/.claude/framework/hooks/record-approval.sh`.
+**A Guardrails-side caveat, handed to CDF and not Solo's to fix:** CDF's `hooks/session-end.sh` deletes the
+approval render record (`/tmp/.claude_approval_shown_<hash>`) whenever a Claude Code process ends. So both
+replies must arrive in ONE process, and the headless-driver residual above (`claude -p --resume <id>`) is not
+enough: each resume is a new process, the record of the first reply is gone, and the second reply renders the
+question again instead of picking. The run's driver sent both replies as two messages in one process. Handed
+over in `~/dogfood-2026-10/CDF-HANDOFF-PROMPT-3.md` (outside the repo), item 1.
+
+## BL-321: a git `pre-commit` hook that checks the commit against the approved tree, so `-a` and pathspecs can pass when they commit exactly what was approved
+
+**Logged:** 2026-10-06 (from `## BL-320:`; Karl's owner decision 2b, 2026-10-05)
+**Category:** Feature (enforcement)
+**Severity:** Medium
+**Status:** Open — DEFERRED (decided 2026-10-05 by Karl in the Development Guardrails' approval design B: "(a) now, (b) as a Solo follow-up")
+
+**What.** A Solo-installed git `pre-commit` hook that compares `git write-tree` — the tree the commit will
+actually contain, with `-a` and pathspecs already applied — with the tree in the Development Guardrails' approval
+marker (`/tmp/.claude_evaluated_<hash>`, written by their `record-approval.sh` on the user's pick, 4.4.0 and
+later), and refuses the commit when they differ.
+
+**Why.** Guardrails 4.4.0 pin an approved commit by shape instead (their spec's D4: a lone `git commit` with
+message options only, no `-a`, no pathspec, no `--amend`), because they cannot see the tree a commit will hold
+before git builds it. A hook inside git can. It would let `-a` and pathspecs through whenever they produce exactly
+the approved tree, and it would turn the spec's residual "6a" — a git hook that was present (and shown to the user)
+at approval time and alters the stage during the commit — from detected after the fact (`matched: false` in
+`.claude/approvals.jsonl`, recorded by `## BL-320:` as an `approval_mismatch` row) into prevented.
+
+**Sources.** CDF `docs/superpowers/specs/2026-10-05-approval-via-pending-question-design.md` rev. 5: D4 ("Not
+adopted. A git `pre-commit` hook comparing `git write-tree` against the marker would cover `-a` and pathspecs
+exactly, but CDF does not own `.git/hooks`"), D8 row 6a, and "Owner decisions" 2(b). The hand-off
+`~/dogfood-2026-10/SOLO-HANDOFF-approval-B.md` (outside the repo), item 8.
+
+**Open questions for the build.** Where the hook reads the marker (the marker's name is a hash of the project
+path, computed the Guardrails' way); ordering against Solo's other pre-commit checks (it must run last, after any
+hook that can change the stage); what it does with no marker (nothing: the Guardrails' own check refuses the commit
+first); that installing it changes the hooks digest an open approval is bound to (install it as a human step, never
+while a question is pending); and whether the Guardrails would then relax their shape rule, which is CDF's
+decision.
+
+## BL-322: Solo findings from brownfield dogfood run 3
+
+**Logged:** 2026-10-07 (Karl's decision of 2026-10-07: fix both sets of run-3 findings, Solo's here and the
+Development Guardrails' in a separate CDF session)
+**Category:** Bug (correctness) + Docs
+**Severity:** Medium — every stage passed; one defect writes a wrong audit record after every approved commit
+**Status:** Closed — shipped in five groups, the last merged 2026-10-09 03:44 UTC (2026-10-08 evening, Karl's time): S1 (PR #502, merge `92b485d`); S2 (PR #503, merge `c324a0d`);
+S3 (PR #504, merge `69b06a5`); S4 (PR #506, merge `c125f0f`); S5 (PR #507, merge `8dd7fe1`). The residuals below stay
+recorded; two have their own entries: the Claude-commit ledger that is never written (`## BL-324:`) and the unit suites
+that run `upgrade-project.sh` with the real HOME (`## BL-344:`)
+
+**What ran.** The third dogfood run, the one that closed `## BL-318:`. A headless Claude Code session (Sonnet)
+played the same systems technician (not a developer), driven in 14 turns, with a stand-in for Karl answering
+between them. It installed Solo from the public README at `5f13470` (PR #501 merged) with Development
+Guardrails 4.4.0 (`aba947b`) on the machine, then adopted a fresh private copy of k-pdf (Python/uv, built with
+an older Solo, Guardrails 4.3.0). It produced 22 findings. **Evidence** (outside the repo, untracked):
+`~/dogfood-2026-10/k-pdf-dogfood-3-FINDINGS.md` (the 22 rows, the step log, the stage verdicts),
+`~/dogfood-2026-10/turns-3/` (every turn; `adopt-attempt1.out` and `adopt-full.out` are adoption's output),
+`~/dogfood-2026-10/claude-dir-3.tgz` (the adoptee's `.claude/` at the end), the transcript
+`transcript-3-36fdf23f-d045-4177-b417-4823e4209b4a.jsonl` and the git bundle `k-pdf-dogfood-3.bundle` beside
+them. The live project is `~/Documents/Claude Projects/k-pdf-dogfood-3`.
+
+**Run-3 scorecard.**
+
+| Stage | Verdict | What the run showed |
+|---|---|---|
+| 0 — install from the README and `docs/adoption.md` | PASS | Rollback point `0bb0465`, clean tree. Karl did the two human-only settings steps (the autoMode line, Superpowers). |
+| 1 — Scout | PASS | The report was true to k-pdf and nothing was refused. It did not predict the ignore-rule block (finding 4) and said the project's `CLAUDE.md` stays (finding 2). |
+| 2 — adoption | PASS after one block | The first run was blocked: `.gitignore` line 20 (`lib/`) refused 26 of the files adoption writes. After the operator anchored it to `/lib/`, the second run adopted: 119 files added, 3 modified, 0 deleted; 5 originals archived. |
+| 3 — Guardrails 4.4.0 and the assessment | PASS | The update was offered and applied, `record-approval.sh` registered, the assessment recorded (verdict: keep), and `resume.sh` printed the Phase 0 prompt. |
+| 4 — one real change, test-first, committed, pushed | PASS | Three failing tests first; the commit ran semgrep and the project's full suite (`1074 passed`); approved by option id; pushed as `2c333be`. Nothing in stage 4 itself was blocked falsely. |
+
+The technician asked Karl 9 questions, plus three commit approvals answered twice each by design. Of the 22
+findings, the Solo ones are grouped below. Row 6 (the existing Qdrant container's exposure note) is a note
+the run deliberately did not act on; it needs no change.
+
+| Group | What the user hit | Root cause | Run findings |
+|---|---|---|---|
+| **S1** | After each approved commit (the adoptee's `d0d3d73`, `d77fc1b`, `2c333be`), the next session start wrote an `out_of_band_commit` row with `actor: user_terminal_inferred` into the TRACKED `.claude/bypass-audit.json`: a wrong audit record, which also left the file modified. Solo's two runtime files sat untracked. The stop hook's "Uncommitted source changes. Commit before finishing." that the run blamed on these (findings 15, 20) was **not** caused by them: measured with the real `stop-checklist.sh` (review round 1, and again here), a modified audit file alone and the two runtime files alone pass; an untracked `.claude/approvals.jsonl` or `.claude/tdd-warn-ledger.jsonl` alone blocks, because the Guardrails' source-file test counts an unknown extension as source. That is a Guardrails defect, handed to them (Karl, 2026-10-07); Solo does not ignore those two logs. | `scripts/detect-out-of-band-commits.sh` knows an agent's commit only by its SHA in `.claude/claude-commits.jsonl`, and that ledger is never written in a real session (below), so every commit reads as one made from the user's own terminal. The detector does not read the Guardrails' record of an approved commit in `.claude/approvals.jsonl`. Adoption writes no ignore rules for Solo's runtime files: `init.sh`'s `.gitignore` template has them, adoption has no ignore step. | 16, 20 (Solo half), 15 (Solo half) |
+| **S2** | Adoption replaced the project's 146-line `CLAUDE.md` with the framework's generic one ("Description: Not yet recorded"). Its hard rules (the colorblind constraint, the architecture rules, the never-do list) and its `@` imports of project docs still in the tree (`@PROJECT_BIBLE.md`, `@PRODUCT_MANIFESTO.md`, `@CONTRIBUTING.md`) stopped loading until the assessment folded them back in. Nothing warned. Scout had said "yours stays". The archive summary said files were "moved" that were only copied (sha256-identical in the tree). | Adoption archives and replaces `CLAUDE.md` by design (the merge is the assessment's job), but the closing block does not say the project's rules stop loading meanwhile. Scout's collision table classes `CLAUDE.md` as keep-theirs (`_scout_md_bucket_phrase`), which is not what adoption does. | 2, 8, 9 |
+| **S3** | The first adoption was blocked by the project's own `lib/` ignore rule, which Scout had not predicted. That blocked run had already registered context7 and qdrant in the user's Claude Code configuration, a change outside the project that a blocked run leaves behind. | Scout does not run adoption's `git check-ignore` test of the files adoption writes. In `adopt_main`, `adopt_mcp_resolve` (`# BL-311-MCP-CALL`) runs before `adopt_prewrite_preflight` (`# BL-225-PREWRITE-CALL`), where the ignore check is. | 4, 5 |
+| **S4** | Wording. (11) The MCP check needs `query-docs`, not `resolve-library-id` alone; the session-start text does not say so, and the first edit was refused. (14) The lone-commit rule ("a lone `git commit -m`, nothing else on the line") is not visible in the docs the technician was told to read before committing; it was learned from block messages. (17) The assessment record's shape pre-fills `adoptedAtCommit` with the pre-adoption HEAD (by design, unexplained), and its `answers` keys lack availability and exposure, which live only in `interview.*`. (18) `RELEASE_NOTES.md` is not seeded from the project's real tags (`v0.2.0`, `v0.3.0`). Also the Development Guardrails 4.4.1 doc follow-ups and S2's review residuals R-S2-6 and R-S2-7. | Missing or unclear text. | 11, 14, 17, 18 |
+| **S5** | Not from the run: what S2's review and the tenth CI leg left. R-S2-12 (improbable): unusual Markdown shapes make the import reading carry an `@` Claude Code would not import (`*@x.md *`, `*@x.md costs 2 * 3`, `_@x.md and snake_case`, an unclosed `[@x.md](url`, `[@x.md](my url)`), each needing an existing in-repo file; the `# BL-322-CARRY` header says it errs in one direction. R-S2-13 (latent): `# BL-322-ZSH-GUARD` fails open on a marker spelled `#NEEDS-ZSH`, indented, lowercase or suffixed, and on an unmarked suite that skips without zsh. R-S2-14 (test strength): `tests/test-bl318-g4g6.sh` P4 skips when a quoted hook is missing from a current clone. Hermeticity: `tests/test-bl141-commitmsg-repair.sh`, `tests/test-bl145-hook-symlink-hookspath.sh` and `tests/test-pr-review-gate.sh` run `verify-install.sh --auto-fix` with the runner's real HOME, which clones the Guardrails from GitHub into `~/.claude-dev-framework`; bl320 (R10, E1), upgrade-cdf-refresh (T1, T3–T5) and bl318-g4g6 get real-clone coverage only from that leftover clone. | Review residuals and a CI fixture that leaks state between suites. | — (S2 review round 1; PRs #503, #505) |
+
+**S1's design (PR #502).** The detector recognises a commit that the Guardrails
+recorded as approved and matched, and writes nothing for it. It writes no `approved_commit` row either: the
+approval's evidence is already in `.claude/approvals.jsonl`, and a row in the tracked audit file after every
+approved commit would modify it after every one. A `matched: false` commit is
+still recorded as `## BL-320:`'s `approval_mismatch`. Adoption writes the ignore rules for Solo's own runtime
+files (`.claude/last-checked-commit.txt`, `.claude/tool-usage.json`); `init.sh`'s template already has them.
+`.claude/approvals.jsonl` is the Guardrails' file: whether a project commits it (an audit trail) or ignores it is
+the CDF session's call, so it is left alone here and is **pending** that answer.
+
+**S1, as built (PR #502, merge `92b485d`).**
+- **The detector** (`scripts/detect-out-of-band-commits.sh`) reads `.claude/approvals.jsonl` once, in file
+  order, and skips a commit it finds approved (`# BL-322-OOB-APPROVED`). An approval line opens when it is a
+  pick of an option that approves a commit, or the user's override (`# BL-322-APPROVED-APPROVES`); any other
+  approval line, a pick that approves nothing, closes it (`# BL-322-APPROVED-HOLD`, review round 1, R-322-2).
+  A commit
+  line counts when the open approval's tree is the tree it says was approved (`# BL-322-APPROVED-PICK`), it
+  says `matched: true` (`# BL-322-APPROVED-MATCHED`), and its `commit` is one full SHA
+  (`# BL-322-APPROVED-SHA`). Every commit line, matched or not, closes the open approval, so one approval
+  exempts at most one commit (`# BL-322-APPROVED-ONCE`). The lookup is by the whole SHA (`# BL-322-APPROVED-EXACT`). Nothing is
+  written for an approved commit, and `.claude/bypass-audit.json` is never read to decide. A `matched: false`
+  commit still gets `## BL-320:`'s `approval_mismatch` row, and its `out_of_band_commit` row too.
+- **What the checks are worth.** They hold the Guardrails' own records to the shape of the real flow, so
+  those records never exempt a commit the user did not approve: a commit line with no approval before it
+  (what a forged approval marker leaves), one after a pick that approved nothing, and one after an approval
+  an earlier commit line used. **They do not authenticate a line.** The Guardrails guard `.claude/approvals.jsonl`
+  and their marker lexically (config-guard and marker-guard refuse a tool call or command whose text names
+  them), and review round 1 got an exempted commit from the agent's own Bash past every guard and Solo's
+  commit check three ways: `CLAUDECODE= bash ~/.claude-dev-framework/hooks/mark-evaluated.sh "ok"` (the
+  override refuses only a non-empty `CLAUDECODE`), a synthetic prompt envelope piped into
+  `record-approval.sh` twice, and `cd .claude && printf … >> approvals.jsonl`. Nothing in a line is secret.
+  This adds no cheaper forgery than what already exempted a commit: before it every commit was flagged
+  anyway (the ledger is never written, below), and a line appended to the agent-writable
+  `.claude/claude-commits.jsonl`, or a `fixup!` or `Merge ` subject, already exempted one.
+- **The hold rule (R-322-2).** Reachable with no forgery, measured through the real Guardrails 4.4.0 hooks
+  (a scratch copy): the user approves (A1 twice), is asked again and holds (A2 twice, an option that
+  approves nothing). Their `record-approval.sh` writes the marker only for an approving pick and leaves the
+  first one in place, so the agent's lone `git commit` passes their check and `marker-tracker.sh` logs it
+  `matched: true`. At `5f13470` the detector wrote an out-of-band row for it; at `ebce113` it wrote none;
+  now it writes one. The cost, failing closed: an unrelated non-approving pick (a bypass question, say)
+  between an approval and its commit flags that commit. The Guardrails were asked to delete their marker on
+  a non-approving pick.
+- **Ignore rules.** Adoption writes `.claude/.gitignore` with `/last-checked-commit.txt` and
+  `/tool-usage.json`, committed with the adoption (`# BL-322-ADOPT-IGNORE-WRITE`). Adoption never edits the
+  project's own ignore files, so the rule goes in a file the framework owns; a `.claude/.gitignore` the
+  project already has is left alone and the run names the two lines to add (`# BL-322-ADOPT-IGNORE-KEEP`).
+  `init.sh` is unchanged: its template (`templates/generated/gitignore-base.tmpl`) has carried both lines
+  since `## BL-030:` and `## BL-236:`. A project adopted before this gets both lines in its `.gitignore` from
+  `upgrade-project.sh --sync-framework` (`# BL-174-GITIGNORE-BACKFILL`). Measured on a copy of run 3's
+  adoptee, with HOME and the Guardrails clone path pointed at an empty folder: `[OK] gitignore sidecar
+  ignore-lines backfilled (BL-174)`, then `git status --porcelain` showed ` M .gitignore` and
+  `?? .claude/approvals.jsonl` only.
+- **Replay of run 3** (the git bundle plus `claude-dir-3.tgz`, baseline at the adoption commit `cc4f63b`).
+  Before: `⚠ 3 user-terminal commit(s) detected`, rows for `d0d3d73`, `d77fc1b` and `2c333be`. After: no
+  row. From a clean checkout with the baseline at `d0d3d73`: before, the detector left
+  ` M .claude/bypass-audit.json`; after, git status is unchanged.
+- **Tests.** `tests/test-bl322-s1-audit-loop.sh` (unit lane; `adopt-b` shard since 2026-10-07; `rest` before): 14 cases and 14 mutants, each
+  mutant killed by a named case. Two cases run a real adoption; on one, the adoptee's own copy of the
+  detector skips an approved commit, leaves the audit file unchanged and still records a terminal commit.
+  Its fixture commits use `--no-verify` (the detector reads history and `approvals.jsonl`, not how a commit
+  was made), so it says nothing about the stop hook.
+
+**S1 residuals (not fixed):**
+- **An approvals line is evidence, not proof.** Review round 1's three forgeries above produce records the
+  detector cannot tell from the Guardrails' own. Closing that needs a value the agent cannot read or
+  recompute, which is the Guardrails' design to change (handed to them), not Solo's.
+- **An approval left open survives the session (R-322-7).** The Guardrails' `session-end.sh` deletes their
+  marker, but nothing in `approvals.jsonl` records that, so an approval no commit line used stays open to
+  the detector; a commit line for the same tree in a later session (a forged marker) is exempt. Checking the
+  commit's real tree and parent with git against the approval would narrow this only where HEAD has moved,
+  so it is not built.
+- **The Claude-commit ledger still exempts a commit, and the agent can write it.** `.claude/claude-commits.jsonl`
+  is `## BL-030:`'s design, unprotected, and (below) never written by its recorder, so today any line in it was
+  written by hand. Not changed here.
+- **`.claude/approvals.jsonl` is neither ignored nor committed by Solo**: pending the CDF session's answer.
+- **A `matched: false` commit's `out_of_band_commit` row says `user_terminal_inferred`**, which is wrong for a
+  commit made through the approval flow; the `approval_mismatch` row beside it is the accurate one.
+- **`--sync-framework` adds the two root `.gitignore` lines even when `.claude/.gitignore` already ignores the
+  files**: the backfill matches exact lines in the root file. Harmless, but it leaves the root `.gitignore`
+  modified for the operator to commit.
+- **PR #481 (BL-314, whose entry is on that branch; open, and already conflicting with `main`) ignores
+  `.claude/tool-usage.json.lw.*`** in the root template and this repo's `.gitignore`. `.claude/.gitignore` does not carry it, because the writer of
+  those temporary files is not on `main`; whichever of the two merges second adds `/tool-usage.json.lw.*` to
+  `_adopt_session_ignore_rules`. This branch touches neither file #481 changes for it.
+
+**S2's design (Karl, 2026-10-07): option 1 plus option 4's warning.** Of four options — carry the original
+`CLAUDE.md`'s `@` imports; `@`-import the archived original; keep theirs at `CLAUDE.md` and move the framework's
+to `.claude/rules/`; warn only — the second loads frozen archive copies (an import resolves against the file
+holding it, so run 3's would have reached two archived copies and two missing files) together with the old
+file's stale state ("Phase: 2", "Next: merge the branch"); the third breaks every script that reads the root
+`CLAUDE.md` by path (validate, verify-install, check-updates, test-gate, tldr-mode, upgrade and freshness,
+check-session-state, and resume.sh's `# BL-318-G2-CURRENT-STATE`); warning alone leaves the rules unloaded.
+`~/` and absolute imports are named, never carried.
+
+**S2, as built (PR #503, merge `c324a0d`).**
+- **The carry** (`scripts/lib/adopt/adopt-docs.sh`, `# BL-322-CARRY`). Before the documents stage writes
+  anything it reads the project's own `CLAUDE.md` (not a symlink, which is left alone) for imports the way
+  Claude Code reads them (`_adopt_claude_md_import_tokens`, below). An import is carried when it is relative,
+  stays inside the project once `.` and `..` are resolved, and names a regular file that is not a symlink or
+  under one, that adoption has not written (the ledger) and will not replace or compose (the archive's
+  dispositions, which already name what this and later stages replace), also under another case of the same
+  name on a case-insensitive disk (`# BL-322-CARRY-CASE`). Each import not carried gets its reason: `control`,
+  `home` (`~/` or absolute: named only), `outside`, `link`, `missing`, `not-a-file`, `unchecked` (the archive
+  record could not be read: fail closed, `# BL-322-CARRY-FAILCLOSED`), `archived` or `written`
+  (`# BL-322-CARRY-HOME` … `# BL-322-CARRY-WRITTEN`). The carried lines are written normalised
+  (`# BL-322-CARRY-NORMWRITE`) and once (`# BL-322-CARRY-DEDUPE`) into a section between
+  `<!-- SOIF-CARRIED-IMPORTS-BEGIN (BL-322) -->` and `<!-- SOIF-CARRIED-IMPORTS-END -->`, "Carried over from
+  your CLAUDE.md", before TL;DR's section (`# BL-322-CARRY-APPEND`); `reconfigure-project.sh --tldr-mode off`,
+  then `on`, leaves it in place.
+- **The reading** (review round 1, against a replica of Claude Code 2.1.292's import extractor: a Markdown
+  lexer, then `(?:^|\s)@((?:[^\s\\]|\\ )+)` on each text token, the path cut at its first `#`). In awk, bytewise:
+  a CR at a line end dropped (`# BL-322-CARRY-CRLF`); fences of either character, up to three spaces in, closed
+  only by one at least as long (`# BL-322-CARRY-FENCE`, `# BL-322-CARRY-FENCE-LEN`); indented code, also in a
+  quote and after a setext underline or a break (`# BL-322-CARRY-INDENT`, `# BL-322-CARRY-QUOTE-CODE`,
+  `# BL-322-CARRY-BREAK`); reference definitions (`# BL-322-CARRY-REFDEF`); HTML blocks — a tag to the next
+  blank line, script/pre/style/textarea, `<?`, `<!X` and CDATA to their own end (`# BL-322-CARRY-HTML`,
+  `# BL-322-CARRY-HTML-RAW`, `# BL-322-CARRY-HTML-PI`, `# BL-322-CARRY-HTML-DECL`, `# BL-322-CARRY-HTML-CDATA`);
+  code spans of any width (`# BL-322-CARRY-SPAN`); HTML comments on a line, across lines and in their short
+  forms (`# BL-322-CARRY-COMMENT`, `# BL-322-CARRY-COMMENT-OPEN`, `# BL-322-CARRY-COMMENT-SHORT`,
+  `# BL-322-CARRY-COMMENT-SHORT2`), the rest of a comment block's line read without Markdown
+  (`# BL-322-CARRY-RAW`); a no-break space as a space (`# BL-322-CARRY-NBSP`); an `@` at a line start, after
+  whitespace, or opening emphasis or a link's text (`# BL-322-CARRY-WS`, `# BL-322-CARRY-EMPH`,
+  `# BL-322-CARRY-LINKTEXT`); the path ended at a backslash that escapes no space (`# BL-322-CARRY-BACKSLASH`)
+  and cut at `#` (`# BL-322-CARRY-FRAGMENT`), and kept only when Claude Code would keep it
+  (`# BL-322-CARRY-PATHCHAR`). On 39 fixtures (the review's 15, k-pdf's `CLAUDE.md`, 23 more) it agrees with the
+  replica on 37; the two it does not are imports it misses (residuals below). At the review's tip it agreed on 2
+  of 24.
+- **The warning.** When the project's `CLAUDE.md` was replaced (`# BL-322-CARRY-FLAG`,
+  `# BL-322-CARRY-ONLY-REPLACED`), the documents stage prints "YOUR OWN CLAUDE.md IS NO LONGER WHAT CLAUDE CODE
+  LOADS." (`# BL-322-CARRY-WARN`), that the rules written in it load again only once the assessment folds them
+  in, the archived original's path, the carried imports, and each one not carried with its reason. "Next: the
+  assessment" says it again (`# BL-322-ACT3-RULES`). The assessment prompt's step 8 names the section: fold the
+  old file's rules in, keep the imports still wanted outside it, delete it; its reading list no longer says
+  adoption replaced every archived document.
+- **"Moved" and "copied"** (`scripts/lib/adopt/adopt-archive.sh`). The disclosure and `MANIFEST.md` say per file
+  whether adoption replaced it, composed with it, or only copied it (`# BL-322-DISCLOSE-DISPO`, a new
+  `MANIFEST.md` column), and a file it only copied gets no restore line (`# BL-322-DISCLOSE-KEPT`,
+  `# BL-322-MANIFEST-KEPT`). The design's sentence stays. A framework script the project already had is now
+  recorded `replaced` (`# BL-322-ARCHIVE-DISPO-SCRIPT`): `adopt_install_framework` installs over it or refuses
+  the run, yet the row said `kept`, which the disclosure would now have read as "unchanged".
+- **Scout** (`scripts/lib/scout/scout-collisions.sh`, `# BL-322-SCOUT-DOCS`). The rows for `CLAUDE.md`,
+  `PROJECT_INTAKE.md`, `FEATURES.md`, `BUGS.md`, `RELEASE_NOTES.md`, `docs/INDEX.md`, `docs/IDENTIFIERS.md` and
+  `docs/archive/README.md` are `archive-and-replace` ("kept a copy, then replaced"), and the `CLAUDE.md` row says
+  its imports are carried; `CHANGELOG.md` stays `keep-theirs`. Scout sources no adoption code (M5), so the set
+  is spelled in both; the suite holds them equal.
+- **Replay of run 3** (the git bundle at `0bb0465`, the `/lib/` anchor uncommitted as in the run, the same seven
+  answers). At `92b485d` the new `CLAUDE.md` had 0 `@` lines, the archive said "moved" with a restore line for
+  `PROJECT_BIBLE.md` and `PRODUCT_MANIFESTO.md`, and Scout said `CLAUDE.md` "yours stays". On this branch it has
+  4 (`@K-PDF_PROJECT_INTAKE.md`, `@PROJECT_BIBLE.md`, `@PRODUCT_MANIFESTO.md`, `@CONTRIBUTING.md`) inside the
+  section, the four files are unchanged by the adoption commit, both "only copied" rows have no restore line,
+  and Scout says "kept a copy, then replaced".
+- **Tests.** `tests/test-bl322-s2-project-rules.sh`: 15 cases and 54 mutants, each mutant killed by a named
+  case, the review's five surviving mutants among them (M1, M34, M35, M36, M42); four real adoptions (one
+  shared by A1–A3) and six more under mutants.
+- **Review round 1** (BLOCK; all addressed). R-S2-1: the carried section's write is spelled
+  `"$ADOPT_WORK/claude-md.rendered"`, so `tests/test-bl225-staging-preflight.sh` T9 sees driver scratch (it
+  failed 34/1 at `3d767e1`). R-S2-2 and R-S2-3: HTML comments and blocks, and CRLF, above. R-S2-4: the five
+  surviving mutants. R-S2-5: `@docs/rules.md#colour` is cut at `#` and carried as `@docs/rules.md` (the
+  normalised form, which is what Claude Code loads). R-S2-8: a control character in a name is never carried
+  and shows as `?`. R-S2-9: `@features.md` and `@claude.md` are not carried on this Mac. R-S2-10: an unreadable
+  archive record fails closed; the normalised path is written; here-strings instead of `printf … | grep -q`
+  under pipefail. R-S2-11: the docs say "before the TL;DR section", and the run no longer says nothing was
+  merged when it carried imports (`# BL-322-CARRY-MERGED`).
+
+**S2 residuals (not fixed):**
+- **The rules written inside the old `CLAUDE.md` still do not load** until the assessment folds them in. That
+  is the decision, not an omission; the run says so twice.
+- **An import Claude Code reads that this reading misses is neither carried nor named** (measured against the
+  replica): an `@` straight after a closing delimiter (`**bold**@x.md`) or an inline tag (`<b>@x.md</b>`); in a
+  tight list item, an `@` after whitespace inside a code span (Claude Code scans a list item's raw text too);
+  a code span across lines; whitespace other than the space, the tab and the no-break space. And it over-skips
+  where it cannot tell: a line opening with an inline tag (`<b>x</b> @y.md`) is read as an HTML block to the next
+  blank line, and indented lines in a list item as code. Each of these errs toward not carrying; the warning
+  names the archived original. `(@x.md)` is not an import in Claude Code either. What Claude Code does with an
+  import whose file is missing is not measured.
+- **`adopt_stub_framework_script_collisions` contradicts the disclosure** (review round 1, R-S2-6,
+  pre-existing): after a framework script was replaced it still prints "NOT DONE … LEFT ALONE … yours, kept:
+  scripts/validate.sh", and `docs/adoption.md`'s "Still not built" says the same. **Fixed by S4** (below).
+- **Scout's other collision rows overstate** (R-S2-7): `.mcp.json`, `.claude/settings.local.json` and git hooks
+  other than pre-commit and commit-msg read "kept a copy, then replaced", though adoption only copies them, and
+  `.claude/settings.json` is composed. **Fixed by S4** (below).
+- **CI, recorded here late:** S2 also made zsh an install step only on the unit-shard legs that run a suite marked
+  `# NEEDS-ZSH`, and the shard script refuses such a suite anywhere else (`c8f3f71`, `# BL-322-ZSH-GUARD`); no
+  suite needs zsh today. The g4g6 and wp11 pins moved twice since; `.github/workflows/tests.yml`'s pin notes
+  carry each move. R-S2-13 (S5) is that guard's residual. **Fixed by S5** (below).
+- **`reconfigure-project.sh`'s rename** (R-S2-10 d): its `sed` over `CLAUDE.md` also rewrites a carried import
+  whose path contains the old project name.
+- **Projects adopted before this change are not backfilled.** Their assessment prompt was written at adoption,
+  so an unassessed one lacks step 8's new sentence; nothing re-carries their imports.
+- **The run-1 transcript of the Guardrails manifest's disclosure** in `docs/adoption.md` is kept as observed,
+  so it predates the per-file line.
+
+**S3's design.** Finding 4 asked Scout to run adoption's ignore test; finding 5 asked that a blocked run leave
+nothing outside the project. The test is two parts: the decision (which paths the rules refuse) and the naming
+of each rule (`## BL-311:` row 5). Both moved, unchanged but for one sort, from
+`scripts/lib/adopt/adopt-state.sh` to `scripts/lib/scout/scout-ignore.sh`, which adoption sources
+(`# BL-322-S3-SHARED`, refusing if it is missing: `# BL-322-S3-SHARED-LOADED`); a module may source Scout,
+as `adopt-tools.sh` already did, and Scout still sources nothing (M5). The set of paths is the part that
+cannot be shared: adoption's is the ledger of a rehearsal of its real write phase, which needs the
+operator's answers and the driver. So Scout derives the set from the framework clone it runs from, by
+extraction (init.sh's copy lines, the templates, the guides, each writer's leave-alone rule), and the suite
+holds it equal to a real rehearsal's ledger.
+
+**S3, as built (PR #504, merge `69b06a5`).**
+- **Scout** (`scout_ignore_scan`, `# BL-322-S3-SCOUT-CALL`) asks the shared decision over the files an
+  adoption writes whatever the operator answers (`scout_adoption_write_set`) and reports
+  `collisions.ignoreRules`: `checked`, `why`, `pathsChecked`, `wouldBlock`, every `refused` path, the `rules`
+  (source, line, pattern, count, example), the `explanation` lines adoption's block prints, and `notChecked`.
+  The Markdown report says it at the top and in a section, "Would your ignore rules stop the adoption?".
+  Not predicted, and said so: `.claude/test-command` (written only when the operator keeps the scan's
+  command) and the Guardrails' own files. Never counted, because they never block: the archive (an ignored copy
+  is withheld from the commit, `# BF-ADOPT-IGNORE-ARCHIVE`), `APPROVAL_LOG.md` and `.claude/bypass-audit.json`
+  (`# BL-322-S3-STAGEABLE-ONLY`: recorded only when git will stage them, `_adopt_record_if_stageable`). Copied out of a framework clone,
+  Scout reports `checked: false` and why (`# BL-322-S3-FW-GUARD`).
+- **The rule lines are sorted** (`# BL-322-S3-EXPLAIN-SORT`), so the example each rule names does not depend on
+  the order a caller found the paths in: Scout's set is in C order, adoption's is `sort -u` in the caller's
+  locale.
+- **The decision is batched**: one `git ls-files -z` and one `git check-ignore --no-index --stdin -z` instead
+  of two git processes per path, on every Scout run and every adoption. Measured over the 114 paths Scout asks
+  about: 2.1-2.2s per path, 0.03-0.04s batched, the same 26 refused. Scout on a clean project: 0.67s at
+  `c324a0d`, 0.73-0.75s here.
+  The per-path form stays as the fallback when git cannot answer the batch, so the path it could not answer
+  for is still named (`# BL-225-ORACLE-FAIL-CLOSED`; only rc 0 and 1 are answers, `# BL-322-S3-BATCH-ANSWERED`).
+  The tracked names are read NUL-separated (`# BL-322-S3-TRACKED-NUL`), and the rule naming asks git once for
+  every refused path (`git check-ignore -v -n -z --stdin`), one table feeding both Scout's `rules` and the prose.
+- **The MCP step asks where it did and runs later.** `adopt_mcp_resolve` asks; after "set it up now" it says
+  nothing has run yet, that a stop before then registers nothing and that a later stop (a file it cannot
+  write, the project's own commit hook) leaves the registration and says so (`# BL-322-S3-MCP-DEFER`,
+  `# BL-322-S3-MCP-DEFER-SAY`). `adopt_mcp_apply` runs the commands, the receipt, Claude
+  Code's launch check and the record's cell after the pre-write check and I20, directly before the write phase
+  (`# BL-322-S3-MCP-APPLY-CALL`). The question stays where it was because the answer sequences the adoption
+  suites pipe are written against its position (TL;DR mode's comment at `adopt_ask_tldr_mode` records the
+  same constraint). A stop after the commands — a writer, the staging check, the commit — still names what
+  they registered (`# BL-318-G6-OUTSIDE`).
+- **Replay of run 3** (the git bundle at `0bb0465`, line 20 `lib/` as committed). Scout at `c324a0d`: no
+  `ignoreRules`. Scout here: `wouldBlock: true`, `.gitignore` line 20 `lib/` refusing 26 paths, "change line 20
+  of .gitignore to `/lib/`", the project unchanged. Adoption with the run's answers (1, standard, set it up
+  now, keep ×4, TL;DR yes), `claude`, `docker` and `curl` stubbed and a scratch `CLAUDE_CONFIG_DIR`: at
+  `c324a0d` both `claude mcp add` calls ran, the block said "this run DID register context7 and qdrant"; here
+  the stub logged only `docker info` and `docker ps`, the config folder stayed empty, and the block ends
+  "Adoption did not begin. Nothing was committed and nothing was written to this project." With line 20
+  anchored (uncommitted, as the operator did), Scout is quiet and adoption registers both servers after the
+  rehearsal and before the first writer; the record says "set up by adoption".
+- **Tests.** `tests/test-bl322-s3-ignore-preflight.sh`: 20 cases and 27 mutants, each killed by a named case.
+  S1-S4 Scout's report; U1 the sort; D1 the decision row by row (untracked, tracked under a file rule, tracked
+  top-level, tracked under an ignored folder, a newline in a tracked name, beyond a symlink: F 128, rc 2); E1 a
+  symlinked `.claude` end to end (Scout cannot tell and says adoption would stop; adoption refuses before
+  writing; the tree is unchanged); P1-P2 Scout's set equals a real rehearsal's ledger (P2 on a project
+  adoption partly leaves alone, with its CI, a test command and an archive); A1-A6 Scout's answer equals the
+  real driver's on the same tree (`lib/`, `*.md`, a negation, a nested `.gitignore`, a global
+  `core.excludesFile` under a fake HOME, `.git/info/exclude`); M1 a blocked adoption told to set the servers
+  up runs no `claude mcp add`, starts no container and leaves HOME, the Claude Code config and TMPDIR
+  byte-identical; M2 a passing one still registers both, after the checks; M3 the project's own pre-commit hook
+  stops the run after the commands, and the block names the registration, as the note says; M4 I20 (reproduced
+  with the inventory's own seam, `SOIF_ADOPT_INVENTORY_SKIP_CLASS`) stops the run before the commands; I1
+  adopt_main's order. A case that needs gitleaks skips without it, and fails when `CI` is set. `tests/test-bl311-c-scout-runner-ignore-rule.sh`'s
+  mutants of the rule naming and `tests/test-bl225-prewrite-preflight.sh`'s MP1 now mutate the moved code;
+  the MCP suites' harnesses call the question and then the commands; `tests/test-bl318-g4g6.sh` B1 (a stop at
+  a later question after "set it up now") now asserts nothing was registered.
+
+**S3 review round 1 (major_concerns; all addressed).** The reviewer found the moved decision equal to the base
+loop on 500 fuzzed and 22 hand-built trees, and the replay reproducible. R-S3-1: the fail-closed half was
+pinned by nothing — their mutants MA (the per-path arm reads 128 as not ignored), MB (the batch reads 128 as an
+answer) and MC (adoption ignores a failed decision) left every suite green, and on a project whose `.claude` is
+a symlink MC wrote 105 files and failed half-installed; MF and MG (a tracked path, or a tracked top-level file,
+asked about itself) over-refused unseen. D1 and E1 kill all five (X20-X24). R-S3-2: the note at the question
+promised the configuration would be left as it was after any stop; a stop after the commands keeps it (M3,
+X27). R-S3-3: an ignored archive copy is withheld, never blocks (corrected above and in the report). R-S3-4:
+"after I20" is pinned by M4 and I1 (X26). R-S3-5: the rule naming ran one `git check-ignore -v` per refused
+path, twice in Scout; on k-pdf at `0bb0465` Scout made 66 git calls (52 of them `-v`) and took 3.20-3.23s, now
+15 (1) and 2.35-2.41s (2.18-2.27s at `c324a0d`). R-S3-6: a newline in a tracked name forged a tracked path and
+the check failed open (D1, X25). R-S3-7: without gitleaks the suite skipped its adoption cases and passed; under
+`CI` it now fails.
+
+**S3 residuals (not fixed):**
+- **What Scout does not predict can still block.** A rule that refuses only `.claude/test-command` or only a
+  Guardrails file: Scout says no block, adoption's own check blocks, and nothing outside the project has
+  changed by then.
+- **A `.claude/settings.json` adoption cannot compose into** (not a JSON object) is left alone, and Scout,
+  which reads no JSON, still counts it: Scout over-claims only if a rule refuses that one path.
+- **The tool resolver's installs still precede the ignore check.** On an explicit yes, a missing scanner is
+  installed before the secrets check, which needs it, and that check precedes the questions; the ignore check
+  needs every answer, because it rehearses the real write phase. A later stop does not name an install
+  (`# BL-318-G6-OUTSIDE` names MCP registrations only). Not changed here.
+- **An early ignore check inside adoption was not built.** Adoption could ask Scout's derived set at its start
+  and stop before any question; a derived set that over-includes would then refuse a project the rehearsal
+  accepts, and the rehearsal is the only exact set. Scout's report is the early warning.
+- **Paths are literal now.** The batched decision reads a planned path literally where the per-path
+  `ls-files --error-unmatch` read `*`, `?` and `[` as globs; only an archive copy of a project file with such a
+  name could differ.
+- **The sort is proven only by U1.** On this Mac and on C.UTF-8 the planned set's `sort -u` order is C order,
+  so A1-A6 cannot see the sort; a glibc collating locale (en_US.UTF-8 on Linux) would. Not measured in one.
+- **Follow-up idea (review round 1, not built):** adoption already runs Scout, or reads the report it is
+  given, before its first question; it could warn there when `ignoreRules.wouldBlock` is true, for an operator
+  who skipped Scout. A warning, not a refusal: the rehearsal stays the check that decides.
+
+**S4's choices.** Findings 11, 14, 17 and 18 are text the technician read at the wrong moment or not at all, so
+each fix puts the sentence where it is read: the session start, the approval guidance the agent gets when it
+records a question and when the commit check holds it, the assessment prompt, and `docs/adoption.md` §7. Two
+calls were asked for. Finding 17's `answers` keys: not added, because the finisher's allowlist is keys
+`intake-wizard.sh` saves (`ADOPT_ACT4_ANSWER_KEYS`; `tests/test-brownfield-wp12a-assessment.sh` K8 derives that)
+and the wizard has no key for exposure, while its `uptime` key is the intake's own uptime question, not the
+interview's availability answer; the prompt says where each lives. Finding 18's seeding
+from `git tag`: not built, because a tag names a release and carries no note a user reads, so
+`RELEASE_NOTES.md` would gain empty headings, and which tags are releases is judgement; the prompt says the
+history was not carried and asks the session to add the releases the user wants.
+
+**S4, as built (PR #506, merge `c125f0f`).**
+- **The MCP check's requirement (finding 11).** `scripts/session-test-gate-check.sh`, the SessionStart hook that
+  announces the check, said "blocked until you call: qdrant-find, context7". It now prints one line per
+  configured server with what counts: a `qdrant-find` that returned, an empty result included, and Context7's
+  `query-docs`, with "resolve-library-id alone does not count" (`# BL-322-S4-GATE-QDRANT`,
+  `# BL-322-S4-GATE-C7`). `scripts/session-mcp-gate.sh`, which decides, already said so when it refused; it is
+  unchanged.
+- **The lone-commit rule (finding 14).** `docs/adoption.md` §7 has "The commit is one lone command":
+  `git commit -m "subject" -m "body"`, nothing before it (not even `cd … &&`), nothing after it, no `-a`, no
+  file names, and the Guardrails' refusal text, `it is not a lone git commit`. `scripts/pending-approval.sh
+  --offer` prints the rule when the question can approve a commit and the Guardrails take replies
+  (`# BL-322-S4-OFFER-IF`, `# BL-322-S4-OFFER-COMMIT`); the commit check's hold message says it
+  (`# BL-322-S4-GATE-HINT`); the CLAUDE.md template and the Builder's Guide add the `cd` case.
+- **The assessment record (finding 17).** Step 9 says `adoptedAtCommit` is pre-filled with the commit the project
+  was at just before the adoption commit, adoption's anchor, that the finisher refuses any other value, that
+  exposure has no wizard key and lives only in `interview.exposure`, and that availability lives in
+  `interview.availability`, the wizard's `uptime` key being the intake's own question.
+- **The release history (finding 18).** Step 8 says `RELEASE_NOTES.md` is the template and the history was not
+  carried, and names `git tag` and `CHANGELOG.md`; `docs/adoption.md` (*The framework documents*) says the same.
+- **Development Guardrails 4.4.1** (CDF PR #27, merge `4180f22`, read with `gh api` on GitHub, read only). (a) The
+  override `mark-evaluated.sh` now opens `/dev/tty`, refuses without one, shows
+  `Type <six digits> and press Enter to approve (anything else cancels):` and approves only on that code;
+  `docs/adoption.md` §7 (*The override*), the Builder's Guide and the User Guide say so. A pipe cannot answer it;
+  a terminal driver such as `expect` can (their own header says so), so the barrier is config-guard refusing the
+  script by name, which §7 says. No Solo script prints the override. (b) config-guard's new `STATE_HOOKS_RE` refuses any command whose text names
+  `mark-evaluated.sh`, `mark-plan-closed.sh`, `record-approval.sh`, `marker-tracker.sh`, `session-start.sh`,
+  `session-end.sh` or `stop-checklist.sh` (reads aside), so a commit message naming one is refused, as one naming
+  a protected path (`CONFIG_GUARD_PROTECTED_RE`) already was; `commit_shape_problem` admits `-F`/`--file` under an
+  approval. Every place above that shows the rule gives the route: write the message to a file outside the project
+  with the Write tool, then `git commit -F <that file>`. (c) `STATE_HOOKS_RE` matches the name exactly, between
+  non-name characters: measured with its own pattern and `/usr/bin/grep -iE`, `bash
+  scripts/session-end-qdrant-reminder.sh` does not match and `bash scripts/session-end.sh` does. Solo ships no
+  `session-start.sh` or `session-end.sh`, and no Solo document tells the agent to run the reminder (a Stop hook).
+  Nothing changed. (d) `SOIF_GUARDRAILS_MIN` stays 4.4.0 (Karl); `docs/adoption.md` §7, the Builder's Guide and
+  the User Guide say 4.4.1 closes ways an agent could approve its own commit (the override run with
+  `CLAUDECODE` cleared, a made-up prompt piped into `record-approval.sh`, a marker name split with quotes) and
+  that the session start offers it once the clone holds it. 4.4.1 also withdraws an unused approval when the user
+  picks an option that approves nothing, which S1's hold rule asked of them; the detector's hold rule stays.
+- **R-S2-6.** Measured at `7d12ba5` on a real adoption of a project with its own `scripts/validate.sh`: the
+  framework's file at the path, theirs in the archive, and the run printing both "replaced by the framework's
+  version" and "NOT DONE … LEFT ALONE … yours, kept: scripts/validate.sh". The call is gone and
+  `adopt_stub_framework_script_collisions` is a headstone in `scripts/lib/adopt/adopt-stubs.sh`; it was the last
+  stub called, so `tests/test-brownfield-wp7b-commit-hook.sh` B9 now pins the called-stub set at 0.
+  `docs/adoption.md`'s "Still not built by this package" says nothing is.
+- **R-S2-7.** Measured on one tree (settings, local settings, `.mcp.json`, a skill, three hooks, the samples,
+  `.claude-backup/`, CI, `CHANGELOG.md`, `FEATURES.md`, `.gitignore`): 7 of Scout's 13 rows disagreed with the
+  adoption's MANIFEST and disk. Each row's bucket is now adoption's disposition (`# BL-322-S4-SCOUT-SETTINGS` …
+  `# BL-322-S4-SCOUT-GITIGNORE`): `.claude/settings.json` marker-composed, whose phrase was "left alone; the
+  framework adds to it" and is now "kept a copy; yours stays, and the framework adds to it"
+  (`# BL-322-S4-SCOUT-COMPOSED-PHRASE`); `.mcp.json`, `.claude/settings.local.json` and other git hooks
+  keep-theirs, their notes naming the archive copy; `.claude-backup/`, the sample hooks and `.gitignore`
+  keep-theirs; `.claude/phase-state.json` keep-theirs, its note saying adoption stops on that project
+  (`# BL-322-S4-SCOUT-PHASESTATE`). The skill and pre-commit notes describe adoption, not `init.sh`.
+  `docs/scout.md` says the same.
+- **Tests.** `tests/test-bl322-s4-wording.sh` (unit lane, `adopt` shard): 11 cases and 27 mutants at first, each
+  killed by a named case; red on base, 0 of 11; 18 cases and 48 mutants after review round 1 (below), 94s locally. S1 holds every Scout row to a real adoption of the same tree, on disk and in
+  its MANIFEST. `tests/test-brownfield-wp2-scout-sections.sh` C1 expects `.claude/settings.local.json`
+  keep-theirs.
+
+**S4 residuals (not fixed):**
+- **Projects adopted before S4 keep the prompt written at their adoption**, without steps 8's and 9's new
+  sentences.
+- **Scout is held to an adoption without the Guardrails installer** (the suites' seam). CDF 4.4.1's
+  `scripts/init.sh`, read on GitHub, preserves `.claude/settings.local.json` and existing git hooks and backs up
+  `.git/hooks/pre-*` into `.claude-backup/<timestamp>/`, which adoption then removes; not run here.
+- **Scout says marker-composed for a `.claude/settings.json` adoption cannot compose** (a symlink, read-only, not a
+  JSON object), which adoption leaves alone; the note says so, and Scout reads no JSON (S3's residual).
+- **A message file named through a variable** (`git commit -F "$TMPDIR/msg"`) is not read by Solo's own commit
+  check: `_commit_msg_file` removes quotes and expands an unquoted `~/`, but expands no `$VAR`, so those message
+  checks see no message and the commit-msg hook decides later. Whether Claude Code asks the user before the
+  Write tool writes outside the project depends on their settings; not measured.
+- **`docs/adoption.md`'s "What lands in `scripts/`" transcript** reads "Installed 70 framework script(s); left 0
+  of your own file(s) untouched."; the run now says "Installed 76 framework script(s); none of your own files
+  collided." (measured 2026-10-08). Not changed: its parity claim beside it (70 each, measured 2026-09-16) was
+  not re-measured.
+
+**S4 review round 1 (major_concerns; all addressed).** R-S4-1: `scripts/pre-commit-gate.sh` read the `-F` file at
+four sites with "`-F`, whitespace, non-spaces", so a quoted path (no space needed) or `--file` was never read and
+the message checks saw no message — a `feat:` commit with no Build Loop, refused with an unquoted path, was
+allowed with the same path in quotes, and refused later by the commit-msg hook. The four sites now share
+`_commit_msg_file` (`# BL-322-S4-MSGFILE`): `-F <f>`, `-F<f>`, `-sF <f>`, `--file <f>`, `--file=<f>`, one layer of
+quotes removed, words after `commit` only, an option's value never read as an option. The "needs a path with no
+spaces" residual above was wrong and is replaced. R-S4-2: the User Guide, which projects receive without
+`adoption.md`, links §7 by its GitHub URL. R-S4-3: §7 said a script cannot answer the override's code; a terminal
+driver can, and §7 now names the real barrier. R-S4-4: the protected-path lists say "such as" (the Guardrails also
+protect `.claude/settings.local.json`, `.claude/approvals.jsonl`, `.git/info`, `.git/config`; a path such as
+`.claude/framework/rules/x.md` is not refused, so "any framework path" would be wrong too). R-S4-5, R-S4-6: Scout's
+`.claude/settings.local.json`, `CHANGELOG.md` and uncommitted-work notes described the wrong file or `init.sh`; every
+note now describes adoption, and S1 and S3 hold that. R-S4-7: wp7b B9 also requires its scan to have read the
+driver's sources. R-S4-8: R1 refuses any `NOT DONE` line. Nits: "MCP CHECK ACTIVE"; the `uptime` key; the
+`adopt-state.sh` header; `docs/adoption.md`'s pre-commit paragraph; "Still not built" names `## BL-293:`. Two
+neighbour suites my first build broke and fixed before review: bl311-d R8's window, g4g6 MC1's marker.
+
+**Found while building S1, not fixed by it: the Claude-commit ledger is never written.**
+`scripts/hooks/record-claude-commit.sh` (`## BL-030:`'s recorder) reads `.tool_response.exit_code` and treats
+its absence as a failure (`// 1`). Claude Code's Bash PostToolUse payload carries no such field: run 3's
+transcript shows the Bash results' keys as `interrupted`, `isImage`, `noOutputExpected`, `stderr`, `stdout`
+(plus `gitOperation` on a commit), and the Guardrails' own `marker-tracker.sh` says "Real tool_response has no
+exit_code field". PostToolUse fires only after a tool succeeded (code.claude.com/docs/en/hooks). So the hook
+exits before writing on every real commit, and run 3's `.claude/` has no `claude-commits.jsonl` at all. Every
+agent commit not covered by an approval (any project without the Guardrails' approval flow) is still flagged as
+a user-terminal commit. Fixing the recorder is a separate change (it also needs a decision on whether the
+ledger, an agent-writable file, is ignored or tracked), so it is recorded here for one.
+
+**Handed to the Development Guardrails (CDF), not fixed here** (`~/dogfood-2026-10/CDF-HANDOFF-PROMPT-3.md`,
+outside the repo): rows 1, 3 and 10 (read-only commands refused as framework edits or as commits), 7
+(`enforce-superpowers` treated a `.gitignore` edit as a source edit), 12, 13, 14b and 19 (hooks that match words
+in file names, question text, commit messages and chains instead of commands), the hook halves of 15 and 20
+(`stop-checklist.sh` blocks on an untracked `.claude/approvals.jsonl` or `.claude/tdd-warn-ledger.jsonl`,
+because its source-file test counts an unknown extension as source; Karl, 2026-10-07: the fix is theirs, and
+Solo does not ignore those logs), their marker surviving a pick that approves nothing (S1's hold rule above),
+21 (the "Superpowers
+verified" banner without the plugin), 22 ("Run: init.sh --reconfigure" in an adopted project), and
+`hooks/session-end.sh` deleting the approval render record, so both approval replies must arrive in one Claude
+Code process (`## BL-320:`'s run-3 paragraph).
+
+**CI residual, hermeticity (recorded 2026-10-08 from the review of the tenth `unit-shard` leg, `264a4a4`;
+not fixed).** Two `rest` suites get part of their CI coverage from a live network fetch:
+`tests/test-bl141-commitmsg-repair.sh` runs `verify-install.sh --auto-fix`, which does a `git clone --depth 1`
+of the Guardrails from GitHub into the runner's HOME, and `tests/test-bl320-approval-schema2.sh` (R10, E1) and
+`tests/test-upgrade-cdf-refresh.sh` (T1, T3, T4, T5) run those cases only when that clone is there. With an
+empty HOME they skip (122/0/2 and 2/0/4, against 124/0/0 and 6/0/0 on PR #504's `rest` leg), so a failed
+clone, or either suite moving off `rest`, costs those cases while the lane stays green. The `pin_adopt_b`
+note in `.github/workflows/tests.yml` records the leg half of this. **Fixed by S5** (below).
+
+**S5, as built (PR #507, merge `8dd7fe1`).**
+- **The import reading, R-S2-12 and review round 1's R-S5-2** (`scripts/lib/adopt/adopt-docs.sh`). Carry on
+  doubt, named (the supervisor's call within Karl's S2 ruling, after round 1 measured the strict rule built
+  first: 0 false carries but 24 of 66 realistic imports missed, against 9 at base, and a run that then said
+  "It imported no files" of a file that did). An `@` that opens emphasis or the text of a link is carried for
+  certain when the same line shows it closing (`emclose`, the flanking rules, `# BL-322-CARRY-EMPH-STOP` …
+  `# BL-322-CARRY-EMPH-NESTED`) or the link being real (`linkclose`, `# BL-322-CARRY-LINK-PAREN` …
+  `# BL-322-CARRY-LINK-CLOSE`), and otherwise carried as **unsure** (`# BL-322-CARRY-CLOSES`,
+  `# BL-322-CARRY-LINKCLOSES`); a non-ASCII neighbour is tried as a space, punctuation and a letter and settles
+  it only when all three agree (`# BL-322-CARRY-EMPH-ASCII`). A new text, so an import, also starts after a run
+  that closes emphasis opened earlier on the line (`**bold**@x.md`, `# BL-322-CARRY-AFTER`), after an escaped
+  character (`# BL-322-CARRY-ESCAPE`), after an inline tag (`# BL-322-CARRY-TAG`) and after any `[` but an
+  image's; a path ends at an inline tag (`# BL-322-CARRY-TAGEND`) and at a closer of something opened earlier
+  (`# BL-322-CARRY-TOKCUT`), but only at a run the flanking rules let close (`# BL-322-CARRY-TOKCUT-CLOSES`), and a
+  plain path cut there is also read whole (`# BL-322-CARRY-KEEPWHOLE`; review round 2, R-S5-7), carried as unsure
+  when that whole path is a file and not named when its file is missing (`# BL-322-CARRY-WHOLE-MISSING`, round 3;
+  a `~/`, absolute or outside whole path is still named among the mentions not carried, R-S5-14); link text
+  the line does not show real ends at a `]` its path did not open (`# BL-322-CARRY-LINKGUESS-DEPTH`, round 3,
+  R-S5-10). `_adopt_claude_md_carry` writes an `unsure` row, once per file, made certain by a
+  certain spelling of the same file (`# BL-322-CARRY-UNSURE-ROW`, `# BL-322-CARRY-UPGRADE`). Every sentence is now
+  true whatever was carried: the section says "It imported the files below" only over certain rows and puts the
+  unsure ones under "Its Markdown does not show for certain that Claude Code reads the files below as its
+  imports … delete any line here it did not mean as an import" (`# BL-322-CARRY-UNSURE-SECTION`); the run names
+  them under "Carried, though its Markdown does not show for certain …" (`# BL-322-CARRY-UNSURE-SAY`) and says "Adoption found no
+  imports in it" only when it found none (`# BL-322-CARRY-NONE`); *Next* and step 8 of the assessment prompt no
+  longer say only the old file's imports were carried, and step 8 asks the user about each unsure one. Measured
+  against the replica (marked 13.0.3), 2026-10-08:
+
+  | Corpus | `c125f0f` (base) | `6d69a80` (strict) | now |
+  |---|---|---|---|
+  | 66 realistic shapes (round 1's): false carries / missed | 1 / 9 | 0 / 24 | 4, all unsure / 0 |
+  | the review's 41 fixtures | 14 / 1 | 9 / 1 | 14 (9 certain, 5 unsure) / 0 |
+  | 9000 fuzzed lines, round 1's generator: missed | 78, 87, 81 | 164, 169, 174 | 42, 46, 43 |
+  | 9000 fuzzed lines, this branch's generator: missed | 11, 14, 11 | 111, 116, 120 | 0, 0, 0 |
+  | 9000 plain-import lines, round 2's generator: real imports missed | 123, 124, 120 | 44, 46, 46 | 2, 1, 2 |
+  | the same: real imports `c125f0f` carried that are dropped | — | 42, 45, 45 | 0, 0, 0 |
+  | round 2's 13 realistic `_` lines (`@docs/coding_standards.md` after `_build/`): carried whole | 13 | 5 | 13 |
+
+  The last three rows' middle column is `0c0c519`, round 1's head. On realistic shapes 19 imports are unsure, 15
+  of them real, and none is missed: `docs/style.md**`, which Claude Code reads by also scanning a tight list item
+  raw, is now carried whole beside `docs/style.md`. On fuzz, which is built of
+  unclosed emphasis, most lines carry an unsure import Claude Code would not take; 1, 2 and 1 per 3000 of round 1's
+  lines are certain false carries (an escaped `\*` before a longer closing run). The 9 certain false carries on
+  the 41 fixtures are the three shapes it cannot see (residuals).
+- **The zsh guard, R-S2-13** (`.github/workflows/tests.yml`, `# BL-322-ZSH-GUARD`). The marker is any line
+  matching `grep -iE '^[[:space:]]*#[[:space:]]*NEEDS-ZSH'`: `#NEEDS-ZSH`, indented, lowercase, suffixed.
+  `tests/test-bl322-zsh-legs.sh` runs six spellings through Z2 and Z3, and Z5 fails a unit-lane suite that names
+  zsh as a whole word on an executed line (comments dropped as `# BL-181-UNIT-LANE-PREDICATE` drops them) unless it
+  carries the marker or is listed in `ZSH_NAMES_ONLY` with its reason. Review round 1 (R-S5-4) found the first
+  build's command-word reading missed `ZSH="/bin/zsh"; "$ZSH" -f`, `[ -x /bin/zsh ] ||`, `"/bin/zsh" -f` and
+  `for sh in bash zsh`; any whole word now counts, and the false flags it brings are listed. 21 shapes pin it;
+  of the 249 suites only the zsh-legs suite names zsh, and it is listed (it runs a stub, never zsh).
+- **P4, R-S2-14** (`tests/test-bl318-g4g6.sh`). A quoted hook missing from a clone that passes the version gate and
+  the ea2025a history check now fails P4 instead of skipping it. P4u deletes `hooks/record-approval.sh` from a
+  copy and P4 fails naming it; at `c125f0f` the fit check named the hook and P4 skipped. The two checks moved
+  into the fixture helper.
+- **`_commit_msg_file`, S4 review round 2's R2-1** (`scripts/pre-commit-gate.sh`). A short-option cluster ends at
+  the first option that takes a value: `-m`, `-c`, `-C`, `-t` (attached, or the next word;
+  `# BL-322-S5-MSGFILE-REQVAL`) and `-S`, `-u` (attached only; `# BL-322-S5-MSGFILE-OPTVAL`), the set `git commit
+  -h` lists (2.54). `-U <n>` is left out: a number spells no option. `git commit -Sabc -F f`, `-S0xC -F f` and
+  `-tc -F f` now read `f`; at `c125f0f` none did. `-u` changes no reading of a valid mode. Review round 1
+  (R-S5-5): a path with git's `:(optional)` prefix (gitcli, "Magic filename options") is read without it
+  (`# BL-322-S5-MSGFILE-OPTIONAL`); at `6d69a80` `-F ':(optional)msg.txt'` was not read.
+- **Hermeticity, of these three suites only.** `tests/test-bl141-commitmsg-repair.sh`, `tests/test-bl145-hook-symlink-hookspath.sh` and
+  `tests/test-pr-review-gate.sh` export a temp HOME holding a stand-in `.claude-dev-framework/.git`
+  (`# BL-322-S5-HOME`, `# BL-322-S5-STANDIN`; the seam `tests/test-bl284-verify-install-context.sh` already used)
+  and unset `CLAUDE_CONFIG_DIR`, `XDG_CONFIG_HOME` and `GIT_CONFIG_GLOBAL`. No product code changed, and none of
+  the three reads the clone's contents. Run with an empty inherited HOME, a `git`
+  that refuses any remote URL and a dead proxy, at `c125f0f` they tried 4, 9 and 2 network clones into it; now
+  none, and it stays empty. With the real HOME, `~/.claude-dev-framework`'s HEAD and mtimes are unchanged. S5 makes no
+  claim about the rest of the unit lane: review round 2 found other suites that still reach the real HOME (residuals).
+- **The fixture.** One way in, `tests/test-helpers/cdf-fixture.sh`: `SOIF_TEST_CDF_FIXTURE`, a clone of CDF at
+  `4180f22be0a8b4410aeaa4e65800aed8e2299805` (v4.4.1, PR #27's merge, confirmed with `gh api`), which a new
+  "Fetch the pinned Guardrails fixture" step fetches with full history on every unit-shard and full leg and
+  refuses unless `git rev-parse HEAD` is the pin (`# BL-322-S5-FIXTURE-HEAD`). The step has its own 3-minute
+  timeout, and each of its three tries gives up on a transfer under 1000 bytes/s for 30s
+  (`# BL-322-S5-FIXTURE-FETCH`, review round 1's R-S5-6). **If GitHub or the CDF repository cannot be reached,
+  that step fails, and with it every unit-shard and full leg**: the fixture is a hard dependency of the lane, on
+  purpose. `cdf_fixture_copy` gives each
+  suite a private clone (`git clone --no-local`, the commit checked out, its HEAD checked). Under `CI` a missing
+  fixture, one not at the pin, or a pin short of a suite's need FAILS the cases (`# BL-322-S5-FIXTURE-FAIL` in
+  each suite); locally a suite falls back to `~/.claude-dev-framework` when it is new enough and has the
+  history, else skips. `BL320_CDF_CLONE`, `BL318_CDF_CLONE` and upgrade-cdf-refresh's `CDF_REFRESH_SRC` are gone.
+  Measured with `CI=1`, an empty HOME and the runner's git config (`GIT_CONFIG_NOSYSTEM=1
+  GIT_CONFIG_GLOBAL=/dev/null`): bl320 124/0/0 with the fixture, 122/2/0 rc 1 without (122/0/2 rc 0 at
+  `c125f0f`); upgrade-cdf-refresh 6/0/0, and 2/4/0 rc 1 (2/0/4 rc 0); bl318-g4g6 50/0/1 (D1 reads a local
+  bundle), and 47/3/1 rc 1 (47/0/3 rc 0). Every real-clone case runs on any leg.
+- **Tests.** `tests/test-bl322-s5-hardening.sh` (unit lane, `mcp-mutants`): 12 cases (H1 the three suites under
+  that probe; X1-X7 the helper against a local upstream; W1-W2 the workflow step and the pin; C1
+  upgrade-cdf-refresh under CI with no fixture; C2 bl320 and g4g6, static) and 13 mutants, each killed by a named
+  case, M12 and M13 only statically. `tests/test-bl322-s2-project-rules.sh` (now 19 cases and 136 mutants): D1 (review round 2) runs
+  the reading at `c125f0f` and this one over 1040 generated plain-import lines amid `_`/`*` prose and paths and
+  round 2's 13 lines verbatim, and fails on any real import `c125f0f` carried that this drops or cuts (0 of 653
+  here; 112 at `0c0c519`, 104 generated and 8 of the 13; 8 with the cut fixed but no whole path kept, M122); D2 (review round 3) the same over 700 lines whose `@` opens
+  emphasis or link text (0 of 133 lost; 10 at `791ed0d`); U8, 85
+  one-line shapes whose certain lines are what the replica imports but one (an image's alt text, which names no
+  file), U2's unsure and upgraded rows, A1's
+  unsure import beside two certain ones and A7's lone unsure import (every sentence true), and M55-M115, one per
+  line of the reading that decides something (review round 1's R-S5-3: its linkclose bracket line and
+  `lf = !isws(x)` had survived; round 2's R-S5-8 found three more, now M117-M119); `tests/test-bl322-zsh-legs.sh` Z5, the spellings in Z2 and Z3, M7-M10;
+  `tests/test-bl322-s4-wording.sh` F1's six new forms, MF11-MF13; `tests/test-bl318-g4g6.sh` P4u.
+
+**S5 review round 1 (BLOCK; all addressed).** R-S5-1: `CI=true bash tests/test-bl322-s5-hardening.sh` gave 24/1
+(X6 failed): `copy_rc` put `CI=""` before a call to a function and then ran `unset CI`, which removes that
+binding and so exposes the exported `CI=true` every runner has; M8 and M9 counted as killed only by it. `copy_rc`
+now sets or unsets CI inside its own subshell (`# BL-322-S5-COPY-CI`), and every touched suite was run both with
+`CI=true` and without. R-S5-2: carry on doubt, named (above). R-S5-3: every decision line of the reading has a
+mutant killed by a named case. R-S5-4: Z5 reads any whole word (above). R-S5-5: `:(optional)` (above). R-S5-6:
+the step's timeout and the stalled-fetch limit (above).
+
+**S5 review round 2 (BLOCK; all addressed).** R-S5-7, a regression against `c125f0f` and `6d69a80` brought in by
+round 1's `tokcut`: a plain `@docs/coding_standards.md` after an unclosed `_build/` on the same line was cut at
+its underscore (`docs/coding`, then "no such file", and the rules stopped loading), because the earlier `_` could
+open emphasis that path never closes. A run in a path now ends it only when the flanking rules let it close, and
+a cut plain path is carried whole as well; D1 holds every real plain import `c125f0f` carried. R-S5-8: the run
+lengths in `prior` and `tokcut` and the image test in `linkprior` had no mutant (`# BL-322-CARRY-PRIOR-RUN`,
+`# BL-322-CARRY-TOKCUT-RUN`, `# BL-322-CARRY-LINKPRIOR-IMAGE`; M117-M119). R-S5-9: step 8 named the unsure files in
+words the section never uses; it now quotes the section's "Its Markdown does not show for certain", and a skip row
+from an unsure token is marked (`# BL-322-CARRY-SKIP-UNSURE`) and listed under "These @ mentions in it were NOT
+carried, and its Markdown does not show for certain that they are imports at all" (`# BL-322-CARRY-SKIP-UNSURE-SAY`)
+instead of being called an import; that list says no "either", since it may be the only one. The run's and the
+section's unsure sentences now say the Markdown does not show for certain *that* Claude Code imports a file, not
+that adoption "could not tell", which stays true of a whole path carried beside a cut one. Every sentence the run,
+the section and step 8 print was read in four adoptions: no imports; certain only (`**Always read @RULES.md**`,
+whose whole `RULES.md**` is listed as a mention not carried); certain and unsure; and only an unsure mention that
+names no file. The archive says nothing about imports.
+R-S5-8's three markers each have a U8 line that tells them apart: `_see @K46__x.md`, `__init__ @K43_.md` and
+`![see @N4.md](u)` (each read whole and certain; the mutant cuts it, unsure).
+
+**S5 review round 3 (minor concerns; all addressed).** R-S5-10, a regression against `c125f0f`, improbable: link
+text whose path holds brackets lost its import. `- [@app/[locale]/README.md](app/[locale]/README.md)`, the file
+present: `c125f0f` carried it; `791ed0d` cut it at its first `]` (`app/[locale`, "no such file"), because
+`linkclose` stops at a `[` and the guess took the first `]`. The guess now ends the text at the first `]` no `[`
+in the path opened (`linkguess`, `# BL-322-CARRY-LINKGUESS`, `-DEPTH`), so it is carried, unsure. The review's
+prototype (cut at the first `](`) left `[@app/[locale]/x.md and more](u)` lost, and once the depth scan was in it
+decided nothing (its mutant survived), so it is not kept. D2 (above) holds every real emphasis or link-text import
+`c125f0f` carried; U8's L11 and L12; M128, M136. R-S5-11: with only an unsure mention not carried, a mutant that
+opened the list of imports not carried with no rows survived; A7 now has such a mention and wants no such list
+(M129), and the mentions loop has a marker (`# BL-322-CARRY-SKIP-UNSURE-SAY-ROW`) and a mutant A1 kills (M130).
+R-S5-12: the S2 suite goes from 74s to 174s locally with S5, so `adopt-b` (523s on PR #506) projected about 660s
+of 720s; `bl322-s1-audit-loop` and `f015` (33.8s and 32.4s on that run) moved to `lint-scan` (481s), which projects
+`adopt-b` to about 595s and `lint-scan` to about 547s, projections to re-measure on this PR's run. R-S5-13: the
+merge sentence said "Apart from your CLAUDE.md's imports" when only unsure lines were carried; it now says "Apart
+from the @ lines carried over from your CLAUDE.md (below)" (M134). And the whole of a cut path is read with its
+own flag (`whole`): the carry drops it when its file is missing from the project (a `~/`, absolute or outside
+whole path is still named among the mentions not carried; review round 4, R-S5-14) (`**Always read @RULES.md**` no longer lists
+`@RULES.md**`) and otherwise treats it as unsure (`# BL-322-CARRY-WHOLE-MISSING`, `-WHOLE-UNSURE`; M131, M132,
+M133, M135). Verified by the review on `791ed0d`, not re-run on these changes: mawk 1.3.4 and bash 5.2.21
+(ubuntu:24.04, arm64) read the same tokens as macOS for `c125f0f` and `791ed0d` over about 8.5k files.
+
+**S5 residuals (not fixed):**
+- **The import reading still carries, as certain, an `@` Claude Code would not import** in three kinds of shape,
+  each needing an existing in-repo file of that name: a fence or an HTML block inside a list item or a block
+  quote; a code span that runs across lines; `<!--> @x.md -->` and `<!---> @x.md -->`. Also, rarely, emphasis that
+  marked does not close although the flanking rules do (an escaped `\*` before a longer closing run: 4 of 9000
+  fuzzed lines).
+- **Unsure imports are carried, so R-S2-12's five shapes load their file again** (`*@x.md *`, `*@x.md costs 2 *
+  3`, `_@x.md and snake_case`, `[@x.md](url`, `[@x.md](my url)`), named apart as unsure. So does any `@` opening
+  emphasis or link text the line does not settle; on fuzz built of unclosed emphasis that is most lines. The
+  user removes what was not meant; the assessment prompt asks about each.
+- **What it still misses**: an `@` inside a code span in a tight list item (Claude Code scans the item raw too), a
+  code span across lines, whitespace other than the space, the tab and the no-break space, a line that opens with
+  an inline tag (read as an HTML block), and an `@` after a run that closes emphasis opened on an earlier line.
+  For an unsure import the path's end is a guess (`*@x.md**y*`: `x.md` carried, Claude Code reads `x.md**y`).
+- **Z5 reads text, not execution**: a zsh run spelled at run time (`"${s}sh"`) is not seen, and any suite that
+  only names zsh must be listed in `ZSH_NAMES_ONLY`.
+- **Review round 4** (delta `791ed0d..89bb262`): two mutants survive, both improbable — `# BL-322-CARRY-ONCE`
+  reduced to `else if (!u) seen[t] = 0` (changes naming only), and `# BL-322-CARRY-LINKGUESS-DEPTH`'s `dp--` made
+  `dp = 0` (cuts `[[...slug]]`, which marked never reads as a link, so no real import is lost). `adopt-b`'s
+  projected 595s is 83% of its 720s cap, past the file's 80% watch band; re-measure on this PR's run.
+- **R2-2** (S4 review round 2): the gate's reading of the commit's words does not take a newline or a glued
+  `;`/`&&` as a command separator. The commit-msg hook still checks the message.
+- **A `$VAR` in a `-F` path is still not expanded** (S4's residual): expanding it would take an `eval` of the
+  agent's command, which the gate must never do.
+- **Two more suites read `~/.claude-dev-framework` and skip on CI**: `tests/test-bl296-adopt-guardrails.sh` G6 (the
+  Guardrails' own installer; `commit-hooks`) and `tests/test-bl318-g5-guardrails-refresh.sh` E1 (`CDF_REFRESH_SRC`;
+  `mcp`). Neither leg ever had the leftover clone; both could read the fixture.
+- **Other unit suites can still reach the real HOME** (review round 2; its own entry is `## BL-344:`):
+  `tests/test-bl312-tldr-mode.sh` U1 runs `upgrade-project.sh`, whose `# BL-320-UP-PULL`
+  runs `git pull --ff-only` in `${CDF_HOME:-$HOME/.claude-dev-framework}` (`# BL-320-UP-CLONE`); run with the real
+  HOME during the review, it pulled the real clone. Of the 249 suites in the `tests.yml` unit list, 33 name
+  `upgrade-project.sh` on a line that is not a comment and 24 of those set neither `HOME` nor `CDF_HOME` (a grep,
+  2026-10-08: naming is not running); none is audited. S5 isolated bl141, bl145 and pr-review-gate only.
+- **A plain path cut at a closer is also read whole.** When the whole path names a file, that file is carried as
+  unsure and loads though Claude Code would not have imported it if the cut was right. When it names no file it
+  is dropped (round 3), but a whole `~/` or absolute path, or one outside the project, is still named among the @
+  mentions not carried (its reason is not "missing").
+- **Not run here**: mawk (the runner's `awk`) on round 3's reading (the review ran it on round 2's), bash 5.2 and
+  GNU grep on the zsh guard and Z5,
+  and the step on a runner. Its lines ran here against a local copy of the pin (the URL replaced), and its git
+  commands by hand against GitHub (HEAD `4180f22`, 166 commits, not shallow). It is a network fetch on each of
+  the ten legs and the four full legs: an unreachable GitHub turns every one of them red.
+
+## BL-323: init.sh's own pre-push review check refuses init.sh's first push, so the new remote is left empty
+
+**Logged:** 2026-10-08 (issue #421, filed by an outside contributor 2026-09-17; route decided by Karl 2026-10-08)
+**Category:** Bug (correctness)
+**Severity:** High — every host's scaffold push fails, and the remedy init prints fails the same way
+**Status:** Open
+
+**What.** `install_precommit_hook` writes `.git/hooks/pre-push` (`# BL-243-HOOK-TEMPLATE`) before the remote
+step pushes the scaffold. A new project has no review record, so `scripts/check-pr-review.sh` refuses the push
+("no review has ever been recorded for this project") and the bare remote keeps zero refs. The push line runs
+`host_push_initial main 2>/dev/null || host_push_initial master`, so the refusal's text is discarded and the
+operator sees the `master` fallback fail for an unrelated reason (no such branch). The same push sits in
+init.sh's bring-your-own-host branch (both attempts silenced) and in `scripts/check-gate.sh --repair`, the
+remedy init prints, which runs after the hook exists and is refused the same way. Measured by the contributor
+at `579b0b0`: `tests/host-drivers/run-all.sh` 11 suites, 3 failed — the `e2e-init*` trio at T1, T2 and T5 —
+and the push lands with the hook moved aside.
+
+**Decision (Karl, 2026-10-08).** The scaffold push uses the attested route `check-pr-review.sh` already has
+(`SOLO_PR_REVIEW_ATTESTED=1` with a fixed `SOLO_PR_REVIEW_ATTESTED_REASON` naming the initial scaffold push,
+which holds no operator code to review), in all three call sites, so each push leaves a dated record. The first
+attempt's error is no longer discarded. Pushing before the hook is installed was considered and rejected: it
+leaves no record and cannot help `check-gate.sh --repair`.
+
+## BL-324: record-claude-commit.sh never records a commit, because Claude Code's Bash result carries no exit code
+
+**Logged:** 2026-10-08 (issue #483, filed 2026-09-30; found independently while building `## BL-322:` S1)
+**Category:** Bug (correctness)
+**Severity:** Medium — every agent commit not covered by a Guardrails approval is recorded as a user-terminal commit
+**Status:** Open
+
+**What.** `scripts/hooks/record-claude-commit.sh` (`## BL-030:`'s recorder) reads `.tool_response.exit_code // 1`
+and exits before writing when the value is not 0. Claude Code's PostToolUse result for Bash has no `exit_code`
+(its keys are `stdout`, `stderr`, `interrupted`, `isImage`, `noOutputExpected`, plus `gitOperation` on a commit),
+so `.claude/claude-commits.jsonl` is never written and `scripts/detect-out-of-band-commits.sh` labels every such
+agent commit `out_of_band_commit`. `tests/test-record-claude-commit.sh` feeds `{"tool_response":{"exit_code":0}}`,
+a shape the host never sends. `## BL-322:` records the same finding from run 3's transcript.
+
+**Direction (from the issue).** PostToolUse fires only after the tool succeeded (a failed call fires
+PostToolUseFailure), so the event itself is the success signal: record on PostToolUse for a `git commit` that was
+not interrupted, keep honouring an explicit non-zero `exit_code` from any host that sends one, and test with the
+real envelope. Still to decide when this is built: whether `.claude/claude-commits.jsonl` is tracked or ignored
+(the Guardrails keep their own `.jsonl` audit logs tracked, and their stop check treats `.jsonl` as data from 4.4.2).
+
+## BL-325: the pending-approval hold stops `git commit` and `gh pr create` only, so other commands still create commits while a decision is pending
+
+**Logged:** 2026-10-08 (issue #470, filed 2026-09-30; decided by Karl 2026-10-08)
+**Category:** Bug (enforcement)
+**Severity:** Medium
+**Status:** Open
+
+**What.** `pa_check` in `scripts/pre-commit-gate.sh` holds a Bash call while `.claude/pending-approval.json`
+exists only when `_is_git_commit` or `_is_gh_pr_create` matches. `git merge`, a merging `git pull`,
+`git cherry-pick`, `git revert`, `git rebase --continue`, `git am` and `git -C <dir> commit` pass; the
+contributor's reproduction shows each. No git hook Solo emits reads the question file.
+
+**Decision (Karl, 2026-10-08).** Widen `pa_check` now to every command that creates a commit: `merge`, `pull`
+(unless `--ff-only`), `cherry-pick`, `revert`, `rebase`, `am`, and `commit` behind `-C`/`-c`.
+
+**Not a git-hook fix.** No single git hook sees every one of these before the commit is written (measured on git
+2.54.0 by the review of this entry): before writing, `cherry-pick`, `revert` and `rebase` fire neither `pre-commit`
+nor `commit-msg` (only `prepare-commit-msg`; `rebase` also fires `pre-rebase` before it starts), `am` fires only
+`applypatch-msg` and `pre-applypatch`, and `commit-tree` plus `update-ref` fires none. `## BL-321:`
+(deferred) is a `pre-commit` tree comparison that does not read `.claude/pending-approval.json`, so as scoped it
+covers none of these commands.
+
+## BL-326: the pull-request check does not recognise `gh pr new` or a pull request opened through the REST API
+
+**Logged:** 2026-10-08 (issues #472 and #485, filed 2026-09-30)
+**Category:** Bug (enforcement)
+**Severity:** Medium
+**Status:** Open
+
+**What.** `_is_gh_pr_create` in `scripts/pre-commit-gate.sh` matches the literal `gh pr create`. gh documents
+`gh pr new` as its alias, and `gh api repos/<owner>/<repo>/pulls` with `-X POST` (or with `-f`/`-F` fields, which
+make gh send a POST) also opens a pull request. Neither is classified, so the Build Loop step count, the UAT check
+and the pending-approval hold (`pa_check` uses the same classifier) all let them through.
+
+**Direction.** Accept `(create|new)` and a POST to the pulls endpoint through `gh api`. Not covered by this direction,
+and not decided: a project script that opens the pull request (`bash scripts/<name>.sh`), which a check that sees
+only the outer command cannot see (#485 discusses options).
+
+## BL-327: the pull-request check allows a pull request for a Build Loop with 0 of 5 steps recorded
+
+**Logged:** 2026-10-08 (issue #473, filed 2026-09-30)
+**Category:** Bug (enforcement)
+**Severity:** Medium
+**Status:** Open
+
+**What.** The pull-request block in `scripts/pre-commit-gate.sh` (after the comment "For PR creation: additional
+checks") refuses only when `BUILD_STEPS_DONE` is greater than 0 and less than 5, so a feature opened with
+`--start-feature` and nothing recorded passes. The commit side (`require_build_loop_state_for_commit`) refuses a
+`feat:` commit at 0 of 5, so the two checks disagree on the same state. Dropping the lower bound makes them agree;
+the feature-present test already exempts the no-loop state.
+
+## BL-328: a UAT session whose steps are recorded without `--start-uat` is invisible to the pull-request and commit checks
+
+**Logged:** 2026-10-08 (issue #474, filed 2026-09-30)
+**Category:** Bug (enforcement)
+**Severity:** Medium
+**Status:** Open
+
+**What.** `complete_step` in `scripts/process-checklist.sh` accepts `uat_session` steps when no session was
+started and never sets `uat_session.started_at`; only `start_uat` writes it. The pull-request block in
+`scripts/pre-commit-gate.sh` and the UAT block in `check_commit_ready` both key on `started_at` alone, so a
+session reported as "(3/9)" lets a pull request open and a source commit through.
+
+**Direction.** Either `complete_step` refuses a `uat_session` step while no session is started, or both checks
+treat recorded steps without `gate_passed` as a session in progress.
+
+## BL-329: the Build Loop check matches the `feat` type case-sensitively, so `FEAT:` and `Feat:` commits skip it
+
+**Logged:** 2026-10-08 (issue #476, filed 2026-09-30)
+**Category:** Bug (enforcement)
+**Severity:** Medium
+**Status:** Open
+
+**What.** `check_commit_message` in `scripts/process-checklist.sh` tests the subject with
+`^feat(\([^\)]*\))?!?:[[:space:]]`, case-sensitively, and exits 0 for anything else; the second copy of the same
+pattern ("Same feat regex as check_commit_message") does the same. Conventional Commits 1.0.0 item 15 says the
+type must not be treated as case-sensitive. A project whose house style writes `FEAT:` gets no Build Loop
+enforcement and no message saying so.
+
+## BL-330: `process-checklist.sh --verify-init` exits 0 when Phase 2 initialisation is incomplete
+
+**Logged:** 2026-10-08 (issue #466, filed 2026-09-30)
+**Category:** Bug (correctness)
+**Severity:** Medium
+**Status:** Open
+
+**What.** `verify_init` prints `[FAIL]` lines and "Phase 2 initialization incomplete" but has no non-zero exit
+path, so `--verify-init && <next step>` proceeds either way. `--start-phase1`, `--start-phase3` and
+`--start-phase4` exit 1 when they refuse. Expected: exit 1 whenever `phase2_init.verified` is not true at the end,
+output unchanged. `## BL-155:`'s check in `--check-commit-ready` catches the state later, at the first source
+commit.
+
+**Also in #466, not decided.** Marking every `phase2_init` step by hand sets `verified`, because `complete_step` has
+no evidence arm for those steps.
+
+## BL-331: four evidence steps complete on a file name alone — `handoff_tested`, `integration_testing`, `accessibility_audit`, `performance_audit`
+
+**Logged:** 2026-10-08 (issues #467 and #471, filed 2026-09-30)
+**Category:** Bug (enforcement)
+**Severity:** Medium
+**Status:** Open
+
+**What.** In `complete_step` (`scripts/process-checklist.sh`), `phase4_release:handoff_tested` accepts anything
+matching `docs/test-results/*handoff*`, including an empty file from `touch`.
+`phase3_validation:integration_testing` accepts `ls tests/`, which every project reaching Phase 3 has;
+`accessibility_audit` and `performance_audit` accept any `*accessibility*`, `*performance*` or `*lighthouse*` file,
+so one empty `*lighthouse*` file completes both. The Phase 3 → Phase 4 gate does not re-check these three. Their
+neighbours `rollback_tested` (`## BL-105:`) and `production_build` (`## BL-117:`) already require a non-empty record
+with a date and an outcome (a recorded failure counts as an outcome there).
+
+**Direction.** The same bar as BL-105 and BL-117 for all four, and a result file rather than the `tests/` folder
+for `integration_testing`. Whether a recorded failure should still complete an audit step is not decided.
+
+**Also in #471's comment, not decided.** The Phase 3 → Phase 4 gate's `docs/test-results/` arm passes on a
+zero-byte file.
+
+## BL-332: `--start-feature`'s health-check counter fails open on a value that is not a plain integer
+
+**Logged:** 2026-10-08 (issue #468, filed 2026-09-30)
+**Category:** Bug (enforcement)
+**Severity:** Low — the framework's own writers store integers; reaching it needs a hand edit or a damaged file
+**Status:** Open
+
+**What.** `start_feature` reads `features_since_last_health_check` with `jq '… // 0' … || echo "0"` and tests
+`[ "$health_count" -ge 4 ] 2>/dev/null`. A string `"5"` or `4.0` makes the test error, the error is discarded, and
+the Build Loop opens; an unparseable file reads as 0. `scripts/session-test-gate-check.sh` reads the counter the
+same way for its reminder. Expected: refuse, with a message, when the value is not a non-negative integer or the
+file cannot be read.
+
+## BL-333: `upgrade-project.sh --sync-framework` does not refresh `templates/tool-matrix/`, so an existing project keeps its install-time version floors
+
+**Logged:** 2026-10-08 (issue #469, filed 2026-09-30; also a residual on `## BL-235:`)
+**Category:** Bug (correctness)
+**Severity:** Medium
+**Status:** Open
+
+**What.** init.sh copies the tool matrix into every project, and `scripts/check-versions.sh` reads the project's
+copy first. `--sync-framework` refreshes scripts, hooks and the verbatim reference documents but nothing under
+`templates/tool-matrix/`, so a floor raised upstream — for example gitleaks 8.18.0 → 8.19.0, enforced, in
+`7578fb9` — never reaches a project installed before it.
+
+**Direction.** Add the matrix to the sync's shipped set as a verbatim copy with the same drift report the reference
+documents get.
+
+## BL-334: the Phase 1 → Phase 2 protection backstop and `--verify-init` check `main`, not the project's integration branch
+
+**Logged:** 2026-10-08 (issue #486, filed 2026-09-30; decided by Karl 2026-10-08)
+**Category:** Bug (correctness)
+**Severity:** Medium — a protected `main` passes the backstop while an unprotected integration branch goes unchecked
+**Status:** Open
+
+**What.** `verify_init` in `scripts/process-checklist.sh` and the Phase 1 → Phase 2 backstop in
+`scripts/check-phase-gate.sh` call `host_verify_protection "main"`, and the push check (`# BL-084-PUSH-VERIFY`)
+accepts a push only when `main` or `master` exists on the remote. `scripts/pre-commit-gate.sh` already reads
+`.integration_branch` from `.claude/manifest.json` for `## BL-072:`'s branch exemption. `## BL-286:` covers the
+TDD half of the same assumption.
+
+**Decision (Karl, 2026-10-08).** Read `.integration_branch // "main"` in all three places, keeping today's behaviour
+when the key is absent. At the push check that means keeping its `master` fallback (today it loops over `main` and
+`master`): nothing writes `.integration_branch`, and init.sh falls back to pushing `master`, so `// "main"` alone
+there would drop a case that passes today.
+
+## BL-335: `mcp_requirements.additional_required` is erased at every fresh session, though the MCP notice tells the Orchestrator to set it there
+
+**Logged:** 2026-10-08 (issue #484, filed 2026-09-30; decided by Karl 2026-10-08)
+**Category:** Bug (correctness)
+**Severity:** Medium
+**Status:** Open
+
+**What.** `scripts/session-test-gate-check.sh`'s MCP notice tells the Orchestrator to add a server under
+`mcp_requirements.additional_required` in `.claude/tool-usage.json`, and `scripts/session-mcp-gate.sh` enforces
+that list (`# BL-233-ADDITIONAL-OUTCOME`). The startup path rewrites the file from a heredoc with
+`"additional_required": []` (so does the merge path's jq-failure fallback); only resume, compact and clear keep it.
+An entry added as advised lasts until the next fresh session, then disappears without a message.
+
+**Decision (Karl, 2026-10-08).** Carry `additional_required` across the startup rewrite, as the merge path already
+does. The startup path's reason for not carrying outcome flags (a committed ledger must not pre-satisfy the check in
+a clone's first session) applies to satisfaction, not to the list of requirements.
+
+## BL-336: the bypass detector does not scan text the agent writes with Edit or MultiEdit
+
+**Logged:** 2026-10-08 (issue #479, filed 2026-09-30; decided by Karl 2026-10-08)
+**Category:** Bug (enforcement)
+**Severity:** Medium
+**Status:** Open — to land with or after `## BL-277:` (PR #454)
+
+**What.** `scripts/hooks/bypass-detector.sh` reads the text to scan from
+`.tool_response.stdout // .stderr // .output // .content`. A Write result carries `.content`; an Edit result
+carries `filePath`, `oldString`, `newString` and others, none of which is read. The same bypass proposal raises the
+sentinel when written with Write and is silent when written with Edit, which routes round Karl's ruling on #454
+that files the agent writes are still scanned.
+
+**Decision (Karl, 2026-10-08).** Scan `tool_input.new_string` for Edit and each `tool_input.edits[].new_string` for
+MultiEdit, as authored text. Not `originalFile`, which would re-scan text the agent did not write. PR #454 narrows
+the hook's registration to `Bash|Write`; if it lands as is, the registration must also gain `Edit|MultiEdit`, or this
+decision does nothing.
+
+## BL-337: adoption never stamps the Currency System's block in `.claude/manifest.json`
+
+**Logged:** 2026-10-08 (issue #464, filed 2026-09-29; decided by Karl 2026-10-08)
+**Category:** Gap (brownfield parity)
+**Severity:** Low — the Currency System has nothing to check in an adopted project
+**Status:** Open
+
+**What.** `soif_currency_stamp` (`scripts/lib/currency-manifest.sh`) has one caller, init.sh
+(`# BL-109-CURRENCY`); adoption never calls it, so an adopted project has `soloFrameworkCommit` but no `currency`
+block. The brownfield design's init-parity table lists it as row 29, unowned. It is not a one-line call: the stamp
+has one call site on purpose ("a birth stamp that acquires a second caller has become a backfill"), and the A1 and
+A2 render bases come from a file only init.sh's render step produces.
+
+**Decision (Karl, 2026-10-08).** Adoption owns the stamp, with the A1 and A2 render-base rows recorded as unknown,
+not empty.
+
+## BL-338: the agent is never told the date — Solo's half: `resume.sh` prints today's date and the days left beside each due date
+
+**Logged:** 2026-10-08 (issue #423, filed 2026-09-17; split by Karl 2026-10-08)
+**Category:** Gap
+**Severity:** Low — a resumed or compacted session can write a stale date into briefs and messages
+**Status:** Open
+
+**What.** Claude Code states the date once at session start, so a session resumed on a later day or compacted
+carries a stale date. `scripts/resume.sh` prints owed write-ups as `<id> — due <due_by>` and never prints today's
+date; `scripts/delta.sh --status` already computes the state and days for the same rows. The contributor's project
+wrote "tomorrow, 18 September" on Thursday 17 September into a brief and a message to the gate approver.
+
+**Solo's half.** `resume.sh` prints today's date and, beside each due date, the days remaining or overdue, computed
+by the script, read through one clock function with a test override (as `soif_freshness_now` does). **The hook
+half** (the time on the Guardrails' per-prompt line and in their `session-start.sh`) belongs to the Development
+Guardrails and was handed to that project on 2026-10-08 as their issue #30
+(https://github.com/kraulerson/claude-dev-framework/issues/30); it shipped in Guardrails 4.4.5 (their PR #32,
+merge `da3b478`), which starts every per-prompt reminder with a `Now:` line and prints the same line in its
+session-start output, after the directive.
+Solo's docs can say Guardrails 4.4.5 and later show the date.
+
+## BL-339: a single-maintainer organisation cannot pass the org-mode protection check, which requires one approving review
+
+**Logged:** 2026-10-08 (issue #487, filed 2026-09-30, with a narrowed proposal in its comments; decided by Karl 2026-10-08)
+**Category:** Gap (enforcement)
+**Severity:** Medium
+**Status:** Open — after `## BL-274:` (PR #452) merges
+
+**What.** `host_verify_protection` in `scripts/host-drivers/github.sh` fails org mode when
+`required_approving_review_count` is 0, and both the Phase 1 → Phase 2 backstop and `--verify-init` call it. GitHub
+does not count an author's approval of their own pull request, so a one-person organisation (the BL-274 case) must
+set the count to 0. The backstop already accepts recorded platform limits (`github_free_tier`,
+`gitlab_free_tier_approvals`) but has no reason for this.
+
+**Decision (Karl, 2026-10-08).** Accept a count of 0 only while a recorded BL-274 single-authority attestation
+stands, as a new `branch_protection.reason` tied to it so the two cannot disagree; without the attestation the
+check fails as today, and the other protection checks are unchanged.
+
+**Not decided.** Reading repository rulesets: the issue notes, untested, that `host_verify_protection` reads classic
+branch protection only, so a repository protected by rulesets alone would read as unprotected.
+
+## BL-340: with GitHub Issues named as the bug tracker, the Phase 2 → Phase 3 bug gate passes on an empty BUGS.md while GitHub is not counted
+
+**Logged:** 2026-10-08 (issue #488, filed 2026-09-30; decided by Karl 2026-10-08)
+**Category:** Bug (enforcement)
+**Severity:** Medium
+**Status:** Open
+
+**What.** `## BL-280:` made `scripts/test-gate.sh` say when GitHub's issues are not counted (no `SEV-1`/`SEV-2`/
+`SEV-3` label exists). When BUGS.md exists, the counts come from it alone, so a header-only BUGS.md gives a clean
+gate with a printed note, while the tracker the intake declared (`bug_tracking_tool`) holds open bugs nobody
+measured.
+
+**Decision (Karl, 2026-10-08).** Refuse: when the declared tracker is GitHub Issues and its severity labels are
+absent, the bug count is not measured, and not measured is not zero (BL-280's own rule). This needs
+`bug_tracking_tool` read by the gate, which nothing reads today.
+
+## BL-341: bind the review record to a reviewer distinct from the author
+
+**Logged:** 2026-10-08 (issue #475, filed 2026-09-30)
+**Category:** Feature (enforcement)
+**Severity:** Low
+**Status:** Won't Fix (2026-10-08, Karl decision). The reviewer's name in the record is written by the same agent that authored the change, so requiring it to differ from `by` adds a step without adding proof. Reopen if a reviewer identity the author cannot write becomes available.
+
+**What was asked.** Ship `.claude/agents/pr-reviewer.md` to projects, make `record-pr-review.sh --reviewer`
+mandatory, and have `scripts/check-pr-review.sh` refuse when `reviewer` is empty or equals `by`.
+
+The first part of the ask, shipping `.claude/agents/pr-reviewer.md`, was not decided and is `## BL-345:`.
+
+## BL-342: a severable module that indexes the framework's own documentation for agents working in a project
+
+**Logged:** 2026-10-08 (issue #489, filed 2026-09-30)
+**Category:** Feature
+**Severity:** Low
+**Status:** Won't Fix (2026-10-08, Karl decision). Agents can already search the clones, and the contributor's project has added a rule telling agents to read the clones first (the issue notes a rule is easy to miss); Karl judged that enough against the upkeep a module adds.
+
+**What was asked.** A module under `docs/module-contract.md`, run from the framework clone and never shipped, that
+chunks the tracked Markdown of the Solo and Guardrails clones by heading so an agent inside a project can find
+contributor documents (`module-contract.md`, `scout.md`, the backlog) that deliberately stay in the clone. The index
+itself is bash 3.2 and `jq` only; an optional sink that writes it into a vector store needs Python (FastEmbed), and
+the issue offered to ship the index without it.
+
+## BL-343: `tests/test-bl276-stdin-hang.sh` leaves its mutant copies behind when the checkout path contains a space
+
+**Logged:** 2026-10-08 (found building `## BL-322:` S5)
+**Category:** Bug (test hygiene)
+**Severity:** Low — untracked `tests/.bl276-mutant-*.sh` files accumulate in a checkout whose path has a space
+**Status:** Open
+
+**What.** The suite records each mutant's path in a space-separated string (`MUTANTS="$MUTANTS $dst"`) and its
+cleanup runs `for m in $MUTANTS; do rm -f "$m"; done`. Word-splitting cuts a path such as
+`…/Claude Projects/…` in two, so `rm -f` removes nothing and the copies stay. Run from Karl's checkout it left
+`tests/.bl276-mutant-a5.<pid>.sh` and `tests/.bl276-mutant-a6.<pid>.sh` files in three worktrees (10 files, counted
+2026-10-09). Fix: keep the paths in
+a newline-separated list or an indexed array and quote the expansion.
+
+## BL-344: unit suites that run `upgrade-project.sh` with the real HOME update the contributor's own Guardrails clone
+
+**Logged:** 2026-10-08 (found by the `## BL-322:` S5 review, round 2)
+**Category:** Bug (test hermeticity)
+**Severity:** Medium — running the unit lane changes the contributor's `~/.claude-dev-framework`, and a later suite or session runs against whatever was pulled
+**Status:** Open
+
+**What.** `tests/test-bl312-tldr-mode.sh` case U1 runs `scripts/upgrade-project.sh`, whose Guardrails pull
+(`# BL-320-UP-PULL`) ran `pull --ff-only` on the real `$HOME/.claude-dev-framework`: during the review, Karl's
+clone moved from `4180f22` to `da3b478` (reflog `2026-10-08 13:41:18 pull --ff-only --quiet: Fast-forward`).
+Of the 249 suites in the unit list, 33 name `upgrade-project.sh` on a non-comment line and 24 of those set neither
+`HOME` nor `CDF_HOME` (a grep, 2026-10-08; naming a script is not proof a suite runs it). BL-322 S5 isolated only `tests/test-bl141-commitmsg-repair.sh`,
+`tests/test-bl145-hook-symlink-hookspath.sh` and `tests/test-pr-review-gate.sh`.
+
+**Direction.** Audit by execution, not grep (the lesson of `## BL-181:`): run each suite with `HOME` pointing at a
+temp folder holding a stand-in clone, and record which ones reach the network or write under it; give each a temp
+HOME (or the pinned fixture from BL-322 S5); then a check that fails a suite which touches the real HOME.
+
+## BL-345: generated projects are told to dispatch a `pr-reviewer` agent that init.sh never ships
+
+**Logged:** 2026-10-09 (the undecided first part of issue #475; see `## BL-341:`)
+**Category:** Gap
+**Severity:** Low
+**Status:** Parked (2026-10-09) — not decided by Karl; `## BL-341:` decided only the reviewer-identity check
+
+**What.** When a push has no recorded review, `scripts/check-pr-review.sh` tells the user "Ask your agent to
+dispatch the pr-reviewer". The agent definition lives only in the framework clone's `.claude/agents/`; init.sh does
+not ship it (it names `pr-reviewer` nowhere), so a generated project is pointed at an agent it does not have. Issue
+#475 asked for it to be shipped.
+
+**Open question for Karl.** Ship `.claude/agents/pr-reviewer.md` into generated and adopted projects, or change the
+message to name a review the project can actually run.
+
+## BL-346: the live-remote lint did not see init.sh run through `"$BASH"`, `$SHELL`, `sh` or a flagged interpreter, so such a suite could drop `--no-remote-creation` and stay green
+
+**Logged:** 2026-10-09 (found reviewing contributor PR #478)
+**Category:** Lint precision / silent-success defect class (the `## BL-076:` hermeticity check)
+**Severity:** High — `no-live-remote-in-tests-lint` is a required check (confirmed in branch protection, 2026-10-09) and the check that stops a suite creating a real repo (the 2026-07-06 leak); a run it cannot see is not checked at all. No suite on main uses a missed spelling (the `--list` comparison below), so nothing on main was exposed.
+**Status:** Open — fixed on branch `fix/bl346-live-remote-lint-bash-var`, not merged
+
+**What.** `line_is_init_exec` in `scripts/lint-no-live-remote-in-tests.sh` counted an init token as executed in
+two shapes only: in command position (line start, after `( ; & |`, or behind an `env …` prefix), or right after the
+literal word `bash`. PR #478's `tests/test-bl308-gitleaks-generated-project.sh` runs
+
+    OUT="$( cd "$REPO_ROOT" && "$BASH" ./init.sh --non-interactive \ … --git-host github … --no-remote-creation 2>&1 )"
+
+`$BASH` is not the word `bash`, and `./init.sh` follows `"$BASH"` rather than a command separator, so the lint never
+saw a run. With `--no-remote-creation` deleted it still printed `OK: no test executes init.sh in a shape that can
+create a real remote.` and exited 0. Spelled `bash ./init.sh` or `env "$BASH" ./init.sh`, the same line gave
+`FAIL … live-remote-reachable`, rc 1.
+
+**Which spellings are seen** (a fixture pair per spelling, guard present and guard deleted, reading the `--list`
+row; 2026-10-09). "Before" is main; "after" is the branch tip, after review round 1. Residual numbers match the
+list under **Residuals**.
+
+| spelling in front of the flags | before | after |
+|---|---|---|
+| `bash ./init.sh`, `/bin/bash …`, `/usr/bin/env bash …`, `command bash …`, `exec bash …`, `env "$BASH" …`, `/usr/bin/env sh …`, `./init.sh`, `"$INIT"` | seen | seen |
+| `"$BASH"`, `"${BASH}"`, `$BASH`, `${BASH}` | not seen | seen |
+| `"$SHELL"`, `"${SHELL}"`, `$SHELL` | not seen | seen |
+| `sh …`, `/bin/sh …`, `command sh …`, `exec sh …` | not seen | seen |
+| `bash -e …`, `bash -eu …`, `"$BASH" -e -o pipefail …`, `bash -euo pipefail …`, `bash -O inherit_errexit …`, `bash -- …` | not seen | seen (round 1) |
+| `bash -n …`, `-en`, `-ne`, `-e -n`, `-xn`, `-D` (syntax checks) | not a run | not a run |
+| `if`, `exec`, `!` or `time` before `"$INIT"` or `./init.sh`; `CI=1 "$INIT" …` | not seen | not seen — R-346-1 |
+| `bash init.sh …`; `bash "$REPO_ROOT"/init.sh …` | not seen | not seen — R-346-2 |
+| `zsh …`, `dash …`, `ksh …` | not seen | not seen — R-346-3 |
+| `bash --norc …`, `bash +o pipefail …` | not seen | not seen — R-346-4 |
+| `bash -o noexec "$INIT" …` (reads, does not run) | not seen | seen as a run — R-346-4 |
+| a path that reaches the run as a function argument (`run_init`'s `"$initcmd"`); `local INIT=…/init.sh` | not seen | not seen — R-346-6 |
+
+**Fix, round 0 (`b1c3b53`).** Shape A takes an interpreter word, not only `bash`: a shell name, `bash` or `sh`
+(`# BL-346-INTERP-NAME`; its left boundary excludes `.`, so the `sh` that ends a filename, as in
+`cp ./init.sh "$T/init.sh"`, is not read as the interpreter), or the shell-path variable `$BASH` or `$SHELL`, bare,
+braced or quoted (`# BL-346-INTERP-VAR`).
+
+**Fix, round 1 (`4d12ec8`).** Option words may sit between the interpreter and init.sh (`# BL-346-INTERP-FLAGS`): a
+cluster of lowercase letters that holds no `n`, `-o` or `-O` (alone or ending a cluster) with the word after it, and
+`--`. The letters are spelled out, not a range, so no locale's collation can widen them. `-n` in any cluster or
+position, and `-D` (which implies `-n`), stay non-runs. Every optional brace in the lint is now `[{]?` / `[}]?`
+instead of `\{?` / `\}?` — in the init token, the shell-path variable and `MOCK_FILE_RE` — because a backslash
+before an ordinary character is unspecified in a POSIX ERE.
+
+**No new false positives.** `bash scripts/lint-no-live-remote-in-tests.sh --list` on the tree: stdout and stderr
+byte-identical to main at `b1c3b53` and again at `4d12ec8` — 115 rows (109 `hermetic-token`, 4 `mock-cli-on-path`,
+2 `allow:`), rc 0. No new rows, intended or not. A grep of `tests/` on main for `$BASH`, `$SHELL`, `sh`, `zsh`,
+`dash`, `ksh` or a flagged `bash` in front of an init token finds no run: its only hits are two `bash -n` syntax
+checks and the unrelated variables `$SHELL_SIG` and `$SHELL_FIN`.
+
+**Tests.** `tests/test-lint-no-live-remote.sh` grows from 14 cases to 80. Each case reads the `--list` row as well
+as the exit code, because a run the lint does not see also exits 0.
+- N15–N31: a pair per spelling (N15–N22 pin spellings main already saw). N32: PR #478's shape. N33: the `sh` of a
+  `.sh` filename is not an interpreter. N34: `"$BASH" -n` and `"$SHELL" -n` are not runs.
+- N35–N39 (round 1): the run written right behind `$(`, `'`, a backtick, `"` and a tab.
+- N40–N45 (round 1): the flagged spellings in the table. N46: the syntax checks in the table stay non-runs.
+- N47–N49 (round 1): a braced init variable after an interpreter, a braced init variable run directly, and a braced
+  `$MOCK_DIR` as a file's only mock signal.
+
+Red by design on each test commit: `6dc75ee` 32 passed / 20 failed (both halves of N23–N32); `a0a4c44` 63/12 and
+`af5c4ff` 68/12 (both halves of N40–N45). Green at `4d12ec8`: 80 passed, 0 failed.
+
+Mutation proofs at `4d12ec8`, each mutant applied to a copy of the lint and the suite run against it (the unmutated
+copy: 80/0). "Tree rows" is the mutant's `--list` row count over the real `tests/` (115 unmutated):
+
+| mutant | suite | tree rows | killed by |
+|---|---|---|---|
+| drop `sh` from the names | 76/4 | 115 | N30 N31 |
+| drop `bash` from the names | 46/34 | 45 | N1 N12 N13 N15 N17 N19 N20 N35–N41 N43–N45 N47 N48 |
+| drop `BASH` from the variables | 66/14 | 115 | N23–N27 N32 N42 |
+| drop `SHELL` from the variables | 76/4 | 115 | N28 N29 |
+| drop the variable's `[{]?` | 74/6 | 115 | N24 N26 N29 |
+| drop the variable's `[}]?` | 74/6 | 115 | N24 N26 N29 |
+| drop the variable's trailing `"?` | 66/14 | 115 | N23 N24 N27 N28 N29 N32 N42 |
+| drop `.` from the left boundary | 79/1 | 115 | N33 |
+| drop the variable alternative | 62/18 | 115 | N23–N29 N32 N42 |
+| drop the name alternative | 42/38 | 45 | N1 N12 N13 N15 N17 N19 N20 N30 N31 N35–N41 N43–N45 N47 N48 |
+| boundary excludes `(` (the reviewer's) | 78/2 | 109 | N35 |
+| boundary is `(^\|[[:space:]/])` (the reviewer's) | 72/8 | 107 | N35–N38 |
+| boundary excludes `'` | 78/2 | 113 | N36 |
+| boundary excludes a backtick | 78/2 | 115 | N37 |
+| boundary excludes `"` | 78/2 | 115 | N38 |
+| boundary excludes a tab | 78/2 | 115 | N39 |
+| drop `^` from the boundary | 61/19 | 109 | N1 N12 N13 N15 N30 N40 N41 N43–N45 N47 |
+| flag letters admit `n` | 77/3 | 116, rc 1 | N10 N34 N46 |
+| flag letters admit `D` | 79/1 | 115 | N46 |
+| flag cluster is any `[[:alpha:]]` | 77/3 | 116, rc 1 | N10 N34 N46 |
+| drop the `-o word` form | 74/6 | 115 | N42 N43 N44 |
+| `-o word` form takes `o` only, not `O` | 78/2 | 115 | N44 |
+| `-o` word without `_` | 78/2 | 115 | N44 |
+| `-o word` form without a cluster before the `o` | 78/2 | 115 | N43 |
+| drop `--` | 78/2 | 115 | N45 |
+| flag cluster of one letter only | 78/2 | 115 | N41 |
+| at most one flag (`*` → `?`) | 78/2 | 115 | N42 |
+| drop the flag group | 68/12 | 115 | N40–N45 |
+| drop the init token's `[{]?` | 76/4 | 115 | N47 N49 |
+| drop the init token's `[}]?` | 78/2 | 115 | N49 |
+| drop `MOCK_FILE_RE`'s `[{]?` | 79/1 | 115 | N48 |
+| drop `MOCK_FILE_RE`'s `[}]?` | 80/0 | 115 | none — equivalent: it is the last atom of an unanchored alternative, so `PATH="${MOCK_DIR` matches without it (it was `\}?` on main, equally dead) |
+
+The two "flag letters" mutants that admit `n` also turn the real tree red (`tests/test-bl254-ci-templates-call-shipped-scripts.sh`'s
+`bash -n "$MT1/init.sh"` becomes a FAIL row), so the `n` exclusion matters on the tree, not only in fixtures.
+
+Which unit-lane suites run this lint, by execution rather than grep (round 0): a marker line appended to the lint,
+then each of the 41 unit-lane suites that name the lint, `pre-commit-gate.sh` or `run-lints.sh` run once, and the
+lint restored byte-exact. Three fired it — `tests/test-lint-no-live-remote.sh` (52 calls),
+`tests/test-pre-commit-gate-lints.sh` (4 calls) and `tests/test-run-lints.sh` (1 call). The other 208 unit-lane
+suites were not traced. At `4d12ec8` those three give 80/0, 14/0 and 8/0, each rc 0.
+
+**Review round 1 (2026-10-09, adversarial review of `7d3c009`: major concerns).**
+- **RV-1** (blocking): N15–N31 all put the interpreter at column 0, so the left boundary was pinned only for `^`,
+  space and `/`. Excluding `(` kept the suite at 52/0 and the tree at rc 0 while hiding the six
+  `e*=$(bash "$REPO_DIR/init.sh"` runs in `tests/edge-cases-pre-init.sh`. Fixed by N35–N39; the tree's rows sit
+  behind `^`, space, `(` and `'`, and nothing on the tree sits right behind `;`, `|` or `&`, so those three are not
+  pinned.
+- **RV-2**: `run_init` (R-346-6) was missing from the residuals. Added, with the other unlisted shapes.
+- **RV-3**: flags between the interpreter and init.sh (round 0's R-346-1) closed now rather than left — PR #480's
+  author writes `"$BASH" -e -o pipefail`.
+- **RV-4**: the residual numbers in the table and the list did not match. Renumbered; they match now.
+- **RV-5**: `\{?` / `\}?` respelled `[{]?` / `[}]?`.
+- A refuted sentence (the header is "stricter") is corrected under **Residuals**.
+
+**The lint's other target.** It has one: init.sh. `scripts/check-gate.sh --repair` also reaches `host_create_repo`
+when the project has no `origin` remote and `remote_repo_created` is not on record, and the lint does not look at it
+at all — a gap, not this defect (R-346-5). The seven suites that name `--repair` either add an `origin` remote first
+or put a stub `gh` on PATH; that is from reading the suites, not an execution trace.
+
+**Residuals.** No run on the tree uses R-346-1 to R-346-4 (grep, 2026-10-09; the round-1 review found none in the
+seven open PRs either). R-346-6 is on main.
+- **R-346-1** a word in front of a direct run: `if "$INIT" …`, `exec "$INIT"`, `! ./init.sh`, `time ./init.sh`, and
+  an assignment prefix without `env` (`CI=1 "$INIT" …`). Shape B skips only `env …`.
+- **R-346-2** init.sh's path is not one token: `bash init.sh …` (no slash) and `bash "$REPO_ROOT"/init.sh …` (the
+  quote closes before the slash).
+- **R-346-3** other shell names: `zsh`, `dash`, `ksh`. The repo is bash-only, and `$SHELL` covers the route to zsh on
+  macOS.
+- **R-346-4** flags round 1 does not read: long options (`--norc`, `--posix`) and `+o` / `+O` (`+O extglob`) hide
+  the run; and
+  `-o noexec`, which reads the script without running it, is counted as a run — the loud direction.
+- **R-346-5** `check-gate.sh --repair`, above.
+- **R-346-6** a path the lint cannot tie to init.sh. `run_init` in `tests/test-bl199-quickstart-from-clone.sh` runs
+  `"$initcmd" --non-interactive … --git-host github … --no-remote-creation`, and its 23 call sites pass the
+  init.sh path (`"$CLONE/init.sh"` and others) as an argument; measured on a copy, deleting that one guard leaves the lint at rc 0 with the
+  same 2 rows. Also unseen: `local` / `export` / `declare` / `readonly INIT=…/init.sh`, because `collect_init_vars`
+  reads only a bare `NAME=` at the start of a line. The tree has two `local` init-path declarations
+  (`case_I5` in `tests/test-bl320-approval-schema2.sh`, `m1_anchor_mutation` in
+  `tests/test-bl199-quickstart-from-clone.sh`); both only read the file — by reading the suites, not a trace.
+- **R-478-2** the `init"".sh` split hides a suite from this lint as well — recorded on `## BL-181:`.
+- The lint's header ("WHAT COUNTS AS AN init run") says a run must carry `--non-interactive` or `--dry-run`; the
+  code checks for neither, and the two predicates are incomparable, not one stricter than the other. The code flags
+  runs with neither flag (`printf … | bash "$INIT" --project x` is a FAIL row), and it misses runs that carry
+  `--non-interactive` (R-346-1, R-346-2, R-346-3, the long-option and `+o` half of R-346-4, and R-346-6). Measured at `4d12ec8`; the header
+  sentence is wrong as a description of the code and is left as it is.
+
+**Close** in a follow-up once the branch is merged, citing the PR.

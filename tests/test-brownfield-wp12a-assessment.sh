@@ -11,8 +11,9 @@
 #
 # WHAT EACH CASE OWNS.
 #   K1  resume.sh on an adopted, unassessed project prints the ASSESSMENT
-#       prompt — naming the record's path and the finisher command — and not
-#       the intake, kickoff or classic prompt
+#       prompt — naming the record's path and the finisher command, and telling
+#       the agent to hand that command to the human if auto mode refuses it —
+#       and not the intake, kickoff or classic prompt
 #   K2  a valid record: the assessment merges into the stamp, the
 #       classification reaches process-state THROUGH adopt_persist_phase1_artifacts,
 #       the answers land under wizard keys, an audit row is written, and the
@@ -27,6 +28,12 @@
 #   K8  every wizard key the prompt names resolves in intake-wizard.sh
 #   K9  the core merge refuses a second assessment and an unadopted project
 set -uo pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSED=0; FAILED=0; SKIPPED=0
@@ -102,6 +109,10 @@ k1() {
   printf '%s\n' "$out" | grep -q 'You are running its ASSESSMENT' || bad="$bad [not the assessment prompt]"
   printf '%s\n' "$out" | grep -qF '.claude/adoption/assessment-record.json' || bad="$bad [the record's path is not named]"
   printf '%s\n' "$out" | grep -qF -- '--act4 --root .' || bad="$bad [the finisher command is not named]"
+  # `## BL-311:` group E — an auto-mode refusal of the finisher goes to the
+  # human (# BL-311-ASSESSMENT-AUTO-MODE). Matched as printed, with no pipe.
+  case "$out" in *"auto mode refuses the command itself"*) ;; *) bad="$bad [no auto-mode refusal instruction]" ;; esac
+  case "$out" in *"Ask me to type that exact"*) ;; *) bad="$bad [the agent is not told to hand the command to the human]" ;; esac
   printf '%s\n' "$out" | grep -q 'We are resuming work on this project' && bad="$bad [the classic prompt fired]"
   printf '%s\n' "$out" | grep -q 'begin Phase 0 from it\|walk me$' && bad="$bad [a Phase-0 entry fired before the assessment]"
   [ -z "$bad" ] && pass "$label" || fail_ "$label" "$bad"

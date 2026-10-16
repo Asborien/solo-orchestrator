@@ -40,16 +40,21 @@ Three further pages cover what happens outside the five-phase build — [The Del
 ## Quick Start
 
 ```bash
-git clone https://github.com/kraulerson/solo-orchestrator.git
-cd solo-orchestrator
+git clone https://github.com/kraulerson/solo-orchestrator.git ~/solo-orchestrator
+cd ~/solo-orchestrator
 chmod +x init.sh
 ./init.sh --project-dir my-project
 ```
 
+**Where the framework lives:** `~/solo-orchestrator`.
+[docs/adoption.md](docs/adoption.md#quick-start-install-and-use) and the
+[User Guide](docs/user-guide.md) clone to the same place, and their commands
+that run a script from the clone assume it.
+
 **Where your project lands.** `--project-dir my-project` — a bare folder name —
 creates the project **next to the clone**, as a sibling of `solo-orchestrator/`,
-not inside it. Clone into `~/Code` and you get `~/Code/my-project/` alongside
-`~/Code/solo-orchestrator/`. Give an **absolute path** instead
+not inside it: with the clone at `~/solo-orchestrator`, you get
+`~/my-project/`. Give an **absolute path** instead
 (`./init.sh --project-dir ~/work/my-project`) and it is used exactly as written,
 anywhere outside the framework. Running plain `./init.sh` with no flags still
 works and prompts you interactively — the directory question defaults to that
@@ -58,6 +63,17 @@ is a target that would write onto the framework itself: the clone, anything
 inside it, or another copy of solo-orchestrator.
 
 > **Preview first?** Run `./init.sh --dry-run` to see what will be installed and created without making any changes.
+
+> **Claude Code and the framework's scripts.** You run `./init.sh` in your own
+> terminal, so Claude Code is not involved. Later, if you ask a Claude Code
+> session to run a script from `~/solo-orchestrator` — Scout, adoption, or an
+> upgrade — its auto mode can refuse it as code from outside your project. It
+> was in the 2026-09-27 test run, where the agent had cloned the framework itself in
+> that same session, and the agent cannot change its own permissions to get past
+> that. Before the session, **you** add one line to your user settings that
+> names the clone as trusted code to run — and if Claude is still refused, you
+> run the command yourself:
+> [docs/adoption.md → Before you start](docs/adoption.md#2-before-you-start-let-claude-code-run-the-frameworks-scripts).
 
 The init script will:
 1. Check prerequisites — offers to auto-install Git, Node.js, and your language runtime if missing
@@ -75,7 +91,7 @@ The init script will:
 4. Start Claude Code **from inside your generated project directory** — and let
    your project print its own first message rather than composing one by hand:
    ```bash
-   cd ../my-project         # the SIBLING init created, not the framework clone
+   cd ~/my-project          # the SIBLING init created, not the framework clone
    bash scripts/resume.sh   # prints the exact first message — copy it
    claude                   # paste it as your very first message
    ```
@@ -147,8 +163,7 @@ overwrites.
 ### Scout — look before you leap
 
 ```bash
-cd solo-orchestrator
-bash scripts/scout.sh --root /path/to/their-app --markdown
+bash ~/solo-orchestrator/scripts/scout.sh --root /path/to/their-app --markdown
 ```
 
 Seven sections: what it is built with, how far along it looks, what is already
@@ -164,21 +179,34 @@ once, and it is off unless you ask.
 
 ```bash
 cd /path/to/their-project
-bash /path/to/solo-orchestrator/scripts/scout.sh --out /tmp/scout --run-tests
-bash /path/to/solo-orchestrator/scripts/adopt-project.sh --scan-report /tmp/scout/scout-report.json
+bash ~/solo-orchestrator/scripts/scout.sh --out /tmp/scout --run-tests
+bash ~/solo-orchestrator/scripts/adopt-project.sh --scan-report /tmp/scout/scout-report.json
 ```
 
 Keep Scout's output **outside** the project, so the survey never lands in the
 tree it describes. `--run-tests` tells you before adopting whether the project's
 own suite passes today — worth knowing, because once adopted a commit that
-touches source code runs that suite and is refused if it fails. Prerequisites
-(`git`, `jq`, `gitleaks`, optionally `semgrep`), what to do when a run stops,
-and how to put a replaced file back are in
+touches source code runs that suite and is refused if it fails. **What adoption
+needs installed** is one list, kept in one place —
+[docs/adoption.md → What you need](docs/adoption.md#what-you-need) — and this
+page does not repeat it, so the two cannot disagree. It includes the
+Superpowers plugin for Claude Code: when the Development Guardrails are
+installed, every edit to a source file is blocked without it. What to do when
+a run stops, and how to put a replaced file back, are in
 [docs/adoption.md → Quick start](docs/adoption.md#quick-start-install-and-use).
+**Asking Claude Code to run these for you?** Claude Code's auto mode can refuse
+scripts from a clone outside the project — it was in the 2026-09-27 test run, where
+the agent had cloned the framework itself in that same session — and the agent
+cannot change its own permissions to get past that. Before the session, add the
+one settings line that names the clone as trusted code to run:
+[docs/adoption.md → Before you start](docs/adoption.md#2-before-you-start-let-claude-code-run-the-frameworks-scripts).
 
 It shows you what the scan found as *evidence that decides nothing*, asks the
-one question no amount of reading your code can answer — **who the project is
-for**, which sets its enforcement tier — and lands it at **phase 0**, writing
+two questions no amount of reading your code can answer — **who the project is
+for**, which sets its enforcement tier, and **which track it is on** (Light,
+Standard or Full) — then one optional one, whether every reply the agent gives
+should end with a plain-English **TL;DR** (off unless you say yes; `init.sh`
+asks it too), and lands it at **phase 0**, writing
 state in a fail-safe order, laying down the framework's `CLAUDE.md` and
 documents, and committing exactly the files it wrote.
 
@@ -231,11 +259,16 @@ not among them. Read them here.
 - **One command setup** — `./init.sh` handles everything: tool installation, project scaffolding, CI/CD generation, security tooling, Git initialization, and health check.
 - **A lifecycle after v1.0** — the [delta track](docs/delta-track.md) ships into every project: one classified unit of post-release change at a time, a brief whose acceptance checklist is the close review, a hotfix lane whose deferred retro blocks the next release, a maintenance cadence that refuses a release when a window is overdue *or unmeasurable*, and `scripts/cut-release.sh`, which decides the semver from what actually shipped, promotes the changelog, closes the `BUGS.md`/`FEATURES.md` rows, and tags.
 - **Look before you install** — [Scout](docs/scout.md) (`scripts/scout.sh`) is a read-only survey of any codebase: stack, phase evidence, reality probes, **full-history secret scanning with the value never printed**, an inventory of what the framework would otherwise overwrite, a tests baseline, and an intake prefill. It writes nothing and needs nothing installed.
-- **A second way in for existing code** — [brownfield adoption](docs/adoption.md) (`scripts/adopt-project.sh`) brings a codebase that already exists under the framework, asking the one plain-English question a scan cannot answer — **who the project is for**, which sets its enforcement tier — and landing **every adopted project at phase 0**, to go forward through the ordinary gates like any other. Nothing is marked as already done and no gate is skipped. **The assessment ships** — after adoption, `scripts/resume.sh` prints a prompt for a Claude Code conversation that asks what the project is for, judges the stack against those answers, and runs a finisher that records the verdict; every designed work package ships, including the Claude Code session layer; the certification pass is **retired**, not pending, because with no claimed rung and no derived landing it has nothing to certify. The **Adoption Record** ships: at the end of the adopted project's `APPROVAL_LOG.md`, under its own heading, adoption writes down what it scanned, what it found by fingerprint, what it archived and what it measured — and names, rather than omits, the things this build cannot yet record. It holds an eight-part structural contract that is checked before a byte is written, so the record can never be read by the framework's own gate parsers as an approval. The driver says so, per capability, during the run. `## BL-242:` in `solo-orchestrator-backlog.md` is the standing record of what is and is not built, and of the decisions still to land; prefer it to this sentence. The collision archive ships: it copies the files the framework would land on into a timestamped, manifested, restorable directory, discloses every one of them by name, permits recorded re-adds, and refuses to commit an archived file a secret scanner matched.
+- **A second way in for existing code** — [brownfield adoption](docs/adoption.md) (`scripts/adopt-project.sh`) brings a codebase that already exists under the framework, asking the two plain-English questions a scan cannot answer — **who the project is for**, which sets its enforcement tier, and **which track it is on** — and landing **every adopted project at phase 0**, to go forward through the ordinary gates like any other. Nothing is marked as already done and no gate is skipped. **The assessment ships** — after adoption, `scripts/resume.sh` prints a prompt for a Claude Code conversation that asks what the project is for, judges the stack against those answers, and runs a finisher that records the verdict; every designed work package ships, including the Claude Code session layer; the certification pass is **retired**, not pending, because with no claimed rung and no derived landing it has nothing to certify. The **Adoption Record** ships: at the end of the adopted project's `APPROVAL_LOG.md`, under its own heading, adoption writes down what it scanned, what it found by fingerprint, what it archived and what it measured — and names, rather than omits, the things this build cannot yet record. It holds an eight-part structural contract that is checked before a byte is written, so the record can never be read by the framework's own gate parsers as an approval. The driver says so, per capability, during the run. `## BL-242:` in `solo-orchestrator-backlog.md` is the standing record of what is and is not built, and of the decisions still to land; prefer it to this sentence. The collision archive ships: it copies the files the framework would land on into a timestamped, manifested, restorable directory, discloses every one of them by name, permits recorded re-adds, and refuses to commit an archived file a secret scanner matched.
 
 ---
 
 ## Prerequisites
+
+This table is what `init.sh` needs to build a **new** project. **Adopting a
+project you already have?** Use
+[docs/adoption.md → What you need](docs/adoption.md#what-you-need) instead:
+that is the one list for adoption, and it is not copied here.
 
 | Tool | Required | Install |
 |---|---|---|
@@ -246,9 +279,25 @@ not among them. Read them here.
 | **Git host CLI** (`gh` or `glab`) | Yes, if using GitHub or GitLab (default host: GitHub) | **Install and authenticate BEFORE running init** — not auto-installed. Interactive runs discover a missing/unauthenticated CLI partway through the run, right before repo creation. `--non-interactive` runs preflight CLI *presence* up front and fail fast — but neither mode ever checks authentication ahead of time, so `gh auth login` / `glab auth login` first regardless of mode. `gh` (GitHub): `brew install gh` (macOS) or [Linux install](https://github.com/cli/cli/blob/trunk/docs/install_linux.md), then `gh auth login`. `glab` (GitLab): `brew install glab`, then `glab auth login`. **Bitbucket** needs no CLI (just `curl`, which ships by default on macOS/Linux) — export `BITBUCKET_API_TOKEN` + `BITBUCKET_API_TOKEN_EMAIL` + `BITBUCKET_WORKSPACE` instead (legacy `BITBUCKET_USER`/`BITBUCKET_APP_PASSWORD` also accepted). `--git-host other` needs neither. Full instructions: [CLI Setup Addendum § Git Host CLIs](docs/cli-setup-addendum.md#git-host-clis). |
 | **Docker** | Recommended | Init script offers to install automatically. macOS: choice of Colima (recommended — headless, no license required, auto-starts on boot) or Docker Desktop. Linux: system package with systemd auto-start. Used by Qdrant (persistent semantic memory) and OWASP ZAP (DAST scanning). |
 | **Claude Code** | Recommended | Installed by init script. Framework is optimized for Claude Code; other AI coding agents can use the methodology but the CLI Setup Addendum and Phase 2 workflow accelerators are Claude Code-specific. |
+| **Superpowers** | Yes, before the first change to source code | A plugin for Claude Code. The Development Guardrails block every edit to a source file until a Superpowers skill has run in the session, and without the plugin there is no skill to run. Install it with `claude plugin install --scope user superpowers@claude-plugins-official`, then start a new Claude Code session. |
 | **GPG** | Optional | Used for commit signing. Init's tool plan offers to install it — macOS: `brew install gnupg`; Linux: gnupg/gnupg2 via your package manager (apt/dnf/pacman). |
 
 Init also auto-installs security tooling: Semgrep (SAST), gitleaks (secret detection), Snyk CLI (dependency scanning), Lighthouse (web performance), and OWASP ZAP (DAST, requires Docker).
+
+To install Superpowers (the row above), then start a new Claude Code session:
+
+```bash
+claude plugin install --scope user superpowers@claude-plugins-official
+```
+
+If the install says the marketplace `claude-plugins-official` is not found,
+add it, then run the install again. Claude Code adds that marketplace the first
+time it starts an interactive session, so a computer where it never has lacks
+it:
+
+```bash
+claude plugin marketplace add anthropics/claude-plugins-official
+```
 
 ### Windows Users
 
@@ -409,13 +458,12 @@ The init script installs these tools globally on your machine. Each installation
 
 | Component | Purpose | Install Method |
 |---|---|---|
-| **Development Guardrails for Claude Code** | Git hook-based guardrails: session-start checks, pre-commit hooks, profile-driven rules. Version pinned in `.claude/manifest.json`. | `init.sh` clones [`kraulerson/claude-dev-framework`](https://github.com/kraulerson/claude-dev-framework) to `~/.claude-dev-framework` (reused across projects), then runs its init to install per-project hooks into `.claude/framework/`. |
+| **Development Guardrails for Claude Code** | Git hook-based guardrails: session-start checks, pre-commit hooks, profile-driven rules. Version pinned in `.claude/manifest.json`. | `init.sh` clones [`kraulerson/claude-dev-framework`](https://github.com/kraulerson/claude-dev-framework) to `~/.claude-dev-framework` (reused across projects), then runs its init to install per-project hooks into `.claude/framework/`. When the clone is already there, `init.sh` asks before updating it (Enter means yes); with no terminal to ask at, it leaves it alone and prints the command. This framework needs version 4.4.0 or later for its approval questions. |
 
 **Optional enhancements (user-configured after init):**
 
 | Tool | Purpose | How to Install |
 |---|---|---|
-| **Superpowers** | Agentic skills plugin for Claude Code (TDD, subagents, debugging) | `claude plugins add superpowers` |
 | **Context7 MCP** | Live library documentation for the AI agent | `claude mcp add context7 --scope user -- npx -y @upstash/context7-mcp` |
 | **Qdrant MCP** | Persistent semantic memory across sessions | Docker container + MCP server config |
 
@@ -620,7 +668,7 @@ These elements are optimized for Claude Code and require retooling to use a diff
 - **CLI Setup Addendum** → rewrite for new agent's configuration model
 - **Init script CLAUDE.md generation** → rewrite template for new agent
 
-The tooling layer is a workflow accelerator, not a dependency. The Build Loop in Phase 2 works without Superpowers — the agent executes sequentially with the Orchestrator directing each step. Superpowers makes it faster; its absence makes it manual, not impossible.
+The tooling layer is a workflow accelerator, not a dependency. The Build Loop in Phase 2 works without Superpowers — the agent executes sequentially with the Orchestrator directing each step. Superpowers makes it faster; its absence makes it manual, not impossible. That is the methodology on another agent. In a Claude Code project with the Development Guardrails installed, Superpowers is required: the Guardrails block every edit to a source file until a Superpowers skill has run (see [Prerequisites](#prerequisites)).
 
 ### Current Status: Proof of Concept on a Single Vendor
 

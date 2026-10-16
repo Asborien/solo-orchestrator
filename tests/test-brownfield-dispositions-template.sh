@@ -19,6 +19,12 @@
 # the validator reads. This suite proves the whole round trip on a real adoption:
 # stop → template → fill → complete, with the decision in the Adoption Record.
 set -uo pipefail
+# `## BL-311:` the adoption driver's MCP step can ask a question and run
+# `claude mcp add` / `docker` on a machine that has `claude` and is missing a
+# server. This suite's piped answers were written before that step existed, so
+# it is switched off here (`# BL-311-MCP-SEAM`); tests/test-bl311-adopt-mcp.sh
+# exercises the real step.
+export SOIF_ADOPT_MCP=off
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASSED=0; FAILED=0; SKIPPED=0
@@ -53,7 +59,7 @@ printf 'aws_access_key_id = %s\n' "AKIA7ZQ2WX4Y""KLMN3PQR" > "$P/src/deploy.py"
 ( cd "$P" && git add src/deploy.py && git commit -q --no-verify -m "chore: a second one" ) >/dev/null 2>&1
 
 # 2 = "A company, a client, or people who are paying for it" — organizational.
-printf '2\n1\n1\n1\n1\n' > "$WORK/ans"
+printf '2\nstandard\n1\n1\n1\n1\n' > "$WORK/ans"     # the tier, then the track (`## BL-311:` row 8)
 _run() {   # _run TAG [--dispositions FILE]
   local tag="$1"; shift
   ( cd "$P" && bash "$REPO_ROOT/scripts/adopt-project.sh" "$@" < "$WORK/ans" ) \
@@ -213,7 +219,7 @@ _personal_adoptee() {   # _personal_adoptee DIR — a clean personal project
 }
 _ack_roundtrip() {   # _ack_roundtrip DIR KIND ENV… — stop, fill, complete; echoes problems
   local p="$1" kind="$2" rc1 rc2 bad=""; shift 2
-  printf '1\n1\n1\n1\n1\n1\n' > "$WORK/pans"     # 1 = just me: personal
+  printf '1\nstandard\n1\n1\n1\n1\n1\n' > "$WORK/pans"     # 1 = just me: personal; then the track
   ( cd "$p" && env "$@" bash "$REPO_ROOT/scripts/adopt-project.sh" < "$WORK/pans" ) > "$WORK/p1.out" 2>&1; rc1=$?
   [ "$rc1" -eq 1 ] || bad="$bad [first run rc $rc1, not 1 — the $kind stop did not fire]"
   _template_from "$WORK/p1.out" > "$WORK/p.json"
