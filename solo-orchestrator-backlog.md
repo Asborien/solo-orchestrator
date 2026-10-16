@@ -24238,7 +24238,8 @@ the CDF session's call, so it is left alone here and is **pending** that answer.
 - **PR #481 (BL-314, whose entry is on that branch; open, and already conflicting with `main`) ignores
   `.claude/tool-usage.json.lw.*`** in the root template and this repo's `.gitignore`. `.claude/.gitignore` does not carry it, because the writer of
   those temporary files is not on `main`; whichever of the two merges second adds `/tool-usage.json.lw.*` to
-  `_adopt_session_ignore_rules`. This branch touches neither file #481 changes for it.
+  `_adopt_session_ignore_rules`. This branch touches neither file #481 changes for it. #481 is the second, and
+  adds it: A1 and mutant M15 in `tests/test-bl322-s1-audit-loop.sh` pin the rule.
 
 **S2's design (Karl, 2026-10-07): option 1 plus option 4's warning.** Of four options — carry the original
 `CLAUDE.md`'s `@` imports; `@`-import the archived original; keep theirs at `CLAUDE.md` and move the framework's
@@ -25531,7 +25532,9 @@ non-empty result into place (`# BL-314-NONEMPTY`). Each behaviour, with the case
   resume (C19).
 - verify-install reports the lib missing as auto-fixable, and `fix_lib_copy_ledger-write` restores it
   byte for byte (C21). `.gitignore` and the generated-project template ignore the lib's temps,
-  `.claude/tool-usage.json.lw.*`, and not a user's `.backup` (C22).
+  `.claude/tool-usage.json.lw.*`, and not a user's `.backup` (C22). Adoption's `.claude/.gitignore`
+  (`_adopt_session_ignore_rules`, `## BL-322:` S1) ignores `/tool-usage.json.lw.*` as well; A1 and its
+  mutant M15 in `tests/test-bl322-s1-audit-loop.sh` pin it.
 
 **Mutants.** The suite places each in a mirror of the three hooks and the lib, and counts it only
 after proving its location: one end-of-line site of the marker, and a diff of exactly that line.
@@ -25561,8 +25564,9 @@ after proving its location: one end-of-line site of the marker, and a diff of ex
   a find event, with three writes, takes more than 10 s; C7u allows 20 s. That needs a host where no
   `stat` can read a directory's mtime.
 - Existing projects do not get the new ignore line: the upgrade backfill adds only
-  `.claude/tool-usage.json`. Until the next locked write sweeps it, a temp a SIGKILL left there is
-  visible to `git add -A`.
+  `.claude/tool-usage.json`. Nor do projects adopted before this change, or an adoptee whose own
+  `.claude/.gitignore` adoption leaves alone (its note names only the two older lines). Until the next
+  locked write sweeps it, a temp a SIGKILL left there is visible to `git add -A`.
 - Without the lib, the gate's two record writes fail with "command not found" on the hook's stderr.
   No decision changes, and verify-install reports the lib missing.
 - A live hold longer than 3 s is taken for stale and can lose a row. jq appends take about 0.23 s at
