@@ -20,10 +20,11 @@ TMP=$(mktemp -d); PROJ="$TMP/p"
 
 # T1: project has bypass-detector wired (PostToolUse + Stop).
 # BL-277: the PostToolUse registration is its own group with matcher
-# "Bash|Write", so it is looked up by matcher rather than at group [0].
-if jq -e '.hooks.PostToolUse[] | select(.matcher == "Bash|Write") | .hooks[] | select(.command | contains("bypass-detector"))' "$PROJ/.claude/settings.json" >/dev/null 2>&1 \
+# "Bash|Write|Edit|MultiEdit" (BL-336), so it is looked up by matcher rather
+# than at group [0].
+if jq -e '.hooks.PostToolUse[] | select(.matcher == "Bash|Write|Edit|MultiEdit") | .hooks[] | select(.command | contains("bypass-detector"))' "$PROJ/.claude/settings.json" >/dev/null 2>&1 \
    && jq -e '.hooks.Stop[0].hooks[] | select(.command | contains("bypass-detector"))' "$PROJ/.claude/settings.json" >/dev/null 2>&1; then
-  pass "T1: PostToolUse (matcher Bash|Write) + Stop wiring"
+  pass "T1: PostToolUse (matcher Bash|Write|Edit|MultiEdit) + Stop wiring"
 else
   fail_ "T1" "wiring missing"
 fi

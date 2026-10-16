@@ -29,6 +29,9 @@
 #       sentinel.
 #   W*  PostToolUse from Write: the model wrote the file, so a `claude` row,
 #       PENDING, and the sentinel.
+#   B*  `## BL-336:` PostToolUse from Edit and MultiEdit: the text scanned is
+#       what the model wrote in (tool_input.new_string, each
+#       tool_input.edits[].new_string), never originalFile or old_string.
 #   S*  Stop: a `claude` row, PENDING, and the sentinel, whose question does
 #       not tell the model how to close it as a false positive.
 #   L*  the ledger read back as tool output mints no `claude` row.
@@ -57,7 +60,7 @@
 #       still registers no PostToolUse detector: the maintainer's
 #       `# BL-242-SETTINGS-BL277` guard, unchanged.
 #   R6  the roster run twice in greenfield mode: one detector, under matcher
-#       Bash|Write and nowhere else.
+#       Bash|Write|Edit|MultiEdit and nowhere else.
 #   M*  marker presence and mutants. Each mutant proves its location by distance
 #       from its marker and asserts the literal text that landed; one that
 #       cannot be applied is a SETUP failure, never a kill.
@@ -260,6 +263,64 @@ chk_write_authored() {
     [ "$a" = "claude" ] || { echo "$ty: actors=[$a], want [claude]"; return 1; }
     [ "$ur" = "PENDING" ] || { echo "$ty: user_response=[$ur], want [PENDING]"; return 1; }
     [ -f "$(sentinel "$p")" ] || { echo "$ty: no sentinel after the model wrote the text"; return 1; }
+  done
+  return 0
+}
+
+# B — `## BL-336:` Edit and MultiEdit. The shapes are an Edit and a MultiEdit
+# envelope as Claude Code sends them (tool_input as the model wrote it,
+# tool_response with the file's old text); the proposal sits only where each
+# case says.
+env_edit() { jq -nc --arg new "$1" --arg old "$2" --arg orig "$3" \
+  '{session_id:"bl277", hook_event_name:"PostToolUse", tool_name:"Edit",
+    tool_input:{file_path:"/proj/NEXT_STEPS.md", old_string:$old, new_string:$new, replace_all:false},
+    tool_response:{filePath:"/proj/NEXT_STEPS.md", oldString:$old, newString:$new, originalFile:$orig,
+      structuredPatch:[], userModified:false, replaceAll:false}}'; }
+env_multiedit() { jq -nc --arg n1 "$1" --arg n2 "$2" --arg old "$3" --arg orig "$4" \
+  '{session_id:"bl277", hook_event_name:"PostToolUse", tool_name:"MultiEdit",
+    tool_input:{file_path:"/proj/NEXT_STEPS.md", edits:[{old_string:"first", new_string:$n1}, {old_string:$old, new_string:$n2}]},
+    tool_response:{filePath:"/proj/NEXT_STEPS.md", edits:[{old_string:"first", new_string:$n1}, {old_string:$old, new_string:$n2}],
+      originalFileContents:$orig, structuredPatch:[], userModified:false}}'; }
+# authored_one <hook> <envelope> <label> — one claude row, PENDING, and the sentinel.
+authored_one() {
+  local hook="$1" p a ur
+  p="$(newtmp)"; mk_proj "$p" || { echo "$3: fixture"; return 1; }
+  run_hook "$hook" "$p" "$2"
+  a="$(q "$p" '[.[].actor] | unique | join(",")')"; ur="$(q "$p" '[.[].user_response] | unique | join(",")')"
+  [ "$HOOK_RC" -eq 0 ] || { echo "$3: hook rc=$HOOK_RC"; return 1; }
+  [ "$(q "$p" 'length')" = "1" ] || { echo "$3: rows=$(q "$p" 'length'), want 1"; return 1; }
+  [ "$a" = "claude" ] && [ "$ur" = "PENDING" ] || { echo "$3: actor=[$a] user_response=[$ur], want [claude] [PENDING]"; return 1; }
+  [ -f "$(sentinel "$p")" ] || { echo "$3: no sentinel after the model wrote the text"; return 1; }
+  return 0
+}
+# B1 — an Edit whose new_string is the proposal.
+chk_edit_authored() {
+  authored_one "$1" "$(env_edit "$(fixture_for no_verify)" "old line" "old line")" "Edit"
+}
+# B2 — a MultiEdit whose SECOND edit's new_string is the proposal: every edit is read.
+chk_multiedit_authored() {
+  authored_one "$1" "$(env_multiedit "a clean first edit" "$(fixture_for no_verify)" "old line" "first\nold line")" "MultiEdit"
+}
+# B3 — an Edit and a MultiEdit that only rewrite unrelated text, while the
+# proposal sits in the text they replaced (old_string) and in the file's old
+# contents (originalFile, originalFileContents): text the model did not write
+# this time. Nothing is recorded.
+chk_edit_unrelated() {
+  local hook="$1" p which env
+  for which in Edit MultiEdit; do
+    p="$(newtmp)"; mk_proj "$p" || { echo "$which: fixture"; return 1; }
+    case "$which" in
+      Edit) env="$(env_edit "the release notes, reworded" "$(fixture_for no_verify)" "intro
+$(fixture_for no_verify)
+outro")" ;;
+      *) env="$(env_multiedit "a clean first edit" "the release notes, reworded" "$(fixture_for no_verify)" "intro
+$(fixture_for no_verify)
+outro")" ;;
+    esac
+    run_hook "$hook" "$p" "$env"
+    [ "$HOOK_RC" -eq 0 ] || { echo "$which: hook rc=$HOOK_RC"; return 1; }
+    [ "$(q "$p" 'length')" = "0" ] || { echo "$which: $(q "$p" 'length') row(s) from text the model did not write: $(q "$p" '[.[].details.excerpt] | join(" | ")')"; return 1; }
+    [ ! -e "$(sentinel "$p")" ] || { echo "$which: a sentinel was raised"; return 1; }
   done
   return 0
 }
@@ -780,8 +841,10 @@ chk_adoption_no_post() {
 # R6 — the roster sourced and run TWICE in greenfield mode on the settings
 # template. The second run reaches the idempotence probe that a second init.sh
 # never can (it refuses an existing directory). Exactly one detector, under
-# matcher Bash|Write and in no other group; Stop once; the tool tracker and the
-# commit recorder still unscoped, so only the detector moved.
+# matcher Bash|Write|Edit|MultiEdit (`## BL-336:`) and in no other group; Stop
+# once; the tool tracker and the commit recorder still unscoped, so only the
+# detector moved.
+MATCHER="Bash|Write|Edit|MultiEdit"
 chk_roster_scoped() {
   local roster="$1" d s det scoped other stop trk rec
   d="$(newtmp)"; s="$d/.claude/settings.json"
@@ -789,13 +852,13 @@ chk_roster_scoped() {
       && soif_register_hook_roster .claude/settings.json init && soif_register_hook_roster .claude/settings.json init ) >/dev/null 2>&1 \
     || { echo "the roster did not run twice"; return 1; }
   det='.hooks[]? | select((.command // "") | contains("bypass-detector.sh"))'
-  scoped="$(jq -r "[.hooks.PostToolUse[]? | select(.matcher == \"Bash|Write\") | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
-  other="$(jq -r "[.hooks.PostToolUse[]? | select((.matcher // \"\") != \"Bash|Write\") | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
+  scoped="$(jq -r --arg m "$MATCHER" "[.hooks.PostToolUse[]? | select(.matcher == \$m) | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
+  other="$(jq -r --arg m "$MATCHER" "[.hooks.PostToolUse[]? | select((.matcher // \"\") != \$m) | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
   stop="$(jq -r "[.hooks.Stop[]? | $det] | length" "$s" 2>/dev/null || printf 'ERR')"
   trk="$(jq -r '[.hooks.PostToolUse[]? | select(has("matcher") | not) | .hooks[]? | select((.command // "") | contains("track-tool-usage.sh"))] | length' "$s" 2>/dev/null || printf 'ERR')"
   rec="$(jq -r '[.hooks.PostToolUse[]? | select(has("matcher") | not) | .hooks[]? | select((.command // "") | contains("record-claude-commit.sh"))] | length' "$s" 2>/dev/null || printf 'ERR')"
   [ "$scoped" = "1" ] && [ "$other" = "0" ] \
-    || { echo "detector under matcher Bash|Write=$scoped, elsewhere=$other, want 1 and 0"; return 1; }
+    || { echo "detector under matcher $MATCHER=$scoped, elsewhere=$other, want 1 and 0"; return 1; }
   [ "$stop" = "1" ] || { echo "Stop detector registrations=$stop, want 1"; return 1; }
   [ "$trk" = "1" ] && [ "$rec" = "1" ] || { echo "unscoped tracker=$trk recorder=$rec, want 1 and 1"; return 1; }
   return 0
@@ -838,6 +901,14 @@ else fail_ "A7" "$why"; fi
 echo "=== W — PostToolUse from Write: the model wrote the file ==="
 if why="$(chk_write_authored "$HOOK")"; then pass "W1 — a Write result, created or overwritten, writes one claude row, PENDING, and raises the sentinel"
 else fail_ "W1" "$why"; fi
+
+echo "=== B — PostToolUse from Edit and MultiEdit (BL-336) ==="
+if why="$(chk_edit_authored "$HOOK")"; then pass "B1 — an Edit whose new_string carries a bypass proposal writes one claude row, PENDING, and raises the sentinel"
+else fail_ "B1" "$why"; fi
+if why="$(chk_multiedit_authored "$HOOK")"; then pass "B2 — a MultiEdit whose second edit's new_string carries it writes one claude row, PENDING, and raises the sentinel"
+else fail_ "B2" "$why"; fi
+if why="$(chk_edit_unrelated "$HOOK")"; then pass "B3 — an Edit and a MultiEdit that rewrite unrelated text record nothing, though old_string and the file's old contents carry a proposal"
+else fail_ "B3" "$why"; fi
 
 echo "=== S — Stop: authored, attributed, blocking ==="
 if why="$(chk_stop_claude_row "$HOOK")"; then pass "S1 — an authored match writes one claude row, PENDING"
@@ -942,7 +1013,7 @@ else fail_ "X1" "$x_fail"; fi
 echo "=== R — the hook roster, sourced ==="
 if why="$(chk_adoption_no_post "$ROSTER")"; then pass "R5 (control) — adoption mode still registers no PostToolUse detector, greenfield does, both keep Stop"
 else fail_ "R5" "$why"; fi
-if why="$(chk_roster_scoped "$ROSTER")"; then pass "R6 — the roster run twice: one detector, under matcher Bash|Write and nowhere else; Stop once; tracker and recorder unscoped"
+if why="$(chk_roster_scoped "$ROSTER")"; then pass "R6 — the roster run twice: one detector, under matcher Bash|Write|Edit|MultiEdit and nowhere else; Stop once; tracker and recorder unscoped"
 else fail_ "R6" "$why"; fi
 
 echo "=== M — markers and mutants ==="
@@ -950,6 +1021,9 @@ echo "=== M — markers and mutants ==="
 for spec in \
   "$HOOK|# BL-277-AUTHORSHIP" \
   "$HOOK|# BL-277-SENTINEL-AUTHORED" \
+  "$HOOK|# BL-336-EDIT-TEXT" \
+  "$HOOK|# BL-336-MULTIEDIT-TEXT" \
+  "$HOOK|# BL-336-AUTHORED-TOOLS" \
   "$LIB|# BL-277-FALSE-POSITIVE" \
   "$LIB|# BL-277-FP-RECORD" \
   "$PA|# BL-277-FP-REASON" \
@@ -1081,7 +1155,7 @@ roster_mutant() {
   elif ! chk_adoption_no_post "$mi" >/dev/null 2>&1; then fail_ "$id (MUTATION)" "the mutant broke R5 too, so the kill proves nothing about R6"
   else pass "$id (MUTATION) — $msg: R6 kills it, R5 survives"; fi
 }
-REG='.hooks.PostToolUse += [{"matcher": "Bash|Write", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]'
+REG='.hooks.PostToolUse += [{"matcher": "Bash|Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]'
 # M7 — the group written without its matcher: the detector runs after every tool.
 roster_mutant M7 "$REG" '.hooks.PostToolUse += [{"hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' 5 "the registration written without its matcher"
 # M8 — the idempotence probe regressed to group [0]: with the detector in its
@@ -1091,7 +1165,10 @@ roster_mutant M8 \
   ".hooks.PostToolUse[0].hooks[]? | select(.command | contains(\"bypass-detector.sh\"))" 4 \
   "the idempotence probe regressed to group [0]"
 # M10 — the matcher widened back over Read, Edit and Write.
-roster_mutant M10 "$REG" '.hooks.PostToolUse += [{"matcher": "Bash|Read|Edit|Write", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' 5 "the matcher widened to Bash|Read|Edit|Write"
+roster_mutant M10 "$REG" '.hooks.PostToolUse += [{"matcher": "Bash|Read|Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' 5 "the matcher widened to Bash|Read|Write|Edit|MultiEdit"
+# M40 — the matcher narrowed back to Bash|Write: an Edit or a MultiEdit never
+# reaches the detector (`## BL-336:`).
+roster_mutant M40 "$REG" '.hooks.PostToolUse += [{"matcher": "Bash|Write", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' 5 "the matcher narrowed to Bash|Write"
 # M12 — the matcher narrowed back to Bash: files the model writes go unscanned
 # (the maintainer's ruling on PR #454).
 roster_mutant M12 "$REG" '.hooks.PostToolUse += [{"matcher": "Bash", "hooks": [{"type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR\"/scripts/hooks/bypass-detector.sh"}]}]' 5 "the matcher narrowed to Bash"
@@ -1099,11 +1176,34 @@ roster_mutant M12 "$REG" '.hooks.PostToolUse += [{"matcher": "Bash", "hooks": [{
 # M11 — Write results no longer authored: a proposal written into a file leaves
 # a tool_output row and no sentinel. Killed by W1; S1 and A1 survive.
 MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
-if why="$(mutate "$MH" "# BL-277-AUTHORSHIP" 'if [ "$EVENT" = "Stop" ] || { [ "$EVENT" = "PostToolUse" ] && [ "$TOOL_NAME" = "Write" ]; }; then' 'if [ "$EVENT" = "Stop" ]; then' 10)"; then
+if why="$(mutate "$MH" "# BL-277-AUTHORSHIP" 'if [ "$EVENT" = "Stop" ] || { [ "$EVENT" = "PostToolUse" ] && [ -n "$AUTHORED_TOOL" ]; }; then' 'if [ "$EVENT" = "Stop" ]; then' 12)"; then
   if chk_write_authored "$MH" >/dev/null 2>&1; then fail_ "M11 (MUTATION)" "Write results recorded as tool output survived W1"
   elif ! chk_stop_claude_row "$MH" >/dev/null 2>&1 || ! chk_post_not_claude "$MH" >/dev/null 2>&1; then fail_ "M11 (MUTATION)" "the mutant broke S1 or A1 too, so the kill proves nothing about W1"
   else pass "M11 (MUTATION) — Write no longer authored: W1 kills it, S1 and A1 survive"; fi
 else fail_ "M11 setup" "$why"; fi
+
+# bd_mutant <id> <marker> <operative> <replacement> <max-distance> <killer> <survivor> <what>
+# — one `## BL-336:` detector mutant on a fresh mirror: <killer> fails on it and
+# <survivor> still passes.
+bd_mutant() {
+  local id="$1" marker="$2" op="$3" rp="$4" maxd="$5" killer="$6" survivor="$7" what="$8" md mh why
+  md="$(mirror_scripts)"; mh="$md/scripts/hooks/bypass-detector.sh"
+  if ! why="$(mutate "$mh" "$marker" "$op" "$rp" "$maxd")"; then fail_ "$id setup" "$why"; return; fi
+  if "$killer" "$mh" >/dev/null 2>&1; then fail_ "$id (MUTATION)" "$what survived $killer"
+  elif ! "$survivor" "$mh" >/dev/null 2>&1; then fail_ "$id (MUTATION)" "the mutant broke $survivor too, so the kill proves nothing about $killer"
+  else pass "$id (MUTATION) — $what: $killer kills it, $survivor survives"; fi
+}
+# M35 — the Edit arm reads nothing: an Edit's proposal is never scanned. Killed by B1.
+bd_mutant M35 "# BL-336-EDIT-TEXT" '.tool_input.new_string // ""' '.tool_input.no_such_key // ""' 4 chk_edit_authored chk_edit_unrelated "the Edit arm reads no text"
+# M36 — the Edit arm reads the file's old contents too. Killed by B3.
+bd_mutant M36 "# BL-336-EDIT-TEXT" '.tool_input.new_string // ""' '(.tool_input.new_string // "") + "\n" + (.tool_response.originalFile // "")' 4 chk_edit_unrelated chk_edit_authored "the Edit arm reads originalFile"
+# M37 — the MultiEdit arm reads only the first edit. Killed by B2.
+bd_mutant M37 "# BL-336-MULTIEDIT-TEXT" '(.tool_input.edits // [])[]?' '(.tool_input.edits // [])[0:1][]?' 4 chk_multiedit_authored chk_edit_authored "the MultiEdit arm reads only its first edit"
+# M38 — the MultiEdit arm reads the old text it replaced too. Killed by B3.
+bd_mutant M38 "# BL-336-MULTIEDIT-TEXT" '| objects | .new_string | strings ]' '| objects | (.new_string, .old_string) | strings ]' 4 chk_edit_unrelated chk_multiedit_authored "the MultiEdit arm reads old_string"
+# M39 — Edit and MultiEdit not authored: their rows are tool_output, with no
+# sentinel. Killed by B1; W1 survives.
+bd_mutant M39 "# BL-336-AUTHORED-TOOLS" 'Write|Edit|MultiEdit) AUTHORED_TOOL=1' 'Write) AUTHORED_TOOL=1' 4 chk_edit_authored chk_write_authored "Edit and MultiEdit recorded as tool output"
 
 # M13 — the false-positive pointer put back into the relayed question. Killed by S3; S2 survives.
 MD="$(mirror_scripts)"; MH="$MD/scripts/hooks/bypass-detector.sh"
