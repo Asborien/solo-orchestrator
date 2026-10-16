@@ -657,6 +657,7 @@ jobs:
             tests/test-bl311-adopt-mcp.sh
             tests/test-bl311-adopt-mcp-mutants.sh
             tests/test-bl311-mcp-add-order.sh
+            tests/test-bl313-ci-before-manifest.sh
             tests/test-bl316-installers.sh
             tests/test-bl312-tldr-mode.sh
             tests/test-bl318-g1-test-command.sh
