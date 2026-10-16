@@ -24862,8 +24862,28 @@ did not match); the issue's three Observed rows, from 29 and 30 September, are o
 proposal shapes matching, including the issue's must-match line and the spellings the old pattern caught
 ("re-run", the other prepositions, a four-word gap, the other marking verbs, "as completed"). T31 gives
 each boundary atom a fixture that matches if the atom is removed. T27 and T28 revert each marked line in
-a copy of the library and see its fixture match again. T1 to T18 unchanged and green;
+a copy of the library and see its fixture match again. T1 to T18 green, their assertions unchanged (T12
+gains `|| true`, so a miss is reported as a failure instead of ending the suite under `set -e`);
 `tests/test-bypass-detector.sh` and `tests/test-bypass-sentinel.sh` green.
+
+**With `## BL-311:`'s relay rule (main merged in, 2026-10-16).** The relay rule reads only the lines
+`terminal_workaround` matches, and `# BL-311-RELAY-REMAINDER` checks what is left of a relay line with
+that same live regex, so BL-315 narrows both. Measured with the real Stop arm, main's table against
+this one:
+- **No row at all where main wrote `relayed_framework_escape`:** the three shell-mode relays SHELL1 to
+  SHELL3 of `tests/test-bl311-d-relayed-escape.sh` (as `## BL-311:` predicted), and an escape relayed
+  "in your project's terminal" or "in a brand-new terminal" (a gap word with an apostrophe or a hyphen).
+  No question is asked on either table; only the record is lost.
+- **A relayed row and no question where main raised one:** "Run `<escape>` in a new terminal, then run
+  the cleanup script yourself, it needs a shell." and "…, then do the same for the subshell." The
+  remainder now raises only when it would raise on a line of its own: `## BL-311:`'s R-BL311D-1,
+  widened by this entry's own residuals. "…, or run it in your own shell" still raises.
+- No proposal stopped matching: `tests/test-bl311-d-relayed-escape.sh` is 287 passed, 0 failed.
+
+`tests/test-bl312-tldr-mode.sh` went red on the merge (71 passed, 2 failed). C4 read the detector's
+words from the end of the regex, and BL-315's regex ends in a word-boundary group. B3 required its
+three historic originals ("in a nutshell", "run shellcheck", "payment terminal") to raise, and they
+are false positives this entry removes. Both now read the live table.
 
 **Residuals.** `no_verify` still matches prose that names the flag (for example "never `--no-verify`");
 narrowing it would stop "I'll use --no-verify here" (T7) matching, so it is left as it is. The issue's
