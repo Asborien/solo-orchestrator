@@ -266,6 +266,96 @@ cmd_offer() {
 
 # --- Subcommand: --resolve ---
 
+# --resolve --decision false-positive --reason WHY (`## BL-277:`) — the
+# operator's way to say a bypass proposal was never one (a rule quoted, a
+# document described). It closes nothing itself: it asks the user the bypass
+# question again with a third option, A3, which closes every PENDING proposal as
+# false_positive with WHY recorded. The user answers by option id, twice,
+# through the Development Guardrails' record-approval.sh, and the close is read
+# from that pick in .claude/approvals.jsonl (bypass_audit_close_from_approvals,
+# `# BL-277-FP-PICK-MAP`), exactly as A1 and A2 are — so an agent that gets past the
+# terminal check below has only put a question to the user, and closed nothing.
+# The detector's own question never carries A3: the gate relays that question
+# to the agent, and it names no false-positive close.
+_pa_fp_reask() {
+  local project_root="$1" route="$2" reason="$3" lib="$SCRIPT_DIR/lib/bypass-audit.sh"
+  local ledger="" sentinel="" n="" pats="" q="" tmpfile="" problems="" sha="" p=""
+  # BL-277-FP-OPERATOR — operator-only, by the same guard as
+  # `test-gate.sh --unrecord-feature`. Agent calls have no terminal on stdin.
+  # Not the barrier (a pseudo-terminal passes it); the user's pick is.
+  if [ ! -t 0 ]; then
+    print_fail "--resolve --decision false-positive requires interactive authorization. Sentinel left in place."
+    echo "The Orchestrator must run this command directly in a terminal:" >&2
+    echo "  scripts/pending-approval.sh --resolve --decision false-positive --reason \"<why this was not a proposal>\"" >&2
+    return 1
+  fi
+  # BL-277-FP-REASON — a reason of whitespace alone is no reason.
+  if [ -z "${reason//[[:space:]]/}" ]; then
+    print_fail "--resolve: --decision false-positive requires --reason \"<why this was not a proposal>\". Sentinel left in place."
+    return 1
+  fi
+  # BL-277-FP-ROUTE — the close is the user's pick, and only the Guardrails at
+  # the minimum or later record one. Below it, or unknown, nothing is asked.
+  if [ "$route" != pick ]; then
+    print_fail "--resolve --decision false-positive asks the user, and only the Development Guardrails ${SOIF_GUARDRAILS_MIN:-4.4.0} and later record their answer (this project: ${route}). Nothing was changed."
+    [ "$route" != legacy ] || echo "  To close the proposal on this project, decline it: scripts/pending-approval.sh --resolve --decision decline" >&2
+    return 1
+  fi
+  _pa_need_lib || return 1
+  # shellcheck disable=SC1090
+  [ -f "$lib" ] && source "$lib"
+  if ! command -v bypass_audit_rebind_pending >/dev/null 2>&1 || [ -z "${BYPASS_FALSE_POSITIVE_TEXT:-}" ]; then
+    print_fail "scripts/lib/bypass-audit.sh predates the false-positive question, so it cannot be asked. Re-sync this project's framework scripts. Nothing was changed."
+    return 1
+  fi
+  ledger="$project_root/.claude/bypass-audit.json"
+  # BL-277-FP-PENDING-ROWS — nothing PENDING, nothing to ask about.
+  n="$(jq '[.[] | select(.type == "claude_bypass_proposal" and .user_response == "PENDING")] | length' "$ledger" 2>/dev/null)" || n=""
+  case "$n" in
+    ''|*[!0-9]*) print_fail "Could not read $ledger. Nothing was changed."; return 1 ;;
+    0) print_fail "No PENDING bypass proposal in .claude/bypass-audit.json: nothing to close as a false positive. Nothing was changed."; return 1 ;;
+  esac
+  sentinel=$(sentinel_path "$project_root")
+  # BL-277-FP-OTHER-QUESTION — a question that is not about these proposals (a
+  # commit question) is the user's to answer; it is never replaced.
+  if [ -f "$sentinel" ] && ! jq -e '.source == "bypass-detector" or .source == "bypass-false-positive"' "$sentinel" >/dev/null 2>&1; then
+    print_fail "Another question is open in .claude/pending-approval.json: wait for the user's answer, or withdraw it (scripts/pending-approval.sh --clear), then run this again. Nothing was changed."
+    return 1
+  fi
+  # BL-277-FP-CONFIRM — confirmed, as --unrecord-feature and --reset confirm
+  # after the same guard.
+  if ! prompt_yes_no "Ask the user again about the $n PENDING bypass proposal(s), adding A3, which closes them as false positives with the reason \"$reason\"? [y/N]" "N"; then
+    print_info "False-positive close cancelled. Sentinel left in place."
+    return 0
+  fi
+  pats="$(jq -r '[.[] | select(.type == "claude_bypass_proposal" and .user_response == "PENDING") | (.details.pattern // empty)] | unique | join(", ")' "$ledger" 2>/dev/null)" || pats=""
+  q="$BYPASS_QUESTION_PREFIX (pattern: ${pats:-unknown}), asked again by the Orchestrator. Review .claude/bypass-audit.json before deciding. Reply with the option id: A1 to accept the proposal, A2 to decline it, A3 to close it as a false positive. $BYPASS_FALSE_POSITIVE_LEAD$reason"
+  tmpfile=$(mktemp "$project_root/.claude/pending-approval.json.XXXXXX") || { print_fail "Could not write the question. Nothing was changed."; return 1; }
+  # BL-277-FP-QUESTION — labelled "bypass-false-positive", not "bypass-detector":
+  # a proposal raised while it is open is NOT bound to it (`# BL-320-DETECT-COVER`
+  # binds only the detector's own label), so A3 closes only the proposals the
+  # Orchestrator looked at.
+  if ! jq -n --arg q "$q" --arg a1 "$BYPASS_ACCEPT_TEXT" --arg a2 "$BYPASS_DECLINE_TEXT" --arg a3 "$BYPASS_FALSE_POSITIVE_TEXT" --arg at "$(iso_timestamp_utc)" \
+      '{schema: 2, source: "bypass-false-positive", question: $q, options: [{id: "A1", text: $a1, approves: "none"}, {id: "A2", text: $a2, approves: "none"}, {id: "A3", text: $a3, approves: "none"}], recommendation: "A3", offered_at: $at}' > "$tmpfile"; then
+    rm -f "$tmpfile"; print_fail "Could not write the question. Nothing was changed."; return 1
+  fi
+  problems="$(soif_pa_v2_problems "$tmpfile")"
+  if [ -n "$problems" ]; then
+    rm -f "$tmpfile"
+    while IFS= read -r p; do [ -n "$p" ] && print_fail "The Development Guardrails could not take an answer to this question: $p."; done <<< "$problems"
+    return 1
+  fi
+  sha="$( { sha256sum "$tmpfile" 2>/dev/null || shasum -a 256 "$tmpfile" 2>/dev/null; } | awk '{print $1; exit}')"
+  # BL-277-FP-BIND — the PENDING proposals are bound to this question before it
+  # is put, so the user's pick on it finds them.
+  if ! bypass_audit_rebind_pending "$project_root" "$sha"; then
+    rm -f "$tmpfile"; print_fail "Could not bind the pending proposals to the question. Nothing was asked."; return 1
+  fi
+  mv -f "$tmpfile" "$sentinel" || { rm -f "$tmpfile"; print_fail "Could not write .claude/pending-approval.json. The proposals stay PENDING."; return 1; }
+  print_ok "Asked again, with A3: the user closes the $n proposal(s) as false positives by replying A3, twice."
+  echo "The Development Guardrails record that pick; the next scripts/pending-approval.sh --resolve, or the next session start, closes the rows from it."
+}
+
 # --resolve: the question is over. It removes a question still on disk (with
 # Guardrails 4.4.0 and later the user's pick has already removed it, so one
 # still there was not answered and is withdrawn), then closes the bypass-audit
@@ -289,6 +379,12 @@ cmd_resolve() {
     return 1
   }
   route="$(_pa_route "$project_root")"
+  # BL-277-FP-DISPATCH — a false-positive close is not the agent's account of an
+  # answer: it asks the user (_pa_fp_reask), so it is not refused below.
+  if [ "$decision" = false-positive ]; then
+    _pa_fp_reask "$project_root" "$route" "$reason"
+    return $?
+  fi
   # FAILS CLOSED (review round 1, R-3): --decision is the agent's own account of
   # the user's answer, so it is accepted only where the Guardrails are KNOWN to
   # be older than the minimum and record no pick. With 4.4.0 or later, with no
@@ -308,32 +404,6 @@ cmd_resolve() {
   if [ -n "$decision" ]; then
     case "$decision" in
       accept|decline) ;;
-      # Every refusal below, and the confirmation, come BEFORE the sentinel is
-      # touched, for the same reason the typo check above does: a close that
-      # fails after the sentinel is gone leaves PENDING rows stranded.
-      false-positive)
-        # BL-277-FP-OPERATOR — operator-only, by the same guard as
-        # `test-gate.sh --unrecord-feature`: every sentinel now comes from text
-        # the model wrote, so a model closing it here would relabel its own
-        # proposal as none. Agent calls have no terminal on stdin.
-        if [ ! -t 0 ]; then
-          print_fail "--resolve --decision false-positive requires interactive authorization. Sentinel left in place."
-          echo "The Orchestrator must run this command directly in a terminal:" >&2
-          echo "  scripts/pending-approval.sh --resolve --decision false-positive --reason \"<why this was not a proposal>\"" >&2
-          return 1
-        fi
-        # BL-277-FP-REASON — a reason of whitespace alone is no reason.
-        if [ -z "${reason//[[:space:]]/}" ]; then
-          print_fail "--resolve: --decision false-positive requires --reason \"<why this was not a proposal>\". Sentinel left in place."
-          return 1
-        fi
-        # BL-277-FP-CONFIRM — confirmed, as --unrecord-feature and --reset
-        # confirm after the same guard.
-        if ! prompt_yes_no "Close every PENDING bypass proposal as a false positive, reason \"$reason\"? [y/N]" "N"; then
-          print_info "False-positive close cancelled. Sentinel left in place."
-          return 0
-        fi
-        ;;
       *)
         print_fail "--resolve: unknown decision '$decision' (expected: accept | decline | false-positive). Sentinel left in place."
         echo "  Re-run: scripts/pending-approval.sh --resolve --decision accept" >&2
@@ -542,12 +612,14 @@ Commands:
                                   with Development Guardrails older than 4.4.0,
                                   which record no pick (BL-029.1).
                                   --decision false-positive --reason "WHY"
-                                  (same condition) closes them as false_positive
-                                  instead: nothing was proposed, and WHY is
-                                  recorded on each row (BL-277). An empty reason
-                                  is refused. The Orchestrator's alone: refused
-                                  unless run directly in a terminal, then
-                                  confirmed at a [y/N] prompt.
+                                  (BL-277) closes nothing itself: it asks the
+                                  user the bypass question again with A3, which
+                                  closes the PENDING proposals as false_positive
+                                  with WHY recorded, once the user picks it by
+                                  option id (Guardrails 4.4.0 and later). An
+                                  empty reason is refused. The Orchestrator's:
+                                  refused unless run directly in a terminal,
+                                  then confirmed at a [y/N] prompt.
   --clear                         Withdraw the question (abort).
   --status                        Print the current question and what each option does.
   --validate [PATH]               Lint a question file. Default: .claude/pending-approval.json.

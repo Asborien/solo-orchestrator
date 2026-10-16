@@ -18272,30 +18272,41 @@ true — reading the ledger back mints no `claude` row — and the growth is lis
   relays it to the model, so it names no way to close the proposal as a false positive. Pinned by S3
   (the relayed question is present and names none of `false-positive`, `false positive`,
   `false_positive` or `--reason`).
-- `# BL-277-FALSE-POSITIVE` and `# BL-277-FP-RECORD` in `scripts/lib/bypass-audit.sh`,
-  `# BL-277-FP-REASON` and `# BL-277-FP-PASS` in `scripts/pending-approval.sh`: `--resolve --decision
-  false-positive --reason "<why>"` closes PENDING proposal rows as `user_response: false_positive`,
-  `final_outcome: recorded_only`, and records the reason on each row as `details.false_positive_reason`
-  (the `jq` that lands it is `# BL-277-FP-RECORD`; the call that carries the reason to the library is
-  `# BL-277-FP-PASS`; its `[OK]` line prints `$decision`, as on `main`).
-  The close is the operator's alone: `# BL-277-FP-OPERATOR` refuses it when stdin is not a terminal,
-  and `# BL-277-FP-CONFIRM` then asks `[y/N]` through `prompt_yes_no`, the two steps
-  `test-gate.sh --unrecord-feature` and `process-checklist.sh --reset` already take for agent calls,
-  in the same shape (a refusal is rc 1; a "no" is "cancelled", rc 0, nothing moved). A
-  missing, empty or blank reason is refused in the script BEFORE the sentinel is touched (the same
-  ordering the `accpet`-typo fix established), and refused again in the library so a direct caller
-  cannot close silently. Pinned by D1 (the operator's close, under a pseudo-terminal: closes, records,
-  distinct from accept and decline), D2 (five empty shapes on the operator's side, tab-only and
-  newline-only among them: non-zero, sentinel kept, row still PENDING), D5 (the agent's side, no
-  terminal on stdin: a well-formed close with a reason is refused, sentinel kept, row PENDING, no
-  reason written), D7 (the operator answers "n", or presses Enter: cancelled, nothing moves), P0
-  (control: the pseudo-terminal is real and the agent's side has none), D4 (the library's own refusal
-  of a blank, tab-only or newline-only reason, reached directly because the script's guard would
-  otherwise shield it from every test), D6 (the library refuses an unknown decision given with a
-  reason), D3 (decline and accept record what they did before, and neither writes a
-  `false_positive_reason`, even when handed a `--reason`). On a stub install without
-  `scripts/lib/helpers-core.sh`, `# BL-277-FP-STUB` supplies a `prompt_yes_no` that refuses the close
-  and names the missing file (D8).
+- The false-positive close is the USER'S PICK, fitted to `## BL-320:`'s schema-2 flow (merged with main
+  on 2026-10-16). `scripts/pending-approval.sh --resolve --decision false-positive --reason "<why>"`
+  (`# BL-277-FP-DISPATCH`, ahead of main's `# BL-320-RESOLVE-DECISION` refusal) closes nothing itself.
+  In `_pa_fp_reask` it is refused when stdin is not a terminal (`# BL-277-FP-OPERATOR`), for a blank
+  reason (`# BL-277-FP-REASON`), below the Guardrails minimum or with no readable version, where no pick
+  can be recorded (`# BL-277-FP-ROUTE`), with nothing PENDING (`# BL-277-FP-PENDING-ROWS`), and with a
+  question of another kind open (`# BL-277-FP-OTHER-QUESTION`); then it asks `[y/N]` with the reason
+  shown (`# BL-277-FP-CONFIRM`). A "no" is "cancelled", rc 0, nothing moved. A "yes" asks the bypass
+  question again, labelled `source: "bypass-false-positive"` (`# BL-277-FP-QUESTION`), with A1 and A2
+  as before, a third option A3 (`BYPASS_FALSE_POSITIVE_TEXT`), and the reason at the end of the question
+  after `BYPASS_FALSE_POSITIVE_LEAD`, and binds every PENDING proposal to it (`# BL-277-FP-BIND`,
+  `bypass_audit_rebind_pending`, `# BL-277-FP-REBIND`). The user answers by option id, twice, through
+  the Guardrails' `record-approval.sh`, and `bypass_audit_close_from_approvals` closes the rows from
+  that pick (`# BL-277-FP-PICK-MAP`): `user_response: false_positive`, `final_outcome: recorded_only`
+  (`# BL-277-FP-PICK-END`), the reason the user was shown as `details.false_positive_reason`
+  (`# BL-277-FP-PICK-WHY`); an A3 pick on a question with no reason after the lead closes nothing.
+  The library's own `--decision false-positive` arm in `bypass_audit_close_pending`
+  (`# BL-277-FALSE-POSITIVE`, `# BL-277-FP-RECORD`) is kept and pinned, with its blank-reason refusal,
+  but `pending-approval.sh` no longer calls it with that decision; `# BL-277-FP-PASS` carries
+  `--reason` to accept and decline, which must not record it. Pinned by D1 (the operator's close asks
+  again with A3 and the reason and closes nothing; the A3 pick then closes, records the reason, and
+  `details.pick` is A3), D2 (five empty reasons, tab-only and newline-only among them: refused, the
+  question and the row unmoved), D5 (the agent's side, no terminal: refused, nothing asked), D7 (the
+  operator answers "n" or presses Enter: cancelled, the prompt showed the reason, nothing asked),
+  D10 (4.3.0 and no version: refused, nothing asked), D11 (an A3 pick on a question with no reason, or
+  a whitespace one: nothing closed), D13 (a commit question open: refused, untouched), D14 (nothing
+  PENDING: refused, no question written), D15 (a proposal raised while the operator's question is open
+  is not bound to it, so A3 closes only the earlier one), D16 (asked again and no pick: `--resolve`
+  withdraws the question, the row stays PENDING), E1 (the real Guardrails hooks from the pinned
+  fixture: config-guard refuses the agent's Write and Bash writes to `.claude/approvals.jsonl` and its
+  own run of `record-approval.sh`; the user's first reply shows A3 and the reason, the second records
+  the pick, and `--resolve` closes the row), P0, D4, D6, D9 and D3 (decline and accept on the legacy
+  route, where the agent's `--decision` is still taken, write no `false_positive_reason`). On a stub
+  install without `scripts/lib/helpers-core.sh`, `# BL-277-FP-STUB` supplies a `prompt_yes_no` that
+  refuses and names the missing file (D8).
 - `# BL-277-MATCHER` in the hook roster, `scripts/lib/claude-settings.sh` (`soif_register_hook_roster`,
   which `init.sh` sources since #451 moved the roster out of it; this entry's hunk moved with it, inside
   the greenfield branch of the maintainer's `# BL-242-SETTINGS-BL277` guard, which is unchanged): the
@@ -18355,7 +18366,7 @@ passes. A mutant that fails any of that is reported as a SETUP failure, never as
 | M2 | detector, `# BL-277-AUTHORSHIP` | ≤ 6 | `USER_RESPONSE="n/a"` → `USER_RESPONSE="PENDING"` | A3 | A1 |
 | M3 | detector, `# BL-277-SENTINEL-AUTHORED` | ≤ 6 | the authorship guard removed (the shipped `if [ ! -f "$SENTINEL" ]`) | A2, G2 | A1 |
 | M3b | detector, `# BL-277-SENTINEL-AUTHORED` | ≤ 6 | `if false; then` (sentinel never raised) | S2, G3 | S1 |
-| M4 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 4 | `false_positive`/`recorded_only` → `declined`/`abandoned` | D1 | D3 |
+| M4 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 4 | `false_positive`/`recorded_only` → `declined`/`abandoned` | D9 | D3 |
 | M5 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 5 | the reason guard → `if false; then` | D4 | — |
 | M6 | pending-approval, `# BL-277-FP-REASON` | ≤ 6 | the reason guard → `if false; then` | D2 | D1 |
 | M7 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | the group written without `"matcher": "Bash\|Write"` | R6 | R5 |
@@ -18376,6 +18387,16 @@ passes. A mutant that fails any of that is reported as a SETUP failure, never as
 | M20 | pending-approval on a stub install, `# BL-277-FP-STUB` | ≤ 4 | the fallback `prompt_yes_no` renamed away | D8 | — |
 | M21 | lib, `# BL-277-FP-RECORD` | ≤ 2 | the close widened to `user_response == "n/a"` rows | D9 | D1 |
 | M22 | lib, `# BL-277-FP-RECORD` | ≤ 2 | the close widened to `escalation` rows | D9 | D1 |
+| M25 | pending-approval, `# BL-277-FP-ROUTE` | ≤ 3 | the pick-route guard → `if false; then` | D10 | D1 |
+| M26 | lib, the A3 arm (`# BL-277-FP-PICK-MAP`) | 1 | an A3 pick maps to `PENDING` | D1 | D3 |
+| M27 | lib, the A3 arm | 1 | the reason requirement → `and true` | D11 | D1 |
+| M28 | lib, `# BL-277-FP-PICK-WHY` | 1 | the whole question read as the reason | D1 | — |
+| M29 | lib, `# BL-277-FP-PICK-END` | ≤ 12 | an A3 close recorded as `abandoned` | D1 | D3 |
+| M30 | pending-approval, `# BL-277-FP-BIND` | ≤ 3 | the rows not bound to the operator's question | D1 | D5 |
+| M31 | pending-approval, `# BL-277-FP-QUESTION` | ≤ 8 | the question labelled `bypass-detector` | D15 | — |
+| M32 | pending-approval, `# BL-277-FP-OTHER-QUESTION` | ≤ 3 | a commit question replaced | D13 | D1 |
+| M33 | pending-approval, `# BL-277-FP-PENDING-ROWS` | ≤ 4 | a question asked with nothing PENDING | D14 | D1 |
+| M34 | pending-approval, `# BL-277-FP-DISPATCH` | ≤ 3 | false-positive sent to main's `--decision` refusal | D1 | D3 |
 
 Each "survives" column is asserted too, so a kill that came from breaking something else is reported
 as such.
@@ -18386,10 +18407,10 @@ the Status paragraph above; each point of the review, with the change and the ca
   authored text: `# BL-277-AUTHORSHIP` gives it `claude` / `PENDING` and the sentinel. W1 pins it with a
   real `Write` result, created and overwritten; M11 (the `Write` arm dropped) and M12 (the matcher
   narrowed to `Bash`) are killed by W1 and R6. Residuals 1 and 2 are corrected.
-- **The relayed question told the agent how to close its own proposal.** The pointer is gone (S3, M13),
-  and `# BL-277-FP-OPERATOR` makes the false-positive close operator-only by the framework's existing
-  terminal guard (D5, M16; P0 proves the operator's side in the suite has a real terminal). Its bounds
-  are residual 8.
+- **The relayed question told the agent how to close its own proposal.** The pointer is gone (S3, M13).
+  The close itself is now the user's pick of A3, recorded by the Guardrails (above); the terminal guard
+  `# BL-277-FP-OPERATOR` (D5, M16; P0 proves the operator's side in the suite has a real terminal)
+  keeps the re-ask the Orchestrator's to start. Its bounds are residual 8.
 - **`# BL-277-FP-RECORD` was unpinned.** D3 now closes by `accept` and by `decline`, each handed a
   `--reason`, and asserts no `false_positive_reason` is written; the maintainer's mutant is M14, killed
   by D3. Before D3 changed, the suite passed in full with that mutant applied.
@@ -18451,17 +18472,21 @@ the Status paragraph above; each point of the review, with the change and the ca
    Bash result carries `stdout`, empty or not, and `jq`'s `//` keeps an empty string, so the extraction
    stops at `stdout`. A4 used to feed `stderr`, `output` and `content` under `tool_name: Bash`, which no
    Bash result can arrive as; it now feeds the real shape and claims only `stdout`.
-8. **The operator-only close is a terminal check and a typed confirmation, with their bounds.**
-   `[ ! -t 0 ]` then `prompt_yes_no` is the framework's existing way of telling the Orchestrator from
-   an agent call; it is not a credential. Two routes still reach a false-positive close without the
-   Orchestrator: a caller that runs the script under a pseudo-terminal and types `y` into it (D1 does
-   exactly that, through `script(1)`), which would pass `--unrecord-feature` and `--reset` the same
-   way; and a caller that sources `scripts/lib/bypass-audit.sh` and calls `bypass_audit_close_pending`
-   directly (D4 and D6 do), which has no terminal check, the same shape as `test-gate.sh`'s callable
-   `_unrecord_feature_apply`. No environment variable or other flag reaches it. And, pre-existing,
-   `--clear` and a bare `--resolve` still remove the sentinel from any caller; those leave the rows
-   PENDING, so the ledger still records an open proposal, where a false-positive close would have
-   recorded that none was made.
+8. **What the operator-only close rests on.** The terminal check and the `[y/N]` are not the barrier:
+   an agent can run the command under a pseudo-terminal and type `y` (D1's first half does exactly
+   that, through `script(1)`). What that gets it is a question put to the user, with A3 and the reason
+   in it; nothing closes until the user picks A3 by option id, twice, after `record-approval.sh` has
+   shown them the question, each option and the reason (E1). The agent cannot write that pick: the
+   Guardrails' config-guard refuses its Write-tool and Bash writes to `.claude/approvals.jsonl` and its
+   own run of `record-approval.sh` (E1, against the pinned fixture). The bounds, none new here: that
+   refusal matches the command's text, so it is the Guardrails' boundary and every schema-2 approval
+   rests on it, commit approvals included; an agent can write its own A3 question with a reason of its
+   choosing, which the user still has to pick having read it; `.claude/bypass-audit.json` itself is not
+   write-protected (`## BL-320:` residual), so an agent can edit a row's outcome directly; and a caller
+   that sources `scripts/lib/bypass-audit.sh` can call `bypass_audit_close_pending ... false-positive`
+   directly (D4 and D6 do), the same shape as `test-gate.sh`'s callable `_unrecord_feature_apply`.
+   Pre-existing, `--clear` and a bare `--resolve` still remove the question from any caller; those
+   leave the rows PENDING.
 9. **`Edit` is not scanned** (pre-existing). An `Edit` result carries `oldString`/`newString`, none of
    the four keys, so a proposal written into a file by `Edit` leaves no row, on `main` and here. The
    ruling names `Write`; extending the scan to `Edit` would be a new surface, not built.

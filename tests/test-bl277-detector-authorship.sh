@@ -477,7 +477,6 @@ chk_fp_closes() {
   run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
   s="$(sentinel "$d")"
   [ "$PA_RC" = "0" ] || { echo "the operator's close: rc=$PA_RC, want 0"; return 1; }
-  grep -qF -e "$REASON_FP" "$TTY_OUT" 2>/dev/null || { echo "the confirmation did not show the reason"; return 1; }
   jq -e --arg fp "$FP_TEXT" --arg tail "$FP_LEAD$REASON_FP" --arg pre "$Q_PREFIX" \
     '.schema == 2 and .source == "bypass-false-positive" and ([.options[].id] == ["A1","A2","A3"])
      and ([.options[].approves] | unique) == ["none"] and (.options[2].text == $fp)
@@ -634,6 +633,7 @@ chk_fp_operator_declines() {
     before="$(sum_of "$(sentinel "$d")")"
     PA_ANSWER="$ans" run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
     [ "$PA_RC" = "0" ] || { echo "answer '$ans': rc=$PA_RC, want 0 (cancelled)"; return 1; }
+    grep -qF -e "$REASON_FP" "$TTY_OUT" 2>/dev/null || { echo "answer '$ans': the confirmation did not show the reason"; return 1; }
     why="$(unmoved "$d" "$before")" || { echo "answer '$ans': $why"; return 1; }
   done
   return 0
@@ -1225,9 +1225,9 @@ fp_mutant M25 pa "# BL-277-FP-ROUTE" 'if [ "$route" != pick ]; then' 'if false; 
 # M26 — an A3 pick decides nothing. Killed by D1.
 fp_mutant M26 lib "# BL-320-AUDIT-DEC" 'then "false_positive"   # BL-277-FP-PICK-MAP' 'then "PENDING"   # BL-277-FP-PICK-MAP' 1 chk_fp_closes chk_decline_still_declines "the user's A3 pick leaves the row PENDING"
 # M27 — an A3 pick closes with no reason shown to the user. Killed by D11.
-fp_mutant M27 lib "# BL-320-AUDIT-DEC" ' and (($why | gsub("\\s"; "")) | length) > 0 then "false_positive"' ' then "false_positive"' 1 chk_fp_pick_needs_reason chk_fp_closes "an A3 pick on a question with no reason closes the row"
+fp_mutant M27 lib "# BL-320-AUDIT-DEC" 'and (($why | gsub("\\s"; "")) | length) > 0' 'and true' 1 chk_fp_pick_needs_reason chk_fp_closes "an A3 pick on a question with no reason closes the row"
 # M28 — the whole question recorded as the reason. Killed by D1.
-fp_mutant M28 lib "# BL-320-AUDIT-AFTER" 'split($fpl) | if length > 1 then (.[1:] | join($fpl)) else "" end' '.' 1 chk_fp_closes - "the whole question read as the operator's reason"
+fp_mutant M28 lib "# BL-320-AUDIT-AFTER" 'split($fpl) | if length > 1 then (.[1:] | join($fpl)) else "" end' 'ltrimstr("")' 1 chk_fp_closes - "the whole question read as the operator's reason"
 # M29 — an A3 close recorded as abandoned. Killed by D1.
 fp_mutant M29 lib "# BL-320-AUDIT-DEC" 'elif $ur == "declined" then "abandoned" else "recorded_only" end)' 'else "abandoned" end)' 12 chk_fp_closes chk_decline_still_declines "an A3 close written as final_outcome abandoned"
 # M30 — the proposals not bound to the operator's question: the user's pick on
