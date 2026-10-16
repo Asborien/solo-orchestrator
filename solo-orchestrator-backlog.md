@@ -21471,6 +21471,9 @@ signatures are unchecked for authorship whether or not this attestation exists.
   exposure. `SOLO_MCP_ATTESTED` does not: `scripts/session-mcp-gate.sh` reads it from the session's
   environment, so it cannot be attached to one call after the session starts. Recorded as a residual
   (Karl, 2026-10-16), consistent with the #404 decision.
+- A6 and A7 check only that the record's `by` and date are non-empty, so a writer that recorded the wrong
+  person or a fixed date would still pass (the final review's mutants `by`→"someone" and the date→
+  "1970-01-01" survived). The values written today are correct; asserting the exact values would close it.
 
 **Related:** `## BL-275:` (the same control, and why its remedy line cannot be made both true and
 consistent), `## BL-212:` (the same walker, its coverage stopping at Phase 1→2), `## BL-279:` (the
