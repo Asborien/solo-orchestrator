@@ -227,13 +227,13 @@ else
   before_p="$(_cksum "$H8N/.claude/intake-progress.json")"; bad=""
   # The last two differ from input_1_name only outside the shape, so they
   # pin the `^`…`$` anchors of `# BL-282-FAMILY-WHOLE` directly.
-  for nk in input_x_name input_1a_name input_1_namex xinput_1_name; do
+  for nk in input_x_name input_1a_name input_1_namex xinput_1_name input__name; do
     wiz "$H8N" --set-answer "$nk" "minted"
     [ "$WIZ_RC" -eq 1 ] || bad="$bad [rc=$WIZ_RC for $nk]"
   done
   after_p="$(_cksum "$H8N/.claude/intake-progress.json")"
   if [ -z "$bad" ] && [ "$before_p" = "$after_p" ]; then
-    pass "H8N — a non-digit index (input_x_name, input_1a_name) and a key outside the shape (input_1_namex, xinput_1_name) are refused (rc=1), file byte-identical"
+    pass "H8N — a non-digit or empty index (input_x_name, input_1a_name, input__name) and a key outside the shape (input_1_namex, xinput_1_name) are refused (rc=1), file byte-identical"
   else
     fail_ "H8N" "${bad:-rc fine}; file $([ "$before_p" = "$after_p" ] && echo unchanged || echo CHANGED)"
   fi
@@ -577,17 +577,22 @@ echo "=== N — the competency family is bounded by the wizard's own domain list
 # MINT a key the wizard records nowhere, which is the one thing the refusal
 # exists to prevent (`# BL-282-COMPETENCY-DOMAINS`).
 
-# N1 — a real domain key is accepted.
+# N1 — a real domain key is accepted. `Product/UX Logic` carries a slash AND
+# a space, so it pins both halves of the arm's `tr '/ ' '_'`.
 N1="$(newtmp)/proj"
 if ! mk_project "$N1"; then
   fail_ "N1 setup" "could not build the fixture"
 else
-  wiz "$N1" --set-answer competency_security "No"
-  got="$(jq_answer competency_security "$N1")"
-  if [ "$WIZ_RC" -eq 0 ] && [ "$got" = "No" ]; then
-    pass "N1 — competency_security, a key the wizard's own domain list yields, is accepted (rc=$WIZ_RC)"
+  bad=""
+  for k in competency_security competency_product_ux_logic; do
+    wiz "$N1" --set-answer "$k" "No"
+    got="$(jq_answer "$k" "$N1")"
+    [ "$WIZ_RC" -eq 0 ] && [ "$got" = "No" ] || bad="$bad [rc=$WIZ_RC $k=[$got]: $(tail -1 "$N1/run.out")]"
+  done
+  if [ -z "$bad" ]; then
+    pass "N1 — competency_security and competency_product_ux_logic, keys the wizard's own domain list yields, are accepted"
   else
-    fail_ "N1" "rc=$WIZ_RC competency_security=[$got], want [No]: $(tail -1 "$N1/run.out")"
+    fail_ "N1" "want [No] for each:$bad"
   fi
 fi
 
@@ -611,15 +616,16 @@ if ! mk_project "$N3"; then
   fail_ "N3 setup" "could not build the fixture"
 else
   # competency_sec is a SUBSTRING of a real domain key: membership is of the
-  # whole line (`grep -x`), never a match inside one.
+  # whole line (`grep -x`), never a match inside one. competency_security_x is
+  # a real domain plus a suffix: only `_tooling` may follow one.
   before_p="$(_cksum "$N3/.claude/intake-progress.json")"; bad=""
-  for nk in competency_zzz competency_sec; do
+  for nk in competency_zzz competency_sec competency_security_x; do
     wiz "$N3" --set-answer "$nk" "minted"
     [ "$WIZ_RC" -eq 1 ] && [ "$(jq_answer "$nk" "$N3")" = "<<unset>>" ] || bad="$bad [rc=$WIZ_RC for $nk]"
   done
   after_p="$(_cksum "$N3/.claude/intake-progress.json")"
   if [ -z "$bad" ] && [ "$before_p" = "$after_p" ]; then
-    pass "N3 — competency_zzz and competency_sec are refused (rc=1), mint nothing, file byte-identical"
+    pass "N3 — competency_zzz, competency_sec and competency_security_x are refused (rc=1), mint nothing, file byte-identical"
   else
     fail_ "N3" "${bad:- rc fine}; file $([ "$before_p" = "$after_p" ] && echo unchanged || echo CHANGED)"
   fi
@@ -740,12 +746,14 @@ refuse_all N8 "gate_, infra_ and escalation_ keys no array yields" \
 
 # N9 — keys carrying a line break, each with one line a valid key would
 # match. Matching is of the WHOLE string (`# BL-282-KEY-CHARSET`,
-# `# BL-282-FAMILY-WHOLE`), never line by line.
+# `# BL-282-FAMILY-WHOLE`), never line by line. The last key is all
+# lower-case, so only the line break itself can refuse it: a charset checked
+# per line passes it, and the domain arm's `grep -x` then matches one line.
 refuse_all N9 "keys with a line break" \
   "$(printf 'NOT A KEY\ngate_q')" "$(printf 'NOT A KEY\ninput_1_name')" \
   "$(printf 'gate_phase_0_to_phase_1\nNOT')" "$(printf 'competency_security\nNOT')" \
   "$(printf 'monthly_budget\nNOT')" "input_1_name
-"
+" "$(printf 'competency_security\nfrontend_code')"
 
 # N11 — `# BL-282-KEY-CHARSET` alone refuses an upper-case or accented key,
 # in a UTF-8 locale too. On bash 3.2 a `[a-z]` range collates, so `M` and `é`
@@ -910,7 +918,7 @@ MP1="$(newtmp)/fw"
 if ! mkdir -p "$MP1" || ! cp -Rp "$REPO_ROOT/scripts" "$MP1/"; then
   fail_ "MP1 setup" "could not mirror scripts/"
 else
-  tgt="$MP1/scripts/intake-wizard.sh"; before="$(mktemp)"; cp "$tgt" "$before"
+  tgt="$MP1/scripts/intake-wizard.sh"; before="$MP1/before.sh"; cp "$tgt" "$before"
   m_ln="$(grep -n 'BL-282-KEY-REFUSE' "$before" | head -1 | cut -d: -f1)"
   sed -e 's/^\([[:space:]]*\)return 1\([[:space:]]*# BL-282-KEY-REFUSE\)$/\1return 0\2/' "$before" > "$tgt"
   h_ln="$(_hunk_line "$before" "$tgt")"
@@ -942,7 +950,7 @@ MP2="$(newtmp)/fw"
 if ! mkdir -p "$MP2" || ! cp -Rp "$REPO_ROOT/scripts" "$MP2/"; then
   fail_ "MP2 setup" "could not mirror scripts/"
 else
-  tgt2="$MP2/scripts/intake-wizard.sh"; before2="$(mktemp)"; cp "$tgt2" "$before2"
+  tgt2="$MP2/scripts/intake-wizard.sh"; before2="$MP2/before.sh"; cp "$tgt2" "$before2"
   r_ln="$(grep -n 'BL-282-RERENDER' "$before2" | head -1 | cut -d: -f1)"
   if [ -z "$r_ln" ]; then
     fail_ "MP2 setup" "could not locate the re-render line"
@@ -976,7 +984,7 @@ MP3="$(newtmp)/fw"
 if ! mkdir -p "$MP3" || ! cp -Rp "$REPO_ROOT/scripts" "$MP3/"; then
   fail_ "MP3 setup" "could not mirror scripts/"
 else
-  tgt3="$MP3/scripts/intake-wizard.sh"; before3="$(mktemp)"; cp "$tgt3" "$before3"
+  tgt3="$MP3/scripts/intake-wizard.sh"; before3="$MP3/before.sh"; cp "$tgt3" "$before3"
   c_ln="$(grep -n 'BL-282-HINT-COUNT' "$before3" | head -1 | cut -d: -f1)"
   sed -e 's/^\(.*\)head -3\(.*# BL-282-HINT-COUNT.*\)$/\1head -1\2/' "$before3" > "$tgt3"
   h_ln3="$(_hunk_line "$before3" "$tgt3")"
@@ -1010,7 +1018,7 @@ MP4="$(newtmp)/fw"
 if ! mkdir -p "$MP4" || ! cp -Rp "$REPO_ROOT/scripts" "$MP4/"; then
   fail_ "MP4 setup" "could not mirror scripts/"
 else
-  tgt4="$MP4/scripts/intake-wizard.sh"; before4="$(mktemp)"; cp "$tgt4" "$before4"
+  tgt4="$MP4/scripts/intake-wizard.sh"; before4="$MP4/before.sh"; cp "$tgt4" "$before4"
   w_ln="$(grep -n 'BL-282-WRITE-STATUS' "$before4" | head -1 | cut -d: -f1)"
   sed -e 's/^\(.*save_answer "\$key" "\$value" \)|| {.*}\( *# BL-282-WRITE-STATUS\)$/\1|| true\2/' "$before4" > "$tgt4"
   h_ln4="$(_hunk_line "$before4" "$tgt4")"
@@ -1042,7 +1050,7 @@ MP5="$(newtmp)/fw"
 if ! mkdir -p "$MP5" || ! cp -Rp "$REPO_ROOT/scripts" "$MP5/"; then
   fail_ "MP5 setup" "could not mirror scripts/"
 else
-  tgt5="$MP5/scripts/intake-wizard.sh"; before5="$(mktemp)"; cp "$tgt5" "$before5"
+  tgt5="$MP5/scripts/intake-wizard.sh"; before5="$MP5/before.sh"; cp "$tgt5" "$before5"
   d_ln="$(grep -n 'BL-282-COMPETENCY-DOMAINS' "$before5" | head -1 | cut -d: -f1)"
   sed -e 's/^\([[:space:]]*\)_bl282_array_keys domains .*\(  # BL-282-COMPETENCY-DOMAINS\)$/\1return 0\2/' "$before5" > "$tgt5"
   h_ln5="$(_hunk_line "$before5" "$tgt5")"
@@ -1076,7 +1084,7 @@ MP6TGT="$(_mirror_with_abort "$MP6")"
 if [ -z "${MP6TGT:-}" ]; then
   fail_ "MP6 setup" "could not build the aborting mirror"
 else
-  before6="$(mktemp)"; cp "$MP6TGT" "$before6"
+  before6="$MP6/before.sh"; cp "$MP6TGT" "$before6"
   a_ln="$(grep -n 'BL-282-ARM-FAILCLOSED' "$before6" | head -1 | cut -d: -f1)"
   sed -e 's/^\([[:space:]]*\)run_set_answer "\$@".*# BL-282-ARM-FAILCLOSED.*$/\1if run_set_answer "$@"; then exit 0; fi  # BL-282-ARM-FAILCLOSED/' "$before6" > "$MP6TGT"
   h_ln6="$(_hunk_line "$before6" "$MP6TGT")"
