@@ -25124,3 +25124,120 @@ seven open PRs either). R-346-6 is on main.
   sentence is wrong as a description of the code and is left as it is.
 
 **Close** in a follow-up once the branch is merged, citing the PR.
+
+## BL-315: two bypass patterns match text that names a flag, an identifier or a step (#465)
+
+**Status:** Open — reproduction and fix in the pull request that files this entry.
+
+**What happens.** `terminal_workaround` was `(run|do|execute) [^.]*(terminal|shell)`: any sentence with
+the word "run" and, later, the letters "terminal" or "shell" matched, including a test helper called
+`run` followed by a `--terminal-mode` flag, "SUBSHELL", and a description of a tool that runs without a
+shell. `fake_loop`'s list form was `tests_verified_failing[^a-z0-9_]+.{0,40}complete`, which the step
+name `complete_step`, the gate's own refusal ("not yet completed") and prose explaining the pattern all
+satisfy. On an adopting project on 30 September 2026 these two patterns produced 29 detector rows in one
+day; five were authored text, which raises the pending-approval sentinel, and none was a proposal.
+
+**Ruling applied.** Files the agent writes are still scanned (#454's review); nothing is excluded by
+path. The patterns are narrowed instead.
+
+**Fix.** `# BL-315-TERMINAL-WORDS`: after the verb, the terminal or shell is reached with a preposition
+("in", "from", "on", "via", "through", "inside", "within", "at", "using" or "with") and at most four
+words, and "terminal" or "shell" is a word (no letter, digit or `_` after it; a hyphen is allowed, so
+"terminal-emulator" matches). Those words may carry Markdown emphasis, `*` or `_` (#482 review, R-482-1:
+"Do them in a **new terminal window**, not in this session.", a real transcript line, raised on main
+and nothing here until then). Every proposal fixture has that shape; a flag after a helper called `run`,
+a word such as SUBSHELL, and a description with no preposition ("run without a shell") do not.
+`# BL-315-FAKE-LOOP-VERB`: the list form needs a marking verb as a word ("mark", "set", "record", "flag"
+or "tick", or its -s, -ed or -ing form) in the same sentence, before the step name or, in a third
+alternative, after it ("skip tests_verified_failing and mark it complete"; #482 review, R-482-3), and
+"complete" not followed by `_`, so "settings" and `complete_step` do not match while "marked" and
+"completed" do; the step-name form is unchanged.
+
+**Tests.** `tests/test-bypass-patterns.sh`: T19 to T25 are excerpts the detector recorded on 30 September
+2026 on an adopting project, none a proposal (six red before the fix; T22 pins identifiers, which already
+did not match); the issue's three Observed rows, from 29 and 30 September, are of the same kind. T26, T29 and T30 keep the
+proposal shapes matching, including the issue's must-match line and the spellings the old pattern caught
+("re-run", the other prepositions, a four-word gap, the other marking verbs, "as completed"), plus
+Markdown emphasis in the phrase and a marking verb after the step name. T31 gives each boundary atom a
+fixture that matches if the atom is removed, in both list-form alternatives, the full stop in
+`[^a-z0-9_.]` included (#482 review, R-482-5: its mutant had survived every suite). Measured
+2026-10-16: 17 single-atom mutants of the two marked lines, each turning its own T30 or T31 row red.
+T27 and T28 revert each marked line in
+a copy of the library and see its fixture match again. T1 to T18 green, their assertions unchanged (T12
+gains `|| true`, so a miss is reported as a failure instead of ending the suite under `set -e`);
+`tests/test-bypass-detector.sh` and `tests/test-bypass-sentinel.sh` green.
+
+**With `## BL-311:`'s relay rule (main merged in, 2026-10-16).** The relay rule reads only the lines
+`terminal_workaround` matches, and `# BL-311-RELAY-REMAINDER` checks what is left of a relay line with
+that same live regex, so BL-315 narrows both. Measured with the real Stop arm, main's table against
+this one:
+- **No row at all where main wrote `relayed_framework_escape`:** the three shell-mode relays SHELL1 to
+  SHELL3 of `tests/test-bl311-d-relayed-escape.sh` (as `## BL-311:` predicted), and an escape relayed
+  "in your project's terminal" or "in a brand-new terminal" (a gap word with an apostrophe or a hyphen).
+  No question is asked on either table; only the record is lost.
+- **A relayed row and no question where main raised one:** "Run `<escape>` in a new terminal, then run
+  the cleanup script yourself, it needs a shell." and "…, then do the same for the subshell." The
+  remainder now raises only when it would raise on a line of its own: `## BL-311:`'s R-BL311D-1,
+  widened by this entry's own residuals. "…, or run it in your own shell" still raises.
+- No proposal in `tests/test-bl311-d-relayed-escape.sh` stopped matching (287 passed, 0 failed). That is
+  true of its fixtures only: the #482 review found a real line, "Do them in a **new terminal window**,
+  not in this session.", that raised on main and nothing here, and a relay followed on the next line by
+  "Then run `git commit -m wip` in a *separate* terminal …" that main raised and this table wrote as a
+  relayed row. With emphasis accepted (R-482-1) both raise again, measured with the real Stop arm.
+
+`tests/test-bl312-tldr-mode.sh` went red on the merge (71 passed, 2 failed). C4 read the detector's
+words from the end of the regex, and BL-315's regex ends in a word-boundary group. B3 required its
+three historic originals ("in a nutshell", "run shellcheck", "payment terminal") to raise, and they
+are false positives this entry removes. Both now read the live table. The TL;DR section's text in
+`scripts/lib/tldr-mode.sh` and `docs/messaging-standard.md` said the detector matches inside other
+words; each now says what it matches (#482 review, R-482-4). The TL;DR rule itself, no "terminal" or
+"shell" in any word, is unchanged and stricter than the detector.
+
+**Measured against the #482 review's batteries and corpus (2026-10-16).** Lines caught, main / this
+table before R-482-1 and R-482-3 / now:
+
+| Battery | Lines | Main | Before | Now |
+|---|---|---|---|---|
+| `terminal_workaround`: recorded proposals | 9 | 9 | 8 | 9 |
+| plain variants (all three miss "command line" and "console") | 8 | 4 | 4 | 4 |
+| a gap of five or more words | 3 | 3 | 0 | 0 |
+| other prepositions, PowerShell | 5 | 5 | 0 | 0 |
+| non-ASCII spellings | 5 | 5 | 1 | 1 |
+| Markdown emphasis, parenthesis, possessive, hyphen | 9 | 9 | 0 | 3 |
+| `fake_loop` proposals | 20 | 20 | 7 | 10 |
+
+In 40,824 fence-stripped assistant lines from local transcripts, `terminal_workaround` matches 72 / 53 /
+54 lines (the review read main's 19 extra as 18 correct removals and the bold line above, now caught
+again) and `fake_loop` 0 / 0 / 0. In 676 fence-stripped repo files, `terminal_workaround` matches 45 /
+21 / 21 files and `fake_loop` 6 / 4 / 4.
+
+**Residuals.** `no_verify` still matches prose that names the flag (for example "never `--no-verify`");
+narrowing it would stop "I'll use --no-verify here" (T7) matching, so it is left as it is. The issue's
+Stop-arm row ("which only you can do from a terminal") still matches: it has the proposal's shape, no
+pattern separates operator guidance from a proposal, and the operator closes it as a false positive.
+Given up deliberately: a gap of five or more words before the terminal; a sentence broken by an internal
+full stop ("step 2, i.e. tests_verified_failing, complete"); marking verbs outside the five named; and
+a hyphenated word in the gap before the terminal ("built-in", "front-end"), since gap words are letters
+only (T31 pins this). A description of the form "run within a <noun> shell", with "run" as its own
+word, still matches, like the Stop-arm row above: the preposition and noun are those of a proposal. A
+gap word holding a digit is not a gap word either, and no fixture pins that. Unpinned atoms: the
+`.{0,40}` width and the separator after the step name in the list form, which predate BL-315; the
+`[^.]*` sentence bound, which BL-315 added (the full-stop case above); and, in the verb-after
+alternative, its `[^.]` bounds, its `{0,40}` width and the non-word character after the step name. The
+detector stores excerpts truncated, so a row whose match lay past the cut cannot be replayed from the
+audit log.
+- **R-482-2** (#482 review; improbable). `terminal_workaround` does not match a possessive in the gap
+  ("in your Mac's terminal", "in your project's terminal"), a parenthesis ("yourself (in a terminal)"),
+  a dash with no space ("yourself—in a terminal"), curly quotes or a backtick around a gap word,
+  PowerShell, a preposition outside the ten ("as", "by", "after", "under"), or a non-breaking space.
+  Adding `'` and a backtick to the gap class brings back 4 false alarms in repo files
+  (`scripts/check-gate.sh`, `scripts/lib/helpers-core.sh`, `scripts/lint-evalprompts-portability.sh`,
+  `tests/test-walk006-ci-protection-scope.sh`; 21 to 25 files, measured), so the class stays letters
+  with emphasis.
+- **R-482-3, what is left** (#482 review). `fake_loop` still misses "complete" as the verb ("complete
+  tests_verified_failing via process-checklist.sh --complete-step"), a state claim with no marking verb
+  ("treat / consider / say tests_verified_failing (is) complete"), other verbs ("update", "flip",
+  "check off"), and a `jq` one-liner writing "complete": 10 of the review's 20 proposals. No transcript
+  line in the corpus has any of these shapes, on main or here. The passive with a marking verb
+  ("tests_verified_failing can be marked complete") is caught by the third alternative.
+

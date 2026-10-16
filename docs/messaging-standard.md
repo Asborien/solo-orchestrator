@@ -368,9 +368,9 @@ silently.
 is one a reader who is not a developer can copy exactly. The rest of the rule is
 for the framework's bypass detector, which records a proposed workaround — and
 raises a question the person must answer — wherever "run", "do" or "execute" is
-followed later on the same line by "terminal" or "shell". It matches inside other
-words and stops only at a full stop, so plain sentences trip it. Both of these
-were recorded as workarounds:
+followed on the same line by a word such as "in" or "from" and, a few words later,
+"terminal" or "shell". It once matched inside other words too, so plain sentences
+tripped it. Both of these were recorded as workarounds:
 
 ```
 7. Recommendation: do (a) — in a nutshell, it is the smaller risk.
