@@ -179,7 +179,7 @@ jobs:
       # PR author sees one failure and cannot tell what else is broken.
       fail-fast: false
       matrix:
-        shard: [lint-sweep, lint-scan, sast, slow-misc, adopt, adopt-b, commit-hooks, mcp, mcp-mutants, rest]
+        shard: [lint-sweep, lint-scan, sast, slow-misc, adopt, adopt-b, commit-hooks, mcp, mcp-mutants, approval, rest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7 (v7.0.1)
@@ -361,7 +361,7 @@ jobs:
           # it. Delete a name here and its `pin_*` array is ORPHANED — it
           # no longer enters `pinned`, so those paths fall back into `rest`
           # and STILL RUN. Fail-safe, not silently dropped.
-          shard_names="lint-sweep lint-scan sast slow-misc adopt adopt-b commit-hooks mcp mcp-mutants rest"
+          shard_names="lint-sweep lint-scan sast slow-misc adopt adopt-b commit-hooks mcp mcp-mutants approval rest"
 
           roster="|"
           shard_arms=0
@@ -1229,6 +1229,20 @@ jobs:
             tests/test-bl200-syntax-detector.sh           # 35.9s at its slowest of three runs — from `lint-sweep` with the tenth leg (the `pin_adopt_b` note); semgrep is on every leg
             tests/test-bl322-s5-hardening.sh              # ~60s local — runs bl141, bl145 and pr-review-gate once each, and 13 mutants; here because this leg ran 467s of 720s on PR #506, the lightest of the ten
           )
+          # ── `approval` — the eleventh leg (2026-10-16, after the contributor
+          # PRs #452/#453/#482 landed). On main run 38953171960 (1163a9c) `rest`
+          # took 672s of 720s; the same tree's PR runs swing ~150s between legs
+          # (on #453's run `adopt` took 652s, on main 496s), so moving suites
+          # between legs buys no margin. These three were `rest`'s slowest on
+          # that run, measured from its log (group start to PASS line):
+          #      rest  672s -> ~426s        approval  - -> ~246s (+ setup)
+          # All three read the pinned Guardrails fixture, which every leg
+          # fetches (BL-322 S5), so they run the same here as in `rest`.
+          pin_approval=(
+            tests/test-bl274-single-authority-attestation.sh  # 126.4s on main run 38953171960 (rest) — from `rest`
+            tests/test-bl318-g4g6.sh                          #  81.3s — from `rest`
+            tests/test-bl320-approval-schema2.sh              #  38.2s — from `rest`
+          )
 
           # The ONLY thing that maps a roster name to a pin array. Both the
           # pinned-set build and the dispatch go through this function, so
@@ -1247,6 +1261,7 @@ jobs:
               commit-hooks) printf '%s\n' "${pin_commit_hooks[@]}" ;;
               mcp)        printf '%s\n' "${pin_mcp[@]}" ;;
               mcp-mutants) printf '%s\n' "${pin_mcp_mutants[@]}" ;;
+              approval)   printf '%s\n' "${pin_approval[@]}" ;;
               rest)       : ;;
               *) echo "shard roster: '$1' is in the roster but has no arm in pins_for" >&2
                  return 1 ;;

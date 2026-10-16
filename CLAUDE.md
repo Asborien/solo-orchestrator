@@ -380,8 +380,8 @@ here.
   HOUSE RULES).
   - **Adding a test is still a ONE-LINE edit** — append it to the canonical
     array. The lane is sharded (matrix `shard: [lint-sweep, lint-scan, sast,
-    slow-misc, adopt, adopt-b, commit-hooks, mcp, mcp-mutants, rest]`, ten
-    legs since 2026-10-07), but only the
+    slow-misc, adopt, adopt-b, commit-hooks, mcp, mcp-mutants, approval, rest]`, eleven
+    legs since 2026-10-16), but only the
     measured long poles are pinned to a shard by the `pin_*` arrays; `rest`
     is the COMPLEMENT, so a new entry lands there automatically.
   - **A case that needs a real Guardrails clone reads the pinned fixture,
