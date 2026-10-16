@@ -23068,9 +23068,10 @@ behind `setup-java` `cache: 'gradle'` (which hashes `**/*.gradle*` for its key),
 **Fix (`# BL-313-MANIFEST-GUARD`, one per template).** The template's own idiom, already on its
 three governance steps since `## BL-147:`: every step that needs the manifest carries
 `if: hashFiles('<manifests>') != ''`, and one new step immediately after checkout, guarded `== ''`,
-reads `current_phase` from `.claude/phase-state.json` and then either FAILS (`::error::`, exit 1)
-when the phase is 2 or more — a check that cannot run must not pass — or prints a `::notice::`
-naming what was skipped, why, and that secret detection and governance still run. The manifest
+reads `current_phase` from `.claude/phase-state.json` and FAILS (`::error::`, exit 1) when the
+phase is 2 or more, or when `.claude/manifest.json` records an adoption at any phase — a check that
+cannot run must not pass; only a new project before Phase 2 gets a `::notice::` naming what was
+skipped, why, and that secret detection and governance still run. The manifest
 lists are the ones the framework itself recognises (`process-checklist.sh`'s lockfile list under
 `project_scaffolded`, and the platform modules' lockfile notes): `package.json`;
 `requirements.txt, pyproject.toml, Pipfile, uv.lock` (a Poetry or Pipenv tree, which is what
@@ -23103,6 +23104,24 @@ phase read is `grep -o` over the committed JSON with `|| true`, because `run:` s
 `bash -e` (workflow-syntax reference: bash and sh enforce fail-fast with `set -e`), so a Phase 0
 tree with no `phase-state.json` yet must not fail the notice step itself.
 
+Why adopted projects are excluded (PR #480's first full review, finding R-480-1). Karl's 2026-10-16
+ruling covers NEW projects. Adoption always lands at phase 0 (`# BL-242-PHASE0-LANDING`) with the
+project's code already there, so an adopted project whose manifest is none of the listed root files
+— `setup.py`, a conda environment file, `requirements-*.txt`, a nested `package.json` or `go.mod`, an
+Xcode-only Swift project — went from red on main to green with nothing installed, linted or tested;
+the reviewer reproduced it with the real `adopt-project.sh` on a `setup.py` + `pytest.ini` tree. So
+the notice step also fails when `.claude/manifest.json` records adoption: `grep -q
+'"adopted"[[:space:]]*:[[:space:]]*true'`, which matches the indented `.adoption.adopted` record
+`soif_adoption_stamp` writes with jq and a minified one alike, and its `::error::` says the project
+is adopted and names the files the template looked for. With a recognised manifest present the step
+does not run, so adoption changes nothing there. Two more findings from the same review: the phase
+is now read with the idiom `check-phase-gate.sh`, `resume.sh` and `validate.sh` use
+(`"*[0-9][0-9]*"*` plus `head -1`), so a quoted `"current_phase": "2"` is phase 2 — the first cut
+read it as no phase and passed (R-480-2); and the step may carry only `name`, `if` and `run`
+(R-480-3), because `continue-on-error` on it, or a `working-directory` that runs both reads where
+`.claude/` is not, turned a Phase 2 tree with no manifest green and survived all 14 suites that read
+the templates.
+
 Why step-level `hashFiles` rather than a job split: `hashFiles` reads the checked-out workspace, so
 it is a step-context function and a job-level `if:` cannot see the tree. Why guard the setup action
 rather than drop `cache:`: the `package-manager-cache` default above, and no toolchain is worth
@@ -23111,35 +23130,44 @@ installing on a tree with nothing to build.
 **Suite:** `tests/test-bl313-ci-before-manifest.sh`. T0 — the template list is derived once
 (`template_list`) and must be in bijection with a nine-row census, so a new language template
 without a census row fails and nothing can be added unguarded. T1 — exactly one `::notice::` skip
-step per template. T2 — every toolchain step guarded on the census manifest (57 directly, plus 14
+step per template, carrying no key but `name`, `if` and `run`. T2 — every toolchain step guarded
+on the census manifest (57 directly, plus 14
 python steps gated on a decision step that carries exactly the census guard). T3 — checkout,
 gitleaks and governance NOT guarded on it. T4 — a shell evaluation of the condition shapes the
 templates carry, `hashFiles(...) != ''`, `== ''` and python's installer gates, over an empty fixture
 (every toolchain step skips, no decision step is reached, notice runs) and over one holding the
 first census sample (63 steps run, notice skips, and 8 python steps do not run because the decision
 chose pip: the 7 on the uv path and the fail-closed step). For python the decision step's own
-script is EXECUTED over the fixture, so the
-installer it picks is measured, not re-implemented. `act` is not installed on this host, so the
-workflow itself is not executed, and the header says so. T5 — the notice step's `run:` script is
-extracted and EXECUTED under
-`bash -e -o pipefail` against four fixtures per template: `current_phase` 3 and 2 (rc 1,
-`::error::`), 1 (rc 0, `::notice::`), and no `phase-state.json` (rc 0, `::notice::`). T6 — one
+script is EXECUTED over the fixture, so the installer it picks is measured, not re-implemented.
+`act` is not installed on this host, so the workflow itself is not executed, and the header says
+so. T5 — the notice step's `run:` script is extracted and EXECUTED under `bash -e -o pipefail`
+against nine fixtures per template: `current_phase` 3, 2 and quoted `"2"` (rc 1, `::error::`), 1 and
+no `phase-state.json` (rc 0, `::notice::`), a new project's manifest at 0 (rc 0, `::notice::`), an
+adopted record, indented or minified, at 0 and 1 (rc 1, an `::error::` saying it is adopted) and at
+3 (rc 1). T7 — with a manifest present, every census sample simulates the same with and without an
+adopted record (16 samples). T6 — one
 case per language: each manifest name in the census, alone in a fixture, enables every toolchain
 step and skips the notice; for python, `pyproject.toml`, `Pipfile` or `uv.lock` alone stops the job
 at the decision step (it exits non-zero, never a skip), and the samples must reach both the pip path
-(`requirements.txt`) and the uv path (`pyproject.toml` with `uv.lock`). Eight mutants on a mirror of
-`templates/`, each proving it landed by changed-line count: drop the setup-node guard (T2 names the
+(`requirements.txt`) and the uv path (`pyproject.toml` with `uv.lock`). Thirteen mutants on a mirror
+of `templates/`, each proving it landed by changed-line count: drop the setup-node guard (T2 names the
 step), invert one go.yml guard (T1 counts two skip steps and names Build), guard the gitleaks step
 (T3 refuses), delete rust.yml's notice step (T1 counts zero), delete the `exit 1` from python.yml's
 phase check (T5 executes it at phase 3 and sees rc 0), drop `pyproject.toml` from every python.yml
 guard (T2 and T1 name the drift and a pyproject-only tree skips 17 steps, the decision step among
 them), drop the guard from python's fail-closed condition (T2 names the step; over an empty tree it
 runs, red at Phase 0), delete the decision step's guard (T2 names it; over an empty tree it runs and
-fails). The `## BL-318:` G3 suite carries the matching pins on its side: T7 requires exactly the
-guard on the decision step, B8 exactly the guarded fail-closed condition, and B4b executes the notice
-step on a tree with no dependency file (rc 1 `::error::` at `current_phase` 2 and 3, rc 0
-`::notice::` at 0, 1 and with no phase-state). Registered in `tests/full-project-test-suite.sh` and
-the `tests.yml` unit list.
+fails), `continue-on-error: true` on typescript's notice step and `working-directory: .github` on
+go's and python's (T1 refuses each key), delete java's adoption `exit 1` (T5 sees an adopted phase-0
+tree pass), put back dart's unquoted phase read (T5 sees a quoted `"2"` pass). The `## BL-318:` G3
+suite carries the matching pins on its side: T7 requires exactly the guard on the decision step, B8
+exactly the guarded fail-closed condition, B4b executes the notice step on a tree with no dependency
+file (rc 1 `::error::` at `current_phase` 2, quoted `"2"` and 3 and for an adopted record at 0 and 1;
+rc 0 `::notice::` for a new project at 0, 1 and with no phase-state), and B4c adopts a real
+`setup.py` + `pytest.ini` project with `adopt-project.sh` and runs the notice step of the
+`solo-gates.yml` it wrote (rc 1, adopted); its mutants MB12 (match only minified JSON), MB13 (an
+unquoted phase read) and MB14 (read another file) die on B4b. Registered in
+`tests/full-project-test-suite.sh` and the `tests.yml` unit list.
 
 **Evidence.**
 - RED at `f8841de`, before the first cut, identical under `/bin/bash` 3.2.57 and Homebrew bash
@@ -23157,11 +23185,18 @@ the `tests.yml` unit list.
   typescript.yml (cksum 4007748106 → 1560107544, guard count 9 → 8); suite `7 passed, 3 failed`,
   T2 naming `typescript.yml: guard-missing: actions/setup-node@…` and T4 reporting
   `typescript(empty:run=1,skip=8,…)`.
-- After merging main (#499's python.yml) with Karl's 2026-10-16 decision applied, this suite is
-  `Results: 24 passed, 0 failed` and the `## BL-318:` G3 suite `68 passed, 0 failed`. Against main's
-  python.yml without that guard, this suite is `15 passed, 9 failed` (T1, T2, T4, T5, T6-python and
-  the four python mutants that cannot land; T4's empty tree runs the decision script and it fails)
-  and the G3 suite `58 passed, 10 failed` (T7, B4b, B8 and the seven new mutants that cannot land).
+- At `f769a25` (main merged, with #499's python.yml and Karl's 2026-10-16 decision applied), this
+  suite was `Results: 24 passed, 0 failed` and the `## BL-318:` G3 suite `68 passed, 0 failed`.
+  Against main's python.yml without that guard, this suite is `15 passed, 9 failed` (T1, T2, T4, T5,
+  T6-python and the four python mutants that cannot land; T4's empty tree runs the decision script
+  and it fails) and the G3 suite `58 passed, 10 failed` (T7, B4b, B8 and the seven new mutants that
+  cannot land).
+- After the review fixes (R-480-1/2/3): this suite `Results: 30 passed, 0 failed`, the G3 suite `72
+  passed, 0 failed`. Run against the templates of `f769a25`, this suite is `27 passed, 3 failed` (T5's
+  36 violations, four per template: two exits, the quoted `"2"`, the adopted record indented and
+  minified; MT12 and MT13 cannot land) and the G3 suite `67 passed, 5 failed`, B4c among them with the
+  real adoption's own state: `current_phase=[0] adopted-flag=[true] notice=[0 notice]` — the green
+  the review found.
 
 **Residual — same class, other hosts, deliberately not in this change.** `ci/gitlab/*.yml` runs
 `npm ci` (and each language's install) in `before_script` / `script`; the documented guard there is
