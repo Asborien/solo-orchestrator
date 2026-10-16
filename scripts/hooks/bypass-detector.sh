@@ -148,6 +148,9 @@ SOIF_RELAY_ESCAPES=(
   # check-phase-gate.sh's Phase 3→4 review FAIL (and docs/builders-guide.md) print the pair alone; the gate's own command, no argument.
   # Reason mandatory; recorded to process-state.json::phase3.attestations.reviewers.
   'SOLO_REVIEWERS_ATTESTED|SOLO_REVIEWERS_ATTESTED_REASON|bash scripts/check-phase-gate.sh|'
+  # docs/builders-guide.md § "Single-Authority Attestation" documents the pair (the self-approval refusal does not print it); the gate's own command, no argument.
+  # Reason mandatory; recorded per gate to process-state.json::attestations.single_authority, refused if it cannot be.
+  'SOLO_SINGLE_AUTHORITY_ATTESTED|SOLO_SINGLE_AUTHORITY_ATTESTED_REASON|bash scripts/check-phase-gate.sh|'
   # check-pr-review.sh's refusal: "SOLO_PR_REVIEW_ATTESTED_REASON=\"<why …>\" git push" — no argument, or a plain remote and branch.
   # Reason mandatory; recorded to process-state.json::pr_review_attestations[], refused if it cannot be.
   'SOLO_PR_REVIEW_ATTESTED|SOLO_PR_REVIEW_ATTESTED_REASON|git push|remote-branch'
