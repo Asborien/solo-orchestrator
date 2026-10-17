@@ -325,6 +325,15 @@ outro")" ;;
   return 0
 }
 
+# W2 — a Write whose result carries only {filePath, type}, the shape the hooks
+# page shows: the text is read from tool_input.content, what the model wrote.
+chk_write_input_only() {
+  local hook="$1" env
+  env="$(jq -nc --arg t "$(fixture_for no_verify)" '{session_id:"bl277", hook_event_name:"PostToolUse", tool_name:"Write",
+    tool_input:{file_path:"/proj/NEXT_STEPS.md", content:$t}, tool_response:{filePath:"/proj/NEXT_STEPS.md", type:"create"}}')"
+  authored_one "$hook" "$env" "Write without content in its result"
+}
+
 # S — an authored match.
 chk_stop_claude_row() {
   local hook="$1" p a ur
@@ -442,6 +451,7 @@ REASON_FP="the matched text was a rule quoted from CLAUDE.md, nobody proposed it
 ACC_TEXT="$( . "$LIB" >/dev/null 2>&1; printf '%s' "${BYPASS_ACCEPT_TEXT:-}")"
 FP_TEXT="$( . "$LIB" >/dev/null 2>&1; printf '%s' "${BYPASS_FALSE_POSITIVE_TEXT:-}")"
 FP_LEAD="$( . "$LIB" >/dev/null 2>&1; printf '%s' "${BYPASS_FALSE_POSITIVE_LEAD:-}")"
+DEC_TEXT="$( . "$LIB" >/dev/null 2>&1; printf '%s' "${BYPASS_DECLINE_TEXT:-}")"
 Q_PREFIX="$( . "$LIB" >/dev/null 2>&1; printf '%s' "${BYPASS_QUESTION_PREFIX:-}")"
 sha_of() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1" 2>/dev/null; } | awk '{print $1; exit}'; }
 sum_of() { [ -f "$1" ] && cksum < "$1" || printf 'ABSENT'; }
@@ -673,6 +683,95 @@ chk_fp_later_proposal() {
   [ "$(q "$d" '.[1].user_response')" = "PENDING" ] || { echo "a proposal raised after the operator asked was closed as $(q "$d" '.[1].user_response')"; return 1; }
   return 0
 }
+# reask <script> <project> — the operator's re-ask, answered y; rc 0 or a reason.
+reask() { run_pa_tty "$1" "$2" --resolve --decision false-positive --reason "$REASON_FP"; [ "$PA_RC" = "0" ]; }
+# pick_rec <project> <question> <option text> <approves> <picked_at> <sha> [<pick>]
+# — a pick record of any shape, as record-approval.sh appends one.
+pick_rec() {
+  jq -nc --arg q "$2" --arg t "$3" --arg a "$4" --arg at "$5" --arg h "$6" --arg p "${7:-A3}" \
+    '{event:"approval", source:"pick", session_id:"bl277", pick:$p, approves:$a, question:$q, option_text:$t, sentinel_sha256:$h, picked_at:$at}' \
+    >> "$1/.claude/approvals.jsonl"
+}
+# a3_guard_case <script> <shape> — the operator's re-ask, then one A3 pick that
+# fails one guard of `# BL-277-FP-PICK-MAP`; --resolve must leave the row PENDING.
+#   other-question  the pick's question is not a bypass question, though it names
+#                   the pattern and carries a reason (X1, $isq)
+#   approves-commit the picked option approves a commit (X2, $none)
+#   before-row      the pick was made before the row was raised: a replay (X3, $after)
+a3_guard_case() {
+  local pa="$1" shape="$2" d s h qq at ap
+  d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  reask "$pa" "$d" || { echo "fixture: the re-ask rc=$PA_RC"; return 1; }
+  s="$(sentinel "$d")"; h="$(sha_of "$s")"; qq="$(jq -r '.question' "$s")"; at="2099-01-01T00:00:00Z"; ap="none"
+  case "$shape" in
+    other-question)  qq="Merge or rebase? (pattern: no_verify) $FP_LEAD$REASON_FP" ;;
+    approves-commit) ap="commit" ;;
+    before-row)      at="2000-01-01T00:00:00Z" ;;
+  esac
+  pick_rec "$d" "$qq" "$FP_TEXT" "$ap" "$at" "$h" || { echo "fixture: the pick"; return 1; }
+  mv "$s" "$d/q-answered.json"
+  run_pa "$pa" "$d" --resolve
+  [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "$shape: an A3 pick closed the row as $(q "$d" '.[0].user_response')"; return 1; }
+  return 0
+}
+chk_a3_other_question()  { a3_guard_case "$1" other-question; }
+chk_a3_approves_commit() { a3_guard_case "$1" approves-commit; }
+chk_a3_before_row()      { a3_guard_case "$1" before-row; }
+# seed_two DIR — two PENDING proposals, no_verify and force_push, both bound to
+# the detector's question (the second raised while it was open).
+seed_two() {
+  local d="$1"
+  seed_pending "$d" || return 1
+  run_hook "$HOOK" "$d" "$(env_stop "$(fixture_for force_push)")"
+  [ "$(q "$d" '[.[] | select(.user_response=="PENDING")] | length')" = "2" ]
+}
+# D1b — X4: two patterns PENDING; the operator's question names both, and the
+# A3 pick closes both.
+chk_fp_closes_two() {
+  local pa="$1" d
+  d="$(newtmp)"; seed_two "$d" || { echo "fixture"; return 1; }
+  reask "$pa" "$d" || { echo "the re-ask rc=$PA_RC"; return 1; }
+  jq -e '.question | contains("(pattern: force_push, no_verify)")' "$(sentinel "$d")" >/dev/null 2>&1 \
+    || { echo "the question does not name both patterns: $(jq -r '.question' "$(sentinel "$d")" | cut -c1-80)"; return 1; }
+  pick_a3 "$d" || { echo "fixture: the pick"; return 1; }
+  run_pa "$pa" "$d" --resolve
+  [ "$(q "$d" '[.[].user_response] | unique | join(",")')" = "false_positive" ] || { echo "rows after the A3 pick: $(q "$d" '[.[] | .details.pattern + "=" + .user_response] | join(" ")')"; return 1; }
+  return 0
+}
+# D18 — C(a): an A3 question that names only no_verify (written by an agent,
+# with every PENDING row rebound to it): the A3 pick closes the no_verify row
+# and leaves the force_push row PENDING. A pick closes only what the user read.
+chk_fp_named_only() {
+  local pa="$1" d s
+  d="$(newtmp)"; seed_two "$d" || { echo "fixture"; return 1; }
+  reask "$pa" "$d" || { echo "fixture: the re-ask rc=$PA_RC"; return 1; }
+  s="$(sentinel "$d")"
+  jq '.question |= sub("\\(pattern: [^)]*\\)"; "(pattern: no_verify)")' "$s" > "$s.new" && mv "$s.new" "$s"
+  jq -e '.question | contains("(pattern: no_verify)")' "$s" >/dev/null 2>&1 || { echo "fixture: the question was not rewritten"; return 1; }
+  ( . "$LIB" && bypass_audit_rebind_pending "$d" "$(sha_of "$s")" ) >/dev/null 2>&1 || { echo "fixture: rebind"; return 1; }
+  pick_a3 "$d" || { echo "fixture: the pick"; return 1; }
+  run_pa "$pa" "$d" --resolve
+  [ "$(q "$d" '[.[] | select(.details.pattern=="no_verify") | .user_response] | join(",")')" = "false_positive" ] \
+    || { echo "the named no_verify row: $(q "$d" '[.[] | select(.details.pattern=="no_verify") | .user_response] | join(",")')"; return 1; }
+  [ "$(q "$d" '[.[] | select(.details.pattern=="force_push") | .user_response] | join(",")')" = "PENDING" ] \
+    || { echo "an A3 pick closed the force_push row, which its question does not name"; return 1; }
+  return 0
+}
+# D19 — C(b): the user already answered A2 on the detector's question and no
+# --resolve has read it yet. The operator's re-ask reads that pick first: the
+# row closes as declined, nothing is left to ask about, and no question is put.
+chk_fp_reconciles_first() {
+  local pa="$1" d s
+  d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
+  s="$(sentinel "$d")"
+  pick_rec "$d" "$(jq -r '.question' "$s")" "$DEC_TEXT" none "2099-01-01T00:00:00Z" "$(sha_of "$s")" A2 || { echo "fixture: the pick"; return 1; }
+  mv "$s" "$d/q-answered.json"
+  run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
+  [ "$(q "$d" '.[0].user_response')" = "declined" ] || { echo "the user's A2 was not read first: the row is $(q "$d" '.[0].user_response')"; return 1; }
+  [ ! -e "$(sentinel "$d")" ] || { echo "a question was put though the user had answered"; return 1; }
+  case "$PA_RC" in 0|NORUN|'') echo "rc=$PA_RC, want a refusal (nothing left PENDING)"; return 1 ;; esac
+  return 0
+}
 # D8 — a stub install (no scripts/lib/helpers-core.sh, the fallback at the top
 # of the script): the operator's well-formed close cannot be confirmed, so it
 # is refused and says why. <script> is the copy whose helpers are removed.
@@ -704,24 +803,26 @@ chk_fp_operator_declines() {
   done
   return 0
 }
-# The library guard on its own: scripts/pending-approval.sh refuses first, so
-# without this case the library's refusal is never reached by any test.
-chk_lib_refuses_empty_reason() {
-  local lib="$1" d rc shape why
-  for shape in blank tab newline; do
-    case "$shape" in blank) why="  " ;; tab) why="$(printf '\t')" ;; newline) why="
-" ;; esac
-    d="$(newtmp)"; seed_pending "$d" 4.3.0 || { echo "fixture"; return 1; }
+# D17 — R-454-1: an agent's direct call of the library with false-positive.
+# The library has no false-positive arm, so a false_positive row can come only
+# from the user's A3 pick: refused, with any reason, and the row unmoved.
+chk_lib_no_false_positive_pa() { chk_lib_no_false_positive "$(dirname "$1")/lib/bypass-audit.sh"; }
+chk_lib_no_false_positive() {
+  local lib="$1" d rc why tab
+  tab="$(printf '\t')"
+  for why in "it quoted a rule" "   " "$tab"; do
+    d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
     ( . "$lib" && bypass_audit_close_pending "$d" false-positive "$why" ) >/dev/null 2>&1; rc=$?
-    [ "$rc" -ne 0 ] || { echo "$shape reason: the library closed rows as false_positive"; return 1; }
-    [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "$shape reason: the row was closed by a refused close"; return 1; }
+    [ "$rc" -ne 0 ] || { echo "reason '$why': the library closed rows as false_positive (rc 0)"; return 1; }
+    [ "$(q "$d" '.[0].user_response')" = "PENDING" ] || { echo "reason '$why': the row was closed as $(q "$d" '.[0].user_response')"; return 1; }
+    [ "$(q "$d" '.[0].details | has("false_positive_reason")')" = "false" ] || { echo "reason '$why': a reason was written"; return 1; }
   done
   return 0
 }
 # D9 — a close changes only PENDING claude_bypass_proposal rows. The ledger
 # holds the row classes this change creates (a tool_output row, user_response
-# n/a) and an open escalation; under each decision, through the library, the two
-# proposal rows close and every other row is byte-identical.
+# n/a) and an open escalation; under accept and decline, through the library,
+# the two proposal rows close and every other row is byte-identical.
 seed_mixed() {
   local d="$1"
   mk_proj "$d" || return 1
@@ -738,11 +839,11 @@ seed_mixed() {
 }
 chk_close_scope() {
   local lib="$1" d dec ur rc before after
-  for dec in accept decline false-positive; do
+  for dec in accept decline; do
     d="$(newtmp)"; seed_mixed "$d" || { echo "fixture"; return 1; }
     before="$(jq -c '[.[1], .[2]]' "$(ledger "$d")")"
     ( . "$lib" && bypass_audit_close_pending "$d" "$dec" "$REASON_FP" ) >/dev/null 2>&1; rc=$?
-    case "$dec" in accept) ur="accepted" ;; decline) ur="declined" ;; false-positive) ur="false_positive" ;; esac
+    case "$dec" in accept) ur="accepted" ;; decline) ur="declined" ;; esac
     [ "$rc" -eq 0 ] || { echo "$dec: rc=$rc"; return 1; }
     [ "$(q "$d" "[.[0], .[3]] | map(.user_response) | unique | join(\",\")")" = "$ur" ] || { echo "$dec: the proposal rows are not $ur"; return 1; }
     after="$(jq -c '[.[1], .[2]]' "$(ledger "$d")")"
@@ -751,7 +852,7 @@ chk_close_scope() {
   return 0
 }
 # D6 — the library refuses a decision it does not know, even with a reason, so
-# a widened false-positive pattern cannot turn a typo into a false_positive close.
+# a widened pattern cannot turn a typo into a close.
 chk_lib_refuses_unknown() {
   local lib="$1" d rc
   d="$(newtmp)"; seed_pending "$d" 4.3.0 || { echo "fixture"; return 1; }
@@ -906,6 +1007,8 @@ else fail_ "A7" "$why"; fi
 echo "=== W — PostToolUse from Write: the model wrote the file ==="
 if why="$(chk_write_authored "$HOOK")"; then pass "W1 — a Write result, created or overwritten, writes one claude row, PENDING, and raises the sentinel"
 else fail_ "W1" "$why"; fi
+if why="$(chk_write_input_only "$HOOK")"; then pass "W2 — a Write whose result carries no content is scanned from tool_input.content: one claude row, PENDING, the sentinel"
+else fail_ "W2" "$why"; fi
 
 echo "=== B — PostToolUse from Edit and MultiEdit (BL-336) ==="
 if why="$(chk_edit_authored "$HOOK")"; then pass "B1 — an Edit whose new_string carries a bypass proposal writes one claude row, PENDING, and raises the sentinel"
@@ -980,11 +1083,23 @@ SM="$(stub_mirror)"
 if [ -z "$SM" ] || [ -e "$SM/scripts/lib/helpers-core.sh" ]; then fail_ "D8 setup" "could not build a stub install"
 elif why="$(chk_fp_stub_refuses "$SM/scripts/pending-approval.sh")"; then pass "D8 — on a stub install (no helpers-core.sh) the operator's close is refused, naming the missing file: non-zero, nothing asked, the row unmoved"
 else fail_ "D8" "$why"; fi
-if why="$(chk_lib_refuses_empty_reason "$LIB")"; then pass "D4 — bypass_audit_close_pending itself refuses a blank, tab-only or newline-only reason and closes nothing"
-else fail_ "D4" "$why"; fi
+if why="$(chk_lib_no_false_positive "$LIB")"; then pass "D17 — an agent's direct bypass_audit_close_pending ... false-positive, with any reason, is refused and the row stays PENDING (R-454-1)"
+else fail_ "D17" "$why"; fi
+if why="$(chk_a3_other_question "$PA")"; then pass "D20 — an A3 pick whose question is not a bypass question closes nothing"
+else fail_ "D20" "$why"; fi
+if why="$(chk_a3_approves_commit "$PA")"; then pass "D21 — an A3 pick on an option that approves a commit closes nothing"
+else fail_ "D21" "$why"; fi
+if why="$(chk_a3_before_row "$PA")"; then pass "D22 — an A3 pick made before the row was raised (a replay onto a rebound row) closes nothing"
+else fail_ "D22" "$why"; fi
+if why="$(chk_fp_closes_two "$PA")"; then pass "D1b — two patterns PENDING: the operator's question names both and the A3 pick closes both"
+else fail_ "D1b" "$why"; fi
+if why="$(chk_fp_named_only "$PA")"; then pass "D18 — an A3 question naming only no_verify closes the no_verify row and leaves the force_push row PENDING"
+else fail_ "D18" "$why"; fi
+if why="$(chk_fp_reconciles_first "$PA")"; then pass "D19 — a re-ask after the user's A2 and before --resolve reads that A2 first: declined, and nothing is asked"
+else fail_ "D19" "$why"; fi
 if why="$(chk_lib_refuses_unknown "$LIB")"; then pass "D6 — bypass_audit_close_pending refuses an unknown decision given with a reason, and closes nothing"
 else fail_ "D6" "$why"; fi
-if why="$(chk_close_scope "$LIB")"; then pass "D9 — accept, decline and false-positive each close only the PENDING proposal rows; tool_output and escalation rows are byte-identical"
+if why="$(chk_close_scope "$LIB")"; then pass "D9 — accept and decline each close only the PENDING proposal rows; tool_output and escalation rows are byte-identical"
 else fail_ "D9" "$why"; fi
 if why="$(chk_decline_still_declines "$PA")"; then pass "D3 — decline and accept record what they did before, and write no false_positive_reason"
 else fail_ "D3" "$why"; fi
@@ -1046,6 +1161,9 @@ for spec in \
   "$LIB|# BL-277-FP-PICK-WHY" \
   "$LIB|# BL-277-FP-PICK-END" \
   "$LIB|# BL-277-FP-REBIND" \
+  "$LIB|# BL-277-FP-PICK-NAMED" \
+  "$PA|# BL-277-FP-RECONCILE" \
+  "$HOOK|# BL-277-WRITE-TEXT" \
   "$ROSTER|# BL-277-MATCHER"; do
   f="${spec%%|*}"; m="${spec#*|}"
   n="$(S="$m" awk 'index($0, ENVIRON["S"]){c++} END{print c+0}' "$f")"
@@ -1122,23 +1240,6 @@ if why="$(mutate "$MH" "# BL-277-SENTINEL-AUTHORED" 'elif [ -n "$RAISE_PATTERN" 
   elif ! chk_stop_claude_row "$MH" >/dev/null 2>&1; then fail_ "M3b (MUTATION)" "the mutant broke the Stop row too, so the kill proves nothing about the sentinel"
   else pass "M3b (MUTATION) — the sentinel never raised: S2 and G3 kill it, S1 survives"; fi
 else fail_ "M3b setup" "$why"; fi
-
-# M4 — the library's false-positive close recorded as a decline. Killed by D9
-# (bypass_audit_close_pending directly: --resolve closes a false positive from
-# the user's pick, not through this arm).
-MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
-if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" 'user_resp="false_positive"; final_out="recorded_only"' 'user_resp="declined"; final_out="abandoned"' 4)"; then
-  if chk_close_scope "$ML" >/dev/null 2>&1; then fail_ "M4 (MUTATION)" "recording a false positive as a decline survived D9"
-  elif ! chk_decline_still_declines "$MP" >/dev/null 2>&1; then fail_ "M4 (MUTATION)" "the mutant broke decline too, so the kill proves nothing about D9"
-  else pass "M4 (MUTATION) — the library's false-positive close written as declined/abandoned: D9 kills it, D3 survives"; fi
-else fail_ "M4 setup" "$why"; fi
-
-# M5 — the library accepts a blank reason. Killed by D4 (the script's own guard shields D2).
-MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"
-if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" 'if [ -z "${reason//[[:space:]]/}" ]; then' 'if false; then' 5)"; then
-  if chk_lib_refuses_empty_reason "$ML" >/dev/null 2>&1; then fail_ "M5 (MUTATION)" "the library taking a blank reason survived D4"
-  else pass "M5 (MUTATION) — the library's reason guard removed: D4 kills it"; fi
-else fail_ "M5 setup" "$why"; fi
 
 # M6 — the script accepts a blank reason and deletes the sentinel before the library refuses. Killed by D2.
 MD="$(mirror_scripts)"; MP="$MD/scripts/pending-approval.sh"
@@ -1245,20 +1346,13 @@ if why="$(mutate "$MP" "# BL-277-FP-OPERATOR" 'if [ ! -t 0 ]; then' 'if false; t
   else pass "M16 (MUTATION) — the operator-only guard removed: D5 kills it, D1 survives"; fi
 else fail_ "M16 setup" "$why"; fi
 
-# M17 — the library's reason guard narrowed to a space. Killed by D4.
-MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"
-if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" 'if [ -z "${reason//[[:space:]]/}" ]; then' 'if [ -z "${reason// /}" ]; then' 5)"; then
-  if chk_lib_refuses_empty_reason "$ML" >/dev/null 2>&1; then fail_ "M17 (MUTATION)" "the library's narrowed reason guard survived D4"
-  else pass "M17 (MUTATION) — the library's reason guard narrowed to spaces: D4 kills it"; fi
-else fail_ "M17 setup" "$why"; fi
-
-# M18 — the library's false-positive pattern widened to catch every decision.
-# Killed by D6; D1 survives.
+# M18 — the library's decline pattern widened to catch every decision, so a
+# typo closes rows. Killed by D6; D1 survives.
 MD="$(mirror_scripts)"; ML="$MD/scripts/lib/bypass-audit.sh"; MP="$MD/scripts/pending-approval.sh"
-if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" '    false-positive)' '    false-positive|*)' 3)"; then
+if why="$(mutate "$ML" "# BL-277-FALSE-POSITIVE" '    decline) user_resp=' '    decline|*) user_resp=' 6)"; then
   if chk_lib_refuses_unknown "$ML" >/dev/null 2>&1; then fail_ "M18 (MUTATION)" "the widened pattern survived D6"
   elif ! chk_fp_closes "$MP" >/dev/null 2>&1; then fail_ "M18 (MUTATION)" "the mutant broke D1 too, so the kill proves nothing about D6"
-  else pass "M18 (MUTATION) — the library's false-positive pattern widened to every decision: D6 kills it, D1 survives"; fi
+  else pass "M18 (MUTATION) — the library's decline pattern widened to every decision: D6 kills it, D1 survives"; fi
 else fail_ "M18 setup" "$why"; fi
 
 # M19 — the operator's confirmation removed. Killed by D7; D1 survives.
@@ -1348,6 +1442,22 @@ fp_mutant M33 pa "# BL-277-FP-PENDING-ROWS" '0) print_fail "No PENDING bypass pr
 # M34 — the false-positive close sent to main's --decision refusal: the
 # operator can no longer ask. Killed by D1; D3 (the legacy route) survives.
 fp_mutant M34 pa "# BL-277-FP-DISPATCH" 'if [ "$decision" = false-positive ]; then' 'if false; then' 3 chk_fp_closes chk_decline_still_declines "the false-positive close never dispatched"
+
+# M41 — R-454-1's arm restored: the library closes a false positive for any
+# caller. Killed by D17; D3 survives.
+fp_mutant M41 lib "# BL-277-FALSE-POSITIVE" '    decline) user_resp="declined";' '    false-positive) user_resp="false_positive"; final_out="recorded_only" ;; decline) user_resp="declined";' 6 chk_lib_no_false_positive_pa chk_decline_still_declines "the library's false-positive arm restored"
+# M42-M44 — R-454-2: each guard of the A3 arm dropped in turn.
+fp_mutant M42 lib "# BL-320-AUDIT-DEC" 'elif $isq and $none and $after and $fp != ""' 'elif $none and $after and $fp != ""' 1 chk_a3_other_question chk_fp_closes "the A3 arm without \$isq (any question)"
+fp_mutant M43 lib "# BL-320-AUDIT-DEC" 'elif $isq and $none and $after and $fp != ""' 'elif $isq and $after and $fp != ""' 1 chk_a3_approves_commit chk_fp_closes "the A3 arm without \$none (an option approving a commit)"
+fp_mutant M44 lib "# BL-320-AUDIT-DEC" 'elif $isq and $none and $after and $fp != ""' 'elif $isq and $none and $fp != ""' 1 chk_a3_before_row chk_fp_closes "the A3 arm without \$after (a replayed pick)"
+# M45 — X4: the operator's question names only the first pattern. Killed by D1b.
+fp_mutant M45 pa "# BL-277-FP-CONFIRM" '| unique | join(", ")' '| unique | .[0:1] | join(", ")' 12 chk_fp_closes_two chk_fp_closes "the question names one pattern of two"
+# M46 — C(a): the A3 arm closes rows its question does not name. Killed by D18.
+fp_mutant M46 lib "# BL-320-AUDIT-DEC" ' and $named and' ' and' 1 chk_fp_named_only chk_fp_closes "the A3 arm without \$named"
+# M47 — C(b): the re-ask does not read the user's pending picks first. Killed by D19.
+fp_mutant M47 pa "# BL-277-FP-RECONCILE" 'if ! bypass_audit_close_from_approvals "$project_root" >/dev/null; then' 'if false; then' 4 chk_fp_reconciles_first chk_fp_closes "the re-ask without reading pending picks"
+# M48 — the Write arm reads only the result. Killed by W2; W1 survives.
+bd_mutant M48 "# BL-277-WRITE-TEXT" '.tool_input.content // .tool_response.content // ""' '.tool_response.content // ""' 3 chk_write_input_only chk_write_authored "the Write arm reading only tool_response.content"
 
 # M9 — the maintainer's adoption guard lifted, so adoption registers the
 # PostToolUse arm. Killed by R5.
