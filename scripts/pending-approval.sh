@@ -309,6 +309,13 @@ _pa_fp_reask() {
     return 1
   fi
   ledger="$project_root/.claude/bypass-audit.json"
+  # BL-277-FP-RECONCILE — a pick the user has already made (A1, A2 or an earlier
+  # A3) is read first: asking again rebinds the rows, which would leave that
+  # pick finding none of them.
+  if ! bypass_audit_close_from_approvals "$project_root" >/dev/null; then
+    print_fail "Could not read the user's picks from .claude/approvals.jsonl. Nothing was asked."
+    return 1
+  fi
   # BL-277-FP-PENDING-ROWS — nothing PENDING, nothing to ask about.
   n="$(jq '[.[] | select(.type == "claude_bypass_proposal" and .user_response == "PENDING")] | length' "$ledger" 2>/dev/null)" || n=""
   case "$n" in

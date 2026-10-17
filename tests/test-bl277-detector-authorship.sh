@@ -669,13 +669,15 @@ chk_fp_nothing_pending() {
   return 0
 }
 # D15 — a proposal raised while the operator's question is open is not bound to
-# it, so the user's A3 closes only the proposals the operator looked at.
+# it, so the user's A3 closes only the proposals the operator looked at. The
+# later proposal has the SAME pattern, so the question naming it (D18's rule)
+# does not shield it: only the label does.
 chk_fp_later_proposal() {
   local pa="$1" d
   d="$(newtmp)"; seed_pending "$d" || { echo "fixture"; return 1; }
   run_pa_tty "$pa" "$d" --resolve --decision false-positive --reason "$REASON_FP"
   [ "$PA_RC" = "0" ] || { echo "fixture: the operator's close rc=$PA_RC"; return 1; }
-  run_hook "$HOOK" "$d" "$(env_stop "$(fixture_for force_push)")"
+  run_hook "$HOOK" "$d" "$(env_stop "and again: $(fixture_for no_verify)")"
   [ "$(q "$d" 'length')" = "2" ] || { echo "fixture: the later proposal was not recorded"; return 1; }
   pick_a3 "$d" || { echo "fixture: the pick"; return 1; }
   run_pa "$pa" "$d" --resolve
@@ -1453,11 +1455,11 @@ fp_mutant M44 lib "# BL-320-AUDIT-DEC" 'elif $isq and $none and $after and $fp !
 # M45 — X4: the operator's question names only the first pattern. Killed by D1b.
 fp_mutant M45 pa "# BL-277-FP-CONFIRM" '| unique | join(", ")' '| unique | .[0:1] | join(", ")' 12 chk_fp_closes_two chk_fp_closes "the question names one pattern of two"
 # M46 — C(a): the A3 arm closes rows its question does not name. Killed by D18.
-fp_mutant M46 lib "# BL-320-AUDIT-DEC" ' and $named and' ' and' 1 chk_fp_named_only chk_fp_closes "the A3 arm without \$named"
+fp_mutant M46 lib "# BL-320-AUDIT-DEC" '$k.t == $fp and $named and' '$k.t == $fp and true and' 1 chk_fp_named_only chk_fp_closes "the A3 arm without \$named"
 # M47 — C(b): the re-ask does not read the user's pending picks first. Killed by D19.
 fp_mutant M47 pa "# BL-277-FP-RECONCILE" 'if ! bypass_audit_close_from_approvals "$project_root" >/dev/null; then' 'if false; then' 4 chk_fp_reconciles_first chk_fp_closes "the re-ask without reading pending picks"
 # M48 — the Write arm reads only the result. Killed by W2; W1 survives.
-bd_mutant M48 "# BL-277-WRITE-TEXT" '.tool_input.content // .tool_response.content // ""' '.tool_response.content // ""' 3 chk_write_input_only chk_write_authored "the Write arm reading only tool_response.content"
+bd_mutant M48 "# BL-277-WRITE-TEXT" '.tool_input.content // .tool_response.content // ""' '.tool_response.content // .tool_response.no_such_key // ""' 3 chk_write_input_only chk_write_authored "the Write arm reading only tool_response.content"
 
 # M9 — the maintainer's adoption guard lifted, so adoption registers the
 # PostToolUse arm. Killed by R5.

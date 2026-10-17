@@ -246,11 +246,12 @@ bypass_audit_count_pending() {
 }
 
 # bypass_audit_close_pending <project_root> <decision> [<reason>]
-# Updates every PENDING row to the given decision. decision ∈ {accept, decline, false-positive}.
+# Updates every PENDING row to the given decision. decision ∈ {accept, decline}.
 #   accept         → user_response=accepted,       final_outcome=bypassed
 #   decline        → user_response=declined,       final_outcome=abandoned
-#   false-positive → user_response=false_positive, final_outcome=recorded_only,
-#                    details.false_positive_reason=<reason>; a blank reason is refused (BL-277)
+# <reason> is never recorded by either (the jq below keeps it out). There is no
+# false-positive decision here (BL-277): a false_positive row comes only from
+# the user's A3 pick, read by bypass_audit_close_from_approvals.
 # Idempotent — leaves already-resolved rows untouched. Holds the same lock
 # bypass_audit_append uses to avoid races. Returns 0 on success, 1 on
 # unknown decision or write failure.
@@ -266,20 +267,14 @@ bypass_audit_close_pending() {
   local file="$project_root/.claude/bypass-audit.json"
 
   local user_resp final_out
+  # BL-277-FALSE-POSITIVE — no false-positive arm. Any caller can reach this
+  # function, an agent sourcing this file included (review of #454, R-454-1),
+  # so a false_positive close here would claim a decision nobody made.
   case "$decision" in
     accept)  user_resp="accepted"; final_out="bypassed" ;;
     decline) user_resp="declined"; final_out="abandoned" ;;
-    # BL-277-FALSE-POSITIVE — nothing was proposed, so nothing was accepted or
-    # abandoned. The reason is the record; without one this is a silent dismissal.
-    false-positive)
-      user_resp="false_positive"; final_out="recorded_only"
-      if [ -z "${reason//[[:space:]]/}" ]; then
-        echo "[FAIL] bypass_audit_close_pending: decision 'false-positive' requires a non-empty reason" >&2
-        return 1
-      fi
-      ;;
     *)
-      echo "[FAIL] bypass_audit_close_pending: unknown decision '$decision' (expected: accept | decline | false-positive)" >&2
+      echo "[FAIL] bypass_audit_close_pending: unknown decision '$decision' (expected: accept | decline; a false positive is the user's A3 pick)" >&2
       return 1
       ;;
   esac
@@ -358,8 +353,11 @@ BYPASS_FALSE_POSITIVE_LEAD="Reason given for closing it as a false positive: "
 # bypass_audit_close_from_approvals <project_root>
 # `## BL-320:` with the Development Guardrails 4.4.0 and later, the USER's
 # answer to a question is recorded by the Guardrails (record-approval.sh) in
-# .claude/approvals.jsonl, a file the agent cannot write, and the question is
-# removed. A PENDING claude_bypass_proposal row is bound to a question by
+# .claude/approvals.jsonl, and the question is removed. The Guardrails'
+# config-guard refuses the agent's Write and Edit to that file and a shell write
+# naming it, but not a path built in a variable or a subprocess (`## BL-277:`
+# residual 12), so a record read here is only as trustworthy as that file.
+# A PENDING claude_bypass_proposal row is bound to a question by
 # details.sentinel_sha256 — the sha256 of the question the bypass detector
 # raised, or found open and labelled as its own — and the pick record carries
 # the sha256 the Guardrails read. The binding only finds the pick; it decides
@@ -415,9 +413,10 @@ bypass_audit_close_from_approvals() {
           | (($k.a // "") == "none") as $none   # BL-320-AUDIT-NONE
           | ((.timestamp // "") as $rt | $rt != "" and (($k.at // "") > $rt)) as $after   # BL-320-AUDIT-AFTER
           | (if $fpl == "" then "" else (($k.q // "") | split($fpl) | if length > 1 then (.[1:] | join($fpl)) else "" end) end) as $why   # BL-277-FP-PICK-WHY
+          | ((.details.pattern // "") as $rp | $rp != "" and ((($k.q // "") | (capture("\\(pattern: (?<p>[^)]*)\\)")? // {p: ""}) | .p | split(", ")) | any(.[]; . == $rp))) as $named   # BL-277-FP-PICK-NAMED
           | (if $isq and $none and $after and $k.t == $acc then "accepted"   # BL-320-AUDIT-MAP
              elif $isq and $none and $after and $k.t == $dec then "declined"   # BL-320-AUDIT-DEC
-             elif $isq and $none and $after and $fp != "" and $k.t == $fp and (($why | gsub("\\s"; "")) | length) > 0 then "false_positive"   # BL-277-FP-PICK-MAP
+             elif $isq and $none and $after and $fp != "" and $k.t == $fp and $named and (($why | gsub("\\s"; "")) | length) > 0 then "false_positive"   # BL-277-FP-PICK-MAP
              else "PENDING" end) as $ur
           | if $ur == "PENDING" then . else
               (.user_response = $ur

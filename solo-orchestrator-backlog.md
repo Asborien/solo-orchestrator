@@ -18288,11 +18288,18 @@ true — reading the ledger back mints no `claude` row — and the growth is lis
   the Guardrails' `record-approval.sh`, and `bypass_audit_close_from_approvals` closes the rows from
   that pick (`# BL-277-FP-PICK-MAP`): `user_response: false_positive`, `final_outcome: recorded_only`
   (`# BL-277-FP-PICK-END`), the reason the user was shown as `details.false_positive_reason`
-  (`# BL-277-FP-PICK-WHY`); an A3 pick on a question with no reason after the lead closes nothing.
-  The library's own `--decision false-positive` arm in `bypass_audit_close_pending`
-  (`# BL-277-FALSE-POSITIVE`, `# BL-277-FP-RECORD`) is kept and pinned, with its blank-reason refusal,
-  but `pending-approval.sh` no longer calls it with that decision; `# BL-277-FP-PASS` carries
-  `--reason` to accept and decline, which must not record it. Pinned by D1 (the operator's close asks
+  (`# BL-277-FP-PICK-WHY`), and only for rows whose pattern the question names
+  (`# BL-277-FP-PICK-NAMED`); an A3 pick on a question with no reason after the lead closes nothing.
+  The re-ask first reads any pick the user has already made (`# BL-277-FP-RECONCILE`), so it cannot
+  rebind, and orphan, rows an A1 or A2 already answers. `bypass_audit_close_pending` has NO
+  false-positive decision (`# BL-277-FALSE-POSITIVE`; review of #454, R-454-1): any caller reaches it,
+  an agent sourcing the library included, and a close there claimed a pick nobody made.
+  `# BL-277-FP-PASS` carries `--reason` to accept and decline, which must not record it
+  (`# BL-277-FP-RECORD`). Review of #454 pins: D17 (an agent's direct library call with false-positive
+  and any reason: refused, row PENDING), D20-D22 (an A3 pick on a non-bypass question, on an option
+  approving a commit, or made before the row: nothing closed), D1b (two patterns: the question names
+  both, the pick closes both), D18 (an A3 question naming one of two patterns closes only that one),
+  D19 (a re-ask after the user's A2 reads it first: declined, nothing asked). Pinned by D1 (the operator's close asks
   again with A3 and the reason and closes nothing; the A3 pick then closes, records the reason, and
   `details.pick` is A3), D2 (five empty reasons, tab-only and newline-only among them: refused, the
   question and the row unmoved), D5 (the agent's side, no terminal: refused, nothing asked), D7 (the
@@ -18367,8 +18374,6 @@ passes. A mutant that fails any of that is reported as a SETUP failure, never as
 | M2 | detector, `# BL-277-AUTHORSHIP` | ≤ 6 | `USER_RESPONSE="n/a"` → `USER_RESPONSE="PENDING"` | A3 | A1 |
 | M3 | detector, `# BL-277-SENTINEL-AUTHORED` | ≤ 6 | the authorship guard removed (the shipped `if [ ! -f "$SENTINEL" ]`) | A2, G2 | A1 |
 | M3b | detector, `# BL-277-SENTINEL-AUTHORED` | ≤ 6 | `if false; then` (sentinel never raised) | S2, G3 | S1 |
-| M4 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 4 | `false_positive`/`recorded_only` → `declined`/`abandoned` | D9 | D3 |
-| M5 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 5 | the reason guard → `if false; then` | D4 | — |
 | M6 | pending-approval, `# BL-277-FP-REASON` | ≤ 6 | the reason guard → `if false; then` | D2 | D1 |
 | M7 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 5 | the group written without `"matcher": "Bash\|Write"` | R6 | R5 |
 | M8 | roster (copied, sourced), `# BL-277-MATCHER` | ≤ 4 | the idempotence probe regressed to `[0].hooks[]?` | R6 | R5 |
@@ -18381,8 +18386,7 @@ passes. A mutant that fails any of that is reported as a SETUP failure, never as
 | M14 | lib, `# BL-277-FP-RECORD` | ≤ 3 | the condition removed, the reason written onto every closed row (the maintainer's mutant) | D3 | D1 |
 | M15 | pending-approval, `# BL-277-FP-REASON` | ≤ 6 | `[[:space:]]` narrowed to a space (the maintainer's mutant) | D2 | D1 |
 | M16 | pending-approval, `# BL-277-FP-OPERATOR` | ≤ 8 | the terminal guard → `if false; then` | D5 | D1 |
-| M17 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 5 | `[[:space:]]` narrowed to a space | D4 | — |
-| M18 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 3 | `false-positive)` widened to `false-positive\|*)` | D6 | D1 |
+| M18 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 6 | `decline)` widened to `decline\|*)` | D6 | D1 |
 | M19 | pending-approval, `# BL-277-FP-CONFIRM` | ≤ 3 | the confirmation skipped: `if false && ! prompt_yes_no …` | D7 | D1 |
 | M23 | pending-approval, `# BL-277-FP-CONFIRM` | ≤ 3 | the confirmation's default flipped to `Y` | D7 (its Enter arm) | — |
 | M24 | detector, `# BL-277-AUTHORSHIP` | ≤ 6 | an authored `Agent` arm added beside the block | A7 | S1, W1 |
@@ -18399,6 +18403,14 @@ passes. A mutant that fails any of that is reported as a SETUP failure, never as
 | M32 | pending-approval, `# BL-277-FP-OTHER-QUESTION` | ≤ 3 | a commit question replaced | D13 | D1 |
 | M33 | pending-approval, `# BL-277-FP-PENDING-ROWS` | ≤ 4 | a question asked with nothing PENDING | D14 | D1 |
 | M34 | pending-approval, `# BL-277-FP-DISPATCH` | ≤ 3 | false-positive sent to main's `--decision` refusal | D1 | D3 |
+| M41 | lib, `# BL-277-FALSE-POSITIVE` | ≤ 6 | the false-positive arm restored | D17 | D3 |
+| M42 | lib, the A3 arm | 1 | `$isq` dropped | D20 | D1 |
+| M43 | lib, the A3 arm | 1 | `$none` dropped | D21 | D1 |
+| M44 | lib, the A3 arm | 1 | `$after` dropped | D22 | D1 |
+| M45 | pending-approval, the re-ask's pattern list | ≤ 12 | only the first pattern named | D1b | D1 |
+| M46 | lib, the A3 arm | 1 | `$named` dropped (`# BL-277-FP-PICK-NAMED`) | D18 | D1 |
+| M47 | pending-approval, `# BL-277-FP-RECONCILE` | ≤ 4 | the re-ask reads no pending pick first | D19 | D1 |
+| M48 | detector, `# BL-277-WRITE-TEXT` | ≤ 3 | the Write arm reads only `tool_response.content` | W2 | W1 |
 
 Each "survives" column is asserted too, so a kill that came from breaking something else is reported
 as such.
@@ -18485,10 +18497,11 @@ the Status paragraph above; each point of the review, with the change and the ca
    rests on it, commit approvals included; an agent can write its own A3 question with a reason of its
    choosing, which the user still has to pick having read it; `.claude/bypass-audit.json` itself is not
    write-protected (`## BL-320:` residual), so an agent can edit a row's outcome directly; and a caller
-   that sources `scripts/lib/bypass-audit.sh` can call `bypass_audit_close_pending ... false-positive`
-   directly (D4 and D6 do), the same shape as `test-gate.sh`'s callable `_unrecord_feature_apply`.
-   Pre-existing, `--clear` and a bare `--resolve` still remove the question from any caller; those
-   leave the rows PENDING.
+   that sources `scripts/lib/bypass-audit.sh` can still call `bypass_audit_close_pending ... decline`
+   (or `accept`), which closes rows without any pick — pre-existing on `main`, the same shape as
+   `test-gate.sh`'s callable `_unrecord_feature_apply`; the library's false-positive arm, which did the
+   same for false_positive, is removed (D17). Pre-existing, `--clear` and a bare `--resolve` still
+   remove the question from any caller; those leave the rows PENDING.
 9. **`Edit` and `MultiEdit` are scanned, as authored text (`## BL-336:`, built in this PR).** Their
    results carry none of the four keys, so before BL-336 a proposal written into a file by `Edit` left
    no row. The detector now reads `tool_input.new_string` for `Edit` (`# BL-336-EDIT-TEXT`) and each
@@ -18502,11 +18515,22 @@ the Status paragraph above; each point of the review, with the change and the ca
     no sentinel. The detector is not registered on `SubagentStop`, so no authored arm sees it. The same
     reasoning as the `Write` ruling would scan it as authored (`Bash|Write|Agent`); that is a scan-scope
     call for the maintainer and is put to him on #454, not built.
-11. **The Write arm depends on `content` being in the Write result.** The Claude Code hooks page's
-    PostToolUse example gives Write's `tool_response` as `{filePath, type}`, with no `content`, and an
-    envelope of that shape gives no row, here and on `main`. Real Write results carry `content` (a
-    transcript `toolUseResult` for Write does), so the example is trimmed and W1 uses the real shape;
-    but if the payload ever drops `content`, the Write arm stops scanning without a sound.
+11. **Retired: the Write arm no longer depends on `content` in the Write result.** The hooks page's
+    PostToolUse example gives Write's `tool_response` as `{filePath, type}`, which gave no row. The
+    detector now reads `tool_input.content` first (`# BL-277-WRITE-TEXT`), the file text the model
+    wrote, and the result's `content` only when that is absent; W2 pins the `{filePath, type}` shape.
+12. **The A3 close is only as trustworthy as `.claude/approvals.jsonl`.** `bypass_audit_close_from_approvals`
+    reads the pick from that file. The Guardrails' config-guard (4.4.1, measured) refuses the agent's
+    Write and Edit to it and a shell command naming it (rc 2), but passes a shell write through a
+    variable path, `d=.claude; printf x >> "$d/approvals.jsonl"`, and a subprocess with a split path,
+    `python3 -c "open('.claude/appr'+'ovals.jsonl','a')…"` (both rc 0); and it returns rc 0 for a MultiEdit
+    envelope naming the file (it reads Write, Edit and NotebookEdit; whether MultiEdit is still a Claude
+    Code tool was not checked). So an agent can append a pick
+    record, and a `false_positive` row is a record of a pick only as far as that file is. This predates
+    the PR (`## BL-320:`; it holds for A1, A2 and commit approvals) and is the Guardrails' to close. The
+    pre-commit gate itself blocks on the question file, which the agent's own `--clear` already removes.
+13. **Not scanned: NotebookEdit, and files a Bash command writes.** Neither is in the matcher, and a
+    file Bash writes reaches the detector only as that command's output (`tool_output`, residual 6).
 
 **A pre-existing failure, easy to misread as this change's.** Where no global git identity exists (a
 bare `ubuntu:24.04` container, or a temporary `HOME`), `tests/test-bl029-integration.sh` exits 128 with

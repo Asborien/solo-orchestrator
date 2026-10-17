@@ -515,6 +515,11 @@ case "$EVENT" in
         # Never originalFile or old_string, which the model did not write now.
         TEXT=$(echo "$INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null)
         ;;
+      Write)
+        # BL-277-WRITE-TEXT — the file the model wrote: tool_input.content, which
+        # every Write carries; the result's .content only when that is absent.
+        TEXT=$(echo "$INPUT" | jq -r '.tool_input.content // .tool_response.content // ""' 2>/dev/null)
+        ;;
       MultiEdit)
         # BL-336-MULTIEDIT-TEXT — every edit's new_string, one after another;
         # never old_string or the file's old contents.
