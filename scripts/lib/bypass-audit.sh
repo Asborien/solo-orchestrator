@@ -59,10 +59,17 @@
 #                                  REAL events; a clean pass writes a non-tracked
 #                                  .claude/last-gate-pass.txt receipt instead. Old
 #                                  ledgers keep any historical passed rows.)
-#     "actor":                     "claude" | "user_terminal" | "user_terminal_inferred" | "framework",
+#     "actor":                     "claude" | "tool_output" | "user_terminal" | "user_terminal_inferred" | "framework",
+#                                  (BL-277: "tool_output" is a claude_bypass_proposal
+#                                  row whose text came back through a tool — a file
+#                                  read, a program's output — so authorship is NOT
+#                                  established; only "claude" rows raise a sentinel.)
 #     "enforcement_level_at_event":"no" | "light" | "strict" | "n/a",
 #     "details":                   { type-specific },
-#     "user_response":             "PENDING" | "accepted" | "declined" | "n/a",
+#     "user_response":             "PENDING" | "accepted" | "declined" | "false_positive" | "n/a",
+#                                  (BL-277: "false_positive" closes a PENDING proposal
+#                                  that was never one; details.false_positive_reason
+#                                  carries the operator's stated reason.)
 #     "final_outcome":             "committed" | "bypassed" | "escalated" | "abandoned" | "recorded_only" | "n/a"
 #   }
 
@@ -238,10 +245,13 @@ bypass_audit_count_pending() {
   jq '[.[] | select(.user_response == "PENDING")] | length' "$file" 2>/dev/null || echo 0
 }
 
-# bypass_audit_close_pending <project_root> <decision>
+# bypass_audit_close_pending <project_root> <decision> [<reason>]
 # Updates every PENDING row to the given decision. decision ∈ {accept, decline}.
-#   accept  → user_response=accepted,  final_outcome=bypassed
-#   decline → user_response=declined,  final_outcome=abandoned
+#   accept         → user_response=accepted,       final_outcome=bypassed
+#   decline        → user_response=declined,       final_outcome=abandoned
+# <reason> is never recorded by either (the jq below keeps it out). There is no
+# false-positive decision here (BL-277): a false_positive row comes only from
+# the user's A3 pick, read by bypass_audit_close_from_approvals.
 # Idempotent — leaves already-resolved rows untouched. Holds the same lock
 # bypass_audit_append uses to avoid races. Returns 0 on success, 1 on
 # unknown decision or write failure.
@@ -253,14 +263,18 @@ bypass_audit_count_pending() {
 bypass_audit_close_pending() {
   local project_root="${1:-.}"
   local decision="${2:-}"
+  local reason="${3:-}"
   local file="$project_root/.claude/bypass-audit.json"
 
   local user_resp final_out
+  # BL-277-FALSE-POSITIVE — no false-positive arm. Any caller can reach this
+  # function, an agent sourcing this file included (review of #454, R-454-1),
+  # so a false_positive close here would claim a decision nobody made.
   case "$decision" in
     accept)  user_resp="accepted"; final_out="bypassed" ;;
     decline) user_resp="declined"; final_out="abandoned" ;;
     *)
-      echo "[FAIL] bypass_audit_close_pending: unknown decision '$decision' (expected: accept | decline)" >&2
+      echo "[FAIL] bypass_audit_close_pending: unknown decision '$decision' (expected: accept | decline; a false positive is the user's A3 pick)" >&2
       return 1
       ;;
   esac
@@ -300,8 +314,9 @@ bypass_audit_close_pending() {
   (
     tmp=$(mktemp "${file}.XXXXXX") || exit 1
     trap 'rm -f "$tmp"; rmdir "$lock_dir" 2>/dev/null' EXIT INT TERM
-    if jq --arg ur "$user_resp" --arg fo "$final_out" \
-         '[.[] | if .type == "claude_bypass_proposal" and .user_response == "PENDING" then .user_response = $ur | .final_outcome = $fo else . end]' \
+    # BL-277-FP-RECORD — the reason lands on every row the close touches.
+    if jq --arg ur "$user_resp" --arg fo "$final_out" --arg why "$reason" \
+         '[.[] | if .type == "claude_bypass_proposal" and .user_response == "PENDING" then .user_response = $ur | .final_outcome = $fo | (if $ur == "false_positive" then .details.false_positive_reason = $why else . end) else . end]' \
          "$file" > "$tmp" 2>/dev/null; then
       _bypass_audit_preserve_mode "$file" "$tmp"
       mv "$tmp" "$file" || exit 1
@@ -325,12 +340,24 @@ bypass_audit_close_pending() {
 BYPASS_QUESTION_PREFIX="Bypass proposal detected"
 BYPASS_ACCEPT_TEXT="Accept the bypass proposal recorded in .claude/bypass-audit.json (this approves no commit)"
 BYPASS_DECLINE_TEXT="Decline it"
+# `## BL-277:` the third answer, A3. Only the re-ask puts it in a question
+# (scripts/pending-approval.sh --resolve --decision false-positive, a terminal
+# command); the detector's own question never carries it, so the question the
+# pre-commit gate relays to the agent names no false-positive close. The reason
+# is the question's tail after the lead, so it is text the user was shown
+# before picking A3. Neither names who asked: anyone who can run the command
+# under a pseudo-terminal, or write the file, can put the question.
+BYPASS_FALSE_POSITIVE_TEXT="Close it as a false positive: the matched text proposed nothing (this approves no commit)"
+BYPASS_FALSE_POSITIVE_LEAD="Reason given for closing it as a false positive: "
 
 # bypass_audit_close_from_approvals <project_root>
 # `## BL-320:` with the Development Guardrails 4.4.0 and later, the USER's
 # answer to a question is recorded by the Guardrails (record-approval.sh) in
-# .claude/approvals.jsonl, a file the agent cannot write, and the question is
-# removed. A PENDING claude_bypass_proposal row is bound to a question by
+# .claude/approvals.jsonl, and the question is removed. The Guardrails'
+# config-guard refuses the agent's Write and Edit to that file and a shell write
+# naming it, but not a path built in a variable or a subprocess (`## BL-277:`
+# residual 12), so a record read here is only as trustworthy as that file.
+# A PENDING claude_bypass_proposal row is bound to a question by
 # details.sentinel_sha256 — the sha256 of the question the bypass detector
 # raised, or found open and labelled as its own — and the pick record carries
 # the sha256 the Guardrails read. The binding only finds the pick; it decides
@@ -376,7 +403,8 @@ bypass_audit_close_from_approvals() {
   (
     tmp=$(mktemp "${file}.XXXXXX") || exit 1
     trap 'rm -f "$tmp"; rmdir "$lock_dir" 2>/dev/null' EXIT INT TERM
-    if jq --argjson picks "$picks" --arg qp "$BYPASS_QUESTION_PREFIX" --arg acc "$BYPASS_ACCEPT_TEXT" --arg dec "$BYPASS_DECLINE_TEXT" '[ .[] |
+    if jq --argjson picks "$picks" --arg qp "$BYPASS_QUESTION_PREFIX" --arg acc "$BYPASS_ACCEPT_TEXT" --arg dec "$BYPASS_DECLINE_TEXT" \
+         --arg fp "${BYPASS_FALSE_POSITIVE_TEXT:-}" --arg fpl "${BYPASS_FALSE_POSITIVE_LEAD:-}" '[ .[] |
         if .type == "claude_bypass_proposal" and .user_response == "PENDING"
         then
           (.details.sentinel_sha256 // "") as $s
@@ -384,12 +412,16 @@ bypass_audit_close_from_approvals() {
           | (($k.q // "") | startswith($qp)) as $isq   # BL-320-AUDIT-Q
           | (($k.a // "") == "none") as $none   # BL-320-AUDIT-NONE
           | ((.timestamp // "") as $rt | $rt != "" and (($k.at // "") > $rt)) as $after   # BL-320-AUDIT-AFTER
+          | (if $fpl == "" then "" else (($k.q // "") | split($fpl) | if length > 1 then (.[1:] | join($fpl)) else "" end) end) as $why   # BL-277-FP-PICK-WHY
+          | ((.details.pattern // "") as $rp | $rp != "" and ((($k.q // "") | (capture("\\(pattern: (?<p>[^)]*)\\)")? // {p: ""}) | .p | split(", ")) | any(.[]; . == $rp))) as $named   # BL-277-FP-PICK-NAMED
           | (if $isq and $none and $after and $k.t == $acc then "accepted"   # BL-320-AUDIT-MAP
              elif $isq and $none and $after and $k.t == $dec then "declined"   # BL-320-AUDIT-DEC
+             elif $isq and $none and $after and $fp != "" and $k.t == $fp and $named and (($why | gsub("\\s"; "")) | length) > 0 then "false_positive"   # BL-277-FP-PICK-MAP
              else "PENDING" end) as $ur
           | if $ur == "PENDING" then . else
               (.user_response = $ur
-               | .final_outcome = (if $ur == "accepted" then "bypassed" else "abandoned" end)
+               | .final_outcome = (if $ur == "accepted" then "bypassed" elif $ur == "declined" then "abandoned" else "recorded_only" end)   # BL-277-FP-PICK-END
+               | (if $ur != "false_positive" then . else .details.false_positive_reason = $why end)
                | .details.decided_by = "the user'"'"'s pick in .claude/approvals.jsonl"
                | .details.pick = $k.p
                | .details.picked_at = $k.at)
@@ -410,4 +442,51 @@ bypass_audit_close_from_approvals() {
   [ "$rc" -eq 0 ] || return 1
   after="$(jq '[.[] | select(.type == "claude_bypass_proposal" and .user_response == "PENDING")] | length' "$file")"
   echo $((before - after))
+}
+
+# bypass_audit_rebind_pending <project_root> <sha256>
+# `## BL-277:` binds every PENDING claude_bypass_proposal row to the question
+# whose sha256 is given (details.sentinel_sha256): the operator's re-ask with A3
+# (scripts/pending-approval.sh --resolve --decision false-positive), so the
+# user's pick on it finds those rows as bypass_audit_close_from_approvals
+# finds any other. It decides nothing. Same lock and atomic write as the other
+# writers. Returns 1 on a value that is not a sha256, a missing or unreadable
+# ledger, or a write failure.
+bypass_audit_rebind_pending() {
+  local project_root="${1:-.}"
+  local sha="${2:-}"
+  local file="$project_root/.claude/bypass-audit.json"
+  case "$sha" in ''|*[!0-9a-f]*) echo "[FAIL] bypass_audit_rebind_pending: '$sha' is not a sha256" >&2; return 1 ;; esac
+  [ "${#sha}" -eq 64 ] || { echo "[FAIL] bypass_audit_rebind_pending: '$sha' is not a sha256" >&2; return 1; }
+  jq -e 'type == "array"' "$file" >/dev/null 2>&1 || { echo "[FAIL] bypass_audit_rebind_pending: $file is missing or not a JSON array" >&2; return 1; }
+
+  local lock_dir="$file.lockdir" attempts=0
+  while ! mkdir "$lock_dir" 2>/dev/null; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 100 ]; then
+      echo "[FAIL] bypass_audit_rebind_pending: lock timeout (>10s)" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  local rc=0
+  (
+    tmp=$(mktemp "${file}.XXXXXX") || exit 1
+    trap 'rm -f "$tmp"; rmdir "$lock_dir" 2>/dev/null' EXIT INT TERM
+    # BL-277-FP-REBIND — the PENDING proposals, and nothing else.
+    if jq --arg s "$sha" '[.[] | if (.type == "claude_bypass_proposal" and .user_response == "PENDING") then .details.sentinel_sha256 = $s else . end]' \
+         "$file" > "$tmp" 2>/dev/null; then
+      _bypass_audit_preserve_mode "$file" "$tmp"
+      mv "$tmp" "$file" || exit 1
+      trap - EXIT INT TERM
+      exit 0
+    else
+      rm -f "$tmp"
+      echo "[FAIL] bypass_audit_rebind_pending: jq failed" >&2
+      trap - EXIT INT TERM
+      exit 1
+    fi
+  ) || rc=1
+  rmdir "$lock_dir" 2>/dev/null
+  return "$rc"
 }

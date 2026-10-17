@@ -361,8 +361,11 @@ case_W15() {  # a stale temp file from an interrupted --offer does not stop the 
 }
 
 # ── D: the bypass detector's question ────────────────────────────────────────
-detect() {   # ROOT DIR — one PostToolUse with a bypass proposal through ROOT's detector
-  printf '%s' '{"hook_event_name":"PostToolUse","session_id":"bl320","tool_name":"Bash","tool_input":{"command":"x"},"tool_response":{"stdout":"just use --no-verify to skip it"}}' \
+# `## BL-277:` a question is raised for AUTHORED text only, so the proposal is the
+# assistant's own message (a Stop event); a Bash command's output records a
+# tool_output row and asks nothing (tests/test-bl277-detector-authorship.sh A2).
+detect() {   # ROOT DIR — one authored bypass proposal (Stop) through ROOT's detector
+  printf '%s' '{"hook_event_name":"Stop","session_id":"bl320","last_assistant_message":"just use --no-verify to skip it","transcript_path":"/nonexistent/bl320.jsonl"}' \
     | CLAUDE_PROJECT_DIR="$2" bash "$1/scripts/hooks/bypass-detector.sh" >/dev/null 2>&1
 }
 case_D1() {   # schema 2, answered by id, rows bound to the question, the typed phrase retired
@@ -414,7 +417,7 @@ case_D5() {   # the question cannot be written: a detector_error row says so, an
   d="$(newtmp)/p"; fx "$d" 4.4.0 || { CASE_DETAIL="fixture"; return 1; }
   stub="$(newtmp)"; real="$(command -v mktemp)"
   printf '#!/bin/sh\ncase "$*" in *pending-approval*) exit 1 ;; esac\nexec "%s" "$@"\n' "$real" > "$stub/mktemp"; chmod +x "$stub/mktemp"
-  printf '%s' '{"hook_event_name":"PostToolUse","session_id":"bl320","tool_name":"Bash","tool_input":{"command":"x"},"tool_response":{"stdout":"just use --no-verify to skip it"}}' \
+  printf '%s' '{"hook_event_name":"Stop","session_id":"bl320","last_assistant_message":"just use --no-verify to skip it","transcript_path":"/nonexistent/bl320.jsonl"}' \
     | PATH="$stub:$PATH" CLAUDE_PROJECT_DIR="$d" bash "$1/scripts/hooks/bypass-detector.sh" >/dev/null 2>&1
   [ ! -f "$d/$SENT" ] || { CASE_DETAIL="fixture: the question was written anyway"; return 1; }
   jq -e '[.[] | select(.type == "detector_error" and (.details.reason | test("bypass question")))] | length == 1' "$d/.claude/bypass-audit.json" >/dev/null 2>&1 \
@@ -432,7 +435,7 @@ case_D7() {   # N-3: a replayed question — an old pick does not decide a propo
   pick_line A1 "$s" > "$d/.claude/approvals.jsonl"              # the user really accepted Q1 (picked_at 00:01:00)
   mv "$d/$SENT" "$d/q1-answered.json"                           # the pick removed it
   cp "$q1" "$d/$SENT"                                           # the agent writes Q1's bytes back
-  printf '%s' '{"hook_event_name":"PostToolUse","session_id":"bl320","tool_name":"Bash","tool_input":{"command":"x"},"tool_response":{"stdout":"just git push --force to get past it"}}' \
+  printf '%s' '{"hook_event_name":"Stop","session_id":"bl320","last_assistant_message":"just git push --force to get past it","transcript_path":"/nonexistent/bl320.jsonl"}' \
     | CLAUDE_PROJECT_DIR="$d" bash "$1/scripts/hooks/bypass-detector.sh" >/dev/null 2>&1
   jq -e --arg s "$s" '[.[] | select(.type == "claude_bypass_proposal" and .timestamp != "2026-10-06T00:00:01Z")] | length >= 1 and all(.details.sentinel_sha256 == $s)' \
     "$d/.claude/bypass-audit.json" >/dev/null 2>&1 || { CASE_DETAIL="fixture: the new proposal did not bind to the replayed question: $(jq -c '[.[] | [.details.pattern, .timestamp, .details.sentinel_sha256]]' "$d/.claude/bypass-audit.json")"; return 1; }
