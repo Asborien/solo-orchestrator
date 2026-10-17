@@ -267,7 +267,7 @@ case_D1() {   # FW — k-pdf's real ci.yml
   f="$k/.github/workflows/ci.yml"
   command grep -q -- '--no-deployment-flag' "$f" || { CASE_DETAIL="fixture: the flag is not in k-pdf's ci.yml"; return 1; }
   a="$(adopt_rules "$fw" "$f")"
-  printf '%s\n' "$a" | command grep -q '^deploy-on-push' && bad="$bad [adoption: deploy-on-push at line $(printf '%s\n' "$a" | command grep '^deploy-on-push' | cut -f2)]"
+  command grep -q '^deploy-on-push' <<< "$a" && bad="$bad [adoption: deploy-on-push at line $(printf '%s\n' "$a" | command grep '^deploy-on-push' | cut -f2)]"
   scan="$(scout_scan "$fw" "$k")"
   [ -n "$scan" ] || { CASE_DETAIL="Scout printed nothing"; return 1; }
   s="$(scout_findings "$scan" ".github/workflows/ci.yml")"
@@ -284,7 +284,7 @@ case_D2() {   # FW — the flag spellings: neither detector fires
   [ -n "$scan" ] || { CASE_DETAIL="Scout printed nothing"; return 1; }
   for f in kpdf-shape.yml flags.yml; do
     a="$(adopt_rules "$fw" "$DP/.github/workflows/$f")"
-    printf '%s\n' "$a" | command grep -q '^deploy-on-push' && bad="$bad [adoption fires on $f]"
+    command grep -q '^deploy-on-push' <<< "$a" && bad="$bad [adoption fires on $f]"
     s="$(scout_findings "$scan" ".github/workflows/$f")"
     case ",$s," in *",deploy-around-the-release-lane,"*) bad="$bad [Scout fires on $f]" ;; esac
   done
@@ -298,7 +298,7 @@ case_D3() {   # FW — every real deploy step still fires, in both detectors
   [ -n "$scan" ] || { CASE_DETAIL="Scout printed nothing"; return 1; }
   for f in $TP_FILES; do
     a="$(adopt_rules "$fw" "$DP/.github/workflows/$f")"
-    printf '%s\n' "$a" | command grep -q '^deploy-on-push' || bad="$bad [adoption misses $f]"
+    command grep -q '^deploy-on-push' <<< "$a" || bad="$bad [adoption misses $f]"
     s="$(scout_findings "$scan" ".github/workflows/$f")"
     case ",$s," in *",deploy-around-the-release-lane,"*) : ;; *) bad="$bad [Scout misses $f]" ;; esac
   done
@@ -558,8 +558,8 @@ case_C2() {   # FW — the finisher's refusal, run
   printf '{"schemaVersion":1,"adoptedAtCommit":"2222222222222222222222222222222222222222"}\n' > "$r/.claude/adoption/assessment-record.json"
   out="$(bash "$WORK/act4.sh" "$fw" "$r" 2>&1 | command grep adoptedAtCommit)"
   CASE_DETAIL="the refusal line: '$out'"
-  printf '%s' "$out" | command grep -qF 'adoptedAtCommit is not the commit adoption started from (1111111111111111111111111111111111111111' \
-    && ! printf '%s' "$out" | command grep -q 'was adopted at'
+  command grep -qF 'adoptedAtCommit is not the commit adoption started from (1111111111111111111111111111111111111111' <<< "$out" \
+    && ! command grep -q 'was adopted at' <<< "$out"
 }
 
 echo
@@ -583,9 +583,9 @@ case_P1() {   # FW
   local fw="$1" s="" m="" bad=""
   s="$(section "$fw/docs/adoption.md" '^### What you need$')"
   [ -n "$s" ] || { CASE_DETAIL="no '### What you need' section"; return 1; }
-  printf '%s' "$s" | command grep -q 'Superpowers' || bad="$bad [Superpowers is not named]"
-  printf '%s' "$s" | command grep -qF "$SP_CMD" || bad="$bad [the install command is not there verbatim]"
-  printf '%s' "$s" | command grep -qF 'BLOCKED — Source file edit requires the Superpowers workflow' || bad="$bad [the block a session prints is not quoted]"
+  command grep -q 'Superpowers' <<< "$s" || bad="$bad [Superpowers is not named]"
+  command grep -qF "$SP_CMD" <<< "$s" || bad="$bad [the install command is not there verbatim]"
+  command grep -qF 'BLOCKED — Source file edit requires the Superpowers workflow' <<< "$s" || bad="$bad [the block a session prints is not quoted]"
   m="$(jq -r '.tools[] | select(.name == "Superpowers") | .install.darwin_brew' "$fw/templates/tool-matrix/common.json")"
   [ "$m" = "$SP_CMD" ] || bad="$bad [the tool matrix installs '$m', not the documented command]"
   CASE_DETAIL="${bad:-}"
@@ -597,10 +597,10 @@ case_P2() {   # FW
   a="$(section "$fw/README.md" '^### Adoption — the second way in$')"
   pre="$(section "$fw/README.md" '^## Prerequisites$')"
   [ -n "$a" ] && [ -n "$pre" ] || { CASE_DETAIL="a README section is missing"; return 1; }
-  printf '%s' "$a" | command grep -qF 'docs/adoption.md#what-you-need' || bad="$bad [the adoption section does not link to What you need]"
-  printf '%s' "$pre" | command grep -qF 'docs/adoption.md#what-you-need' || bad="$bad [Prerequisites does not link to What you need]"
+  command grep -qF 'docs/adoption.md#what-you-need' <<< "$a" || bad="$bad [the adoption section does not link to What you need]"
+  command grep -qF 'docs/adoption.md#what-you-need' <<< "$pre" || bad="$bad [Prerequisites does not link to What you need]"
   for t in jq gitleaks semgrep shasum; do
-    printf '%s' "$a" | command grep -qF "\`$t\`" && bad="$bad [the adoption section names \`$t\` itself — a second list]"
+    command grep -qF "\`$t\`" <<< "$a" && bad="$bad [the adoption section names \`$t\` itself — a second list]"
   done
   command grep -qx '### What you need' "$fw/docs/adoption.md" || bad="$bad [the link's target heading is gone]"
   CASE_DETAIL="${bad:-}"
@@ -610,10 +610,10 @@ case_P2() {   # FW
 case_P3() {   # FW
   local fw="$1" pre="" opt="" bad=""
   pre="$(section "$fw/README.md" '^## Prerequisites$')"
-  printf '%s' "$pre" | command grep -F '| **Superpowers** |' | command grep -qF "\`$SP_CMD\`" || bad="$bad [no Superpowers row with its command under Prerequisites]"
+  command grep -qF "\`$SP_CMD\`" <<< "$(command grep -F '| **Superpowers** |' <<< "$pre")" || bad="$bad [no Superpowers row with its command under Prerequisites]"
   opt="$(awk '/^\*\*Optional enhancements/{on=1} on && /^See the \[CLI Setup Addendum\]/{exit} on' "$fw/README.md")"
   [ -n "$opt" ] || bad="$bad [fixture: no Optional enhancements table]"
-  printf '%s' "$opt" | command grep -q 'Superpowers' && bad="$bad [Superpowers is still listed as optional]"
+  command grep -q 'Superpowers' <<< "$opt" && bad="$bad [Superpowers is still listed as optional]"
   CASE_DETAIL="${bad:-}"
   [ -z "$bad" ]
 }
@@ -647,7 +647,7 @@ case_P4() {   # FW CLONE
     rev=""; case "$hook" in *@*) rev="${hook#*@}"; hook="${hook%@*}" ;; esac
     if [ -n "$rev" ]; then body="$(git -C "$clone" show "$rev:$hook" 2>/dev/null)"; else body="$(cat "$clone/$hook" 2>/dev/null)"; fi
     [ -n "$body" ] || { bad="$bad [the clone has no $hook${rev:+ at $rev}]"; continue; }
-    printf '%s' "$body" | command grep -qF -- "$text" || bad="$bad [$hook${rev:+@$rev} does not print: $text]"
+    command grep -qF -- "$text" <<< "$body" || bad="$bad [$hook${rev:+@$rev} does not print: $text]"
   done <<EOF
 $QUOTES
 EOF
@@ -701,7 +701,7 @@ case_P5() {   # FW — each kind of session-start message: named in the guide, p
   [ -n "$g" ] || { CASE_DETAIL="no '#### What to do with each message' in docs/user-guide.md"; return 1; }
   while IFS='|' read -r k src; do
     [ -n "$k" ] || continue
-    printf '%s' "$g" | command grep -qF -- "$k" || bad="$bad [the guide does not name: $k]"
+    command grep -qF -- "$k" <<< "$g" || bad="$bad [the guide does not name: $k]"
     command grep -qF -- "$k" "$fw/$src" || bad="$bad [$src does not print: $k]"
   done <<'EOF'
 Update commands (run manually):|scripts/check-versions.sh
@@ -713,7 +713,7 @@ cannot tell whether an update is available|scripts/check-versions.sh
 a new MAJOR version|scripts/check-versions.sh
 NOT registered with Claude Code|scripts/check-versions.sh
 EOF
-  section "$fw/docs/adoption.md" '^### 6\. Afterwards$' | command grep -qF 'user-guide.md#what-to-do-with-each-message' \
+  command grep -qF 'user-guide.md#what-to-do-with-each-message' <<< "$(section "$fw/docs/adoption.md" '^### 6\. Afterwards$')" \
     || bad="$bad [adoption.md section 6 does not link to it]"
   CASE_DETAIL="${bad:-}"
   [ -z "$bad" ]
@@ -721,10 +721,10 @@ EOF
 
 case_P6() {   # FW — the phase-0 paragraph's citation is true
   local fw="$1" body="" bad=""
-  section "$fw/docs/adoption.md" '^### 7\. Your first change$' | command grep -qF '`check_commit_ready`' \
+  command grep -qF '`check_commit_ready`' <<< "$(section "$fw/docs/adoption.md" '^### 7\. Your first change$')" \
     || bad="$bad [section 7 does not cite check_commit_ready]"
   body="$(awk '/^check_commit_ready\(\) \{/{on=1} on{print} on && /^\}/{exit}' "$fw/scripts/process-checklist.sh")"
-  printf '%s' "$body" | command grep -qF '"$current_phase" -lt 2 ]' || bad="$bad [check_commit_ready no longer lets everything through below phase 2]"
+  command grep -qF '"$current_phase" -lt 2 ]' <<< "$body" || bad="$bad [check_commit_ready no longer lets everything through below phase 2]"
   CASE_DETAIL="${bad:-}"
   [ -z "$bad" ]
 }
@@ -733,7 +733,7 @@ case_P7() {   # FW — the override clears the recorded question first
   local fw="$1" o="" bad=""
   o="$(awk '/^\*\*The override\.\*\*/{on=1} on && /^\*\*The commit.s own checks\.\*\*/{exit} on' "$fw/docs/adoption.md")"
   [ -n "$o" ] || { CASE_DETAIL="no 'The override.' paragraph in section 7"; return 1; }
-  printf '%s' "$o" | command grep -qF 'bash scripts/pending-approval.sh --resolve' || bad="$bad [the override does not clear the recorded question]"
+  command grep -qF 'bash scripts/pending-approval.sh --resolve' <<< "$o" || bad="$bad [the override does not clear the recorded question]"
   command grep -qE '^[[:space:]]+--resolve' "$fw/scripts/pending-approval.sh" || bad="$bad [pending-approval.sh has no --resolve]"
   CASE_DETAIL="${bad:-}"
   [ -z "$bad" ]
@@ -745,9 +745,9 @@ case_P8() {   # FW — Superpowers is nowhere optional
   [ -z "$hits" ] || bad="$bad [user-guide.md calls it optional: $(printf '%s' "$hits" | head -2 | tr '\n' '|')]"
   hits="$(command grep -n -i 'superpowers' "$fw/docs/builders-guide.md" | command grep -i -E 'optional|recommended')"
   [ -z "$hits" ] || bad="$bad [builders-guide.md calls it optional or recommended: $(printf '%s' "$hits" | head -2 | tr '\n' '|')]"
-  command grep -A3 'Superpowers plugin not found' "$fw/init.sh" | command grep -qi 'recommended' && bad="$bad [init.sh still calls it recommended]"
+  command grep -qi 'recommended' <<< "$(command grep -A3 'Superpowers plugin not found' "$fw/init.sh")" && bad="$bad [init.sh still calls it recommended]"
   command grep -q 'Superpowers plugin not found' "$fw/init.sh" || bad="$bad [fixture: init.sh's message is gone]"
-  section "$fw/README.md" '^### Adoption — the second way in$' | tr '\n' ' ' | command grep -q 'when the Development Guardrails are installed' \
+  command grep -q 'when the Development Guardrails are installed' <<< "$(section "$fw/README.md" '^### Adoption — the second way in$' | tr '\n' ' ')" \
     || bad="$bad [README's adoption sentence says it blocks without saying when]"
   CASE_DETAIL="${bad:-}"
   [ -z "$bad" ]
