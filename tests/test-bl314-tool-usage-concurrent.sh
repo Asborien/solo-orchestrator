@@ -67,8 +67,9 @@
 #       decision is unchanged (a satisfied ledger is still allowed).
 #   C24 a directory, or a symlink to one, at the ledger path is never written
 #       into: _lw_put refuses it (rc 1) and a tracker event leaves it empty.
-#   C25 a lib that is present but cannot be loaded (0 bytes, a syntax error)
-#       is as loud as a missing one, in the tracker, SessionStart and the gate.
+#   C25 a lib that is present but cannot be loaded (0 bytes, a syntax error,
+#       or one that loads but lacks _lw_put) is as loud as a missing one, in
+#       the tracker, SessionStart and the gate.
 #
 # Mutants, run against a mirror of the three hooks and their lib. Each proves
 # its location: one marker site, and a diff of exactly that line.
@@ -1167,18 +1168,29 @@ else
 fi
 
 # ── C25: a lib that is present but cannot be loaded ─────────────────────────
-# A 0-byte lib defines nothing; one with a syntax error ends a `set -e` shell
-# at the `.` (SessionStart's), even inside an `if`. Either must be as loud as a
-# missing lib: the tracker exits 1 naming it, SessionStart says so and still
-# erases inherited successes, the gate's deny names it.
+# A 0-byte lib defines nothing. One with a syntax error ends a `set -e` shell
+# at the `.` on bash 3.2 (rc 2, even inside an `if`); bash 4.0 and later carry
+# on with the `.` failed (measured, bash:3.2 through bash:5.2 images). One that
+# loads but lacks _lw_put (an old or mismatched lib) passes a bare `[ -f ]` and
+# the `.` on every version, and SessionStart's startup write then fails. Each
+# must be as loud as a missing lib: the tracker exits 1 naming it, SessionStart
+# says so and still erases inherited successes, the gate's deny names it. The
+# third shape is what makes MLS discriminate on bash 4.0 and later.
 _badlib_round() {  # SCRIPTS_DIR — sets R_BAD25 to every arm that did not hold
   local shape m d before out rc
   R_BAD25=""
-  for shape in empty syntax; do
+  for shape in empty syntax incomplete; do
     m="$(newtmp)/scripts"; mkdir -p "$m/lib"
     cp "$1/track-tool-usage.sh" "$1/session-mcp-gate.sh" "$1/session-test-gate-check.sh" "$m/"
-    if [ "$shape" = "empty" ]; then : > "$m/lib/ledger-write.sh"
-    else { printf 'if then\n'; cat "$LIB"; } > "$m/lib/ledger-write.sh"; fi
+    case "$shape" in
+      empty)  : > "$m/lib/ledger-write.sh" ;;
+      syntax) { printf 'if then\n'; cat "$LIB"; } > "$m/lib/ledger-write.sh" ;;
+      incomplete)
+        awk '/^_lw_put\(\) \{$/ { print "_lw_put_gone() {"; next } { print }' "$LIB" > "$m/lib/ledger-write.sh"
+        if [ "$(_changed_lines "$LIB" "$m/lib/ledger-write.sh")" != "2" ] || ! "$BASH" -n "$m/lib/ledger-write.sh" 2>/dev/null; then
+          R_BAD25="$R_BAD25 incomplete: the lib without _lw_put was not built;"; continue
+        fi ;;
+    esac
     d=$(newtmp); _seed "$d"; before=$(cat "$d/.claude/tool-usage.json")
     _nolib_ev "$d" "$m/track-tool-usage.sh" "$FIND_PAYLOAD"
     if [ "$R_RC" = "0" ] || [ "$(cat "$d/.claude/tool-usage.json")" != "$before" ] || ! _says_nolib "$R_ERR"; then
@@ -1197,7 +1209,7 @@ _badlib_round() {  # SCRIPTS_DIR — sets R_BAD25 to every arm that did not hold
 }
 _badlib_round "$REPO_ROOT/scripts"
 if [ -z "$R_BAD25" ]; then
-  pass "C25: a 0-byte lib and one with a syntax error are each as loud as a missing one: the tracker exits 1 naming it, SessionStart says so (rc 0) and erases inherited successes, the gate's deny names it"
+  pass "C25: a 0-byte lib, one with a syntax error and one without _lw_put are each as loud as a missing one: the tracker exits 1 naming it, SessionStart says so (rc 0) and erases inherited successes, the gate's deny names it"
 else
   fail_ "C25" "$R_BAD25"
 fi

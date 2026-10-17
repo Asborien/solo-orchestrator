@@ -25851,11 +25851,17 @@ non-empty result into place (`# BL-314-NONEMPTY`). Each behaviour, with the case
   (`# BL-314-LEDGER-DIR`), so no copy lands inside it, or outside `.claude` through a link (C24,
   mutant MD). The gate reads the ledger only as a regular file, so it denies.
 - A lib that is present but cannot be loaded counts as missing. The tracker and SessionStart load it
-  through a trial in a subshell, keyed on the functions it defines, not on `[ -f ]`
-  (`# BL-314-LIB-TRIAL`, `# BL-314-SESSION-LIB-TRIAL`): a 0-byte lib defines nothing, and under
-  SessionStart's `set -e` one with a syntax error or no read permission ended the hook at the `.`,
-  before the reset and with no note (measured, bash 3.2: rc 2 and rc 1, even inside an `if`). The
-  0-byte and syntax-error shapes are pinned in all three hooks (C25, mutants MLT and MLS).
+  through a trial in a subshell, keyed on the functions it defines (`_lw_update`, `_lw_put`,
+  `_lw_traps`), not on `[ -f ]` (`# BL-314-LIB-TRIAL`, `# BL-314-SESSION-LIB-TRIAL`); the gate's note
+  keys on the same three. A 0-byte lib defines nothing. An old or mismatched lib that loads but lacks
+  `_lw_put` passed `[ -f ]` and the `.` on every bash, and SessionStart's startup write then failed
+  as if the disk were full. On bash 3.2 only, under SessionStart's `set -e`, a lib with a syntax
+  error or no read permission ended the hook at the `.`, before the reset and with no note (rc 2 and
+  rc 1, even inside an `if`); bash 4.0 and later carry on with the `.` failed (measured on the
+  bash:3.2 to bash:5.2 images). C25 pins the 0-byte, syntax-error and no-`_lw_put` shapes in all
+  three hooks; MLT is killed on every bash, MLS by the syntax shape on 3.2 and by the no-`_lw_put`
+  shape everywhere (PR #481's CI, run 39040137718, is where MLS survived on bash 5.2 before that
+  shape existed).
 - Without the lib, nothing passes in silence. The tracker's write entry points become one loud
   failure: a stderr line naming the lib and `bash scripts/verify-install.sh --auto-fix`, exit 1 (a
   non-blocking hook error, shown to the user), nothing written (`# BL-314-NOLIB-LOUD`), for an MCP

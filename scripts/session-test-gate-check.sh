@@ -94,9 +94,12 @@ fi
 # then reports the ledger absent and points at verify-install.
 TOOL_USAGE=".claude/tool-usage.json"
 LW_READY=0
-# Loaded through a trial in a subshell, as track-tool-usage.sh does: under this
-# hook's `set -e` a lib with a syntax error or no read permission ends the
-# shell at the `.` even inside an `if`, before the reset and the note below.
+# Loaded through a trial in a subshell, as track-tool-usage.sh does, keyed on
+# the functions it defines. An old or mismatched lib that loads but lacks
+# _lw_put would otherwise pass, and the startup write below would fail as if
+# the disk were full. On bash 3.2, under this hook's `set -e`, a lib with a
+# syntax error or no read permission also ends the shell at the `.` even
+# inside an `if` (bash 4.0 and later carry on), before the reset and the note.
 if ( . "$SCRIPT_DIR/lib/ledger-write.sh" && command -v _lw_update && command -v _lw_put && command -v _lw_traps ) >/dev/null 2>&1; then   # BL-314-SESSION-LIB-TRIAL
   # shellcheck source=scripts/lib/ledger-write.sh
   . "$SCRIPT_DIR/lib/ledger-write.sh" && _lw_traps && LW_READY=1

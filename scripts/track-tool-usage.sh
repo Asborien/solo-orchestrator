@@ -68,9 +68,10 @@ TOOL_USAGE=".claude/tool-usage.json"
 # this fires after every tool call. verify-install reports the lib missing.
 #
 # The lib is loaded through a trial in a subshell, keyed on what it defines,
-# not on `[ -f ]`: a 0-byte lib defines nothing, and one with a syntax error
-# or no read permission ends a `set -e` shell at the `.` even inside an `if`
-# (measured, bash 3.2: rc 2 and rc 1). A subshell's exit cannot end this one.
+# not on `[ -f ]`: a 0-byte lib defines nothing, an old or mismatched one may
+# lack a function, and on bash 3.2 one with a syntax error or no read
+# permission ends a `set -e` shell at the `.` even inside an `if` (rc 2 and
+# rc 1; bash 4.0 and later carry on). A subshell's exit cannot end this one.
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
 if ( . "$SCRIPT_DIR/lib/ledger-write.sh" && command -v _lw_update && command -v _lw_put && command -v _lw_traps ) >/dev/null 2>&1; then   # BL-314-LIB-TRIAL
   # shellcheck source=scripts/lib/ledger-write.sh
