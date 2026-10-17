@@ -65,6 +65,10 @@
 #   C22 .gitignore and the project template ignore the lib's temps.
 #   C23 the lib-less gate's deny names the missing lib and the fix; its
 #       decision is unchanged (a satisfied ledger is still allowed).
+#   C24 a directory, or a symlink to one, at the ledger path is never written
+#       into: _lw_put refuses it (rc 1) and a tracker event leaves it empty.
+#   C25 a lib that is present but cannot be loaded (0 bytes, a syntax error)
+#       is as loud as a missing one, in the tracker, SessionStart and the gate.
 #
 # Mutants, run against a mirror of the three hooks and their lib. Each proves
 # its location: one marker site, and a diff of exactly that line.
@@ -88,9 +92,11 @@
 #   the lock (C18, its own arm); ML38, ML25, ML28 the return codes (C19);
 #   MT02, MT03 the lib-less tracker exiting 0, and silent (C19); MV01, MV02
 #   verify-install's row and fixer (C21); MGI each ignore file without its
-#   temp line (C22); MGN the gate's missing-lib note dropped (C23). A mutant
-#   with no marker is anchored on its own find text, which must occur on
-#   exactly one line.
+#   temp line (C22); MGN the gate's missing-lib note dropped (C23); MRF a
+#   failed startup reset that does not empty the ledger (C19); MD the
+#   directory check dropped (C24); MLT, MLS the tracker's and SessionStart's
+#   load trial back to a bare `[ -f ]` (C25). A mutant with no marker is
+#   anchored on its own find text, which must occur on exactly one line.
 # Not a mutant here: skipping the seed lock (# BL-314-SEED-LOCK) survived six
 # C5 rounds. Every process in a burst passes the seed check before any of them
 # appends, so a second seed cannot land over a first writer's row without
@@ -947,7 +953,10 @@ fi
 
 # ── C19: the return codes the entry states ──────────────────────────────────
 # C19a/b: a SessionStart whose ledger write cannot land (.claude at 0555) ends
-# non-zero, on startup and on resume. C19c: the tracker without the lib fails
+# non-zero, on startup and on resume. The startup case carries last session's
+# successes and configured servers: the failed reset must empty the ledger, say
+# so on stderr, and leave the next Write DENIED. (A resume keeps the ledger's
+# flags by design, so it asserts only the exit.) C19c: the tracker without the lib fails
 # loud on every write: an MCP call with no ledger, an MCP call on a ledger,
 # and a commit on a ledger each exit 1 with a stderr line naming the lib and
 # `verify-install.sh --auto-fix`, and write nothing. A call that writes nothing
@@ -955,22 +964,38 @@ fi
 # C19d: a failed mv is a failed write: rc 1, the ledger unchanged, no temp.
 # _unlandable_round SESSION_HOOK — sets R_UNL_FAIL and R_UNL_SKIP.
 _unlandable_round() {
-  local src d rc
+  local src d rc gate_out err
   R_UNL_FAIL=""; R_UNL_SKIP=""
   for src in startup resume; do
-    d=$(newtmp); _seed "$d"; mkdir -p "$d/home"
+    d=$(newtmp); mkdir -p "$d/home"
+    if [ "$src" = "startup" ]; then _seed_satisfied "$d"; else _seed "$d"; fi
+    # Servers configured project-locally, so a fresh ledger that DID land would
+    # require both outcomes and deny: an allow can only come from old flags.
+    printf '%s\n' '{"mcpServers": {"qdrant": {"command": "uvx"}, "context7": {"command": "npx"}}}' > "$d/.claude/settings.local.json"
     chmod 555 "$d/.claude"
     if ( : > "$d/.claude/.probe" ) 2>/dev/null; then
       rm -f "$d/.claude/.probe"; chmod 755 "$d/.claude"; R_UNL_SKIP="$R_UNL_SKIP $src"; continue
     fi
     printf '{"hook_event_name":"SessionStart","source":"%s"}' "$src" > "$d/.envelope"
     _timed 10 "$d" "$d/.envelope" env HOME="$d/home" "$BASH" "$1"
-    rc=hung
+    rc=hung; err=""; gate_out=""
     if [ "$R_HUNG" = "0" ]; then
-      ( cd "$d" && env HOME="$d/home" "$BASH" "$1" < "$d/.envelope" > /dev/null 2>&1 ); rc=$?
+      ( cd "$d" && env HOME="$d/home" "$BASH" "$1" < "$d/.envelope" > /dev/null 2> "$d/.err" ); rc=$?
+      err=$(cat "$d/.err" 2>/dev/null)
     fi
+    [ "$src" = "startup" ] && gate_out=$(_gate_one "$d" "$GATE")
     chmod 755 "$d/.claude"
     if [ "$R_HUNG" = "1" ] || [ "$rc" = "0" ]; then R_UNL_FAIL="$R_UNL_FAIL $src: hung=$R_HUNG rc=$rc (want non-zero);"; fi
+    if [ "$src" = "startup" ]; then
+      case "$gate_out" in
+        *'"permissionDecision": "deny"'*) ;;
+        *) R_UNL_FAIL="$R_UNL_FAIL startup: next Write ALLOWED (gate stdout bytes=${#gate_out}) after a failed reset;" ;;
+      esac
+      case "$err" in
+        *"could not write a fresh"*) ;;
+        *) R_UNL_FAIL="$R_UNL_FAIL startup: stderr does not say the reset failed [$err];" ;;
+      esac
+    fi
   done
 }
 _unlandable_round "$SESSION"
@@ -1025,7 +1050,7 @@ _mv_fail_round "$LIB"
 [ "$R_RC" = "1" ] && [ "$R_SAME" = "1" ] && [ -z "$R_DEBRIS" ] || c19_fail="$c19_fail mv fails: rc=$R_RC unchanged=$R_SAME debris=[$R_DEBRIS] (want 1, 1, none);"
 [ -n "$c19_skip" ] && skip_ "C19a/b" "a 0555 directory stays writable here (root?):$c19_skip"
 if [ -z "$c19_fail" ]; then
-  pass "C19: an unlandable SessionStart write ends non-zero (startup, resume); the lib-less tracker exits 1 naming the lib and verify-install.sh --auto-fix on every write and writes nothing, and exits 0 in silence on a call that writes nothing; a failed mv returns 1 and leaves no temp"
+  pass "C19: an unlandable SessionStart write ends non-zero (startup, resume), and a failed startup reset empties the ledger, says so, and leaves the next Write denied; the lib-less tracker exits 1 naming the lib and verify-install.sh --auto-fix on every write and writes nothing, and exits 0 in silence on a call that writes nothing; a failed mv returns 1 and leaves no temp"
 else
   fail_ "C19" "$c19_fail"
 fi
@@ -1110,6 +1135,71 @@ if [ "$R_NOTE" = "1" ] && [ "$R_CTL" = "0" ] && [ -z "$R_SAT_OUT" ]; then
   pass "C23: the lib-less gate's deny names lib/ledger-write.sh and verify-install.sh --auto-fix (the gate with its lib does not), and a satisfied ledger is still allowed"
 else
   fail_ "C23" "lib-less deny names it=$R_NOTE (want 1) with-lib deny names it=$R_CTL (want 0) lib-less satisfied stdout bytes=${#R_SAT_OUT} (want 0, an allow)"
+fi
+
+# ── C24: a directory at the ledger path is never written into ───────────────
+# mv onto a directory drops the temp INSIDE it, and through a symlink that is
+# outside .claude. _lw_land refuses a directory, so nothing lands anywhere.
+_files_in() { _num "$(ls -A "$1" 2>/dev/null | wc -l | tr -d ' ')"; }
+_put_at() {  # DIR LIB — _lw_put of a small object; sets R_RC
+  ( cd "$1" && printf '{"a": 1}\n' | LW_LIB="$2" "$BASH" -c 'TOOL_USAGE=.claude/tool-usage.json; . "$LW_LIB"; _lw_put' ) > /dev/null 2>&1
+  R_RC=$?
+}
+_ledger_dir_round() {  # LIB TRACKER — sets R_DIR to every arm that did not hold
+  local d o n
+  R_DIR=""
+  d=$(newtmp); mkdir -p "$d/.claude/tool-usage.json"
+  _put_at "$d" "$1"; n=$(_files_in "$d/.claude/tool-usage.json")
+  { [ "$R_RC" = "1" ] && [ "$n" = "0" ]; } || R_DIR="$R_DIR put/dir: rc=$R_RC files=$n;"
+  d=$(newtmp); mkdir -p "$d/.claude/tool-usage.json"
+  _run_one "$d" "$2" "$FIND_PAYLOAD"; n=$(_files_in "$d/.claude/tool-usage.json")
+  [ "$n" = "0" ] || R_DIR="$R_DIR tracker/dir: files=$n;"
+  d=$(newtmp); o=$(newtmp); mkdir -p "$d/.claude"; ln -s "$o" "$d/.claude/tool-usage.json"
+  _put_at "$d" "$1"
+  _run_one "$d" "$2" "$FIND_PAYLOAD"; n=$(_files_in "$o")
+  { [ "$R_RC" = "1" ] && [ "$n" = "0" ]; } || R_DIR="$R_DIR symlink-to-dir: put rc=$R_RC, files outside .claude=$n;"
+}
+_ledger_dir_round "$LIB" "$TRACKER"
+if [ -z "$R_DIR" ]; then
+  pass "C24: a directory, or a symlink to one, at the ledger path: _lw_put returns 1 and a find event leaves it empty (0 files, none outside .claude)"
+else
+  fail_ "C24" "$R_DIR"
+fi
+
+# ── C25: a lib that is present but cannot be loaded ─────────────────────────
+# A 0-byte lib defines nothing; one with a syntax error ends a `set -e` shell
+# at the `.` (SessionStart's), even inside an `if`. Either must be as loud as a
+# missing lib: the tracker exits 1 naming it, SessionStart says so and still
+# erases inherited successes, the gate's deny names it.
+_badlib_round() {  # SCRIPTS_DIR — sets R_BAD25 to every arm that did not hold
+  local shape m d before out rc
+  R_BAD25=""
+  for shape in empty syntax; do
+    m="$(newtmp)/scripts"; mkdir -p "$m/lib"
+    cp "$1/track-tool-usage.sh" "$1/session-mcp-gate.sh" "$1/session-test-gate-check.sh" "$m/"
+    if [ "$shape" = "empty" ]; then : > "$m/lib/ledger-write.sh"
+    else { printf 'if then\n'; cat "$LIB"; } > "$m/lib/ledger-write.sh"; fi
+    d=$(newtmp); _seed "$d"; before=$(cat "$d/.claude/tool-usage.json")
+    _nolib_ev "$d" "$m/track-tool-usage.sh" "$FIND_PAYLOAD"
+    if [ "$R_RC" = "0" ] || [ "$(cat "$d/.claude/tool-usage.json")" != "$before" ] || ! _says_nolib "$R_ERR"; then
+      R_BAD25="$R_BAD25 $shape/tracker: rc=$R_RC stderr=[$R_ERR];"
+    fi
+    d=$(newtmp); _seed_satisfied "$d"; mkdir -p "$d/home"
+    out=$( cd "$d" && printf '{"hook_event_name":"SessionStart","source":"startup"}' \
+             | env HOME="$d/home" "$BASH" "$m/session-test-gate-check.sh" 2>/dev/null ); rc=$?
+    if [ "$rc" != "0" ] || ! _says_nolib "$out" \
+       || [ "$(jq -r '.qdrant_find_succeeded // false' "$d/.claude/tool-usage.json" 2>/dev/null)" = "true" ]; then
+      R_BAD25="$R_BAD25 $shape/session: rc=$rc says_it=$(_says_nolib "$out" && echo yes || echo no);"
+    fi
+    d=$(newtmp); _seed "$d"
+    _says_nolib "$(_gate_one "$d" "$m/session-mcp-gate.sh")" || R_BAD25="$R_BAD25 $shape/gate: deny does not name the lib;"
+  done
+}
+_badlib_round "$REPO_ROOT/scripts"
+if [ -z "$R_BAD25" ]; then
+  pass "C25: a 0-byte lib and one with a syntax error are each as loud as a missing one: the tracker exits 1 naming it, SessionStart says so (rc 0) and erases inherited successes, the gate's deny names it"
+else
+  fail_ "C25" "$R_BAD25"
 fi
 
 # ── Mutants ─────────────────────────────────────────────────────────────────
@@ -1300,8 +1390,8 @@ fi
 
 # MT: SessionStart's startup write back to an unlocked truncating redirect.
 if _mk_mutant "MT" session-test-gate-check.sh "# BL-314-SESSION-PUT" \
-     '_lw_put << TUEOF   # BL-314-SESSION-PUT' \
-     'cat > "$TOOL_USAGE" << TUEOF   # BL-314-SESSION-PUT'; then
+     '_lw_put << TUEOF || LW_RESET_FAILED=1   # BL-314-SESSION-PUT' \
+     'cat > "$TOOL_USAGE" << TUEOF || LW_RESET_FAILED=1   # BL-314-SESSION-PUT'; then
   mt_killed=""
   r=1
   while [ "$r" -le 6 ] && [ -z "$mt_killed" ]; do
@@ -1553,6 +1643,52 @@ if [ -z "$mgi_fail" ]; then
   pass "MGI: without its one temp line, neither ignore file ignores the lib's temps (C22 discriminates)"
 else
   fail_ "MGI" "$mgi_fail"
+fi
+
+# MRF: a failed startup reset no longer empties the ledger.
+if _mk_mutant "MRF" session-test-gate-check.sh "# BL-314-RESET-FAIL-CLOSED" \
+     'if { : > "$TOOL_USAGE"; } 2>/dev/null; then   # BL-314-RESET-FAIL-CLOSED' \
+     'if true; then   # BL-314-RESET-FAIL-CLOSED'; then
+  _unlandable_round "$MUT_DIR/session-test-gate-check.sh"
+  if [ -n "$R_UNL_FAIL" ]; then
+    pass "MRF: a failed reset that keeps the old ledger lets the next Write through ($R_UNL_FAIL)"
+  elif [ -n "$R_UNL_SKIP" ]; then
+    skip_ "MRF" "EACCES cannot be made here"
+  else
+    fail_ "MRF" "the next Write was still denied; C19 does not discriminate"
+  fi
+fi
+
+# MD: the directory check dropped.
+if _mk_mutant "MD" lib/ledger-write.sh "# BL-314-LEDGER-DIR" \
+     'if [ -d "$TOOL_USAGE" ]; then return 1; fi   # BL-314-LEDGER-DIR' \
+     'if false; then return 1; fi   # BL-314-LEDGER-DIR'; then
+  _ledger_dir_round "$MUT_DIR/lib/ledger-write.sh" "$MUT_DIR/track-tool-usage.sh"
+  if [ -n "$R_DIR" ]; then
+    pass "MD: without the check, copies land inside the directory ($R_DIR)"
+  else
+    fail_ "MD" "nothing landed with the check removed; C24 does not discriminate"
+  fi
+fi
+
+# MLT, MLS: the tracker's and SessionStart's load trial back to a bare [ -f ].
+if _mk_mutant "MLT" track-tool-usage.sh "# BL-314-LIB-TRIAL" \
+     'if ( . "$SCRIPT_DIR/lib/ledger-write.sh" && command -v _lw_update && command -v _lw_put && command -v _lw_traps ) >/dev/null 2>&1; then   # BL-314-LIB-TRIAL' \
+     'if [ -f "$SCRIPT_DIR/lib/ledger-write.sh" ]; then   # BL-314-LIB-TRIAL'; then
+  _badlib_round "$MUT_DIR"
+  case "$R_BAD25" in
+    *tracker*) pass "MLT: with a bare [ -f ], an unloadable lib leaves the tracker silent ($R_BAD25)" ;;
+    *) fail_ "MLT" "the tracker stayed loud with the trial removed; C25 does not discriminate" ;;
+  esac
+fi
+if _mk_mutant "MLS" session-test-gate-check.sh "# BL-314-SESSION-LIB-TRIAL" \
+     'if ( . "$SCRIPT_DIR/lib/ledger-write.sh" && command -v _lw_update && command -v _lw_put && command -v _lw_traps ) >/dev/null 2>&1; then   # BL-314-SESSION-LIB-TRIAL' \
+     'if [ -f "$SCRIPT_DIR/lib/ledger-write.sh" ]; then   # BL-314-SESSION-LIB-TRIAL'; then
+  _badlib_round "$MUT_DIR"
+  case "$R_BAD25" in
+    *session*) pass "MLS: with a bare [ -f ], an unloadable lib breaks SessionStart before its note ($R_BAD25)" ;;
+    *) fail_ "MLS" "SessionStart stayed loud with the trial removed; C25 does not discriminate" ;;
+  esac
 fi
 
 echo ""

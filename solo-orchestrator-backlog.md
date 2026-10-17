@@ -25531,7 +25531,20 @@ non-empty result into place (`# BL-314-NONEMPTY`). Each behaviour, with the case
   flags cannot reach the first Write, and the gate reports the ledger absent (T5d). This is new
   behaviour, not a restoration: before this change the startup reset ran only when jq was present,
   so without jq an inherited ledger kept its flags. A SessionStart write that cannot land ends that
-  hook non-zero, on startup and on resume (C19).
+  hook non-zero, on startup and on resume (C19). On startup it first empties the ledger in place
+  (`# BL-314-RESET-FAIL-CLOSED`), which needs no write to the directory, and says so on stderr, so the
+  last session's outcome flags cannot reach the first Write: C19 seeds them, with both servers
+  configured, under a 0555 `.claude` and wants the next Write denied (mutant MRF). The unique temp
+  needs a directory write where main's in-place `cat >` did not, and main's landed there with rc 0.
+- A directory, or a symlink to one, at the ledger path is never written into: `_lw_land` returns 1
+  (`# BL-314-LEDGER-DIR`), so no copy lands inside it, or outside `.claude` through a link (C24,
+  mutant MD). The gate reads the ledger only as a regular file, so it denies.
+- A lib that is present but cannot be loaded counts as missing. The tracker and SessionStart load it
+  through a trial in a subshell, keyed on the functions it defines, not on `[ -f ]`
+  (`# BL-314-LIB-TRIAL`, `# BL-314-SESSION-LIB-TRIAL`): a 0-byte lib defines nothing, and under
+  SessionStart's `set -e` one with a syntax error or no read permission ended the hook at the `.`,
+  before the reset and with no note (measured, bash 3.2: rc 2 and rc 1, even inside an `if`). The
+  0-byte and syntax-error shapes are pinned in all three hooks (C25, mutants MLT and MLS).
 - Without the lib, nothing passes in silence. The tracker's write entry points become one loud
   failure: a stderr line naming the lib and `bash scripts/verify-install.sh --auto-fix`, exit 1 (a
   non-blocking hook error, shown to the user), nothing written (`# BL-314-NOLIB-LOUD`), for an MCP
@@ -25567,6 +25580,10 @@ after proving its location: one end-of-line site of the marker, and a diff of ex
 | `BL-314-NOLIB-LOUD` | MT02, the lib-less tracker exits 0 again (MT03 silences its message) | C19 |
 | `BL-314-GATE-NOLIB` | MGN, the gate's missing-lib note dropped | C23 |
 | `BL-314-NOLIB-NOTE` | T5f in `tests/test-session-test-gate-check-merge.sh`, SessionStart's line silenced | T5d's check |
+| `BL-314-RESET-FAIL-CLOSED` | MRF, a failed startup reset that does not empty the ledger | C19 |
+| `BL-314-LEDGER-DIR` | MD, the directory check dropped | C24 |
+| `BL-314-LIB-TRIAL` | MLT, the tracker's load trial back to `[ -f ]` | C25 |
+| `BL-314-SESSION-LIB-TRIAL` | MLS, SessionStart's load trial back to `[ -f ]` | C25 |
 
 **Residuals.**
 - Two waiters that both read a stale lock's age can both break it, and the second can remove a lock a
@@ -25594,9 +25611,18 @@ after proving its location: one end-of-line site of the marker, and a diff of ex
   0644 under the umask. `_tt_record_accumulation` does the same to `process-state.json`.
 - The gate says "requirements not met", not "ledger unreadable", on an empty or unparseable ledger.
   The next MCP event reseeds it (C13).
-- Under SessionStart's `set -e`, a fresh write that cannot land (an unwritable `.claude`) ends that
-  hook non-zero, as a failed `cat >` did. A directory at the ledger path ends it with rc 1 and keeps
-  the directory.
+- A startup ledger that can be neither rewritten nor emptied (the file itself read-only, or a
+  directory at the path) ends SessionStart with rc 1 and a stderr line saying so; a read-only file
+  then keeps the last session's flags. A directory is kept, and the gate denies on it.
+- A process that keeps the lockdir's mtime fresh (a `touch` loop) holds every locked write in its
+  wait, the gate's record write included, and that write comes before the gate prints its decision.
+  The gate then waits out Claude Code's hook timeout (600 s by default), and a PreToolUse hook that
+  times out does not block the tool call, so that Write goes through (review of #481, R-481-3).
+  Anyone who can run that loop can forge the ledger more simply, so it is recorded, not fixed. The
+  options the review named: write the record after the decision is printed, or register the gate
+  with `onFailure: "block"`; neither is checked against the hooks documentation here.
+- verify-install checks that the lib is present, not that it loads; a 0-byte or broken lib is reported
+  by the hooks themselves (C25), not by verify-install.
 - SessionStart's merge fallback takes the lock twice, once for `_lw_update` and once for `_lw_put`.
   A tracker row can land between them and be overwritten; the fallback runs only on an unparseable
   ledger.

@@ -58,22 +58,27 @@ set +e
 TOOL_USAGE=".claude/tool-usage.json"
 
 # BL-314: every ledger write goes through the locked, unique-temp writer that
-# session-mcp-gate.sh shares. Without it (hooks newer than the lib, or the lib
-# deleted) this hook cannot write the ledger at all, and that must not pass in
-# silence: the call goes unrecorded and the MCP check then refuses every Write
-# and Edit with no hint why. So each write entry point stands in as one loud
-# failure: a stderr line and exit 1, a non-blocking hook error Claude Code
-# shows the user (the tool call has already run). A call that writes nothing
-# (not MCP, not a commit) still exits 0 in silence, since this fires after
-# every tool call. verify-install reports the lib missing.
+# session-mcp-gate.sh shares. Without it (hooks newer than the lib, the lib
+# deleted, or a lib that cannot be loaded) this hook cannot write the ledger at
+# all, and that must not pass in silence: the call goes unrecorded and the MCP
+# check then refuses every Write and Edit with no hint why. So each write entry
+# point stands in as one loud failure: a stderr line and exit 1, a non-blocking
+# hook error Claude Code shows the user (the tool call has already run). A call
+# that writes nothing (not MCP, not a commit) still exits 0 in silence, since
+# this fires after every tool call. verify-install reports the lib missing.
+#
+# The lib is loaded through a trial in a subshell, keyed on what it defines,
+# not on `[ -f ]`: a 0-byte lib defines nothing, and one with a syntax error
+# or no read permission ends a `set -e` shell at the `.` even inside an `if`
+# (measured, bash 3.2: rc 2 and rc 1). A subshell's exit cannot end this one.
 SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
-if [ -f "$SCRIPT_DIR/lib/ledger-write.sh" ]; then
+if ( . "$SCRIPT_DIR/lib/ledger-write.sh" && command -v _lw_update && command -v _lw_put && command -v _lw_traps ) >/dev/null 2>&1; then   # BL-314-LIB-TRIAL
   # shellcheck source=scripts/lib/ledger-write.sh
   . "$SCRIPT_DIR/lib/ledger-write.sh"
   _lw_traps
 else
   _lw_absent() {
-    echo "track-tool-usage.sh: $SCRIPT_DIR/lib/ledger-write.sh is missing, so this call was NOT recorded in $TOOL_USAGE, and the MCP check will keep refusing Write and Edit. Restore it: bash scripts/verify-install.sh --auto-fix" >&2
+    echo "track-tool-usage.sh: $SCRIPT_DIR/lib/ledger-write.sh is missing or cannot be loaded, so this call was NOT recorded in $TOOL_USAGE, and the MCP check will keep refusing Write and Edit. Restore it: bash scripts/verify-install.sh --auto-fix" >&2
     exit 1   # BL-314-NOLIB-LOUD
   }
   _lw_lock() { _lw_absent; }

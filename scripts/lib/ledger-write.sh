@@ -95,6 +95,10 @@ _lw_sweep() {
 # empty input and prints nothing). Caller holds the lock.
 _lw_land() {
   local tmp
+  # A directory at the ledger path, or a symlink to one, is no ledger: mv would
+  # drop the temp INSIDE it, outside .claude through a link. Refuse it; the gate
+  # reads the ledger only as a regular file, so it denies ("ledger ABSENT").
+  if [ -d "$TOOL_USAGE" ]; then return 1; fi   # BL-314-LEDGER-DIR
   _lw_sweep
   tmp=$(mktemp "$TOOL_USAGE.lw.XXXXXX" 2>/dev/null) || tmp=""   # BL-314-UNIQUE-TMP
   [ -n "$tmp" ] || return 1
